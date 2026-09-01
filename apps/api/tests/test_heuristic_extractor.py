@@ -1002,15 +1002,15 @@ class TestHeuristicEmitsPropertyCategory:
 
 def _family_for_property(property_name: str) -> str | None:
     """Resolve the heuristic_extractor family bucket for a given
-    ``property_name`` by scanning ``_F8_TABLE_ROW_PHRASES`` first (third
+    ``property_name`` by scanning ``_F8_CONTEXT_RULES`` first (third
     pass) and falling back to ``_PROPERTY_RULES`` (first/second pass).
     """
     from nfm_db.services.heuristic_extractor import (
-        _F8_TABLE_ROW_PHRASES,
+        _F8_CONTEXT_RULES,
         _PROPERTY_RULES,
     )
 
-    for _pattern, name, family in _F8_TABLE_ROW_PHRASES:
+    for _pattern, name, family in _F8_CONTEXT_RULES:
         if name == property_name:
             return family
     for _pattern, name, family in _PROPERTY_RULES:

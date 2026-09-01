@@ -442,113 +442,136 @@ def _nearest_material(
 #   distinguish F8 hot-patch rows from generic ``heuristic_regex``
 #   rows without changing existing call sites.
 
-_F8_TABLE_ROW_PHRASES: list[tuple[re.Pattern[str], str, str]] = [
-    # (phrase_regex, property_name, family)
+_F8_CONTEXT_LOOKBACK = 220
+
+# Regex that flags a value+unit as an UNCERTAINTY rather than the
+# primary measurement. ``uncertainty`` / ``±`` / ``uncert`` qualifiers
+# appear immediately before OR after the value+unit in scientific prose
+# ("0.08 eV with uncertainty" or "with uncertainty 0.08 eV"). When a
+# value matches this pattern it is excluded from F8 emission — the F8
+# scorecard wants the primary measurement, not its uncertainty bound.
+_F8_UNCERTAINTY_RE = re.compile(
+    r"\b(?:uncertainty|uncert\.?|±)\b",
+    re.IGNORECASE,
+)
+
+
+def _f8_sentence_start(text: str, value_pos: int) -> int:
+    """Return the start index of the sentence containing ``value_pos``.
+
+    Scans BACKWARD from ``value_pos`` for the most recent sentence
+    boundary. Handles period-in-numbers by checking the character
+    after the period — if it's a digit, the period is part of a
+    numeric literal and is not a sentence boundary.
+    """
+    pos = value_pos
+    while pos > 0:
+        # Find the most recent period/!/?/paragraph-break at or before pos.
+        prefix = text[:pos]
+        candidate = -1
+        chosen_term: str | None = None
+        for term in (". ", "! ", "? ", "\n\n"):
+            idx = prefix.rfind(term)
+            if idx > candidate:
+                candidate = idx
+                chosen_term = term
+        if candidate == -1 or chosen_term is None:
+            return 0
+        # If the terminator starts with ".", check whether the next
+        # character is a digit — that means the period is part of a
+        # numeric literal (e.g. "0.08 eV") and is NOT a sentence
+        # boundary. Continue scanning backward past this position.
+        if text[candidate] == ".":
+            after_period = candidate + 1
+            if after_period < len(text) and text[after_period].isdigit():
+                pos = candidate
+                continue
+        return candidate + len(chosen_term)
+    return 0
+
+
+# Regexes used by the F8 row extractor. Each entry is
+# ``(context_regex, property_name, family)`` where ``context_regex`` is
+# matched against the SAME sentence as the value+unit (so a "Cr-doped"
+# mention in a different sentence does not flip undoped values in the
+# later sentence). This is a VALUE-ANCHORED design rather than the
+# sentence-pattern design attempted first: the previous
+# sentence-pattern regex ``[^.!?]*`` broke on periods inside numeric
+# values like ``0.08`` in scientific prose.
+_F8_CONTEXT_RULES: list[tuple[re.Pattern[str], str, str]] = [
     # F8 #3 — Cr-doped activation energy (0.26 eV) — energy family.
-    # The regex matches a single SENTENCE containing a Cr-doped marker,
-    # the property keyword, and the value+unit. ``[^.!?]*`` between
-    # marker and keyword allows natural prose like "For 50 at% Cr-doped
-    # UO2 samples, the activation energy decreased to 0.26 eV". The
-    # negation deliberately excludes only sentence-terminating
-    # punctuation (``.!?``), not newlines — source prose wraps lines
-    # mid-sentence (the Owen2023 fixture wraps at ~70 chars/line) and
-    # ``\n`` is part of the SAME sentence.
     (
         re.compile(
             r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
-            r"[^.!?]*"
-            r"\bactivation[\s_\-]*energy\b"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>eV|meV|kJ(?:[\s/]mol)?|kcal(?:[\s/]mol)?)",
-            re.IGNORECASE,
+            r".*?"
+            r"\bactivation[\s_\-]*energy\b",
+            re.IGNORECASE | re.DOTALL,
         ),
         "cr_doped_activation_energy",
         "energy",
     ),
     # F8 #4 — Cr-doped diffusion coefficient (1.27e-9 cm²/s) —
-    # diffusivity family.
+    # diffusivity family. ``D0`` / ``D`` are standard scientific
+    # symbols for the diffusion pre-exponential factor — papers
+    # routinely write "D0 dropped to 1.27e-9" without spelling out
+    # "diffusion coefficient".
     (
         re.compile(
             r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
-            r"[^.!?]*"
+            r".*?"
             r"(?:diffusion[\s_\-]*(?:coefficient|coeff\.?|constant)"
-            r"|diffusivity)"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>cm(?:\^?2|²)?[\s/]s|cm[\s\-]?s[\-]?1|m2[\s/]s)",
-            re.IGNORECASE,
+            r"|diffusivity|\bD[\s\-_]?0?\b)",
+            re.IGNORECASE | re.DOTALL,
         ),
         "cr_doped_diffusion_coefficient",
         "diffusivity",
     ),
-    # F8 #5 — amorphous density (10.55 g/cm³ for amorphous UO2) —
-    # density family. The doping/phase marker (``amorphous``) is
-    # REQUIRED to be in the same sentence as the value+unit.
+    # F8 #5 — amorphous density (10.55 g/cm³) — density family.
     (
         re.compile(
             r"\bamorphous\b"
-            r"[^.!?]*"
-            r"\bdensity\b"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>g[\s/]cm(?:\^?3|³)?|kg[\s/]m(?:\^?3|³)?)",
-            re.IGNORECASE,
+            r".*?"
+            r"\bdensity\b",
+            re.IGNORECASE | re.DOTALL,
         ),
         "density_amorphous",
         "density",
     ),
-    # F8 #6 — Cr-doped density (10.27 g/cm³ for 10 at% Cr-doped UO2) —
-    # density family. Same constraint as F8 #5 — Cr-doping marker must
-    # be in the same sentence as the value+unit. The reverse form
-    # "density ... Cr-doped" is handled by the existing first-pass
-    # ``_match_property`` context upgrade.
+    # F8 #6 — Cr-doped density (10.27 g/cm³) — density family.
     (
         re.compile(
             r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
-            r"[^.!?]*"
-            r"\bdensity\b"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>g[\s/]cm(?:\^?3|³)?|kg[\s/]m(?:\^?3|³)?)",
-            re.IGNORECASE,
+            r".*?"
+            r"\bdensity\b",
+            re.IGNORECASE | re.DOTALL,
         ),
         "density_doped",
         "density",
     ),
-    # F8 #7 — RDF peak distance/position (2.28 Å, 2.83 Å for amorphous
-    # UO2) — length family. The first-pass ``rdf_peak`` rule still
-    # fires for the bare "RDF peak" / "radial distribution function
-    # peak" forms; this pattern targets the distance/position surface
-    # form the v0.5.0 taxonomy uses.
+    # F8 #7 — RDF peak distance (2.28 Å, 2.83 Å) — length family.
+    # The first-pass ``rdf_peak`` rule still fires for the bare
+    # "RDF peak" / "radial distribution function peak" forms; this
+    # rule targets the v0.5.0-disambiguated ``rdf_peak_distance``
+    # label. The literal words "distance" / "position" are NOT
+    # required — papers routinely write "peaks at 2.28 angstrom"
+    # without spelling out the word "distance".
     (
         re.compile(
             r"\brdf\b"
-            r"[^.!?]*"
-            r"\bpeak\b"
-            r"[^.!?]*?"
-            r"\b(?:distance|position)s?\b"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>Å|angstrom|angstroms|nm|pm)",
-            re.IGNORECASE,
+            r".*?"
+            r"\bpeaks?\b",
+            re.IGNORECASE | re.DOTALL,
         ),
         "rdf_peak_distance",
         "length",
     ),
-    # F8 #8 — Cr-O bond length (2.04 Å) — length family. The first-pass
-    # ``bond_length`` rule already matches "Cr-O bond length" /
-    # "bond length" forms; this pattern targets the co-located
-    # Cr-O + bond-length form the v0.5.0 taxonomy uses.
+    # F8 #8 — Cr-O bond length (2.04 Å) — length family.
     (
         re.compile(
             r"\bcr[\s\-]*o\b"
-            r"[^.!?]*"
-            r"\b(?:bond[\s\.]+)?(?:length|distance)\b"
-            r"[^.!?]*?"
-            r"(?P<value>-?\d+\.?\d*(?:[eE][-+]?\d+)?)"
-            r"\s*(?P<unit>Å|angstrom|angstroms|nm|pm)",
-            re.IGNORECASE,
+            r".*?"
+            r"\b(?:bond[\s\.]+)?(?:length|distance)\b",
+            re.IGNORECASE | re.DOTALL,
         ),
         "bond_length",
         "length",
@@ -562,9 +585,12 @@ def _extract_f8_table_rows(
 ) -> list[dict[str, Any]]:
     """Extract F8 scorecard rows from prose that LOOKS like a table row.
 
-    For each F8 sentence pattern, find the sentence containing both the
-    doping/phase marker AND the property keyword AND a numeric
-    value+unit. Attribute the row to the closest material.
+    Scans every value+unit pair in ``text``. For each pair whose unit
+    is compatible with an F8 family (energy / diffusivity / density /
+    length), checks whether the F8 context rule (e.g. ``Cr-doped ...
+    activation energy`` for the energy family) matches within the
+    SAME sentence as the value. If yes, emits an F8 row with the
+    disambiguated property name.
 
     Returns a list of dicts with the same shape as a heuristic_extract
     output row except ``method`` is NOT set here — the caller decides
@@ -578,39 +604,60 @@ def _extract_f8_table_rows(
     """
     rows: list[dict[str, Any]] = []
 
-    for phrase_re, property_name, family in _F8_TABLE_ROW_PHRASES:
-        for m in phrase_re.finditer(text):
-            raw_value = m.group("value")
-            value = _normalize_number(raw_value)
-            if value is None:
-                continue
-            unit = m.group("unit")
+    for value_m in _VALUE_UNIT_RE.finditer(text):
+        value = _normalize_number(value_m.group("value"))
+        if value is None:
+            continue
+        unit = value_m.group("unit")
+        value_pos = value_m.start()
+
+        # Skip values that are flagged as UNCERTAINTY rather than the
+        # primary measurement. The qualifier appears IMMEDIATELY BEFORE
+        # the uncertainty value ("with uncertainty 0.08 eV", "± 0.05 eV")
+        # — not AFTER. The pattern "0.26 eV with uncertainty 0.08 eV"
+        # means 0.08 is the uncertainty bound (not 0.26), so checking
+        # AFTER the value would falsely exclude the primary measurement.
+        before_value = text[max(0, value_pos - 30):value_pos]
+        if _F8_UNCERTAINTY_RE.search(before_value):
+            continue
+
+        # Find the sentence containing this value+unit. Restrict the
+        # F8 context check to that sentence to avoid cross-sentence
+        # contamination (a "Cr-doped" mention in an earlier sentence
+        # would otherwise flip undoped values in later sentences).
+        sent_start = _f8_sentence_start(text, value_pos)
+        sentence = text[sent_start:value_pos]
+
+        # Find which F8 rule (if any) fires for this value+unit.
+        matched_property: str | None = None
+        matched_family: str | None = None
+        for context_re, property_name, family in _F8_CONTEXT_RULES:
             if not _units_compatible(unit, family):
-                # Skip rows where the unit doesn't match the F8 family
-                # — keeps the third pass from emitting nonsense.
                 continue
+            if context_re.search(sentence):
+                matched_property = property_name
+                matched_family = family
+                break
+        if matched_property is None:
+            continue
 
-            # Attribute to the nearest material. Use the value START
-            # (not the phrase start) so the value-with-unit is the
-            # anchor point — this mirrors the first-pass behaviour
-            # where the value-with-unit is the iteration variable.
-            material = _nearest_material(materials, m.start("value"))
-            if material is None:
-                continue
+        material = _nearest_material(materials, value_pos)
+        if material is None:
+            continue
 
-            rows.append(
-                {
-                    "element_system": material,
-                    "material_name": material,
-                    "composition": material,
-                    "phase": "Unknown",
-                    "property_name": property_name,
-                    "value": value,
-                    "unit": unit,
-                    "family": family,
-                    "property_category": FAMILY_TO_CATEGORY.get(family),
-                }
-            )
+        rows.append(
+            {
+                "element_system": material,
+                "material_name": material,
+                "composition": material,
+                "phase": "Unknown",
+                "property_name": matched_property,
+                "value": value,
+                "unit": unit,
+                "family": matched_family,
+                "property_category": FAMILY_TO_CATEGORY.get(matched_family),
+            }
+        )
 
     return rows
 
@@ -763,6 +810,20 @@ def heuristic_extract(
     # Without this pass, clean rebuilds of ``origin/main`` silently
     # regress to 2/8 strict-kg_nodes scorecard (NFM-3824 phantom-pass
     # risk). See NFM-3845 Board/审计 directive step 2.
+    #
+    # Two emission modes:
+    # * ``UPGRADE``: the F8 row matches (material, property_name, value)
+    #   of an existing first/second-pass row. The existing row's
+    #   ``method`` is upgraded from ``heuristic_regex`` to
+    #   ``heuristic_f8`` so the scorecard counts it as a hot-patch
+    #   row. This handles F8 classes that the first pass already emits
+    #   under the generic label (e.g. ``bond_length``, ``rdf_peak``)
+    #   where the F8 context does not change the property_name but
+    #   still marks the row as a hot-patch emission.
+    # * ``NEW``: the F8 property_name is new (e.g.
+    #   ``cr_doped_activation_energy`` is not emitted by the first
+    #   pass which uses the generic ``activation_energy``). Emit a
+    #   new row with ``method=heuristic_f8``.
     f8_rows = _extract_f8_table_rows(normalized, materials)
     for row in f8_rows:
         material = row["element_system"]
@@ -780,16 +841,22 @@ def heuristic_extract(
         value_str = f"{row['value']:g}"
         key = (material, name, value_str)
         if key in seen_keys:
+            # UPGRADE: existing first/second-pass row matches the F8
+            # row by (material, property_name, value). Update its
+            # method so the kg_nodes strict surface counts it as a
+            # hot-patch emission.
+            for existing in found:
+                if (
+                    existing["element_system"] == material
+                    and existing["property_name"] == name
+                    and f"{existing['value']:g}" == value_str
+                ):
+                    existing["method"] = "heuristic_f8"
+                    break
             continue
-        seen_keys.add(key)
 
-        # F8 rows are emitted with ``method=heuristic_f8`` so the
-        # mapper can distinguish hot-patch rows from generic regex
-        # rows. ``property_category`` is taken from the row's own
-        # family mapping (set by ``_extract_f8_table_rows``) so the
-        # mapper's ``_coerce_unknown_categories`` does not coerce to
-        # ``"other"`` (which would inflate ``skipped_unknown_properties``
-        # on the F8 scorecard).
+        # NEW: emit a fresh F8 row.
+        seen_keys.add(key)
         found.append(
             {
                 "element_system": material,
