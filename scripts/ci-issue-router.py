@@ -8,14 +8,14 @@ issues are closed.
 Runs as a Hermes cron job every 10 minutes. Silent when nothing to report.
 """
 
+# ruff: noqa: B007, F841, N999
+
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 
 import psycopg2
 
@@ -40,14 +40,23 @@ def gh_issue_list(label: str, state: str, limit: int = 20) -> list[dict]:
     try:
         result = subprocess.run(
             [
-                "gh", "issue", "list",
-                "--repo", REPO,
-                "--label", label,
-                "--state", state,
-                "--json", "number,title,body,labels",
-                "--limit", str(limit),
+                "gh",
+                "issue",
+                "list",
+                "--repo",
+                REPO,
+                "--label",
+                label,
+                "--state",
+                state,
+                "--json",
+                "number,title,body,labels",
+                "--limit",
+                str(limit),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             return []
@@ -82,12 +91,8 @@ def extract_sha(title: str, body: str) -> str | None:
 
 def main() -> int:
     # Gather GitHub issues
-    open_issues = merge_dedup(
-        [gh_issue_list(label, "open") for label in LABELS]
-    )
-    closed_issues = merge_dedup(
-        [gh_issue_list(label, "closed", limit=5) for label in LABELS]
-    )
+    open_issues = merge_dedup([gh_issue_list(label, "open") for label in LABELS])
+    closed_issues = merge_dedup([gh_issue_list(label, "closed", limit=5) for label in LABELS])
 
     if not open_issues and not closed_issues:
         # Silent: nothing to report
@@ -169,7 +174,16 @@ def main() -> int:
                 %s, NOW(), NOW(),
                 %s, %s, 'standard', 0
             )""",
-            (COMPANY_ID, PROJECT_ID, title, description, priority, SRE_AGENT_ID, next_num, identifier),
+            (
+                COMPANY_ID,
+                PROJECT_ID,
+                title,
+                description,
+                priority,
+                SRE_AGENT_ID,
+                next_num,
+                identifier,
+            ),
         )
         created_pc += 1
 

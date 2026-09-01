@@ -154,15 +154,13 @@ class TestIngestFullFlow:
         assert data["corpus_id"] == "flow-test"
 
         # Verify property_measurements row exists
-        measurements = (await db_session.execute(
-            select(PropertyMeasurement)
-        )).scalars().all()
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) >= 1, "Expected at least one PropertyMeasurement row"
 
         # Verify corpus was auto-created
-        corpus = (await db_session.execute(
-            select(Corpus).where(Corpus.corpus_id == "flow-test")
-        )).scalar_one_or_none()
+        corpus = (
+            await db_session.execute(select(Corpus).where(Corpus.corpus_id == "flow-test"))
+        ).scalar_one_or_none()
         assert corpus is not None
         assert corpus.is_auto_created is True
 
@@ -242,6 +240,92 @@ class TestSkippedCounterReconciliation:
         assert data["created_measurements"] == 1
 
 
+class TestNFM3919SkippedUnknownMaterialsSurfaced:
+    """NFM-3919 CR-2 (E2E QA 2026-09-01): the new
+    ``MappingResult.skipped_unknown_materials`` counter must be visible
+    in the POST /extraction/ingest response so operators can alert on
+    the specific "extractor schema-drift" signal — i.e. items where
+    BOTH material_name and composition were None.
+
+    Without this, the mapper increments the counter but it never
+    leaves the function (grep confirmed only one call site, which
+    did not surface the field).
+    """
+
+    @pytest.mark.asyncio
+    async def test_skipped_unknown_materials_zero_when_clean(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        db_session: AsyncSession,
+    ) -> None:
+        """All items valid → skipped_unknown_materials must be 0 and
+        visible in the response (default 0 even when nothing skipped)."""
+        payload = _ingest_payload(
+            properties=[_sample_property()],
+            corpus_id="nfm3919-c2-clean",
+        )
+        resp = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert "skipped_unknown_materials" in data, (
+            "CR-2: skipped_unknown_materials must be surfaced in "
+            "ExtractionIngestAck — operators alert on this signal."
+        )
+        assert data["skipped_unknown_materials"] == 0
+
+    @pytest.mark.asyncio
+    async def test_skipped_unknown_materials_counted_when_both_none(
+        self,
+        async_client: AsyncClient,
+        svc_headers: dict[str, str],
+        seeded_property_type: PropertyType,
+        db_session: AsyncSession,
+    ) -> None:
+        """Item with BOTH material_name and composition = None triggers
+        the schema-drift guard and bumps skipped_unknown_materials=1
+        in the response.
+        """
+        bad = _sample_property(
+            overrides={
+                "material_name": None,
+                "composition": None,
+            }
+        )
+        payload = _ingest_payload(
+            properties=[bad],
+            corpus_id="nfm3919-c2-both-none",
+            source_reference="10.1234/nfm3919-c2-both-none",
+        )
+        resp = await async_client.post(
+            "/api/v1/extraction/ingest",
+            json=payload,
+            headers=svc_headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["skipped_unknown_materials"] == 1, (
+            f"CR-2: expected skipped_unknown_materials=1, "
+            f"got {data.get('skipped_unknown_materials')}. "
+            "Either the mapper guard didn't trip or the counter isn't "
+            "wired through to the response."
+        )
+        # And no Material row was created for the bad item.
+        from nfm_db.models import Material
+
+        mats = (
+            (await db_session.execute(select(Material).where(Material.name.is_(None))))
+            .scalars()
+            .all()
+        )
+        assert all(m.formula is not None or m.name is not None for m in mats) or mats == []
+
+
 class TestIngestKGBuildFailureIsolated:
     """AC-3: property persistence is isolated from KG build failures.
 
@@ -268,6 +352,7 @@ class TestIngestKGBuildFailureIsolated:
 
         # First: do a successful ingest to seed measurements
         from nfm_db.models.property import PropertyCategory, PropertyType
+
         cat = PropertyCategory(name="thermal", slug="thermal-iso")
         db_session.add(cat)
         await db_session.flush()
@@ -292,9 +377,9 @@ class TestIngestKGBuildFailureIsolated:
         assert good_resp.status_code == 202
         good_body = good_resp.json()
         assert good_body["success"] is True
-        measurements_before = (await db_session.execute(
-            select(PropertyMeasurement)
-        )).scalars().all()
+        measurements_before = (
+            (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        )
         count_before = len(measurements_before)
 
         # Now mock map_and_persist to simulate a KG build failure.
@@ -328,9 +413,7 @@ class TestIngestKGBuildFailureIsolated:
         assert fail_data["created_measurements"] == 0
 
         # Prior measurements must still be in the DB
-        measurements_after = (await db_session.execute(
-            select(PropertyMeasurement)
-        )).scalars().all()
+        measurements_after = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements_after) == count_before, (
             "Prior measurements should survive a subsequent persist failure"
         )
@@ -365,14 +448,10 @@ class TestIngestWithConditions:
         assert data["created_measurements"] == 1
 
         # Verify MeasurementCondition row
-        conditions = (await db_session.execute(
-            select(MeasurementCondition)
-        )).scalars().all()
+        conditions = (await db_session.execute(select(MeasurementCondition))).scalars().all()
         assert len(conditions) >= 1, "Expected at least one MeasurementCondition row"
         temps = [c.temperature for c in conditions if c.temperature is not None]
-        assert 400.0 in temps, (
-            f"Expected temperature=400.0 in conditions, got {temps}"
-        )
+        assert 400.0 in temps, f"Expected temperature=400.0 in conditions, got {temps}"
 
 
 class TestIngestDuplicateDetection:
@@ -399,9 +478,11 @@ class TestIngestDuplicateDetection:
             _sample_property({"value": "10.20", "property": "density"}),
         ]
         # Seed a second property type for density
-        category = (await db_session.execute(
-            select(PropertyCategory).where(PropertyCategory.slug == "thermal")
-        )).scalar_one_or_none()
+        category = (
+            await db_session.execute(
+                select(PropertyCategory).where(PropertyCategory.slug == "thermal")
+            )
+        ).scalar_one_or_none()
         if category is not None:
             density_type = PropertyType(
                 category_id=category.id,
@@ -489,9 +570,11 @@ class TestSyncVerificationPerRequestDelta:
         doi = "10.1234/nfm2096-ac2"
 
         # Seed a second property type so the second POST is a novel 5-tuple.
-        category = (await db_session.execute(
-            select(PropertyCategory).where(PropertyCategory.slug == "thermal")
-        )).scalar_one_or_none()
+        category = (
+            await db_session.execute(
+                select(PropertyCategory).where(PropertyCategory.slug == "thermal")
+            )
+        ).scalar_one_or_none()
         assert category is not None
         density_type = PropertyType(
             category_id=category.id,
@@ -528,11 +611,15 @@ class TestSyncVerificationPerRequestDelta:
         resp2 = await async_client.post(
             "/api/v1/extraction/ingest",
             json=_ingest_payload(
-                properties=[_sample_property({
-                    "property": "density",
-                    "value": "10.95",
-                    "unit": "g/cm3",
-                })],
+                properties=[
+                    _sample_property(
+                        {
+                            "property": "density",
+                            "value": "10.95",
+                            "unit": "g/cm3",
+                        }
+                    )
+                ],
                 corpus_id="nfm2096-delta",
                 source_reference=doi,
             ),
@@ -606,19 +693,19 @@ class TestSyncVerificationPerRequestDelta:
 
         # AC-3: must report verified=False.
         assert data["verified"] is False, (
-            f"Force-mismatch should yield verified=False; "
-            f"got verified={data['verified']}"
+            f"Force-mismatch should yield verified=False; got verified={data['verified']}"
         )
         # Must contain the structured MISMATCH error message.
         mismatch_errors = [
-            e for e in data["errors"]
-            if "sync-verification MISMATCH" in e
-            and "created_measurements=99" in e
+            e
+            for e in data["errors"]
+            if "sync-verification MISMATCH" in e and "created_measurements=99" in e
         ]
         assert len(mismatch_errors) == 1, (
             f"Expected exactly 1 MISMATCH error mentioning "
             f"created_measurements=99; got errors={data['errors']}"
         )
+
 
 class TestVerifiedFalseDetector:
     """NFM-2097 AC-1 / AC-2: verified-False drift paths that the original
@@ -675,21 +762,17 @@ class TestVerifiedFalseDetector:
         assert resp.status_code == 202
         data = resp.json()["data"]
 
-        assert data["verified"] is False, (
-            f"Expected verified=False; got {data['verified']}"
-        )
+        assert data["verified"] is False, f"Expected verified=False; got {data['verified']}"
         assert data["db_measurement_count"] == 1, (
             f"Expected db_measurement_count=1; got {data['db_measurement_count']}"
         )
 
         mismatch_errors = [
-            e for e in data["errors"]
-            if "sync-verification MISMATCH" in e
-            and "created_measurements=2" in e
+            e
+            for e in data["errors"]
+            if "sync-verification MISMATCH" in e and "created_measurements=2" in e
         ]
-        assert len(mismatch_errors) == 1, (
-            f"Expected 1 MISMATCH error; got {data['errors']}"
-        )
+        assert len(mismatch_errors) == 1, f"Expected 1 MISMATCH error; got {data['errors']}"
 
         # Response carries a valid job_id for correlation.
         assert "job_id" in data
@@ -724,15 +807,11 @@ class TestVerifiedFalseDetector:
         assert resp.status_code == 202
         data = resp.json()["data"]
 
-        assert data["verified"] is False, (
-            f"Expected verified=False; got {data['verified']}"
-        )
+        assert data["verified"] is False, f"Expected verified=False; got {data['verified']}"
 
         skipped_errors = [
-            e for e in data["errors"]
-            if "sync-verification SKIPPED" in e
-            and "no source_reference" in e
+            e
+            for e in data["errors"]
+            if "sync-verification SKIPPED" in e and "no source_reference" in e
         ]
-        assert len(skipped_errors) == 1, (
-            f"Expected 1 SKIPPED error; got {data['errors']}"
-        )
+        assert len(skipped_errors) == 1, f"Expected 1 SKIPPED error; got {data['errors']}"

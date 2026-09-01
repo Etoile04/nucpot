@@ -179,6 +179,13 @@ class MappingResult:
     reused_entities: int = 0
     skipped_duplicate_measurements: int = 0
     skipped_unknown_properties: int = 0
+    # NFM-3919: items where BOTH material_name and composition are None
+    # (e.g. an extractor that omits both fields) are rejected at the mapper
+    # bottom line so the database is never polluted with fresh
+    # ``name='Unknown Material'`` rows. Counted separately from
+    # ``skipped_unknown_properties`` so operators can alert on the specific
+    # "extractor schema-drift" signal.
+    skipped_unknown_materials: int = 0
     validation_errors: int = 0
 
     @property
@@ -197,6 +204,7 @@ class MappingResult:
             self.reused_entities
             + self.skipped_duplicate_measurements
             + self.skipped_unknown_properties
+            + self.skipped_unknown_materials
         )
 
 
@@ -441,7 +449,8 @@ async def _lookup_property_type(
     category_slug = _normalize_category_slug(category_name)
     if category_slug is None:
         logger.debug(
-            "Unknown OntoFuel category literal: %r", category_name,
+            "Unknown OntoFuel category literal: %r",
+            category_name,
         )
         return None
 
@@ -559,11 +568,34 @@ async def map_and_persist(
     reused_entities = 0
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
+    skipped_unknown_materials = 0  # NFM-3919
 
     for item in validated:
         s_key = _source_key(item)
         m_key = _material_key(item)
         d_key = _dataset_key(s_key, m_key)
+
+        # --- NFM-3919 bottom-line guard: reject ONLY when both material
+        # identity fields are absent. Rejecting on EITHER-missing was the
+        # CR-1 bug (E2E QA 2026-09-01): LLM extraction_prompt.py:305-306
+        # explicitly permits ``composition=None`` for materials where the
+        # name itself carries the chemistry (e.g. SS316, Zr-2.5Nb, Inconel
+        # 718). 78/131 prod ``materials`` rows currently have
+        # ``name = formula`` from the legacy ``or material_name`` fallback
+        # — the same pattern. The previous ``not (A and B)`` check
+        # (= ``not A or not B``) would have silently dropped all of them.
+        # Now restricted to both-None, with explicit ``is None`` so empty
+        # strings are still accepted (extractor schema-drift guard).
+        if item.material_name is None and item.composition is None:
+            logger.warning(
+                "Skipping extraction item with no material identity: "
+                "material_name=%r composition=%r "
+                "(NFM-3919 — extractor schema-drift guard)",
+                item.material_name,
+                item.composition,
+            )
+            skipped_unknown_materials += 1
+            continue
 
         # --- DataSource (find or create) ---
         if s_key not in source_map:
@@ -606,9 +638,13 @@ async def map_and_persist(
         source = source_map[s_key]
 
         # --- Material (find or create) ---
+        # NFM-3919: the top-of-loop guard ensures both ``item.material_name``
+        # and ``item.composition`` are truthy here, so we no longer fall back
+        # to ``"Unknown Material"`` — that fallback was the root cause of the
+        # pollution where every heuristic run inserted a fresh row.
         if m_key not in material_map:
-            material_name = item.material_name or "Unknown Material"
-            formula = item.composition or item.material_name
+            material_name = item.material_name
+            formula = item.composition
 
             existing_mat = await _find_material_by_formula(db, formula)
             if existing_mat:
@@ -631,13 +667,17 @@ async def map_and_persist(
         if d_key not in dataset_map:
             dataset_title = f"{material.name} - {source.title}"
             existing_dataset = (
-                await db.execute(
-                    select(Dataset).where(
-                        Dataset.material_id == material.id,
-                        Dataset.source_id == source.id,
+                (
+                    await db.execute(
+                        select(Dataset).where(
+                            Dataset.material_id == material.id,
+                            Dataset.source_id == source.id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if existing_dataset is not None:
                 # Cross-request hit: same source+material already has a
                 # dataset.  Reuse it so the 5-tuple dedup keys line up.
@@ -764,6 +804,7 @@ async def map_and_persist(
         reused_entities=reused_entities,
         skipped_duplicate_measurements=skipped_duplicate_measurements,
         skipped_unknown_properties=skipped_unknown_properties,
+        skipped_unknown_materials=skipped_unknown_materials,
         validation_errors=validation_error_count,
     )
 
@@ -786,11 +827,19 @@ async def _find_material_by_formula(
     db: AsyncSession,
     formula: str | None,
 ) -> Material | None:
-    """Find existing Material by formula."""
+    """Find existing Material by formula.
+
+    NFM-3919: tolerates duplicate ``formula`` rows that exist in the
+    database from prior batches. ``scalar_one_or_none()`` would raise
+    ``MultipleResultsFound`` and fail the entire ingest batch the moment
+    a second row with the same formula was inserted (e.g. legacy
+    ``Unknown Material`` pollution). We instead use ``.limit(1)`` plus
+    ``scalars().first()`` so the lookup returns one row deterministically.
+    """
     if not formula:
         return None
-    stmt = select(Material).where(Material.formula == formula)
-    return (await db.execute(stmt)).scalar_one_or_none()
+    stmt = select(Material).where(Material.formula == formula).limit(1)
+    return (await db.execute(stmt)).scalars().first()
 
 
 def _parse_float(value: str) -> float | None:

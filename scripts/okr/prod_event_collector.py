@@ -36,6 +36,7 @@ Required environment:
                           skipped if unset).
 """
 
+# ruff: noqa: N818, SIM105
 from __future__ import annotations
 
 import argparse
@@ -51,23 +52,23 @@ from pathlib import Path
 from typing import Any, Protocol
 
 # Spec §3.1 schema — verbatim, do not extend or rename.
-SCHEMA_FIELDS = frozenset({
-    "event_id",
-    "ts",
-    "environment",
-    "triggered_by",
-    "commit_sha",
-    "first_pass_success",
-    "health_gate_first_poll_passed",
-    "rollback_triggered",
-    "skip_flag_used",
-    "duration_ms",
-})
+SCHEMA_FIELDS = frozenset(
+    {
+        "event_id",
+        "ts",
+        "environment",
+        "triggered_by",
+        "commit_sha",
+        "first_pass_success",
+        "health_gate_first_poll_passed",
+        "rollback_triggered",
+        "skip_flag_used",
+        "duration_ms",
+    }
+)
 
 # NFM-2035 spec §3.1 — UUIDv4 pattern (cheap uniqueness + version check).
-_UUID4_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-)
+_UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 # ADR-KR3-A2 §Failure-mode 3: clock-skew window between GH API and host.
 SYNC_SKEW_MINUTES = 5
@@ -77,9 +78,11 @@ SYNC_SKEW_MINUTES = 5
 # Domain types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Run:
     """One production run that has a deploy-event artifact to consider."""
+
     run_id: int
     created_at: datetime  # tz-aware UTC
     artifact_ids: tuple[int, ...] = ()
@@ -95,16 +98,20 @@ class SyncState:
     validated; they are skipped on every subsequent iteration until a
     human intervenes (per ADR §Failure-mode 2).
     """
+
     last_synced_run_id: int = 0
     last_synced_at: str = ""
     bad_run_ids: list[int] = field(default_factory=list)
 
     def to_json(self) -> str:
-        return json.dumps({
-            "last_synced_run_id": self.last_synced_run_id,
-            "last_synced_at": self.last_synced_at,
-            "bad_run_ids": sorted(set(self.bad_run_ids)),
-        }, indent=2)
+        return json.dumps(
+            {
+                "last_synced_run_id": self.last_synced_run_id,
+                "last_synced_at": self.last_synced_at,
+                "bad_run_ids": sorted(set(self.bad_run_ids)),
+            },
+            indent=2,
+        )
 
     @classmethod
     def from_json(cls, text: str) -> SyncState:
@@ -143,6 +150,7 @@ class FragmentInvalid(ValueError):
 # Validation (pure, testable)
 # ---------------------------------------------------------------------------
 
+
 def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
     """Parse + validate a per-run JSONL fragment.
 
@@ -171,9 +179,7 @@ def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
         raise FragmentInvalid(run_id, f"missing fields: {sorted(missing)}")
 
     if obj.get("environment") != "production":
-        raise FragmentInvalid(
-            run_id, f"environment={obj.get('environment')!r} is not 'production'"
-        )
+        raise FragmentInvalid(run_id, f"environment={obj.get('environment')!r} is not 'production'")
 
     event_id = obj.get("event_id", "")
     if not isinstance(event_id, str) or not _UUID4_RE.match(event_id):
@@ -185,6 +191,7 @@ def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Backend protocol + GH implementation (subprocess boundary — swappable in tests)
 # ---------------------------------------------------------------------------
+
 
 class Backend(Protocol):
     """Side-effecting operations the collector needs. Tests inject fakes."""
@@ -212,13 +219,14 @@ def _gh_api(repo: str, *args: str) -> Any:
         endpoint = f"repos/{repo}"
     cmd = ["gh", "api", endpoint]
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, check=False,
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
         env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"gh api failed ({proc.returncode}): {proc.stderr.strip()}"
-        )
+        raise RuntimeError(f"gh api failed ({proc.returncode}): {proc.stderr.strip()}")
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
@@ -252,9 +260,7 @@ class GhBackend:
                 continue
             try:
                 run_id = int(item["id"])
-                created = datetime.fromisoformat(
-                    item["created_at"].replace("Z", "+00:00")
-                )
+                created = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
             except (KeyError, TypeError, ValueError):
                 continue
             artifact_ids = self._list_artifact_ids(run_id)
@@ -278,18 +284,24 @@ class GhBackend:
         # ``gh run download`` extracts a single artifact to a directory.
         proc = subprocess.run(
             [
-                "gh", "run", "download", str(run_id),
-                "--repo", self.repo,
-                "--name", f"prod-deploy-event-{run_id}",
-                "--dir", str(dest),
+                "gh",
+                "run",
+                "download",
+                str(run_id),
+                "--repo",
+                self.repo,
+                "--name",
+                f"prod-deploy-event-{run_id}",
+                "--dir",
+                str(dest),
             ],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
             env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
         )
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"gh run download failed for run_id={run_id}: {proc.stderr.strip()}"
-            )
+            raise RuntimeError(f"gh run download failed for run_id={run_id}: {proc.stderr.strip()}")
 
     def append_and_advance(
         self,
@@ -327,7 +339,7 @@ class GhBackend:
             f"MASTER='{self.master_jsonl_path}'",
             f"STATE='{self.sync_state_path}'",
             'exec 9>"$MASTER.lock"',
-            'flock -n 9 || exit 99',
+            "flock -n 9 || exit 99",
             "",
             "# Tail-1 sanity check: if the master JSONL ends in a partial",
             "# line, truncate so the next append starts at a clean boundary.",
@@ -336,14 +348,14 @@ class GhBackend:
             '  if [ -n "$LAST_LINE" ] && ! printf \'%s\' "$LAST_LINE" | jq -e . >/dev/null 2>&1; then',
             '    echo "[collector] WARN: master JSONL tail is malformed, truncating" >&2',
             '    head -n -1 "$MASTER" > "$MASTER.tmp" && mv "$MASTER.tmp" "$MASTER"',
-            '  fi',
-            'fi',
+            "  fi",
+            "fi",
             "",
             "# Decode + append each valid fragment as one JSONL line.",
             f"echo '{payload_b64}' | base64 -d | jq -c '.[]' | while read -r item; do",
-            '  TEXT="$(printf \'%s\' "$item" | jq -r \'.text\')"',
+            "  TEXT=\"$(printf '%s' \"$item\" | jq -r '.text')\"",
             '  printf \'%s\\n\' "$TEXT" >> "$MASTER"',
-            'done',
+            "done",
             "",
             "# Advance the sync-state under the same lock.",
             f"echo '{state_b64}' | base64 -d > \"$STATE.tmp\"",
@@ -355,12 +367,19 @@ class GhBackend:
 
         proc = subprocess.run(
             [
-                "ssh", "-o", "StrictHostKeyChecking=no",
-                "-i", os.path.expanduser("~/.ssh/deploy_key"),
-                self.ssh_target, "bash", "-s",
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-i",
+                os.path.expanduser("~/.ssh/deploy_key"),
+                self.ssh_target,
+                "bash",
+                "-s",
             ],
             input=remote_script,
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if proc.returncode != 0:
             raise RuntimeError(
@@ -371,29 +390,43 @@ class GhBackend:
         webhook = os.environ.get("ALERT_WEBHOOK", "")
         if not webhook:
             return
-        body = json.dumps({
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {"tag": "plain_text", "content": "Bad prod deploy-event fragment"},
-                    "template": "red",
+        body = json.dumps(
+            {
+                "msg_type": "interactive",
+                "card": {
+                    "header": {
+                        "title": {"tag": "plain_text", "content": "Bad prod deploy-event fragment"},
+                        "template": "red",
+                    },
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                f"**run_id**: `{run_id}`\n"
+                                f"**reason**: {reason}\n"
+                                f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
+                            ),
+                        }
+                    ],
                 },
-                "elements": [{
-                    "tag": "markdown",
-                    "content": (
-                        f"**run_id**: `{run_id}`\n"
-                        f"**reason**: {reason}\n"
-                        f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
-                    ),
-                }],
-            },
-        })
+            }
+        )
         try:
             subprocess.run(
-                ["curl", "-sf", "-X", "POST", webhook,
-                 "-H", "Content-Type: application/json",
-                 "-d", body],
-                capture_output=True, check=False, timeout=10,
+                [
+                    "curl",
+                    "-sf",
+                    "-X",
+                    "POST",
+                    webhook,
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    body,
+                ],
+                capture_output=True,
+                check=False,
+                timeout=10,
             )
         except Exception:
             # Alert failure is non-fatal — the run_id is already in
@@ -414,31 +447,48 @@ class GhBackend:
         webhook = os.environ.get("ALERT_WEBHOOK", "")
         if not webhook:
             return
-        body = json.dumps({
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {"tag": "plain_text", "content": "Prod deploy-event append failed"},
-                    "template": "red",
+        body = json.dumps(
+            {
+                "msg_type": "interactive",
+                "card": {
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": "Prod deploy-event append failed",
+                        },
+                        "template": "red",
+                    },
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                f"**reason**: {reason}\n"
+                                "**action**: state NOT advanced; same fragments will be "
+                                "re-attempted on the next collector iteration. The "
+                                "POSIX flock is released on SSH process death, so the "
+                                "master JSONL is not corrupted by a mid-sync exit."
+                            ),
+                        }
+                    ],
                 },
-                "elements": [{
-                    "tag": "markdown",
-                    "content": (
-                        f"**reason**: {reason}\n"
-                        "**action**: state NOT advanced; same fragments will be "
-                        "re-attempted on the next collector iteration. The "
-                        "POSIX flock is released on SSH process death, so the "
-                        "master JSONL is not corrupted by a mid-sync exit."
-                    ),
-                }],
-            },
-        })
+            }
+        )
         try:
             subprocess.run(
-                ["curl", "-sf", "-X", "POST", webhook,
-                 "-H", "Content-Type: application/json",
-                 "-d", body],
-                capture_output=True, check=False, timeout=10,
+                [
+                    "curl",
+                    "-sf",
+                    "-X",
+                    "POST",
+                    webhook,
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    body,
+                ],
+                capture_output=True,
+                check=False,
+                timeout=10,
             )
         except Exception:
             # Alert failure is non-fatal — the run will retry on the next
@@ -450,6 +500,7 @@ class GhBackend:
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
+
 
 def collect(state: SyncState, backend: Backend) -> SyncState:
     """Top-level orchestration. Returns the next state to persist.
@@ -490,9 +541,7 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
 
         if not run.artifact_ids:
             next_state.bad_run_ids.append(run.run_id)
-            backend.alert_bad_fragment(
-                run.run_id, "no prod-deploy-event-* artifact uploaded"
-            )
+            backend.alert_bad_fragment(run.run_id, "no prod-deploy-event-* artifact uploaded")
             continue
 
         artifact_id = run.artifact_ids[0]
@@ -512,9 +561,7 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             candidates = list(dest.glob("*.jsonl"))
             if not candidates:
                 next_state.bad_run_ids.append(run.run_id)
-                backend.alert_bad_fragment(
-                    run.run_id, "artifact contains no .jsonl file"
-                )
+                backend.alert_bad_fragment(run.run_id, "artifact contains no .jsonl file")
                 continue
             fragment_path = candidates[0]
 
@@ -533,9 +580,7 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
         # ``sorted(..., key=lambda r: r.run_id)`` above), so the
         # advance target is the highest run_id in ``pending``.
         next_state.last_synced_run_id = pending[-1][0]
-        next_state.last_synced_at = datetime.now(UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        next_state.last_synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             backend.append_and_advance(pending, next_state)
         except Exception as exc:
@@ -562,6 +607,7 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _load_state(path: Path) -> SyncState:
     if not path.exists():
         return SyncState()
@@ -586,6 +632,7 @@ def _save_state(path: Path, state: SyncState) -> None:
 # expanded (``Path.home()``), which works for any operator on any host
 # without embedding a literal username in committed code. ``Path.home()``
 # is called lazily so tests can monkeypatch it.
+
 
 def _resolve_ssh_target(cli_value: str | None) -> str:
     """Resolve the SSH target: CLI arg → ``NFMD_PROD_SSH_TARGET`` env.
@@ -657,7 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo", default="Etoile04/nucpot")
     parser.add_argument(
-        "--ssh-target", default=None,
+        "--ssh-target",
+        default=None,
         help="SSH target as user@host (required). Set via this flag or "
         "the NFMD_PROD_SSH_TARGET environment variable.",
     )
@@ -674,7 +722,10 @@ def main(argv: list[str] | None = None) -> int:
     state = _load_state(sync_state_path)
 
     backend: Backend = GhBackend(
-        args.repo, ssh_target, str(master_jsonl_path), str(sync_state_path),
+        args.repo,
+        ssh_target,
+        str(master_jsonl_path),
+        str(sync_state_path),
     )
     try:
         next_state = collect(state, backend)
@@ -683,21 +734,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.dry_run:
-        print(json.dumps({
-            "mode": "dry-run",
-            "would_advance_to_run_id": next_state.last_synced_run_id,
-            "would_advance_at": next_state.last_synced_at,
-            "bad_run_ids": next_state.bad_run_ids,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "mode": "dry-run",
+                    "would_advance_to_run_id": next_state.last_synced_run_id,
+                    "would_advance_at": next_state.last_synced_at,
+                    "bad_run_ids": next_state.bad_run_ids,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     _save_state(sync_state_path, next_state)
-    print(json.dumps({
-        "advanced": next_state.last_synced_run_id > state.last_synced_run_id,
-        "last_synced_run_id": next_state.last_synced_run_id,
-        "last_synced_at": next_state.last_synced_at,
-        "bad_run_ids": next_state.bad_run_ids,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "advanced": next_state.last_synced_run_id > state.last_synced_run_id,
+                "last_synced_run_id": next_state.last_synced_run_id,
+                "last_synced_at": next_state.last_synced_at,
+                "bad_run_ids": next_state.bad_run_ids,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

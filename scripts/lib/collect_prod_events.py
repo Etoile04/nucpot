@@ -20,6 +20,8 @@ Environment variables:
                                         (default: <jsonl>.processed)
 """
 
+# ruff: noqa: RUF034, SIM105
+
 from __future__ import annotations
 
 import argparse
@@ -32,22 +34,25 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 # §3.1 schema fields — exactly 10, exactly these names.
-SCHEMA_FIELDS: frozenset[str] = frozenset({
-    "event_id",
-    "ts",
-    "environment",
-    "triggered_by",
-    "commit_sha",
-    "first_pass_success",
-    "health_gate_first_poll_passed",
-    "rollback_triggered",
-    "skip_flag_used",
-    "duration_ms",
-})
+SCHEMA_FIELDS: frozenset[str] = frozenset(
+    {
+        "event_id",
+        "ts",
+        "environment",
+        "triggered_by",
+        "commit_sha",
+        "first_pass_success",
+        "health_gate_first_poll_passed",
+        "rollback_triggered",
+        "skip_flag_used",
+        "duration_ms",
+    }
+)
 
 _BOOLEAN_FIELDS: tuple[str, ...] = (
     "first_pass_success",
@@ -189,9 +194,7 @@ def read_processed(processed_path: Path) -> dict[str, tuple[str, str]]:
     return out
 
 
-def append_processed_row(
-    processed_path: Path, run_id: str, sha: str, status: str
-) -> None:
+def append_processed_row(processed_path: Path, run_id: str, sha: str, status: str) -> None:
     """O_APPEND atomic line write. Short rows are atomic under POSIX."""
     processed_path.parent.mkdir(parents=True, exist_ok=True)
     with processed_path.open("a", encoding="utf-8") as f:
@@ -249,9 +252,7 @@ def quarantine_dir(jsonl_path: Path) -> Path:
     return jsonl_path.with_name(jsonl_path.name + _QUARANTINE_SUFFIX)
 
 
-def quarantine_payload(
-    jsonl_path: Path, run_id: str, raw_text: str
-) -> Path:
+def quarantine_payload(jsonl_path: Path, run_id: str, raw_text: str) -> Path:
     """Move ``raw_text`` into ``<jsonl>.quarantine/<run_id>.json``.
 
     Returns the path of the quarantined file. Caller is responsible for
@@ -521,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = process_event(jsonl_path, processed_path, text, args.run_id)
-    except Exception as exc:  # noqa: BLE001 — collector must not break the caller
+    except Exception as exc:
         logger.exception("collector crashed run_id=%s (%s)", args.run_id, exc)
         result = "error"
     print(result)

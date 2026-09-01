@@ -115,7 +115,7 @@ export function MaterialsListView() {
   const fetchMaterials = useCallback(async (pageNum: number): Promise<void> => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
     try {
-      let endpoint = `/api/v1/materials?page=${pageNum}&per_page=${PAGE_SIZE}`
+      let endpoint = `/api/v1/materials?page=${pageNum}&per_page=${PAGE_SIZE}&sort=name&order=asc`
       if (searchQuery.trim()) {
         endpoint = `/api/v1/materials/search?q=${encodeURIComponent(searchQuery.trim())}&page=${pageNum}&per_page=${PAGE_SIZE}`
       }
