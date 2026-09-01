@@ -14,6 +14,7 @@ import {
   Table,
   Tag,
   Typography,
+  message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { request } from "@/lib/api-client";
@@ -92,6 +93,36 @@ function parsePageParam(raw: string | null): number {
   if (!raw) return 1;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+// ── Touch swipe pagination (NFM-4085 C) ────────────────────────────────
+//
+// Mobile / touch devices frequently want to flip a paginated list by
+// swiping the page sideways. We bind `touchstart`/`touchend` on the
+// list container, classify the gesture as horizontal-dominant, and
+// translate it into a page change with a small toast.
+//
+// Rules:
+//   - `|deltaX| >= 50px` AND `|deltaY| <= 30px` → horizontal swipe
+//   - deltaX < 0 → next page; deltaX > 0 → previous page
+//   - Boundary pages (first/last) are silent no-ops
+//   - The handlers are no-ops on devices without touch input — desktop
+//     mouse interactions are unaffected.
+//
+// The gesture classifier is exported as a pure helper for unit tests.
+
+const SWIPE_MIN_HORIZONTAL_PX = 50;
+const SWIPE_MAX_VERTICAL_PX = 30;
+
+type SwipeDirection = "left" | "right" | null;
+
+export function classifySwipe(
+  deltaX: number,
+  deltaY: number,
+): SwipeDirection {
+  if (Math.abs(deltaX) < SWIPE_MIN_HORIZONTAL_PX) return null;
+  if (Math.abs(deltaY) > SWIPE_MAX_VERTICAL_PX) return null;
+  return deltaX < 0 ? "left" : "right";
 }
 
 // ── Table columns ──────────────────────────────────────────────────────
@@ -295,8 +326,49 @@ export function MaterialsListView() {
     setPage(next);
   };
 
+  // ── Touch swipe (NFM-4085 C) ─────────────────────────────────────────
+  //
+  // We track the start of a touch and compute the delta when the user
+  // lifts. The handlers are no-ops if `e.touches[0]` / `changedTouches[0]`
+  // are missing (some browsers/synthetic events omit them) — desktop
+  // mouse events never fire these, so impact is zero.
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const direction = classifySwipe(t.clientX - start.x, t.clientY - start.y);
+    if (!direction) return;
+    const totalPages = Math.max(
+      1,
+      Math.ceil(state.total / PAGE_SIZE) || 1,
+    );
+    let nextPage: number | null = null;
+    if (direction === "left" && page < totalPages) nextPage = page + 1;
+    if (direction === "right" && page > 1) nextPage = page - 1;
+    if (nextPage == null) return; // boundary: silent no-op
+    setPage(nextPage);
+    // antd `message.info` is the same toast used elsewhere in the app;
+    // it surfaces the new page index without taking focus from the table.
+    message.info(`第 ${nextPage} 页`);
+  };
+
   return (
-    <div className="max-w-[1200px] mx-auto px-6 py-8">
+    <div
+      className="max-w-[1200px] mx-auto px-6 py-8"
+      data-testid="materials-list-swipe-area"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <Title level={2}>材料列表</Title>
       <Text type="secondary">
         浏览数据库中全部核燃料与结构材料，共 {state.total} 条记录

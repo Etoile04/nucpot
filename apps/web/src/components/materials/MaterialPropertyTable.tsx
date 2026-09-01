@@ -21,6 +21,23 @@ import type { MaterialProperty } from "@/lib/materials-api"
 const { Search } = Input
 const { Text } = Typography
 
+// ── NFM-4085 (B): sticky header + inner scroll for long tables ──────────
+//
+// When the dataset exceeds this threshold we engage antd Table's
+// `scroll.y` (which applies a `max-height` to `.ant-table-body`) so the
+// header becomes sticky and only the body scrolls. Below the threshold
+// the page-level scroll is fine (matches the issue's "目前 ≤7 未触及痛点"
+// baseline) and we avoid surprising the user with an empty scroll
+// affordance on a short table.
+//
+// The `calc(100vh - 360px)` accounts for: root Nav (~64px) +
+// Footer (~80px) + page header (Title + filter bar ~140px) + table
+// header row (~40px) + breathing room. It keeps the property table
+// inside the viewport on a 1080p display without clipping the column
+// header while leaving room for the footer to remain visible.
+const STICKY_SCROLL_THRESHOLD = 20
+const STICKY_SCROLL_Y = "calc(100vh - 360px)"
+
 // ── Exported types (consumed by MaterialPropertiesView) ──────────────────
 
 /** Server-side sort columns — must match backend whitelist ^(name|value|created_at)$. */
@@ -219,7 +236,14 @@ export function MaterialPropertyTable({
               `第 ${range[0]}-${range[1]} 条，共 ${filteredTotal} 条`,
           }}
           onChange={handleTableChange}
-          scroll={{ x: 800 }}
+          scroll={{
+            x: 800,
+            // NFM-4085 (B): when the row count crosses the threshold,
+            // engage sticky header + inner scroll. The computed
+            // max-height keeps the table body within the viewport so
+            // the page-level scroll does not have to move.
+            y: data.length > STICKY_SCROLL_THRESHOLD ? STICKY_SCROLL_Y : undefined,
+          }}
           locale={{
             emptyText: filterText.trim()
               ? "没有匹配的属性"
