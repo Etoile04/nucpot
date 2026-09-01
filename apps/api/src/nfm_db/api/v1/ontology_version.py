@@ -27,7 +27,7 @@ from nfm_db.models.ontology_version import (
     OntologyVersion,
 )
 from nfm_db.models.user import User
-from nfm_db.schemas.common import PaginatedResponse, PaginationParams
+from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.ontology_version import (
     OntologyDataUpload,
     OntologyVersionCreate,
@@ -37,6 +37,10 @@ from nfm_db.schemas.ontology_version import (
 )
 
 router = APIRouter(tags=["本体版本管理"])
+
+# BUG-01 (NFM-4078): single-version detail response consumed by the
+# frontend ``use-ontology-detail`` hook (``{success, data}`` envelope).
+OntologyVersionDetailResponse = ApiResponse[OntologyVersionRead]
 
 # Default initial semver when no published version exists yet.
 _INITIAL_VERSION = "0.1.0"
@@ -164,6 +168,35 @@ async def list_versions(
         page=pagination.page,
         limit=pagination.per_page,
         pages=pagination.pages(total),
+    )
+
+
+@router.get(
+    "/ontology/versions/{version_id}",
+    response_model=OntologyVersionDetailResponse,
+    summary="Get ontology version detail",
+    description="Fetch a single ontology version by ID, including its full "
+    "``ontology_data`` payload (classes / object_properties / "
+    "datatype_properties / individuals). Any authenticated user can access. "
+    "(BUG-01 / NFM-4078: the frontend ``use-ontology-detail`` hook has "
+    "called this route since NFM-3792; the backend route was missing and "
+    "the detail page 405'd.)",
+)
+async def get_version(
+    version_id: uuid.UUID,
+    _current_user: Annotated[User, Depends(get_current_active_user)],
+    session: AsyncSession = Depends(get_db),
+) -> OntologyVersionDetailResponse:
+    """Return one ontology version with its ontology_data payload."""
+    ov = await session.get(OntologyVersion, version_id)
+    if ov is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ontology version {version_id} not found",
+        )
+    return OntologyVersionDetailResponse(
+        success=True,
+        data=OntologyVersionRead.model_validate(ov),
     )
 
 
