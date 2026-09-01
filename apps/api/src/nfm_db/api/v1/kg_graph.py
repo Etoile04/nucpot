@@ -1,19 +1,31 @@
-"""Knowledge Graph subgraph endpoint (NFM-1274).
+"""Knowledge Graph subgraph endpoint (NFM-1274, NFM-4083).
 
-``GET /api/v1/kg/graph`` returns the depth-*n* neighbourhood subgraph of a
-Knowledge Graph node.  Public read-only endpoint (no auth required).
+``GET /api/v1/kg/graph/subgraph`` returns the depth-*n* neighbourhood subgraph
+of a Knowledge Graph node.  Public read-only endpoint (no auth required).
 No env vars required.
+
+Mounted at ``/kg/graph/subgraph`` (not ``/kg/graph``) to avoid the routing
+collision with ``api/v1/kg.py``'s global-pool ``/kg/graph`` endpoint that
+the ``/kg/explore`` page and NFM-3825 source_id filter depend on.  See
+NFM-4083 for the collision post-mortem.
+
+The *nodeId* parameter accepts a UUID, ``type:label`` pair, or bare label
+(with case-insensitive fallback).  It also accepts a ``materials.id`` UUID
+which is translated to the matching ``KGNode`` via the materials table
+(label bridge) before BFS resolution — see :func:`_resolve_node_id`.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid as _uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGNode
+from nfm_db.models.material import Material
 from nfm_db.schemas.kg import (
     KGGraphEdge,
     KGGraphNode,
@@ -31,17 +43,21 @@ router = APIRouter()
 
 
 @router.get(
-    "/kg/graph",
+    "/kg/graph/subgraph",
     response_model=KGGraphResponse,
-    summary="Get depth-n neighbourhood subgraph for a KG node",
+    summary="Get depth-n neighbourhood subgraph for a KG node (or material)",
     responses={
-        404: {"description": "Focal node not found"},
+        404: {"description": "Focal node (or material) not found"},
         422: {"description": "nodeId missing/empty after trim, or depth out of [1..3]"},
     },
 )
-async def get_kg_graph(
+async def get_kg_graph_subgraph(
     nodeId: str = Query(
-        min_length=1, description="Focal node: UUID, 'type:label', or label"
+        min_length=1,
+        description=(
+            "Focal node: KG UUID, 'type:label', bare label, OR a materials.id "
+            "UUID (NFM-4083 material→focal translation)."
+        ),
     ),
     depth: int = Query(default=2, ge=1, le=3),
     status: str = Query(default="active", pattern="^(active|all)$"),
@@ -49,9 +65,14 @@ async def get_kg_graph(
 ) -> KGGraphResponse:
     """Return the depth-limited neighbourhood subgraph around a focal node.
 
-    The *nodeId* parameter accepts a UUID, a ``type:label`` pair, or a bare
-    label (with case-insensitive fallback).  The *depth* parameter (1–3)
-    controls how many BFS hops are included.
+    The *nodeId* parameter accepts a KG-node UUID, a ``type:label`` pair, or
+    a bare label (with case-insensitive fallback).  As of NFM-4083 it also
+    accepts a ``materials.id`` UUID; that value is translated to the
+    canonical material name and re-resolved against ``KGNode`` via the
+    ``Material:<name>`` form so each material page renders its own
+    subgraph instead of the global pool.
+
+    The *depth* parameter (1–3) controls how many BFS hops are included.
 
     ``nodeId`` is whitespace-trimmed at the validation layer; an empty
     result after trim returns ``422 nodeId must not be empty`` rather than
@@ -64,14 +85,68 @@ async def get_kg_graph(
             detail="nodeId must not be empty",
         )
 
-    focal = await resolve_focal_node(session, trimmed_id, status)
+    focal = await _resolve_node_id(session, trimmed_id, status)
     if focal is None:
         raise HTTPException(
             status_code=404,
-            detail=f"KG node '{nodeId}' not found",
+            detail=f"KG node (or material) '{nodeId}' not found",
         )
     subgraph = await build_neighborhood_subgraph(session, focal, depth, status)
     return _to_response(focal, subgraph)
+
+
+async def _resolve_node_id(
+    session: AsyncSession,
+    raw_node_id: str,
+    status_filter: str,
+) -> KGNode | None:
+    """Resolve a user-supplied nodeId to a single ``KGNode``.
+
+    Resolution order (NFM-4083):
+
+    1. Direct resolution via :func:`resolve_focal_node` — covers a
+       ``KGNode`` UUID, ``type:label``, or bare label.
+    2. **Material bridge** (NFM-4083): if the trimmed value parses as a
+       UUID but step 1 returned ``None``, look the value up in
+       ``materials.id``.  If a material row exists, re-resolve using the
+       canonical ``Material:<name>`` form so callers can pass a
+       ``materials.id`` UUID directly.
+
+    The second step is what unblocks the per-material graph page: the
+    frontend has ``materials.id`` but ``kg_nodes`` uses an independent
+    UUID space, so a plain UUID lookup against ``kg_nodes`` never matched.
+    """
+    focal = await resolve_focal_node(session, raw_node_id, status_filter)
+    if focal is not None:
+        return focal
+
+    # NFM-4083: only attempt the materials bridge when the input is a
+    # well-formed UUID that didn't already resolve to a KG node.
+    try:
+        material_uuid = _uuid_mod.UUID(raw_node_id)
+    except (ValueError, AttributeError):
+        return None
+
+    material = await session.get(Material, material_uuid)
+    if material is None:
+        return None
+
+    label = material.name
+    if not label:
+        return None
+
+    bridged = await resolve_focal_node(
+        session,
+        f"Material:{label}",
+        status_filter,
+    )
+    if bridged is None:
+        logger.info(
+            "kg_graph: materials.id=%s has name=%r but no matching Material KG node",
+            material.id,
+            label,
+        )
+    return bridged
 
 
 # ---------------------------------------------------------------------------
