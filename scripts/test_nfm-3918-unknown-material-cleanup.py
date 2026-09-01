@@ -15,6 +15,8 @@ The tests do not require a live PostgreSQL connection — they only
 exercise `_rewrite_sql_with_literals` and the GUC substitution table.
 """
 
+# ruff: noqa: N999
+
 from __future__ import annotations
 
 import importlib.util
@@ -22,7 +24,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WRAPPER_PATH = REPO_ROOT / "scripts" / "nfm-3918-unknown-material-cleanup.py"
@@ -54,9 +55,7 @@ def test_rewrite_substitutes_typed_literal(wrapper):
         "  RAISE NOTICE 'expected=%', expected_count;\n"
         "END $$;"
     )
-    rewritten = wrapper._rewrite_sql_with_literals(
-        sql, {"expected_unknown_count": "0"}
-    )
+    rewritten = wrapper._rewrite_sql_with_literals(sql, {"expected_unknown_count": "0"})
     # Cast preserved, value literal inlined
     assert "current_setting('expected_unknown_count'" not in rewritten
     assert "0::int" in rewritten
@@ -95,9 +94,7 @@ def test_rewrite_substitutes_text_path(wrapper):
 
 def test_rewrite_escapes_single_quotes(wrapper):
     sql = "SELECT current_setting('require_backup_path', true);"
-    rewritten = wrapper._rewrite_sql_with_literals(
-        sql, {"require_backup_path": "O'Brien's path"}
-    )
+    rewritten = wrapper._rewrite_sql_with_literals(sql, {"require_backup_path": "O'Brien's path"})
     # Single quotes must be doubled inside the literal string
     assert "'O''Brien''s path'" in rewritten
 
@@ -173,9 +170,7 @@ def sql_text():
 
 
 def _strip_sql_comments(text: str) -> str:
-    return "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("--")
-    )
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
 
 
 def test_zero_downstream_predicate_is_measurement_based(sql_text):
@@ -195,9 +190,9 @@ def test_zero_downstream_predicate_is_measurement_based(sql_text):
     )
 
     # It must instead test for measurements reachable through datasets.
-    assert body.count(
-        "JOIN property_measurements pm ON pm.dataset_id = d.id"
-    ) >= 2, "expected the measurement-based downstream predicate in phase 2 and phase 3"
+    assert body.count("JOIN property_measurements pm ON pm.dataset_id = d.id") >= 2, (
+        "expected the measurement-based downstream predicate in phase 2 and phase 3"
+    )
 
 
 def test_before_snapshot_emits_total_measurement_count(sql_text):
@@ -210,8 +205,7 @@ def test_before_snapshot_emits_total_measurement_count(sql_text):
     assert "NFM-3918_BEFORE" in sql_text
     before_notice = sql_text.split("NFM-3918_BEFORE", 1)[1].split("END $$;", 1)[0]
     assert "measurements_total=%" in before_notice, (
-        "BEFORE notice must emit measurements_total so the invariant compares "
-        "like with like"
+        "BEFORE notice must emit measurements_total so the invariant compares like with like"
     )
 
 
@@ -246,9 +240,7 @@ def test_invariants_detect_measurement_loss(wrapper):
         "NFM-3918_AFTER unknown=0 measurements_total=3 (was 97) density_10_55=1 "
         "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
     )
-    failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None
-    )
+    failures = wrapper.assert_invariants(before, after, apply=True, expected_measurements=None)
     assert any("measurement" in f.lower() for f in failures), (
         f"measurement loss went undetected; failures={failures}"
     )
@@ -265,9 +257,7 @@ def test_invariants_pass_on_clean_merge(wrapper):
         "NFM-3918_AFTER unknown=0 measurements_total=97 (was 97) density_10_55=1 "
         "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
     )
-    assert wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None
-    ) == []
+    assert wrapper.assert_invariants(before, after, apply=True, expected_measurements=None) == []
 
 
 def test_invariants_new_canonical_passes_with_density_unchanged(wrapper):
@@ -286,12 +276,16 @@ def test_invariants_new_canonical_passes_with_density_unchanged(wrapper):
         "NFM-3918_AFTER unknown=0 measurements_total=97 (was 93) density_10_55=8 "
         "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
     )
-    assert wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
-        strategy="new_canonical",
-    ) == [], (
-        "new_canonical must NOT fail AC #4 even though density_10_55 stayed at 8"
-    )
+    assert (
+        wrapper.assert_invariants(
+            before,
+            after,
+            apply=True,
+            expected_measurements=None,
+            strategy="new_canonical",
+        )
+        == []
+    ), "new_canonical must NOT fail AC #4 even though density_10_55 stayed at 8"
 
 
 def test_invariants_new_canonical_fails_if_density_grew(wrapper):
@@ -306,7 +300,10 @@ def test_invariants_new_canonical_fails_if_density_grew(wrapper):
         "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
     )
     failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
+        before,
+        after,
+        apply=True,
+        expected_measurements=None,
         strategy="new_canonical",
     )
     assert any("density=10.55" in f and "GREATER" in f for f in failures), (
@@ -326,7 +323,10 @@ def test_invariants_source_id_walk_still_requires_density_collapse(wrapper):
         "orphan_datasets=0 orphan_measurements=0 dedup_total=0"
     )
     failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
+        before,
+        after,
+        apply=True,
+        expected_measurements=None,
         strategy="source_id_walk",
     )
     assert any("density=10.55" in f for f in failures), (
@@ -405,12 +405,10 @@ def test_no_top_level_phase_3_or_phase_4_do_blocks(sql_text):
     phase3_cte = "WITH zero_downstream AS ("
     phase4_loop = "FOR rec IN"
     assert body.count(phase3_cte) == 1, (
-        f"Phase 3 zero_downstream CTE must appear exactly once; "
-        f"found {body.count(phase3_cte)}"
+        f"Phase 3 zero_downstream CTE must appear exactly once; found {body.count(phase3_cte)}"
     )
     assert body.count(phase4_loop) == 1, (
-        f"Phase 4 FOR rec IN must appear exactly once; "
-        f"found {body.count(phase4_loop)}"
+        f"Phase 4 FOR rec IN must appear exactly once; found {body.count(phase4_loop)}"
     )
     assert body.index(phase3_cte) > outer_idx, (
         "Phase 3 CTE must live INSIDE the $outer$ transactional wrapper"
@@ -456,18 +454,14 @@ def test_merge_strategy_guc_substitution(wrapper):
         "  RAISE NOTICE 'strategy=%', s;\n"
         "END $$;"
     )
-    rewritten = wrapper._rewrite_sql_with_literals(
-        sql, {"merge_strategy": "new_canonical"}
-    )
+    rewritten = wrapper._rewrite_sql_with_literals(sql, {"merge_strategy": "new_canonical"})
     assert "current_setting('merge_strategy'" not in rewritten
     assert "'new_canonical'::text" in rewritten
 
 
 def test_merge_strategy_escapes_single_quotes(wrapper):
     sql = "SELECT current_setting('merge_strategy', true);"
-    rewritten = wrapper._rewrite_sql_with_literals(
-        sql, {"merge_strategy": "abc'def"}
-    )
+    rewritten = wrapper._rewrite_sql_with_literals(sql, {"merge_strategy": "abc'def"})
     assert "'abc''def'::text" in rewritten
 
 
@@ -507,15 +501,15 @@ def test_phase_4_branches_on_merge_strategy(sql_text):
     # dry-run one precedes it, the apply one is the later of the two.
     outer_idx = body.index("DO $outer$")
     apply_notice_marker = "phase 4 applied strategy=new_canonical"
-    if_marker = body.rindex("IF merge_strategy = 'new_canonical'", 0, body.index(apply_notice_marker))
+    if_marker = body.rindex(
+        "IF merge_strategy = 'new_canonical'", 0, body.index(apply_notice_marker)
+    )
     else_marker = body.index("ELSE", if_marker)
     end_if_marker = body.find("END IF;", else_marker)
     assert if_marker > outer_idx, (
         "Phase 4 IF/ELSE must live INSIDE the $outer$ transactional wrapper"
     )
-    assert end_if_marker > else_marker, (
-        "Phase 4 IF/ELSE must close with END IF after ELSE branch"
-    )
+    assert end_if_marker > else_marker, "Phase 4 IF/ELSE must close with END IF after ELSE branch"
 
     # The IF branch (new_canonical) must reference the canonical row creation.
     assert "Unknown Material (canonical)" in body, (
@@ -545,7 +539,7 @@ def test_phase_4_dry_run_notice_branches_on_strategy(sql_text):
 
 def test_wrapper_exposes_strategy_cli_flag(wrapper):
     """The wrapper must accept --strategy with the two supported values."""
-    import argparse  # noqa: PLC0415
+    import argparse
 
     # Reach into the parse_args() builder by calling it with a known-good arg set
     # and inspecting the resulting namespace. Bypassing parse_args() here keeps
@@ -599,7 +593,10 @@ def test_invariants_source_id_walk_missing_density_emits_ac_failure(wrapper):
     )
     # Must not raise — must return a list of AC failure strings.
     failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
+        before,
+        after,
+        apply=True,
+        expected_measurements=None,
         strategy="source_id_walk",
     )
     assert isinstance(failures, list), (
@@ -607,11 +604,8 @@ def test_invariants_source_id_walk_missing_density_emits_ac_failure(wrapper):
     )
     # source_id_walk demands density_10_55 == 1; missing means != 1, so the
     # AC #4 (source_id_walk) branch must fire.
-    assert any(
-        "AC #4" in f and "source_id_walk" in f for f in failures
-    ), (
-        f"source_id_walk must emit AC #4 FAIL when density_10_55 is missing; "
-        f"failures={failures}"
+    assert any("AC #4" in f and "source_id_walk" in f for f in failures), (
+        f"source_id_walk must emit AC #4 FAIL when density_10_55 is missing; failures={failures}"
     )
 
 
@@ -638,14 +632,16 @@ def test_invariants_new_canonical_missing_density_emits_ac_failure(wrapper):
     )
     # The critical assertion: this call MUST NOT raise.
     failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
+        before,
+        after,
+        apply=True,
+        expected_measurements=None,
         strategy="new_canonical",
     )
     # Clean run: all ACs pass when both sides are clean (Unknown=0,
     # measurements_total preserved, no orphans). Empty failure list.
     assert failures == [], (
-        f"clean run with missing density_10_55 must produce no AC failures; "
-        f"got {failures}"
+        f"clean run with missing density_10_55 must produce no AC failures; got {failures}"
     )
 
 
@@ -670,13 +666,16 @@ def test_invariants_new_canonical_density_grew_with_missing_token(wrapper):
     )
     # No raise, returns a list — pin both invariants.
     failures = wrapper.assert_invariants(
-        before, after, apply=True, expected_measurements=None,
+        before,
+        after,
+        apply=True,
+        expected_measurements=None,
         strategy="new_canonical",
     )
     assert isinstance(failures, list)
     # With default 0 on both sides, 0 > 0 is False — AC #4 (new_canonical)
     # should NOT fire on its own. Other ACs may or may not fire depending
     # on other counts; the regression we care about is "does not TypeError".
-    assert not any(
-        "TypeError" in str(f) or "NoneType" in str(f) for f in failures
-    ), f"missing density_10_55 must not surface as a TypeError string; got {failures}"
+    assert not any("TypeError" in str(f) or "NoneType" in str(f) for f in failures), (
+        f"missing density_10_55 must not surface as a TypeError string; got {failures}"
+    )

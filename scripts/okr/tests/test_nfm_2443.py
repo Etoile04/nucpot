@@ -17,6 +17,8 @@ AC4: Regression test covering AC3 — inject a failing fetch, assert KR-1
     is ``[no data]`` and not ``0.000``.
 """
 
+# ruff: noqa: RUF012, SIM118
+
 from __future__ import annotations
 
 import json
@@ -29,8 +31,8 @@ import pytest
 
 from scripts.okr import PaperclipFetchError, fetch_all_issues
 from scripts.okr.commit_efficiency import fetch_issue_statuses
-from scripts.okr.report import build_arg_parser, main as report_main
-
+from scripts.okr.report import build_arg_parser
+from scripts.okr.report import main as report_main
 
 # ---------------------------------------------------------------------------
 # AC1 — Authorization header sent; missing key raises; HTTP error raises
@@ -42,7 +44,7 @@ class _HeaderCaptureHandler(BaseHTTPRequestHandler):
 
     captured: dict[str, str] = {}
 
-    def do_GET(self) -> None:  # noqa: N802 (HTTP verb)
+    def do_GET(self) -> None:
         for header_name in self.headers.keys():
             value = self.headers.get(header_name)
             if value is not None:
@@ -75,12 +77,8 @@ def test_fetch_all_issues_sends_authorization_header() -> None:
             params={},
             api_key="secret-key-123",
         )
-        assert (
-            _HeaderCaptureHandler.captured.get("Authorization")
-            == "Bearer secret-key-123"
-        ), (
-            "Authorization header missing or wrong: "
-            f"{_HeaderCaptureHandler.captured}"
+        assert _HeaderCaptureHandler.captured.get("Authorization") == "Bearer secret-key-123", (
+            f"Authorization header missing or wrong: {_HeaderCaptureHandler.captured}"
         )
     finally:
         server.shutdown()
@@ -130,34 +128,38 @@ def test_fetch_all_issues_raises_on_http_error() -> None:
 @pytest.mark.unit
 def test_fetch_all_issues_wraps_timeout_error() -> None:
     """Socket timeouts must degrade through the same fetch error contract."""
-    with patch(
-        "scripts.okr.urllib.request.urlopen",
-        side_effect=TimeoutError("timed out"),
+    with (
+        patch(
+            "scripts.okr.urllib.request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        ),
+        pytest.raises(PaperclipFetchError, match=r"HTTP error"),
     ):
-        with pytest.raises(PaperclipFetchError, match=r"HTTP error"):
-            fetch_all_issues(
-                "http://localhost:3000",
-                company_id="co-1",
-                params={},
-                api_key="secret-key",
-            )
+        fetch_all_issues(
+            "http://localhost:3000",
+            company_id="co-1",
+            params={},
+            api_key="secret-key",
+        )
 
 
 @pytest.mark.unit
 def test_fetch_issue_statuses_propagates_fetch_error() -> None:
     """fetch_issue_statuses must NOT swallow PaperclipFetchError — the
     downstream report needs to know the fetch failed."""
-    with patch(
-        "scripts.okr.commit_efficiency.fetch_all_issues",
-        side_effect=PaperclipFetchError("simulated 401"),
+    with (
+        patch(
+            "scripts.okr.commit_efficiency.fetch_all_issues",
+            side_effect=PaperclipFetchError("simulated 401"),
+        ),
+        pytest.raises(PaperclipFetchError),
     ):
-        with pytest.raises(PaperclipFetchError):
-            fetch_issue_statuses(
-                ["NFM-100"],
-                "http://localhost:3000",
-                "co-1",
-                api_key="secret-key",
-            )
+        fetch_issue_statuses(
+            ["NFM-100"],
+            "http://localhost:3000",
+            "co-1",
+            api_key="secret-key",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +177,7 @@ def test_default_api_url_from_env_when_set(monkeypatch: pytest.MonkeyPatch) -> N
     is passed explicitly.
     """
     monkeypatch.setenv("PAPERCLIP_API_URL", "https://paperclip.example.com")
-    args = build_arg_parser().parse_args(
-        ["--since", "2026-07-27", "--until", "2026-08-02"]
-    )
+    args = build_arg_parser().parse_args(["--since", "2026-07-27", "--until", "2026-08-02"])
     assert args.api_url is None  # argparse default; main() does the env lookup
 
 
@@ -191,9 +191,7 @@ def test_default_api_url_is_none_when_env_unset(
     out before any network call. The argparse default is explicitly None.
     """
     monkeypatch.delenv("PAPERCLIP_API_URL", raising=False)
-    args = build_arg_parser().parse_args(
-        ["--since", "2026-07-27", "--until", "2026-08-02"]
-    )
+    args = build_arg_parser().parse_args(["--since", "2026-07-27", "--until", "2026-08-02"])
     assert args.api_url is None
 
 
@@ -203,8 +201,12 @@ def test_explicit_api_url_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("PAPERCLIP_API_URL", "https://paperclip.example.com")
     args = build_arg_parser().parse_args(
         [
-            "--since", "2026-07-27", "--until", "2026-08-02",
-            "--api-url", "http://override.example.com",
+            "--since",
+            "2026-07-27",
+            "--until",
+            "2026-08-02",
+            "--api-url",
+            "http://override.example.com",
         ]
     )
     assert args.api_url == "http://override.example.com"
@@ -234,17 +236,23 @@ def test_kr1_is_no_data_when_fetch_fails(
     # Two referenced issues that, if the fetch succeeded, would resolve to
     # known statuses. We mock the fetch to fail so we exercise the failure
     # path.
-    mock_git_log = MagicMock(return_value=(
-        "abc1234 feat: NFM-100 login\n"
-        "def5678 feat: NFM-101 logout\n"
-    ))
+    mock_git_log = MagicMock(
+        return_value=("abc1234 feat: NFM-100 login\ndef5678 feat: NFM-101 logout\n")
+    )
 
     fetch_failure = PaperclipFetchError("simulated 401 Unauthorized")
 
-    monkeypatch.setattr(sys, "argv", [
-        "report",
-        "--since", "2026-07-27", "--until", "2026-08-02",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--since",
+            "2026-07-27",
+            "--until",
+            "2026-08-02",
+        ],
+    )
 
     with (
         patch("scripts.okr.report.run_git_log", mock_git_log),
@@ -256,16 +264,22 @@ def test_kr1_is_no_data_when_fetch_fails(
             "scripts.okr.report.fetch_all_issues",
             side_effect=fetch_failure,
         ),
-        patch("scripts.okr.report.compute_kr3", return_value={
-            "key": "deploy_first_pass_success",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
-        patch("scripts.okr.report.compute_kr5", return_value={
-            "key": "test_coverage",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
+        patch(
+            "scripts.okr.report.compute_kr3",
+            return_value={
+                "key": "deploy_first_pass_success",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
+        patch(
+            "scripts.okr.report.compute_kr5",
+            return_value={
+                "key": "test_coverage",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
     ):
         report_main()
 
@@ -306,15 +320,21 @@ def test_kr1_uses_real_values_when_fetch_succeeds(
     monkeypatch.setenv("PAPERCLIP_API_KEY", "secret-key")
 
     # Two commits; both reference NFM-100 which is "done".
-    mock_git_log = MagicMock(return_value=(
-        "abc1234 feat: NFM-100 login\n"
-        "def5678 feat: NFM-100 logout\n"
-    ))
+    mock_git_log = MagicMock(
+        return_value=("abc1234 feat: NFM-100 login\ndef5678 feat: NFM-100 logout\n")
+    )
 
-    monkeypatch.setattr(sys, "argv", [
-        "report",
-        "--since", "2026-07-27", "--until", "2026-08-02",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--since",
+            "2026-07-27",
+            "--until",
+            "2026-08-02",
+        ],
+    )
 
     with (
         patch("scripts.okr.report.run_git_log", mock_git_log),
@@ -326,21 +346,25 @@ def test_kr1_uses_real_values_when_fetch_succeeds(
             "scripts.okr.report.fetch_all_issues",
             return_value=[],
         ),
-        patch("scripts.okr.report.compute_kr3", return_value={
-            "key": "deploy_first_pass_success",
-            "value": 0.90,
-            "unit": "ratio",
-        }),
-        patch("scripts.okr.report.compute_kr5", return_value={
-            "key": "test_coverage",
-            "value": 0.75,
-            "unit": "ratio",
-        }),
+        patch(
+            "scripts.okr.report.compute_kr3",
+            return_value={
+                "key": "deploy_first_pass_success",
+                "value": 0.90,
+                "unit": "ratio",
+            },
+        ),
+        patch(
+            "scripts.okr.report.compute_kr5",
+            return_value={
+                "key": "test_coverage",
+                "value": 0.75,
+                "unit": "ratio",
+            },
+        ),
     ):
         report_main()
 
     out = capsys.readouterr().out
     # 1 done issue out of 2 commits = 0.5 commitEfficiency
-    assert "0.500" in out, (
-        f"KR-1 happy path must render 0.500 for 1/2 done, got:\n{out}"
-    )
+    assert "0.500" in out, f"KR-1 happy path must render 0.500 for 1/2 done, got:\n{out}"

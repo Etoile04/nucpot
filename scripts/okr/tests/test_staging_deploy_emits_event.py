@@ -9,6 +9,8 @@ Approach: build a tempdir that mimics the repo layout (so the script's
 and ``curl`` on PATH, and assert what was appended to the JSONL.
 """
 
+# ruff: noqa: SIM105, SIM108
+
 from __future__ import annotations
 
 import json
@@ -159,24 +161,18 @@ printf '{{"status":"ok"}}' ''',
         assert event["health_gate_first_poll_passed"] is False
         assert event["rollback_triggered"] is True
 
-    def test_reserved_skip_flag_is_always_false(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_reserved_skip_flag_is_always_false(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """C5: the removed bypass flag remains a reserved false field."""
         fake, bin_dir, events_path = fake_repo
         _make_stubs(bin_dir, health_should_pass=True)
-        result = _run(
-            fake, bin_dir, events_path, extra_env={"SKIP_HEALTH_GATE": "1"}
-        )
+        result = _run(fake, bin_dir, events_path, extra_env={"SKIP_HEALTH_GATE": "1"})
 
         assert result.returncode == 0, result.stderr
         event = _read_events(events_path)[0]
         assert event["skip_flag_used"] is False
         assert event["first_pass_success"] is True
 
-    def test_no_new_required_env_vars(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_no_new_required_env_vars(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """Existing callers still succeed without an events-path override."""
         fake, bin_dir, _ = fake_repo
         _make_stubs(bin_dir, health_should_pass=True)
@@ -291,9 +287,7 @@ printf '{{"status":"ok"}}' ''',
             stdout, stderr = proc.communicate()
         return stdout, stderr
 
-    def test_cancelled_run_appends_event(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_cancelled_run_appends_event(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """NFM-2771: SIGTERM (GHA cancel / timeout) must still emit 1 event.
 
         Before NFM-2771 the EXIT trap was armed only AFTER ``compose up``
@@ -334,9 +328,7 @@ printf '{{"status":"ok"}}' ''',
         assert event["skip_flag_used"] is False
         assert event["duration_ms"] >= 0
 
-    def test_int_signal_appends_event(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_int_signal_appends_event(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """SIGINT (Ctrl-C / GHA abort API) is a sibling of SIGTERM; same
         coverage requirement applies per the issue.
         """
@@ -353,14 +345,11 @@ printf '{{"status":"ok"}}' ''',
 
         events = _read_events(events_path)
         assert len(events) == 1, (
-            f"expected 1 event after SIGINT, got {len(events)}: "
-            f"stdout={stdout!r} stderr={stderr!r}"
+            f"expected 1 event after SIGINT, got {len(events)}: stdout={stdout!r} stderr={stderr!r}"
         )
         assert events[0]["first_pass_success"] is False
 
-    def test_arm_armed_debug_file_records_state(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_arm_armed_debug_file_records_state(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """AC#3: the trap-armed-debug sidecar confirms _DEPLOY_EVENT_ARMED
         transitions are reachable on the cancellation path.
 
@@ -380,27 +369,17 @@ printf '{{"status":"ok"}}' ''',
         self._wait_or_kill(proc, timeout=10)
 
         debug_path = events_path.with_suffix(events_path.suffix + ".armed")
-        assert debug_path.exists(), (
-            "expected trap-armed-debug sidecar alongside JSONL — AC#3"
-        )
-        lines = [
-            ln
-            for ln in debug_path.read_text().splitlines()
-            if ln.strip()
-        ]
+        assert debug_path.exists(), "expected trap-armed-debug sidecar alongside JSONL — AC#3"
+        lines = [ln for ln in debug_path.read_text().splitlines() if ln.strip()]
         # At minimum: an entry reset, an armed transition (true), and a
         # post-emit disarm (false). Loose bound to keep the test robust
         # against extra logging from future extensions.
-        assert any("true" in ln for ln in lines), (
-            f"no 'true' state transition recorded: {lines!r}"
-        )
+        assert any("true" in ln for ln in lines), f"no 'true' state transition recorded: {lines!r}"
         assert any("false" in ln for ln in lines), (
             f"no 'false' state transition recorded: {lines!r}"
         )
 
-    def test_sync_invoked_after_event_append(
-        self, fake_repo: tuple[Path, Path, Path]
-    ) -> None:
+    def test_sync_invoked_after_event_append(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """The JSONL writer must invoke ``sync`` after the append so the
         drone-ssh subshell teardown cannot drop the line via buffered
         I/O. NFMD_SYNC_BIN overrides the system ``sync`` binary for

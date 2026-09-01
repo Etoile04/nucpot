@@ -18,6 +18,7 @@ Exit codes:
 The script uses stdlib ``ast`` (no third-party deps) and is safe to run in CI.
 """
 
+# ruff: noqa: F841, SIM102
 from __future__ import annotations
 
 import argparse

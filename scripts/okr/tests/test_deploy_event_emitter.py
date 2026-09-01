@@ -25,22 +25,22 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE = REPO_ROOT / "scripts" / "lib" / "deploy_event_emitter.py"
 
-SCHEMA_FIELDS = frozenset({
-    "event_id",
-    "ts",
-    "environment",
-    "triggered_by",
-    "commit_sha",
-    "first_pass_success",
-    "health_gate_first_poll_passed",
-    "rollback_triggered",
-    "skip_flag_used",
-    "duration_ms",
-})
-
-_UUID4_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+SCHEMA_FIELDS = frozenset(
+    {
+        "event_id",
+        "ts",
+        "environment",
+        "triggered_by",
+        "commit_sha",
+        "first_pass_success",
+        "health_gate_first_poll_passed",
+        "rollback_triggered",
+        "skip_flag_used",
+        "duration_ms",
+    }
 )
+
+_UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 # GHA `needs.<job>.result` enum values. Per ADR-KR3-A1 C6.1.1, only `success`
@@ -54,14 +54,22 @@ GHA_RESULT_TO_FIRST_PASS = {
 }
 
 _CLI_BASE = [
-    "--environment", "production",
-    "--triggered-by", "alice",
-    "--commit-sha", "abc1234",
-    "--first-pass-success", "true",
-    "--health-gate-first-poll-passed", "true",
-    "--rollback-triggered", "false",
-    "--skip-flag-used", "false",
-    "--duration-ms", "4321",
+    "--environment",
+    "production",
+    "--triggered-by",
+    "alice",
+    "--commit-sha",
+    "abc1234",
+    "--first-pass-success",
+    "true",
+    "--health-gate-first-poll-passed",
+    "true",
+    "--rollback-triggered",
+    "false",
+    "--skip-flag-used",
+    "false",
+    "--duration-ms",
+    "4321",
 ]
 
 
@@ -206,8 +214,7 @@ class TestResolvedPath:
     def test_default_path_is_repo_docker_deploy_events(self, monkeypatch) -> None:
         monkeypatch.delenv("NFMD_DEPLOY_EVENTS_PATH", raising=False)
         assert (
-            _import_module().resolve_events_path()
-            == REPO_ROOT / "docker" / ".deploy-events.jsonl"
+            _import_module().resolve_events_path() == REPO_ROOT / "docker" / ".deploy-events.jsonl"
         )
 
     def test_env_override_wins(self, monkeypatch, tmp_path: Path) -> None:
@@ -259,15 +266,24 @@ class TestCLI:
         the CLI to guarantee the contract survives shell argument parsing."""
         result = subprocess.run(
             [
-                sys.executable, str(MODULE),
-                "--environment", "production",
-                "--triggered-by", "alice",
-                "--commit-sha", "abc1234",
-                "--first-pass-success", "false",   # smoke-test failed
-                "--health-gate-first-poll-passed", "false",
-                "--rollback-triggered", "false",
-                "--skip-flag-used", "false",
-                "--duration-ms", "4321",
+                sys.executable,
+                str(MODULE),
+                "--environment",
+                "production",
+                "--triggered-by",
+                "alice",
+                "--commit-sha",
+                "abc1234",
+                "--first-pass-success",
+                "false",  # smoke-test failed
+                "--health-gate-first-poll-passed",
+                "false",
+                "--rollback-triggered",
+                "false",
+                "--skip-flag-used",
+                "false",
+                "--duration-ms",
+                "4321",
             ],
             capture_output=True,
             text=True,

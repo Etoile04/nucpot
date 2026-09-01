@@ -34,6 +34,7 @@ comment. The script exits non-zero if any acceptance invariant is violated
 (post-count drift, orphan rows, or density=10.55 not collapsed).
 """
 
+# ruff: noqa: N999, RUF001, SIM105
 from __future__ import annotations
 
 import argparse
@@ -42,10 +43,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
-
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SQL_PATH = SCRIPT_DIR / "nfm-3918-unknown-material-cleanup.sql"
@@ -234,9 +234,7 @@ def run_psql(database_url: str, sql_path: Path, psql_vars: Mapping[str, str]) ->
         combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
         if proc.returncode != 0:
             sys.stderr.write(combined)
-            raise SystemExit(
-                f"psql exited {proc.returncode}; check the SQL output above."
-            )
+            raise SystemExit(f"psql exited {proc.returncode}; check the SQL output above.")
         return combined
     finally:
         try:
@@ -313,8 +311,7 @@ def assert_invariants(
     # AC #2: Unknown count = 0 after.
     if after.counts.get("unknown", -1) != 0:
         failures.append(
-            f"AC #2 FAIL: post-count Unknown = {after.counts.get('unknown')}, "
-            "expected 0."
+            f"AC #2 FAIL: post-count Unknown = {after.counts.get('unknown')}, expected 0."
         )
 
     # AC #4: density=10.55 collapse — only meaningful when source_id_walk
@@ -338,7 +335,11 @@ def assert_invariants(
     # (we never gain rows). The "8 on 1 material" invariant is verified by
     # a separate SQL check (see Phase 5 of the migration SQL — not in this
     # wrapper because the wrapper only sees aggregate counts).
-    if apply and strategy == "new_canonical" and after_density > before.counts.get("density_10_55", 0):
+    if (
+        apply
+        and strategy == "new_canonical"
+        and after_density > before.counts.get("density_10_55", 0)
+    ):
         failures.append(
             f"AC #4 FAIL (new_canonical): post-state density=10.55 rows = "
             f"{after.counts.get('density_10_55')} GREATER than before "
@@ -444,8 +445,7 @@ def parse_args() -> argparse.Namespace:
         "--expected-unknown-count",
         type=int,
         default=27,
-        help="Override the preflight Unknown count check (default 27 per "
-        "ticket body).",
+        help="Override the preflight Unknown count check (default 27 per ticket body).",
     )
     parser.add_argument(
         "--expected-measurements",
@@ -479,7 +479,8 @@ def main() -> int:
         "dry_run": "1" if args.dry_run else "0",
         "expected_unknown_count": str(args.expected_unknown_count),
         "require_backup_path": (
-            "stub" if args.dry_run or not is_prod_target(args.database_url)
+            "stub"
+            if args.dry_run or not is_prod_target(args.database_url)
             else os.environ["NFMD_PROD_BACKUP_PATH"]
         ),
         "merge_strategy": args.strategy,
@@ -504,7 +505,8 @@ def main() -> int:
         return 1
 
     print(
-        "\nAll acceptance criteria passed." if not args.dry_run
+        "\nAll acceptance criteria passed."
+        if not args.dry_run
         else "\nDry-run: no invariants enforced beyond parseability."
     )
     return 0
