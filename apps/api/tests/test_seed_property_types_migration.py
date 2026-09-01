@@ -307,3 +307,292 @@ class TestDowngrade:
         assert "DROP TABLE" not in body.upper(), (
             "downgrade must not drop property_types (other rows may exist)"
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4024 — v0.5.0 seed migration for the 2 TRUE catalog gaps
+# (`elastic_constant`, `solubility_limit`) surfaced by
+# `scripts/nfm-4012-unknown-property-enumeration.py` (NFM-4012).
+#
+# The test class below mirrors the NFM-1995 / 031 coverage so future
+# regressions on this seed are caught by the same rigor.
+# ---------------------------------------------------------------------------
+
+V050_REVISION = "067_v050_seed_elastic_constant_solubility_limit"
+V050_DOWN_REVISION = "066_seed_material_categories"
+V050_MIGRATION_PATH = f"migrations/versions/{V050_REVISION}.py"
+
+# AC-3 / AC-4 — the two new property names, the two required slugs, the
+# categories the rules must land under.
+V050_EXPECTED_PROPERTY_NAMES: frozenset[str] = frozenset(
+    {"elastic_constant", "solubility_limit"}
+)
+V050_EXPECTED_CATEGORY_SLUGS: frozenset[str] = frozenset(
+    {"mechanical", "physical"}
+)
+
+
+@pytest.fixture(scope="module")
+def v050_migration_source() -> str:
+    """Read the v0.5.0 migration source file."""
+    with open(V050_MIGRATION_PATH) as f:
+        return f.read()
+
+
+@pytest.fixture(scope="module")
+def v050_script_directory() -> ScriptDirectory:
+    """Load Alembic script directory for chain analysis."""
+    config = Config("alembic.ini")
+    return ScriptDirectory.from_config(config)
+
+
+class TestV050MigrationChain:
+    """v0.5.0 migration is discoverable and chains off the current head."""
+
+    def test_revision_loadable(self, v050_script_directory: ScriptDirectory) -> None:
+        rev = v050_script_directory.get_revision(V050_REVISION)
+        assert rev is not None, f"Migration {V050_REVISION!r} not registered"
+        assert rev.revision == V050_REVISION
+
+    def test_down_revision_is_066_seed_material_categories(
+        self,
+        v050_script_directory: ScriptDirectory,
+    ) -> None:
+        """AC-1: chain point is the current head, NOT 065_widen.
+
+        NFM-3918 renumbered 065→066; this assertion prevents a future
+        author from re-anchoring to a stale down_revision.
+        """
+        rev = v050_script_directory.get_revision(V050_REVISION)
+        assert rev is not None
+        assert rev.down_revision == V050_DOWN_REVISION, (
+            f"Expected down_revision={V050_DOWN_REVISION!r} (current head), "
+            f"got {rev.down_revision!r}. Per NFM-3918 renumber, the seed "
+            "chains off 066_seed_material_categories."
+        )
+
+    def test_v050_reachable_from_head(
+        self,
+        v050_script_directory: ScriptDirectory,
+    ) -> None:
+        """After this migration is applied, the chain head moves forward."""
+        revisions = {r.revision for r in v050_script_directory.walk_revisions()}
+        assert V050_REVISION in revisions, (
+            f"{V050_REVISION} not reachable from head "
+            f"{v050_script_directory.get_current_head()!r}"
+        )
+
+
+class TestV050Idempotent:
+    """AC-2: re-running upgrade() must not raise."""
+
+    def test_uses_on_conflict(self, v050_migration_source: str) -> None:
+        assert "ON CONFLICT" in v050_migration_source.upper().replace(
+            "\n", " "
+        ), "Migration must use ON CONFLICT to be idempotent"
+
+    def test_conflict_target_matches_unique_constraint(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        assert re.search(
+            r"ON\s+CONFLICT\s*\(\s*category_id\s*,\s*slug\s*\)",
+            v050_migration_source,
+            re.IGNORECASE,
+        ), (
+            "ON CONFLICT target must be (category_id, slug) — "
+            "matches uq_property_types_category_slug"
+        )
+
+    def test_do_nothing_branch(self, v050_migration_source: str) -> None:
+        assert re.search(
+            r"ON\s+CONFLICT[^;]*DO\s+NOTHING",
+            v050_migration_source,
+            re.IGNORECASE | re.DOTALL,
+        ), "ON CONFLICT must DO NOTHING for safe re-runs"
+
+
+class TestV050Coverage:
+    """AC-3 / AC-4: both catalog gaps seeded with correct category mapping."""
+
+    @pytest.mark.parametrize("name", sorted(V050_EXPECTED_PROPERTY_NAMES))
+    def test_property_name_seeded(
+        self,
+        v050_migration_source: str,
+        name: str,
+    ) -> None:
+        pattern = rf"['\"]\b{re.escape(name)}\b['\"]"
+        assert re.search(pattern, v050_migration_source), (
+            f"v0.5.0 seed missing canonical name: {name!r}"
+        )
+
+    @pytest.mark.parametrize("slug", sorted(V050_EXPECTED_CATEGORY_SLUGS))
+    def test_category_slug_referenced(
+        self,
+        v050_migration_source: str,
+        slug: str,
+    ) -> None:
+        pattern = rf"['\"]\b{re.escape(slug)}\b['\"]"
+        assert re.search(pattern, v050_migration_source), (
+            f"v0.5.0 seed missing category slug reference: {slug!r}"
+        )
+
+    def test_joins_property_categories(self, v050_migration_source: str) -> None:
+        joined_with_subq = re.search(
+            r"\(\s*SELECT\s+id\s+FROM\s+property_categories\s+WHERE\s+slug\s*=",
+            v050_migration_source,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert joined_with_subq, (
+            "Seed must resolve category_id from property_categories.slug — "
+            "cannot hard-code UUIDs (they are random)"
+        )
+
+    def test_elastic_constant_categorised_as_mechanical(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        """AC-4: ``elastic_constant`` → mechanical (via pressure family).
+
+        NFM-3835 / FAMILY_TO_CATEGORY in ``heuristic_extractor.py`` maps
+        the pressure family to mechanical. The seed must respect this
+        contract or downstream extraction will fall back to ``other``
+        and re-trigger skipped_unknown_properties.
+        """
+        pattern = re.compile(
+            r"\(\s*[\"']mechanical[\"']\s*,\s*[\"']elastic_constant[\"']",
+            re.IGNORECASE,
+        )
+        assert pattern.search(v050_migration_source), (
+            "elastic_constant must be seeded under the 'mechanical' "
+            "category slug (NFM-3835 FAMILY_TO_CATEGORY)."
+        )
+
+    def test_solubility_limit_categorised_as_physical(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        """AC-4: ``solubility_limit`` → physical (via dimensionless family)."""
+        pattern = re.compile(
+            r"\(\s*[\"']physical[\"']\s*,\s*[\"']solubility_limit[\"']",
+            re.IGNORECASE,
+        )
+        assert pattern.search(v050_migration_source), (
+            "solubility_limit must be seeded under the 'physical' "
+            "category slug (NFM-3835 FAMILY_TO_CATEGORY)."
+        )
+
+    def test_does_not_rename_existing_elastic_constants(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        """NDE constraint: do not rename the seeded ``elastic_constants`` (plural).
+
+        Migration 031 already cites ``elastic_constants`` (the tensor
+        row, value_type=list); renaming it would orphan existing
+        measurement rows. The v0.5.0 migration must add a NEW row
+        ``elastic_constant`` (singular) and leave the plural alone.
+        """
+        # The seed must NOT contain a tuple whose name/slug is the
+        # plural 'elastic_constants' (the 031 row).
+        assert not re.search(
+            r"\(\s*[\"']mechanical[\"']\s*,\s*[\"']elastic_constants[\"']",
+            v050_migration_source,
+            re.IGNORECASE,
+        ), (
+            "v0.5.0 seed must not re-seed 'elastic_constants' (plural); "
+            "the existing 031 row covers it. Add 'elastic_constant' "
+            "(singular) as a new row instead."
+        )
+
+    def test_value_types_allowed(self, v050_migration_source: str) -> None:
+        allowed = {"scalar", "range", "expression", "list", "text"}
+        seed_value_types = set(
+            re.findall(
+                r'"(?:scalar|range|expression|list|text)"',
+                v050_migration_source,
+            )
+        )
+        used = {s.strip('"') for s in seed_value_types}
+        assert used <= allowed, (
+            f"value_type literals outside allowed set {allowed}: {used - allowed}"
+        )
+        # elastic_constant is per-component (C11/C12/C44), so value_type
+        # should be scalar. Solubility limit is a single number, also
+        # scalar. Either way, 'scalar' must appear in the seed.
+        assert '"scalar"' in v050_migration_source, (
+            "v0.5.0 seed must include 'scalar' value_type "
+            "(elastic_constant and solubility_limit are per-component scalars)"
+        )
+
+
+class TestV050Downgrade:
+    """AC-1 corollary: downgrade() removes only the 2 seeded rows."""
+
+    def test_has_downgrade(self, v050_migration_source: str) -> None:
+        assert "def downgrade()" in v050_migration_source
+
+    def test_downgrade_targets_only_seeded_rows(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        match = re.search(
+            r"def\s+downgrade\s*\(\s*\)\s*->\s*None\s*:\s*(?P<body>.*?)(?=\n\ndef |\Z)",
+            v050_migration_source,
+            re.DOTALL,
+        )
+        assert match is not None, "downgrade() body not found"
+        body = match.group("body")
+        assert "property_types" in body
+        assert re.search(
+            r"\bDELETE\s+FROM\s+property_types\b", body, re.IGNORECASE
+        ), "downgrade should DELETE seeded rows, not DROP the table"
+        assert "DROP TABLE" not in body.upper(), (
+            "downgrade must not drop property_types (other rows may exist)"
+        )
+
+    def test_downgrade_deletes_exactly_the_v050_slugs(
+        self,
+        v050_migration_source: str,
+    ) -> None:
+        """The downgrade() must delete exactly the 2 v0.5.0 slugs.
+
+        Cross-checks against the explicit ``V050_EXPECTED_PROPERTY_NAMES``
+        constant rather than re-deriving slugs from a regex over the
+        source (which would also match docstring prose mentioning
+        'scalar', 'range', etc.). The downgrade body must contain the
+        slug list bound to the DELETE statement and no other rows
+        should be reachable via this WHERE.
+        """
+        # 1. The downgrade body must reference the seeded slugs by literal
+        #    string — they appear in the ``_PROPERTY_TYPE_V050_SEED``
+        #    tuple AND are extracted via ``row[2]``.
+        for slug in V050_EXPECTED_PROPERTY_NAMES:
+            assert re.search(
+                rf"[\"']{re.escape(slug)}[\"']",
+                v050_migration_source,
+            ), (
+                f"v0.5.0 seed missing literal slug {slug!r}; "
+                "downgrade() would leave the row behind."
+            )
+
+        # 2. The downgrade() function must delete by slug (not by name,
+        #    not by id) — this is the safe contract.
+        match = re.search(
+            r"def\s+downgrade\s*\(\s*\)\s*->\s*None\s*:\s*(?P<body>.*?)(?=\n\ndef |\Z)",
+            v050_migration_source,
+            re.DOTALL,
+        )
+        assert match is not None, "downgrade() body not found"
+        body = match.group("body")
+        # Must use DELETE … WHERE slug = ANY(CAST(:slugs AS VARCHAR[]))
+        # pattern (matches the 031 contract).
+        assert re.search(
+            r"WHERE\s+slug\s*=\s*ANY",
+            body,
+            re.IGNORECASE,
+        ), "downgrade() must filter by slug = ANY(...)"
+        assert re.search(
+            r":slugs\b",
+            body,
+        ), "downgrade() must bind :slugs parameter to the seeded slug list"
