@@ -23,7 +23,14 @@ async def test_health_check_returns_ok(async_client) -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_response_body_keys(async_client) -> None:
-    """Response should contain the 4 worker_health snapshot keys."""
+    """Response should contain the 4 worker_health snapshot keys plus
+    the NFM-4097 AC-4 ``recent_uuid_titled_source_blocks`` counter.
+
+    NFM-4097 adds the DB-derived degraded-flip signal but keeps the
+    existing snapshot fields so monitoring agents that already
+    consume them do not break.  The count is informational for
+    on-call dashboards.
+    """
     worker_health.reset()
     try:
         response = await async_client.get("/api/v1/health")
@@ -34,8 +41,10 @@ async def test_health_check_response_body_keys(async_client) -> None:
             "consecutive_failures",
             "last_success_at",
             "last_error",
+            "recent_uuid_titled_source_blocks",
         }
         assert isinstance(body["status"], str)
+        assert isinstance(body["recent_uuid_titled_source_blocks"], int)
     finally:
         worker_health.reset()
 
