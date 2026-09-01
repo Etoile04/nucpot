@@ -1,12 +1,14 @@
 """Materials REST API endpoints (NFM-696).
 
-- GET  /materials                       — paginated, filtered list
-- GET  /materials/search                — full-text search by name/alias/formula
-- GET  /materials/{id}                  — detail with aliases + composition
-- GET  /materials/{id}/properties       — property table (NFM-1067)
-- POST /materials                       — create (admin)
-- POST /materials/batch-import          — bulk CSV/JSON import (NFM-1141)
-- PATCH /materials/{id}                 — update (admin)
+- GET  /materials                                    — paginated, filtered list
+- GET  /materials/search                             — full-text search by name/alias/formula
+- GET  /materials/{id}                               — detail with aliases + composition
+- GET  /materials/{id}/properties                    — property table (NFM-1067)
+- POST /materials                                    — create (admin)
+- POST /materials/batch-import                       — bulk CSV/JSON import (NFM-1141)
+- PATCH /materials/{id}                              — update (admin)
+- GET  /material-categories                          — taxonomy list (NFM-3917 / Tier 1D)
+- GET  /material-categories/uncategorized-count      — count of NULL category_id (NFM-4030)
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from nfm_db.schemas.material import (
     MaterialDetailResponse,
     MaterialResponse,
     MaterialUpdate,
+    UncategorizedMaterialCountResponse,
 )
 from nfm_db.schemas.property import MaterialPropertyListResponse
 from nfm_db.services.batch_import_service import (
@@ -39,6 +42,7 @@ from nfm_db.services.batch_import_service import (
     get_import_lock,
 )
 from nfm_db.services.material_service import (
+    count_uncategorized_materials,
     create_material,
     get_material,
     list_material_categories,
@@ -131,6 +135,27 @@ async def list_material_categories_endpoint(
     curator-chosen order.
     """
     result = await list_material_categories(db)
+    return ApiResponse(success=True, data=result)
+
+
+@router.get(
+    "/material-categories/uncategorized-count",
+    response_model=ApiResponse[UncategorizedMaterialCountResponse],
+    summary="未分类材料计数",
+    description="返回 category_id IS NULL 的材料数量 — 这些材料不会出现在任何类别筛选结果中（NFM-4030 / Tier 1D 静默缺口修复）。\n\nReturn the count of materials whose ``category_id IS NULL``. These rows are invisible under any category filter on /materials.",
+)
+async def uncategorized_material_count_endpoint(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[UncategorizedMaterialCountResponse]:
+    """Return the count of materials with no category (NFM-4030).
+
+    Read-only, public, no auth — mirrors ``GET /material-categories``.
+    The ``/materials`` page uses this to render a notice when the
+    count is positive so users can see that some materials are not
+    surfaced by any category filter. The count comes from a real
+    ``COUNT(*)`` aggregation; the UI never hardcodes a number.
+    """
+    result = await count_uncategorized_materials(db)
     return ApiResponse(success=True, data=result)
 
 

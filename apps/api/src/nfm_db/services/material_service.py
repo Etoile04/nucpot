@@ -18,6 +18,7 @@ from nfm_db.schemas.material import (
     MaterialDetailResponse,
     MaterialResponse,
     MaterialUpdate,
+    UncategorizedMaterialCountResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,3 +183,29 @@ async def list_material_categories(db: AsyncSession) -> MaterialCategoryListResp
     return MaterialCategoryListResponse(
         items=[MaterialCategoryResponse.model_validate(r) for r in rows],
     )
+
+
+async def count_uncategorized_materials(
+    db: AsyncSession,
+) -> UncategorizedMaterialCountResponse:
+    """Count materials whose ``category_id IS NULL`` (NFM-4030).
+
+    These rows are invisible under any category filter on the
+    ``/materials`` page (NFM-3917 Tier 1D silent-gap follow-up). The
+    frontend surfaces a notice when this count is positive so users are
+    not surprised by 47 (or however many) "missing" materials.
+
+    Single-row ``COUNT(*)`` aggregation — cheap enough to fetch on every
+    page mount; no caching needed at current data volume (~hundreds of
+    materials). If traffic warrants it later, a 60-second in-process
+    cache keyed on (db bind) is the obvious next step.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Material)
+        .where(
+            Material.category_id.is_(None),
+        )
+    )
+    total = (await db.execute(stmt)).scalar_one()
+    return UncategorizedMaterialCountResponse(count=int(total))

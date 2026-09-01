@@ -6,66 +6,66 @@
  * Spec: NFM-1066 §1
  */
 
-import { request } from "@/lib/api-client"
-import type { ApiResponse } from "@/lib/api-client"
+import { request } from "@/lib/api-client";
+import type { ApiResponse } from "@/lib/api-client";
 import type {
   GraphData,
   GraphEdge,
   GraphNode,
   GraphNodeType,
-} from "@/components/graph/types"
+} from "@/components/graph/types";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 export interface MaterialProperty {
-  readonly id: string
-  readonly name: string
-  readonly value: string
-  readonly unit: string | null
-  readonly source: string
-  readonly confidence: number
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+  readonly unit: string | null;
+  readonly source: string;
+  readonly confidence: number;
 }
 
 export interface MaterialPropertyMeta {
-  readonly total: number
-  readonly page: number
-  readonly limit: number
+  readonly total: number;
+  readonly page: number;
+  readonly limit: number;
 }
 
 export interface MaterialPropertyListResponse {
-  readonly data: ReadonlyArray<MaterialProperty>
-  readonly meta: MaterialPropertyMeta
+  readonly data: ReadonlyArray<MaterialProperty>;
+  readonly meta: MaterialPropertyMeta;
 }
 
 export interface MaterialPropertyListParams {
-  readonly page?: number
-  readonly limit?: number
-  readonly sort?: string
-  readonly order?: "asc" | "desc"
-  readonly filter?: string
+  readonly page?: number;
+  readonly limit?: number;
+  readonly sort?: string;
+  readonly order?: "asc" | "desc";
+  readonly filter?: string;
 }
 
 export interface MaterialSummary {
-  readonly id: string
-  readonly name: string
-  readonly formula: string | null
+  readonly id: string;
+  readonly name: string;
+  readonly formula: string | null;
 }
 
 // ── Material categories (NFM-3917 / Tier 1D) ───────────────────────────
 
 export interface MaterialCategory {
-  readonly id: string
-  readonly name: string
-  readonly slug: string
-  readonly description: string | null
-  readonly parent_id: string | null
-  readonly sort_order: number
-  readonly created_at: string
-  readonly updated_at: string
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly parent_id: string | null;
+  readonly sort_order: number;
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 export interface MaterialCategoryListEnvelope {
-  readonly items: ReadonlyArray<MaterialCategory>
+  readonly items: ReadonlyArray<MaterialCategory>;
 }
 
 /**
@@ -78,14 +78,45 @@ export interface MaterialCategoryListEnvelope {
  * available" instead of an error page; the caller surfaces a friendly
  * notice via the Select's ``notFoundContent``.
  */
-export async function listMaterialCategories(): Promise<ReadonlyArray<MaterialCategory>> {
+export async function listMaterialCategories(): Promise<
+  ReadonlyArray<MaterialCategory>
+> {
   try {
-    const envelope = await request<
-      ApiResponse<MaterialCategoryListEnvelope>
-    >("/api/v1/material-categories")
-    return envelope.data.items
+    const envelope = await request<ApiResponse<MaterialCategoryListEnvelope>>(
+      "/api/v1/material-categories",
+    );
+    return envelope.data.items;
   } catch {
-    return []
+    return [];
+  }
+}
+
+// ── Uncategorized count (NFM-4030 / Tier 1D follow-up) ────────────────
+//
+// Materials whose `category_id` is NULL are invisible under any category
+// filter on /materials (NFM-3917 Tier 1D silent gap). The backend exposes
+// the count so the page can render a notice; the count comes from a real
+// `COUNT(*)` query and the UI never hardcodes the number.
+
+export interface UncategorizedCountEnvelope {
+  readonly count: number;
+}
+
+/**
+ * Fetch the number of materials with `category_id IS NULL`.
+ *
+ * Returns 0 on a network error so the UI degrades to "no notice" rather
+ * than blocking page render — this is a non-critical disclosure, not a
+ * functional dependency of the list view.
+ */
+export async function getUncategorizedMaterialCount(): Promise<number> {
+  try {
+    const envelope = await request<ApiResponse<UncategorizedCountEnvelope>>(
+      "/api/v1/material-categories/uncategorized-count",
+    );
+    return envelope.data.count;
+  } catch {
+    return 0;
   }
 }
 
@@ -104,18 +135,18 @@ export async function getMaterialProperties(
   materialId: string,
   params: MaterialPropertyListParams = {},
 ): Promise<MaterialPropertyListResponse> {
-  const sp = new URLSearchParams()
+  const sp = new URLSearchParams();
 
-  sp.set("page", String(params.page ?? 1))
-  sp.set("limit", String(params.limit ?? 50))
-  if (params.sort) sp.set("sort", params.sort)
-  if (params.order) sp.set("order", params.order)
-  if (params.filter) sp.set("filter", params.filter)
+  sp.set("page", String(params.page ?? 1));
+  sp.set("limit", String(params.limit ?? 50));
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.order) sp.set("order", params.order);
+  if (params.filter) sp.set("filter", params.filter);
 
   const envelope = await request<ApiResponse<MaterialPropertyListResponse>>(
     `/api/v1/materials/${materialId}/properties?${sp.toString()}`,
-  )
-  return envelope.data
+  );
+  return envelope.data;
 }
 
 /**
@@ -130,31 +161,31 @@ export async function getMaterial(
 ): Promise<MaterialSummary> {
   const envelope = await request<ApiResponse<MaterialSummary>>(
     `/api/v1/materials/${materialId}`,
-  )
-  return envelope.data
+  );
+  return envelope.data;
 }
 
 // ── Subgraph (NFM-1258) ───────────────────────────────────────────────
 
 /** Raw API node shape returned by `GET /api/v1/kg/graph`. */
 export interface KgGraphApiNode {
-  readonly id: string
-  readonly label: string
-  readonly type: string
-  readonly properties?: Readonly<Record<string, unknown>>
+  readonly id: string;
+  readonly label: string;
+  readonly type: string;
+  readonly properties?: Readonly<Record<string, unknown>>;
 }
 
 /** Raw API edge shape returned by `GET /api/v1/kg/graph`. */
 export interface KgGraphApiEdge {
-  readonly source: string
-  readonly target: string
-  readonly type: string
+  readonly source: string;
+  readonly target: string;
+  readonly type: string;
 }
 
 /** Raw API response from `GET /api/v1/kg/graph`. */
 export interface KgGraphApiResponse {
-  readonly nodes: ReadonlyArray<KgGraphApiNode>
-  readonly edges: ReadonlyArray<KgGraphApiEdge>
+  readonly nodes: ReadonlyArray<KgGraphApiNode>;
+  readonly edges: ReadonlyArray<KgGraphApiEdge>;
 }
 
 /**
@@ -169,11 +200,11 @@ export interface KgGraphApiResponse {
  *   Condition / Publication / Source / other → "default"
  */
 export function toGraphNodeType(apiType: string): GraphNodeType {
-  const normalized = apiType.toLowerCase()
-  if (normalized === "material") return "material"
-  if (normalized === "property") return "property"
-  if (normalized === "experiment" || normalized === "ontology") return "entity"
-  return "default"
+  const normalized = apiType.toLowerCase();
+  if (normalized === "material") return "material";
+  if (normalized === "property") return "property";
+  if (normalized === "experiment" || normalized === "ontology") return "entity";
+  return "default";
 }
 
 /**
@@ -187,24 +218,27 @@ export function mapSubgraphResponse(
   // The API wraps the payload in a { success, data, error } envelope.
   // request() returns the raw envelope without unwrapping .data,
   // so handle both shapes defensively.
-  const payload = "data" in response && "nodes" in (response as any).data
-    ? (response as any).data
-    : response
+  const payload =
+    "data" in response && "nodes" in (response as any).data
+      ? (response as any).data
+      : response;
 
   const nodes: GraphNode[] = payload.nodes.map((node: KgGraphApiNode) => ({
     id: node.id,
     label: node.label,
     type: toGraphNodeType(node.type),
-  }))
+  }));
 
-  const edges: GraphEdge[] = payload.edges.map((edge: KgGraphApiEdge, index: number) => ({
-    id: `e-${index}-${edge.source}->${edge.target}`,
-    source: edge.source,
-    target: edge.target,
-    type: edge.type,
-  }))
+  const edges: GraphEdge[] = payload.edges.map(
+    (edge: KgGraphApiEdge, index: number) => ({
+      id: `e-${index}-${edge.source}->${edge.target}`,
+      source: edge.source,
+      target: edge.target,
+      type: edge.type,
+    }),
+  );
 
-  return { nodes, edges }
+  return { nodes, edges };
 }
 
 /**
@@ -222,11 +256,11 @@ export async function getMaterialSubgraph(
   materialId: string,
   depth = 2,
 ): Promise<GraphData> {
-  const sp = new URLSearchParams()
-  sp.set("nodeId", materialId)
-  sp.set("depth", String(depth))
+  const sp = new URLSearchParams();
+  sp.set("nodeId", materialId);
+  sp.set("depth", String(depth));
   const response = await request<KgGraphApiResponse>(
     `/api/v1/kg/graph?${sp.toString()}`,
-  )
-  return mapSubgraphResponse(response)
+  );
+  return mapSubgraphResponse(response);
 }
