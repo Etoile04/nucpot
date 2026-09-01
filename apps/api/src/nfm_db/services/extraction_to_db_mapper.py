@@ -454,32 +454,93 @@ async def _lookup_property_type(
 ) -> PropertyType | None:
     """Find PropertyType by OntoFuel category literal + property name.
 
-    Normalises the OntoFuel category literal to a DB ``slug`` via
-    ``_normalize_category_slug`` before querying.
+    Two-stage lookup (NFM-4019):
+
+    1. **Strict lookup** — match ``(property_categories.slug, property_types.name)``
+       against the OntoFuel category literal (normalised via
+       :func:`_normalize_category_slug`). This is the canonical path and
+       handles every property whose LLM-extracted category literal matches
+       the seed.
+    2. **Name-only fallback** — when the strict lookup misses AND the
+       property name is unique across all categories, return that unique
+       match. This resolves the 4 LLM-side category-context mismatches
+       flagged by NFM-4019:
+       - ``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity``:
+         LLM emits no category literal at all (stage 1 returns None
+         immediately).
+       - ``melting_point``: LLM emits ``category=thermal`` but the seed
+         places it under ``physical``; strict lookup misses on the slug,
+         and the fallback finds the single row under ``physical``.
+
+    The fallback only succeeds when ``property_types.name`` matches
+    **exactly one** row across all categories. Catalog gaps like
+    ``elastic_constant`` (singular, addressed by NFM-4008 / 032_seed) and
+    ``solubility_limit`` (addressed by NFM-4008 / 032_seed) remain absent
+    from ``property_types`` entirely, so the fallback also misses and the
+    mapper correctly drops them.
 
     Returns None if not found (caller should skip measurement).
     """
-    if not category_name:
+    if not property_name:
         return None
 
-    category_slug = _normalize_category_slug(category_name)
-    if category_slug is None:
+    # Stage 1: strict (slug, name) lookup.
+    if category_name:
+        category_slug = _normalize_category_slug(category_name)
+        if category_slug is None:
+            logger.debug(
+                "Unknown OntoFuel category literal: %r; trying name-only fallback",
+                category_name,
+            )
+        else:
+            stmt = (
+                select(PropertyType)
+                .join(PropertyCategory)
+                .where(
+                    PropertyCategory.slug == category_slug,
+                    PropertyType.name == property_name,
+                )
+            )
+            result = (await db.execute(stmt)).scalar_one_or_none()
+            if result is not None:
+                return result
+            logger.debug(
+                "Strict lookup miss: category_slug=%s name=%s; trying name-only fallback",
+                category_slug,
+                property_name,
+            )
+    else:
         logger.debug(
-            "Unknown OntoFuel category literal: %r",
+            "No category literal; trying name-only fallback for name=%s",
+            property_name,
+        )
+
+    # Stage 2: name-only fallback (NFM-4019).
+    # Only succeed when the property name is unique across all categories.
+    # This is safe because the seed canonicalises each (name, category)
+    # pair, and the AC-1 v0.5.0 ontology expansion (NFM-4008) keeps each
+    # canonical name under exactly one category.
+    fallback_stmt = select(PropertyType).where(PropertyType.name == property_name)
+    fallback_rows = (await db.execute(fallback_stmt)).scalars().all()
+    if len(fallback_rows) == 1:
+        resolved = fallback_rows[0]
+        logger.info(
+            "NFM-4019 fallback: resolved name=%s via name-only lookup to "
+            "category_id=%s (raw_category=%r)",
+            property_name,
+            resolved.category_id,
             category_name,
         )
-        return None
+        return resolved
 
-    stmt = (
-        select(PropertyType)
-        .join(PropertyCategory)
-        .where(
-            PropertyCategory.slug == category_slug,
-            PropertyType.name == property_name,
+    if len(fallback_rows) > 1:
+        logger.debug(
+            "NFM-4019 fallback ambiguous: name=%s matches %d property_types "
+            "rows; skipping (would need explicit category resolution)",
+            property_name,
+            len(fallback_rows),
         )
-    )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    return result
+    return None
 
 
 # ---------------------------------------------------------------------------
