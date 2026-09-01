@@ -121,6 +121,7 @@
     }
   ],
   "rd2_label": "[EXPLORATORY]",
+  "rd2_label_status": "permanent",
   "rd3_triggered": true,
   "rd2_reasons": [
     "GroupKFold(n_splits=5) by element system returns R^2 = 0.3111 +/- 0.4777 (see energy_predictor_v3.0_groupedcv_metrics.json). The 0.9858 random 80/20 headline and 0.9678 random-KFold CV R^2 were materially optimistic; per-fold spread includes a negative-R^2 fold (fold 4: R^2 = -0.5652). Re-labeled [EXPLORATORY] per NFM-3953 LOW-bucket decision rule. Confidence claims on the production prediction path need revision."
@@ -133,7 +134,8 @@
     "splitter": "GroupKFold(n_splits=5) by element system",
     "seed": 42,
     "delta_vs_incumbent_random_kfold_cv_r2": -0.6567,
-    "preregistration": "NFM-3953 PREREG-APPROVED 2026-08-31T22:13Z"
+    "preregistration": "NFM-3953 PREREG-APPROVED 2026-08-31T22:13Z",
+    "rd2_label_pinned": true
   },
   "rd3_verdict": {
     "decided_by": "NDE (fe09f6ec-1998-46a0-96af-f0b26e79abdf)",
