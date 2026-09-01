@@ -450,8 +450,38 @@ _F8_CONTEXT_LOOKBACK = 220
 # ("0.08 eV with uncertainty" or "with uncertainty 0.08 eV"). When a
 # value matches this pattern it is excluded from F8 emission — the F8
 # scorecard wants the primary measurement, not its uncertainty bound.
+#
+# NFM-4080 [NFM-4058-FOLLOWUP]: ``±`` is a non-word character so the
+# word-boundary anchors (``\b…\b``) silently fail to match it (``\b``
+# requires a word/non-word transition, and ``±`` has neither side as a
+# word char). Use a bare ``±`` alternative so the X±Y scientific
+# notation form (``0.30 ± 0.05 eV``) is also caught.
+#
+# NFM-4080 CTO verification (finding F2b): the pattern is RIGHT-ANCHORED
+# (``…$``) because both call sites match it against a fixed 30-char
+# lookback window with :meth:`re.Pattern.search`. An unanchored
+# alternative matches ANYWHERE in that window, so a legitimate primary
+# measurement that merely FOLLOWS a bound within 30 chars was silently
+# dropped:
+#
+#     "the activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV for
+#      Cr-doped UO2"   ->  0.26 suppressed (verified false negative)
+#
+# Anchoring makes the guard *pair-aware*: it fires only when the
+# qualifier is the immediate left operand of the value, allowing just
+# ``of`` / whitespace / opening-bracket filler in between. That keeps
+# both the prose form ("with an uncertainty of 0.05 eV") and the
+# notation form ("± 0.05 eV") suppressed while primaries survive.
+#
+# Two further sub-fixes folded in:
+#   * ``\buncert\.?\b`` never matched a trailing-period abbreviation
+#     followed by a space ("uncert. 0.08 eV") because ``\b`` after
+#     ``\.`` requires a following word character. Moved the ``\b``
+#     before the optional period.
+#   * Added the ASCII ``+/-`` and ``+-`` spellings, which appear in
+#     text extracted from PDFs where ``±`` failed to round-trip.
 _F8_UNCERTAINTY_RE = re.compile(
-    r"\b(?:uncertainty|uncert\.?|±)\b",
+    r"(?:\b(?:uncertainty|uncert)\b\.?|±|\+/-|\+-)\s*(?:of\s+)?[(\[\s±]*$",
     re.IGNORECASE,
 )
 
@@ -701,14 +731,32 @@ def heuristic_extract(
         if value is None:
             continue
         unit = m.group("unit")
-        prop = _match_property(normalized, m.start(), unit=unit)
+        value_pos = m.start()
+
+        # NFM-4080 [NFM-4058-FOLLOWUP]: skip values flagged as
+        # UNCERTAINTY rather than the primary measurement. Mirrors the
+        # third-pass guard in :func:`_extract_f8_table_rows` so the
+        # first pass also excludes uncertainty bounds (e.g. ``0.05 eV``
+        # in "0.30 eV with an uncertainty of 0.05 eV") before they are
+        # emitted as standalone property values. The qualifier appears
+        # IMMEDIATELY BEFORE the uncertainty value (``with uncertainty
+        # 0.08 eV``, ``± 0.05 eV``) — not AFTER — so checking text
+        # AFTER the value would falsely exclude the primary measurement
+        # ("0.26 eV with uncertainty 0.08 eV" means 0.08 is the bound,
+        # not 0.26). 30-char lookback matches the third-pass window so
+        # the two passes stay consistent.
+        before_value = normalized[max(0, value_pos - 30):value_pos]
+        if _F8_UNCERTAINTY_RE.search(before_value):
+            continue
+
+        prop = _match_property(normalized, value_pos, unit=unit)
         if prop is None:
             continue
         name, family = prop
         if not _units_compatible(unit, family):
             continue
 
-        material = _nearest_material(materials, m.start())
+        material = _nearest_material(materials, value_pos)
         if material is None:
             continue
 

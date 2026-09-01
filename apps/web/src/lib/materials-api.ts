@@ -167,7 +167,7 @@ export async function getMaterial(
 
 // ── Subgraph (NFM-1258) ───────────────────────────────────────────────
 
-/** Raw API node shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API node shape returned by the KG graph endpoints. */
 export interface KgGraphApiNode {
   readonly id: string;
   readonly label: string;
@@ -175,14 +175,14 @@ export interface KgGraphApiNode {
   readonly properties?: Readonly<Record<string, unknown>>;
 }
 
-/** Raw API edge shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API edge shape returned by the KG graph endpoints. */
 export interface KgGraphApiEdge {
   readonly source: string;
   readonly target: string;
   readonly type: string;
 }
 
-/** Raw API response from `GET /api/v1/kg/graph`. */
+/** Raw API response from the KG graph endpoints. */
 export interface KgGraphApiResponse {
   readonly nodes: ReadonlyArray<KgGraphApiNode>;
   readonly edges: ReadonlyArray<KgGraphApiEdge>;
@@ -249,8 +249,13 @@ export function mapSubgraphResponse(
  * `"material:<id>"`; these pass through verbatim and are stripped only
  * at navigation time.
  *
- * Endpoint contract (NFM-1258.3):
- *   GET /api/v1/kg/graph?nodeId=<id>&depth=<n>
+ * Endpoint contract (NFM-1258.3, NFM-4083):
+ *   GET /api/v1/kg/graph/subgraph?nodeId=<id>&depth=<n>
+ *
+ * NFM-4083 moved this from ``/api/v1/kg/graph`` to ``/kg/graph/subgraph``
+ * because the global-pool ``/kg/graph`` endpoint registered first was
+ * shadowing it. ``nodeId`` may be either a ``materials.id`` (resolved via
+ * the materials→KG bridge on the server) or a ``KGNode`` UUID.
  */
 export async function getMaterialSubgraph(
   materialId: string,
@@ -260,7 +265,7 @@ export async function getMaterialSubgraph(
   sp.set("nodeId", materialId);
   sp.set("depth", String(depth));
   const response = await request<KgGraphApiResponse>(
-    `/api/v1/kg/graph?${sp.toString()}`,
+    `/api/v1/kg/graph/subgraph?${sp.toString()}`,
   );
   return mapSubgraphResponse(response);
 }
