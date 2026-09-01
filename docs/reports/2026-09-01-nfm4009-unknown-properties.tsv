@@ -1,0 +1,4 @@
+rank	raw_property_name	normalized_property_name	category_slug	raw_category	frequency	sample_value	source_papers
+1	bulk_modulus	bulk_modulus			5	207.5	file:9320cb50-eb65-4178-8d2e-c56aeb848b21|mat:;file:cd36999a-b0a0-4d76-935f-6595bb09cb64|mat:
+2	lattice_constant	lattice_constant			5	5.47	file:9320cb50-eb65-4178-8d2e-c56aeb848b21|mat:;file:cd36999a-b0a0-4d76-935f-6595bb09cb64|mat:
+3	thermal_conductivity	thermal_conductivity			5	7.5	file:9320cb50-eb65-4178-8d2e-c56aeb848b21|mat:;file:cd36999a-b0a0-4d76-935f-6595bb09cb64|mat:
