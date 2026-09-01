@@ -290,6 +290,101 @@ class TestExitCodes:
 
 
 # ---------------------------------------------------------------------------
+# NFM-4077 regression tests: DSN normalization + default migrations path
+# ---------------------------------------------------------------------------
+
+
+class TestNfm4077Regressions:
+    """NFM-4077 verified end-to-end against staging with the SQLAlchemy
+    ``postgresql+asyncpg://`` DSN and the default ``/app/migrations``
+    path baked by docker/staging-api.Dockerfile. The original NFM-4066
+    defaults were untested in either dimension and broke staging startup.
+    These tests lock the fixes.
+    """
+
+    def test_dsn_with_asyncpg_driver_is_accepted(self, migrations_dir: Path) -> None:
+        """``postgresql+asyncpg://`` must be normalized before asyncpg.connect.
+
+        asyncpg speaks libpq, not SQLAlchemy — passing the raw
+        ``postgresql+asyncpg://...`` DSN produces
+        ``ClientConfigurationError: invalid DSN: scheme is expected to be
+        either "postgresql" or "postgres", got 'postgresql+asyncpg'``
+        (this is what bit staging-api on 2026-09-01).
+        """
+        result = _run_guard(
+            db_row={"version_num": "ccc_seed_things"},
+            migrations_dir=migrations_dir,
+            database_url="postgresql+asyncpg://nfm:secret@db:5432/nfm_db",
+        )
+        assert result.returncode == 0, (
+            f"expected exit 0 against +asyncpg DSN; got {result.returncode}; "
+            f"stderr={result.stderr!r}"
+        )
+        assert "DB CONNECTIVITY ERROR" not in result.stderr
+        assert "invalid DSN" not in result.stderr
+
+    def test_dsn_with_psycopg2_driver_is_accepted(self, migrations_dir: Path) -> None:
+        """``postgresql+psycopg2://`` must also normalize — defensive."""
+        result = _run_guard(
+            db_row={"version_num": "ccc_seed_things"},
+            migrations_dir=migrations_dir,
+            database_url="postgresql+psycopg2://nfm:secret@db:5432/nfm_db",
+        )
+        assert result.returncode == 0, (
+            f"expected exit 0 against +psycopg2 DSN; got {result.returncode}; "
+            f"stderr={result.stderr!r}"
+        )
+        assert "invalid DSN" not in result.stderr
+
+    def test_default_migrations_dir_is_app_migrations(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When ALEMBIC_MIGRATIONS_DIR is unset, default to ``/app/migrations``.
+
+        The staging Dockerfile bakes migrations at ``/app/migrations``
+        (``WORKDIR /app`` + ``COPY apps/api/migrations/ ./migrations/``).
+        The original default of ``/migrations`` was inconsistent with the
+        Dockerfile and made every container crash on startup with
+        ``Migrations directory not found: /migrations``.
+        """
+        # Re-invoke without ALEMBIC_MIGRATIONS_DIR in env. We can't go
+        # through _run_guard (it always sets the var), so build the
+        # subprocess env by hand.
+        bin_dir = Path("/tmp/check_staging_revision_test_bin")
+        if bin_dir.exists():
+            shutil.rmtree(bin_dir)
+        bin_dir.mkdir(parents=True)
+        asyncpg_pkg = _make_asyncpg_stub(bin_dir, {"version_num": "aaa_base"})
+
+        env = dict(os.environ)
+        env.pop("ALEMBIC_MIGRATIONS_DIR", None)
+        env["PYTHONPATH"] = (
+            str(asyncpg_pkg) + os.pathsep + env.get("PYTHONPATH", "")
+        )
+        env["NFM_DATABASE_URL"] = "postgresql://test/test"
+
+        # /app/migrations does not exist on the test host — we only care
+        # that the script reports *that specific path*, not ``/migrations``.
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 2, (
+            f"expected CONFIG ERROR (2); got {result.returncode}; "
+            f"stderr={result.stderr!r}"
+        )
+        assert "/app/migrations" in result.stderr, (
+            f"expected default to be /app/migrations; stderr={result.stderr!r}"
+        )
+        assert "/migrations: " not in result.stderr, (
+            f"unexpected bare '/migrations' (without /app) in stderr: "
+            f"{result.stderr!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Loader smoke test: real alembic integrations against the repo's own tree
 # ---------------------------------------------------------------------------
 
