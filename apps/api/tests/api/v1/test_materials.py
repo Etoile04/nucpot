@@ -283,3 +283,56 @@ async def test_search_materials_paginated(async_client, db_session) -> None:
     data = response.json()["data"]
     assert data["total"] == 5
     assert len(data["items"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# NFM-4057: list + search must hide "Unknown Material (canonical)"
+# ---------------------------------------------------------------------------
+
+UNKNOWN_CANONICAL_NAME = "Unknown Material (canonical)"
+
+
+async def test_list_materials_excludes_unknown_canonical(async_client, db_session) -> None:
+    """GET /api/v1/materials must not surface the canonical Unknown row."""
+    await _seed_material(db_session, name="UO2")
+    canonical = await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    response = await async_client.get("/api/v1/materials?page=1&per_page=20")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 1
+    assert [m["name"] for m in data["items"]] == ["UO2"]
+    # Direct UUID lookup is intentionally preserved (curation path).
+    detail = await async_client.get(f"/api/v1/materials/{canonical.id}")
+    assert detail.status_code == 200
+    assert detail.json()["data"]["name"] == UNKNOWN_CANONICAL_NAME
+
+
+async def test_search_materials_excludes_unknown_canonical(async_client, db_session) -> None:
+    """GET /api/v1/materials/search must not surface the canonical Unknown row,
+    even when the query token matches its name. Other 'Unknown'-named rows
+    remain visible so the filter is targeted, not blanket.
+    """
+    await _seed_material(db_session, name="Unknown Experimental Alloy")
+    await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    response = await async_client.get("/api/v1/materials/search?q=Unknown")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 1
+    assert data["items"][0]["name"] == "Unknown Experimental Alloy"
+
+
+async def test_list_materials_total_excludes_canonical(async_client, db_session) -> None:
+    """total + pages fields reflect the filtered set (no canonical inflation)."""
+    for i in range(4):
+        await _seed_material(db_session, name=f"Mat-{i}")
+    await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    response = await async_client.get("/api/v1/materials?page=1&per_page=2")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] == 4
+    assert data["pages"] == 2
+    assert len(data["items"]) == 2
+    assert all(m["name"] != UNKNOWN_CANONICAL_NAME for m in data["items"])

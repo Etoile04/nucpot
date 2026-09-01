@@ -29,6 +29,13 @@ _SORT_COLUMNS = {
     "updated_at": Material.updated_at,
 }
 
+# NFM-4057 / NFM-4052 Phase-4 merge target: this row carries the 96
+# property_measurements + 13 datasets that were reattributed to it during
+# the Unknown-Material cleanup. It must remain accessible via
+# get_material() and via dataset/property_measurement material_id queries
+# (curation path), but should NOT appear in the public list or search.
+UNKNOWN_MATERIAL_CANONICAL_NAME = "Unknown Material (canonical)"
+
 
 async def list_materials(
     db: AsyncSession,
@@ -39,8 +46,13 @@ async def list_materials(
     order: str = "desc",
     category_id: uuid.UUID | None = None,
 ) -> PaginatedResponse[MaterialResponse]:
-    """Return a paginated list of materials, optionally filtered by category."""
-    stmt = select(Material)
+    """Return a paginated list of materials, optionally filtered by category.
+
+    NFM-4057: hides the canonical "Unknown Material (canonical)" row from
+    the public list. Direct UUID lookup (get_material) and the
+    dataset/property_measurement data paths are intentionally preserved.
+    """
+    stmt = select(Material).where(Material.name != UNKNOWN_MATERIAL_CANONICAL_NAME)
 
     if category_id is not None:
         stmt = stmt.where(Material.category_id == category_id)
@@ -132,8 +144,13 @@ async def search_materials(
     category — composing with the ``query`` parameter is intentional
     (NFM-3917 / Tier 1D CPO decision: do not make search and category
     filter mutually exclusive).
+
+    NFM-4057: hides the canonical "Unknown Material (canonical)" row so
+    that even a query like ``q=unknown`` does not surface it. The row
+    remains accessible via get_material() and via
+    dataset/property_measurement material_id queries.
     """
-    stmt = select(Material)
+    stmt = select(Material).where(Material.name != UNKNOWN_MATERIAL_CANONICAL_NAME)
 
     if query:
         pattern = f"%{query}%"

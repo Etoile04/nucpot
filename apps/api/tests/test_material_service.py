@@ -261,3 +261,73 @@ async def test_search_pagination(db_session) -> None:
     assert result.total == 5
     assert len(result.items) == 2
     assert result.pages == 3
+
+
+# ── NFM-4057: hide "Unknown Material (canonical)" from public list/search ───
+
+
+UNKNOWN_CANONICAL_NAME = "Unknown Material (canonical)"
+
+
+@pytest.mark.asyncio
+async def test_list_excludes_unknown_canonical(db_session) -> None:
+    """NFM-4057: list_materials must filter out the canonical Unknown row.
+
+    The canonical row carries 96 property_measurements + 13 datasets (the
+    Phase-4 merge target from NFM-3918 / NFM-4052); it must remain
+    accessible via get_material() and via dataset/property_measurement
+    material_id queries, but should NOT appear in the public list/search.
+    """
+    await _seed_material(db_session, name="UO2")
+    canonical = await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    result = await list_materials(db_session, page=1, limit=20)
+
+    assert result.total == 1
+    assert [m.name for m in result.items] == ["UO2"]
+    # The canonical row itself is still queryable by UUID — the filter is
+    # scoped to list/search, not get_material().
+    detail = await get_material(db_session, canonical.id)
+    assert detail is not None
+    assert detail.name == UNKNOWN_CANONICAL_NAME
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_total_excludes_canonical(db_session) -> None:
+    """NFM-4057: total + pages reflect the filtered set."""
+    for i in range(4):
+        await _seed_material(db_session, name=f"Mat-{i}")
+    await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    result = await list_materials(db_session, page=1, limit=2)
+    assert result.total == 4
+    assert result.pages == 2
+    assert len(result.items) == 2
+    assert all(m.name != UNKNOWN_CANONICAL_NAME for m in result.items)
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_unknown_canonical(db_session) -> None:
+    """NFM-4057: search_materials must filter out the canonical row too."""
+    await _seed_material(db_session, name="UO2")
+    await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    result = await search_materials(db_session, query="", page=1, limit=20)
+    assert result.total == 1
+    assert result.items[0].name == "UO2"
+
+
+@pytest.mark.asyncio
+async def test_search_canonical_query_does_not_return_canonical(db_session) -> None:
+    """NFM-4057: searching 'unknown' must NOT surface the canonical row,
+    even though the ILIKE pattern would otherwise match its name.
+    """
+    # Seed a non-canonical row whose name ALSO matches 'Unknown' so the
+    # ILIKE pattern hits it — proves the canonical is filtered while the
+    # other 'Unknown'-named row still surfaces.
+    await _seed_material(db_session, name="Unknown Experimental Alloy")
+    await _seed_material(db_session, name=UNKNOWN_CANONICAL_NAME)
+
+    result = await search_materials(db_session, query="Unknown", page=1, limit=20)
+    assert result.total == 1
+    assert result.items[0].name == "Unknown Experimental Alloy"
