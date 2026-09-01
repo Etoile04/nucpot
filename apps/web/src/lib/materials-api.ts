@@ -51,6 +51,44 @@ export interface MaterialSummary {
   readonly formula: string | null
 }
 
+// ── Material categories (NFM-3917 / Tier 1D) ───────────────────────────
+
+export interface MaterialCategory {
+  readonly id: string
+  readonly name: string
+  readonly slug: string
+  readonly description: string | null
+  readonly parent_id: string | null
+  readonly sort_order: number
+  readonly created_at: string
+  readonly updated_at: string
+}
+
+export interface MaterialCategoryListEnvelope {
+  readonly items: ReadonlyArray<MaterialCategory>
+}
+
+/**
+ * Fetch the full material-category taxonomy for the /materials filter
+ * dropdown (NFM-3917 / Tier 1D).
+ *
+ * Returns the array directly (the ``ApiResponse`` envelope is unwrapped
+ * here, mirroring `getMaterialProperties` / `getMaterial`). Returns an
+ * empty array on a network error so the UI degrades to "no categories
+ * available" instead of an error page; the caller surfaces a friendly
+ * notice via the Select's ``notFoundContent``.
+ */
+export async function listMaterialCategories(): Promise<ReadonlyArray<MaterialCategory>> {
+  try {
+    const envelope = await request<
+      ApiResponse<MaterialCategoryListEnvelope>
+    >("/api/v1/material-categories")
+    return envelope.data.items
+  } catch {
+    return []
+  }
+}
+
 // ── API functions ─────────────────────────────────────────────────────
 
 /**

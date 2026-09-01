@@ -63,6 +63,21 @@ class MaterialCategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MaterialCategoryListResponse(BaseModel):
+    """Schema for a list of material categories (NFM-3917 Tier 1D).
+
+    Wraps the array so the standard ``ApiResponse[T]`` envelope
+    ``{ success, data, error? }`` keeps its homogeneous shape across
+    endpoints. Returning a bare list is also fine for FastAPI, but the
+    explicit envelope keeps the frontend's discriminated-union parsing
+    (see ``apps/web/src/lib/api-client.ts``) consistent.
+    """
+
+    items: list[MaterialCategoryResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MaterialCreate(BaseModel):
     """Schema for creating a material."""
 

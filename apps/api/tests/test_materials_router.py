@@ -379,3 +379,98 @@ class TestSearchMaterialsEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["total"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_search_filters_by_category_id(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-3917 / Tier 1D: category_id composes with the search query."""
+        cat_a = await _seed_category(db_session, name="cat-a", slug="cat-a")
+        cat_b = await _seed_category(db_session, name="cat-b", slug="cat-b")
+
+        await _seed_material(db_session, name="UO2-Fuel-A", category=cat_a)
+        await _seed_material(db_session, name="UO2-Fuel-B", category=cat_b)
+        await _seed_material(db_session, name="UO2-Uncategorized", category=None)
+
+        resp = await async_client.get(f"/api/v1/materials/search?q=UO2&category_id={cat_a.id}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["total"] == 1
+        assert body["data"]["items"][0]["name"] == "UO2-Fuel-A"
+        assert body["data"]["items"][0]["category_id"] == str(cat_a.id)
+
+    @pytest.mark.asyncio
+    async def test_search_category_id_with_empty_query_returns_category_only(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """category_id alone (empty q) lists that category — same as /materials?category_id."""
+        cat = await _seed_category(db_session, name="cat-empty", slug="cat-empty")
+        await _seed_material(db_session, name="Zirc", category=cat)
+        await _seed_material(db_session, name="Other")
+
+        resp = await async_client.get(f"/api/v1/materials/search?q=&category_id={cat.id}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["total"] == 1
+        assert body["data"]["items"][0]["name"] == "Zirc"
+
+
+# ============================================================
+# GET /material-categories
+# ============================================================
+
+
+class TestListMaterialCategoriesEndpoint:
+    """Tests for GET /material-categories (NFM-3917 / Tier 1D)."""
+
+    @pytest.mark.asyncio
+    async def test_list_categories_returns_seeded_rows(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        await _seed_category(db_session, name="alpha", slug="alpha", sort_order=10)
+        await _seed_category(db_session, name="beta", slug="beta", sort_order=5)
+        await _seed_category(db_session, name="gamma", slug="gamma", sort_order=5)
+
+        resp = await async_client.get("/api/v1/material-categories")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        items = body["data"]["items"]
+        slugs = [c["slug"] for c in items]
+        assert {"alpha", "beta", "gamma"}.issubset(set(slugs))
+        # sort_order ASC then name ASC: beta(5) gamma(5) alpha(10)
+        ordered = [c["slug"] for c in items if c["slug"] in {"alpha", "beta", "gamma"}]
+        assert ordered == ["beta", "gamma", "alpha"]
+
+    @pytest.mark.asyncio
+    async def test_list_categories_empty_when_no_rows(
+        self,
+        async_client: AsyncClient,
+    ) -> None:
+        resp = await async_client.get("/api/v1/material-categories")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["items"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_categories_is_public(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """No auth header — the dropdown must work for anonymous viewers."""
+        await _seed_category(db_session, name="public-cat", slug="public-cat")
+
+        resp = await async_client.get("/api/v1/material-categories")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["items"][0]["slug"] == "public-cat"

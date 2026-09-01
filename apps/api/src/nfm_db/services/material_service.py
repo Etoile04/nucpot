@@ -7,10 +7,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from nfm_db.models import Material, MaterialAlias
+from nfm_db.models import Material, MaterialAlias, MaterialCategory
 from nfm_db.schemas.common import PaginatedResponse
 from nfm_db.schemas.material import (
     MaterialAliasResponse,
+    MaterialCategoryListResponse,
+    MaterialCategoryResponse,
     MaterialCompositionResponse,
     MaterialCreate,
     MaterialDetailResponse,
@@ -120,10 +122,15 @@ async def search_materials(
     query: str = "",
     page: int = 1,
     limit: int = 20,
+    category_id: uuid.UUID | None = None,
 ) -> PaginatedResponse[MaterialResponse]:
     """Search materials by name, formula, or alias (ILIKE).
 
-    An empty query returns all materials (paginated).
+    An empty query returns all materials (paginated). When
+    ``category_id`` is provided the result set is restricted to that
+    category — composing with the ``query`` parameter is intentional
+    (NFM-3917 / Tier 1D CPO decision: do not make search and category
+    filter mutually exclusive).
     """
     stmt = select(Material)
 
@@ -136,6 +143,9 @@ async def search_materials(
                 Material.aliases.any(MaterialAlias.alias_name.ilike(pattern)),
             )
         )
+
+    if category_id is not None:
+        stmt = stmt.where(Material.category_id == category_id)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar_one()
@@ -151,4 +161,24 @@ async def search_materials(
         page=page,
         limit=limit,
         pages=max(1, -(-total // limit)),
+    )
+
+
+async def list_material_categories(db: AsyncSession) -> MaterialCategoryListResponse:
+    """Return every material category ordered for the filter dropdown.
+
+    NFM-3917 / Tier 1D: feeds the ``/materials`` page category ``Select``.
+    Sort order is ``(sort_order ASC, name ASC)`` so the seeded taxonomy
+    (which sets ``sort_order`` to a stable integer in
+    ``065_seed_material_categories``) renders in the order data
+    curators chose. ``name`` is the tiebreaker so newly inserted rows
+    without an explicit ``sort_order`` still appear deterministically.
+    """
+    stmt = select(MaterialCategory).order_by(
+        MaterialCategory.sort_order.asc(),
+        MaterialCategory.name.asc(),
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return MaterialCategoryListResponse(
+        items=[MaterialCategoryResponse.model_validate(r) for r in rows],
     )
