@@ -1023,3 +1023,95 @@ describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
     expect(screen.queryByText(/本页折叠为/)).not.toBeInTheDocument()
   })
 })
+
+// ── NFM-4117 W1: ×N badge must survive narrow viewports ───────────────
+//
+// On viewport widths ≤ ~500px the original "计数" column (position 6 of 6,
+// width 80px, total table width ~900px) lives past the right edge of
+// `.ant-table-body`'s horizontal scroll. With 17-fold rows now common on
+// canonical-seed materials, users on phones lose the only signal that a
+// row was folded. The fix is to surface the ×N badge inside the value
+// cell (column 2 of the new order) so it lives in the always-visible
+// region regardless of viewport width.
+
+describe("MaterialPropertyTable — NFM-4117 W1 narrow-viewport ×N badge", () => {
+  it("renders the ×N count badge INSIDE the value cell (column 2) so it survives narrow viewports", () => {
+    const source = makeSource({ title: "Narrow viewport source" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2, 3].map((i) =>
+      makeProperty({
+        id: `narrow-${i}`,
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        confidence: 0.9,
+      }),
+    )
+
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // The value cell (the one carrying "0.3") must contain the ×N badge
+    // as a descendant — meaning the badge lives in the always-visible
+    // second column, NOT in the cut-off 计数 column.
+    const valueCells = container.querySelectorAll(".ant-table-cell")
+    const cellWithValue = Array.from(valueCells).find((cell) =>
+      cell.textContent?.includes("0.3"),
+    )
+    expect(cellWithValue).toBeDefined()
+    expect(cellWithValue?.textContent).toMatch(/×3/)
+  })
+
+  it("does NOT render the off-screen 计数 column header", () => {
+    // The 计数 column is the column that gets clipped on narrow viewports;
+    // the fix moves the ×N indicator inline so that header is no longer
+    // needed.
+    const source = makeSource({ title: "Header test" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2].map((i) =>
+      makeProperty({
+        id: `ht-${i}`,
+        name: "Density",
+        value: "10.5",
+        source,
+      }),
+    )
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    expect(screen.queryByText("计数")).not.toBeInTheDocument()
+  })
+
+  it("omits the inline ×N badge when count is 1 (single-measurement rows stay clean)", () => {
+    // Single-measurement rows should never render a ×N badge — the
+    // inline placement must respect the same count <= 1 guard that the
+    // 计数 column used.
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({ id: "p1", name: "Density", value: "10.5" }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // No fold → no ×N indicator anywhere in the row.
+    expect(screen.queryByText(/^×/)).not.toBeInTheDocument()
+  })
+})
