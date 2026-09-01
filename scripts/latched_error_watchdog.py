@@ -256,7 +256,11 @@ def build_issue_body(
         f"fingerprint={fingerprint} version={SENTINEL_VERSION} -->"
     )
 
+    # Sentinel MUST appear in the first ~200 chars — the Paperclip collection
+    # endpoint silently truncates `description` at 1200 chars, which would
+    # otherwise strip our dedup fingerprint. Put it at the very top.
     return (
+        f"{sentinel}\n\n"
         f"## Latched error detected\n\n"
         f"- **Agent**: `{name}` (`{agent_id}`)\n"
         f"- **Adapter**: `{agent.get('adapterType', '?')}`\n"
@@ -282,11 +286,9 @@ def build_issue_body(
             f"```\n\n"
             f"Then re-run the watchdog or invoke the clear-error route above.\n\n"
             if classification == "transient"
-            else f"For TERMINAL cases the workspace `.git` anchor is present, so the "
-            f"`git init` fix does not apply. Escalate to CTO Research / Lead Engineer.\n\n"
+            else "For TERMINAL cases the workspace `.git` anchor is present, so the "
+            "`git init` fix does not apply. Escalate to CTO Research / Lead Engineer.\n\n"
         )
-        + f"---\n\n"
-        f"{sentinel}\n"
     )
 
 
