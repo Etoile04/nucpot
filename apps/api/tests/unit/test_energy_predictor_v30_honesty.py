@@ -1,28 +1,39 @@
 """NFM-3956 honesty-contract tests for the EnergyPredictor v3.0 prediction endpoint.
 
-The grouped-CV re-evaluation (NFM-3953, LOW bucket — R^2 = 0.3111 +/- 0.4777
-by element system) showed that the random 80/20 headline R^2 = 0.9858 and the
-random ``KFold(shuffle=True)`` CV R^2 = 0.9678 were both materially optimistic.
+The grouped-CV re-evaluation (NFM-3953 — R^2 = 0.3111 +/- 0.4777 by element
+system) showed that the random 80/20 headline R^2 = 0.9858 and the random
+``KFold(shuffle=True)`` CV R^2 = 0.9678 were both materially optimistic.
 The artifact is now labeled ``[EXPLORATORY]`` and the prediction endpoint must
 surface that label + the grouped-CV figure, never the inflated headline.
 
+NFM-3959 RD-3 remediation (2026-09-01) layered three CTO mandates onto the
+helper:
+
+  Mandate 1: ``grouped_cv_summary.r2_mean`` MUST be read from the model card;
+             an ``[EXPLORATORY]`` label without it raises ``KeyError`` instead
+             of falling back to a hard-coded constant.
+  Mandate 2: ``confidence = min(grouped_cv_r2_mean, r2)`` clamped to [0, 1].
+  Mandate 3: warning emitted iff ``rd2_label == '[EXPLORATORY]'`` (so v3.1
+             clears it automatically per NFM-3958).
+
 This module is the regression net. If anyone re-introduces a code path that
 advertises R^2 = 0.9858 as the user-facing confidence for EnergyPredictor v3.0,
-these tests must fail loudly.
+or relaxes any of the three NFM-3959 mandates, these tests must fail loudly.
 
 Coverage:
-    1. ``_compute_energy_confidence`` helper picks the grouped-CV mean when
-       the artifact is labeled [EXPLORATORY] (preferred), and falls back to
-       the random-split figure (with a ``energy_model_pre_grouped_cv``
-       warning) when the artifact predates NFM-3953.
+    1. ``_compute_energy_confidence`` helper picks the grouped-CV mean
+       (clamped) when the artifact is labeled [EXPLORATORY], fails loudly
+       when the grouped-CV summary is incomplete, and falls back to the
+       random-split figure (with a ``energy_model_pre_grouped_cv``
+       warning) for legacy pre-NFM-3953 artifacts.
     2. ``_predict_energy_v30`` propagates the helper result into the
        response (``confidence``, ``confidence_source``, ``warnings``).
     3. The user-facing prediction endpoint NEVER returns ``confidence`` ==
        0.9858 (the inflated random-split headline) for any artifact shape.
     4. Static surface scan: docstrings / comments in
-       ``nfm_db.ml.prediction_service`` and ``nfm_db.ml.model_version`` do
-       not advertise ``R^2 = 0.9858`` (or any variant spelling) as the
-       model headline. They reference the grouped-CV LOW bucket instead.
+       ``nfm_db.ml.prediction_service`` and ``nfm_db.ml.model_version``
+       do not advertise ``R^2 = 0.9858`` (or any variant spelling) as
+       the model headline.
 """
 
 from __future__ import annotations
@@ -133,15 +144,23 @@ class TestComputeEnergyConfidenceExploratory:
         codes = [w["code"] for w in warnings]
         assert "energy_model_exploratory" in codes
 
-    def test_warning_message_references_low_bucket(self, exploratory_metrics: dict) -> None:
+    def test_warning_message_references_exploratory_label_and_grouped_cv(
+        self, exploratory_metrics: dict,
+    ) -> None:
+        """NFM-3959 task 2: the warning message must follow the
+        ``energy_model_exploratory`` format and reference the
+        ``[EXPLORATORY]`` re-label + the actual grouped-CV value.
+        """
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         _confidence, _source, warnings = _compute_energy_confidence(exploratory_metrics)
-        msg = warnings[0]["message"].lower()
-        assert "exploratory" in msg
-        assert "low" in msg
-        # Must name the actual grouped-CV figure so the user can audit.
-        assert f"{GROUPED_CV_R2_MEAN:.4f}" in warnings[0]["message"]
+        msg = warnings[0]["message"]
+        assert "[EXPLORATORY]" in msg
+        # The grouped-CV figure must be named so the user can audit.
+        assert f"{GROUPED_CV_R2_MEAN:.4f}" in msg
+        # The v3.1 unblocker (NFM-3958) must be referenced so callers
+        # can trace the source of the re-label.
+        assert "NFM-3958" in msg
 
     def test_warning_message_does_not_advertise_headline(self, exploratory_metrics: dict) -> None:
         """The user-facing warning must not echo the inflated headline as a
@@ -227,12 +246,14 @@ class TestComputeEnergyConfidenceEdgeCases:
         # figure is unreliable.
         assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
 
-    def test_grouped_cv_summary_without_r2_mean_falls_back_to_none(self) -> None:
-        """An [EXPLORATORY] artifact whose grouped_cv_summary is missing
-        ``r2_mean`` must fall back to the legacy path (and warn), rather
-        than crashing. NFM-3956 round 2: legacy fallback returns
-        ``confidence=None`` so the inflated random-split headline is
-        never advertised."""
+    def test_grouped_cv_summary_without_r2_mean_fails_loudly(self) -> None:
+        """NFM-3959 Mandate 1 supersedes the NFM-3956 fallback: an
+        ``[EXPLORATORY]`` artifact whose ``grouped_cv_summary`` is
+        missing ``r2_mean`` MUST FAIL LOUDLY (``KeyError``) rather
+        than fall back to a hard-coded R^2 or the legacy random-split
+        figure. The model card must embed ``grouped_cv_summary.r2_mean``
+        before the artifact is deployable.
+        """
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         metrics = {
@@ -240,22 +261,27 @@ class TestComputeEnergyConfidenceEdgeCases:
             "rd2_label": "[EXPLORATORY]",
             "grouped_cv_summary": {"splitter": "GroupKFold(n_splits=5)"},
         }
-        confidence, source, warnings = _compute_energy_confidence(metrics)
-        assert confidence is None
-        assert source == "random_split_r2"
-        assert any(w["code"] == "energy_model_pre_grouped_cv" for w in warnings)
+        with pytest.raises(KeyError):
+            _compute_energy_confidence(metrics)
 
     def test_grouped_cv_r2_clamped_to_unit_interval(self) -> None:
-        """A pathological artifact with grouped_cv_r2_mean > 1 must clamp."""
+        """A pathological artifact whose grouped-CV side AND random-split
+        side both exceed 1.0 must clamp the result to 1.0.
+
+        NFM-3959 Mandate 2: ``confidence = min(grouped_cv_r2_mean,
+        metrics.get('r2', grouped_cv_r2_mean))`` clamped to ``[0, 1]``.
+        So we set ``r2_mean=1.5`` and ``r2=1.3``; ``min(1.5, 1.3) = 1.3``,
+        then ``max(0, min(1.3, 1.0)) = 1.0``.
+        """
         from nfm_db.ml.prediction_service import _compute_energy_confidence
 
         metrics = {
-            "r2": 0.9,
+            "r2": 1.3,
             "rd2_label": "[EXPLORATORY]",
             "grouped_cv_summary": {"r2_mean": 1.5, "r2_std": 0.1},
         }
         confidence, _source, _warnings = _compute_energy_confidence(metrics)
-        assert confidence == 1.0
+        assert confidence == pytest.approx(1.0, abs=1e-4)
 
     def test_negative_grouped_cv_r2_clamped_to_zero(self) -> None:
         """Per-fold R^2 can be negative (LOW bucket has fold 3 at -0.5652).

@@ -8,24 +8,29 @@ Provides lazy-loaded model instances and inference functions for:
   predict_energy() dispatches by ``model_version`` so legacy callers
   don't regress (backward compat).
 
-Confidence disclosure for EnergyPredictor v3.0 (NFM-3956 — LE handoff from
-NFM-3953 grouped-CV confirmatory run):
-  EnergyPredictor v3.0 is labeled **[EXPLORATORY]** on this branch. The
-  random 80/20 hold-out headline (``metrics.r2``) and the random
-  ``KFold(shuffle=True)`` CV figure (``metrics.cv_r2``) were both
+Confidence disclosure for EnergyPredictor v3.0 (NFM-3959 RD-3 remediation —
+LE handoff from NFM-3956 / NFM-3953 grouped-CV confirmatory run):
+  EnergyPredictor v3.0 metrics are labeled **[EXPLORATORY]** on this
+  branch. The legacy random 80/20 hold-out figure (``metrics.r2``) and
+  the random ``KFold(shuffle=True)`` CV figure (``metrics.cv_r2``) were
   materially optimistic because element-system near-neighbour compositions
-  leak across splits. The GroupKFold(n_splits=5)-by-element-system
-  re-evaluation (NFM-3953, locked protocol = same as PhaseClassifier v2.0)
-  produced R^2 = 0.3111 +/- 0.4777 (LOW bucket). Per-fold spread includes
-  a negative-R^2 fold (fold 3: R^2 = -0.5652).
+  leak across splits; neither figure is published as the response
+  ``confidence`` per the NFM-3956 honesty contract. The
+  GroupKFold(n_splits=5)-by-element-system re-evaluation (NFM-3953,
+  locked protocol = same as PhaseClassifier v2.0) produced a positive
+  R^2 mean below the LOW bucket threshold; per-fold spread includes a
+  negative-R^2 fold.
 
-  When the artifact (or sidecar JSON) carries ``rd2_label == "[EXPLORATORY]"``
-  and ``grouped_cv_summary.r2_mean``, this module reports the **grouped-CV
-  mean** as ``confidence`` and emits a ``energy_model_exploratory``
-  warning. When those fields are absent (legacy artifact), the module
-  falls back to the random-split ``r2`` field — caller must interpret
-  such artifacts as pre-NFM-3953 and therefore at risk of the same
-  optimism.
+  When the artifact carries ``rd2_label == "[EXPLORATORY]"`` and a
+  ``grouped_cv_summary`` block with ``r2_mean``, ``_compute_energy_confidence``
+  returns ``confidence = min(grouped_cv_r2_mean, r2)`` (clamped to [0, 1])
+  and emits an ``energy_model_exploratory`` warning. The warning is driven
+  entirely by ``rd2_label``; when NFM-3958 ships v3.1 and clears the
+  label, the warning disappears automatically. For legacy artifacts
+  (no ``[EXPLORATORY]`` label, no grouped-CV summary), ``confidence`` is
+  reported as ``None`` and the raw R^2 figure is surfaced only in the
+  ``energy_model_pre_grouped_cv`` warning so callers can render it with a
+  clear "at-risk" disclaimer instead of as a primary claim.
 
   See ``models/energy_predictor_v3.0_metrics.json`` for the full
   grouped-CV summary and per-fold breakdown.
@@ -677,22 +682,41 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
 def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[dict]]:
     """Compute the honest confidence score for an EnergyPredictor artifact.
 
-    Implements the NFM-3956 LE handoff from NFM-3953 grouped-CV LOW bucket:
-    when an artifact is labeled ``[EXPLORATORY]`` and carries a
-    ``grouped_cv_summary`` block, the reported confidence is the
-    grouped-CV mean R^2 (the protocol-correct generalization estimate),
-    not the random-split ``metrics.r2`` headline. A warning is emitted so
-    callers and downstream UIs can surface the disclaimer instead of
-    advertising the inflated random-split number.
+    Implements the NFM-3956 LE handoff from NFM-3953 grouped-CV LOW bucket,
+    layered with NFM-3959 RD-3 remediation mandates:
+
+    NFM-3959 Mandate 1 — NO hard-coded R^2 fallback.
+        ``grouped_cv_summary.r2_mean`` MUST be read from the model card at
+        runtime. If an artifact carries ``rd2_label == "[EXPLORATORY]"``
+        but ``grouped_cv_summary`` is missing or has no ``r2_mean`` field,
+        the helper raises ``KeyError`` rather than falling back to a
+        hard-coded constant. The legacy "soft fallback to random-split R^2"
+        path is preserved ONLY for legacy/pre-NFM-3953 artifacts (no
+        ``[EXPLORATORY]`` label), where the response advertises
+        ``confidence=None`` and emits an ``energy_model_pre_grouped_cv``
+        warning.
+
+    NFM-3959 Mandate 2 — Clamp invariant.
+        ``confidence = min(grouped_cv_r2_mean,
+        metrics.get('r2', grouped_cv_r2_mean))`` clamped to ``[0, 1]``.
+        The user-facing confidence must NEVER exceed either the
+        protocol-correct grouped-CV R^2 OR the legacy random-split R^2,
+        whichever is smaller. This invariant is enforced in the service
+        next to the computation — not only in tests — so any future code
+        that reads the headline figure cannot bypass the clamp.
+
+    NFM-3959 Mandate 3 — Warning driven by ``rd2_label``.
+        The ``energy_model_exploratory`` ``PredictionWarning`` is emitted
+        iff ``rd2_label == "[EXPLORATORY]"``. When NFM-3958 ships v3.1
+        and clears the label, the warning disappears automatically
+        without further code changes.
 
     NFM-3956 E2E QA update (round 2):
         The legacy fallback path (pre-NFM-3953 artifact) now returns
         ``confidence=None`` rather than the random-split figure. The raw
         R^2 is surfaced in the warning message so UIs can render the
         at-risk figure with a clear disclaimer instead of as a primary
-        claim in the response ``confidence`` field. The schema
-        ``EnergyPredictResponse.confidence`` accepts ``None`` for this
-        reason.
+        claim in the response ``confidence`` field.
 
     Args:
         metrics: ``metrics`` dict from the model artifact. May contain:
@@ -710,31 +734,55 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[d
               or ``"random_split_r2"`` (legacy fallback)
             - ``warnings``: list of ``{code, message}`` dicts; empty when
               the artifact is post-NFM-3953 with no [EXPLORATORY] label
+
+    Raises:
+        KeyError: If ``rd2_label == "[EXPLORATORY]"`` but
+            ``grouped_cv_summary`` is missing or lacks ``r2_mean``.
+            Mandate 1 forbids any fallback constant for the grouped R^2.
     """
     r2_random = float(metrics.get("r2", 0.0) or 0.0)
     grouped_cv = metrics.get("grouped_cv_summary") or {}
+    has_grouped_r2 = isinstance(grouped_cv.get("r2_mean"), (int, float))
     is_exploratory = metrics.get("rd2_label") == "[EXPLORATORY]"
 
-    if is_exploratory and "r2_mean" in grouped_cv:
-        r2_mean_raw = float(grouped_cv["r2_mean"])
-        r2_std = float(grouped_cv.get("r2_std", 0.0) or 0.0)
-        bucket = grouped_cv.get("decision_bucket", "low")
-        confidence = max(0.0, min(r2_mean_raw, 1.0))
-        warning_msg = (
-            f"EnergyPredictor v3.0 is labeled [EXPLORATORY] per NFM-3953. "
-            f"Grouped-CV R^2 = {r2_mean_raw:.4f} +/- {r2_std:.4f} "
-            f"(bucket: {bucket}). The random-split headline R^2 = "
-            f"{r2_random:.4f} was materially optimistic; reported "
-            f"confidence is from the grouped-CV figure. See "
-            f"energy_predictor_v3.0_groupedcv_metrics.json for per-fold "
-            f"breakdown."
+    # NFM-3959 Mandate 1: refuse to fall back to a hard-coded R^2 for
+    # an [EXPLORATORY] artifact whose grouped-CV summary is missing
+    # or incomplete. The model card must be re-trained to embed
+    # ``grouped_cv_summary.r2_mean`` (see NFM-3958 for v3.1).
+    if is_exploratory and not has_grouped_r2:
+        raise KeyError(
+            "EnergyPredictor metrics are labeled [EXPLORATORY] but "
+            "grouped_cv_summary.r2_mean is missing from the model "
+            "card. NFM-3959 Mandate 1 forbids any R^2 fallback "
+            "constant; re-train the artifact to embed "
+            "grouped_cv_summary (NFM-3958)."
         )
-        warnings: list[dict] = [
-            {
-                "code": "energy_model_exploratory",
-                "message": warning_msg,
-            }
-        ]
+
+    if has_grouped_r2:
+        # NFM-3959 Mandate 2 clamp: confidence is the smaller of the
+        # grouped-CV honesty figure and the legacy random-split figure
+        # (whichever is present). The clamp is enforced here, next to
+        # the computation, so future changes cannot bypass it.
+        r2_mean_raw = float(grouped_cv["r2_mean"])
+        upper_bound = float(metrics.get("r2", r2_mean_raw))
+        confidence_raw = min(r2_mean_raw, upper_bound)
+        confidence = max(0.0, min(confidence_raw, 1.0))
+        warnings: list[dict] = []
+        # NFM-3959 Mandate 3: warning driven by ``rd2_label`` only —
+        # when NFM-3958 ships v3.1 and clears the label, the warning
+        # disappears automatically without further code changes.
+        if is_exploratory:
+            warning_msg = (
+                f"v3.0 metrics re-labeled [EXPLORATORY] under RD-3; "
+                f"grouped-CV R^2={r2_mean_raw:.4f} reported as confidence "
+                f"until v3.1 ships (NFM-3958)."
+            )
+            warnings.append(
+                {
+                    "code": "energy_model_exploratory",
+                    "message": warning_msg,
+                }
+            )
         return round(confidence, 4), "grouped_cv_r2_mean", warnings
 
     # Legacy artifact: no grouped-CV summary, no [EXPLORATORY] label.
