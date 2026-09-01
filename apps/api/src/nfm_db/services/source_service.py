@@ -11,6 +11,7 @@ mapper no-DOI) goes through a single dedup gate before INSERT.
 
 import hashlib
 import logging
+import re
 import uuid
 from typing import Any, Literal
 
@@ -102,7 +103,8 @@ async def list_sources(
     # and never enters this branch.
     if sqlite_post_filter and ontology_version is not None:
         rows = [
-            r for r in rows
+            r
+            for r in rows
             if isinstance(r.metadata_, dict)
             and r.metadata_.get("extraction_ontology_version") == ontology_version
         ]
@@ -189,7 +191,11 @@ async def create_source(
         source_type=payload.get("source_type", "other"),
         # All remaining payload fields (journal, year, abstract, etc.) are
         # applied only on first INSERT — existing rows are returned unchanged.
-        fields={k: v for k, v in payload.items() if k not in {"doi", "title", "source_type", "file_hash", "content_md"}},
+        fields={
+            k: v
+            for k, v in payload.items()
+            if k not in {"doi", "title", "source_type", "file_hash", "content_md"}
+        },
     )
     if was_created:
         await db.commit()
@@ -282,6 +288,88 @@ async def _find_source_by_content_fingerprint(
     return None
 
 
+#: NFM-4088 (lifted from extraction_to_db_mapper) — guard against
+#: UUID-pattern ``title``. Root cause: prior source's primary-key
+#: string was being copied into the new row's ``title`` when the
+#: extraction pipeline emitted a UUID instead of a real reference.
+#: Canonical 36-char UUID, case-insensitive, anchored on both ends.
+_UUID_TITLE_PATTERN: re.Pattern[str] = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _reject_uuid_title(title: str) -> None:
+    """Raise ``ValueError`` when ``title`` is a 36-char UUID string.
+
+    NFM-4088 AC-4 (write-path guard).
+
+    The pre-fix DOI-empty branch silently inserted a row whose ``title``
+    was the primary-key UUID of another source. Migration 070 cleans the
+    existing rows; this guard prevents the regression from re-emerging
+    inside :func:`get_or_create_source`. We refuse the INSERT rather than
+    silently substitute because the only way the title can be a UUID is a
+    logic bug in the upstream extraction chain — substituting a different
+    label would mask that bug.
+    """
+    if _UUID_TITLE_PATTERN.match(title):
+        raise ValueError(
+            f"Refusing to create DataSource with UUID-pattern title={title!r}. "
+            "The upstream extraction chain supplied a UUID instead of a "
+            "literature reference; investigate the extractor before retrying."
+        )
+
+
+async def _find_source_by_title(
+    db: AsyncSession,
+    title: str,
+) -> DataSource | None:
+    """Find an existing :class:`DataSource` by exact ``title`` equality.
+
+    NFM-4088 AC-3 (write-path guard fallback 1).
+
+    Returns at most one row; the ``data_sources`` table has no UNIQUE
+    constraint on ``title`` (only ``doi``) so two rows may legitimately
+    share a title in legacy states. We use ``.first()`` rather than
+    ``scalar_one_or_none()`` to avoid raising ``MultipleResultsFound``
+    (mirrors the NFM-3919 dedup-by-formula pattern).
+    """
+    if not title:
+        return None
+    stmt = select(DataSource).where(DataSource.title == title).limit(1)
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _find_source_by_content_md_prefix(
+    db: AsyncSession,
+    source_file: str | None,
+) -> DataSource | None:
+    """Find an existing :class:`DataSource` by ``source_file`` substring match.
+
+    NFM-4088 AC-3 (write-path guard fallback 2).
+
+    When ``source_file`` is a Markdown path the NFM-1486 PDF pipeline
+    uploaded, the corresponding ``content_md`` column holds the parsed
+    text and was uploaded under the same file. We match by
+    ``LIKE '%<basename>%'`` — exact equality is unreliable across
+    absolute-vs-relative paths.
+
+    Returns ``None`` when ``source_file`` is absent or no row matches.
+    """
+    if not source_file:
+        return None
+    basename = source_file.rstrip("/").split("/")[-1]
+    if not basename or len(basename) < 4:
+        return None
+    stmt = (
+        select(DataSource)
+        .where(DataSource.content_md.is_not(None))
+        .where(DataSource.content_md.like(f"%{basename}%"))
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
 async def get_or_create_source(
     db: AsyncSession,
     *,
@@ -289,26 +377,36 @@ async def get_or_create_source(
     doi: str | None = None,
     file_hash: str | None = None,
     content_md: str | None = None,
+    source_file: str | None = None,
     source_type: str = "other",
     fields: dict[str, Any] | None = None,
 ) -> tuple[DataSource, bool]:
     """Return an existing :class:`DataSource` matching the inputs, or create one.
 
-    NFM-4089 AC2: this is the single ingest gate every code path must funnel
-    through before INSERTing into ``data_sources``.  It replaces ad-hoc
-    ``DataSource(...)`` + ``db.add(...)`` blocks in:
+    NFM-4089 AC2 + NFM-4088 AC-3/AC-4: this is the single ingest gate every
+    code path must funnel through before INSERTing into ``data_sources``.
+    It replaces ad-hoc ``DataSource(...)`` + ``db.add(...)`` blocks in:
 
       * ``apps/api/src/nfm_db/api/v1/literature.py`` (PDF upload, DOI ingest)
       * ``apps/api/src/nfm_db/services/source_service.py`` (POST /sources)
       * ``apps/api/src/nfm_db/services/extraction_to_db_mapper.py`` (with-DOI, no-DOI)
 
-    Dedup order:
+    Dedup order (applied in this exact sequence):
 
-        1. ``doi`` (matches ``uq_data_sources_doi``).
+        0. **Fail-fast:** raise ``ValueError`` when ``title`` matches the
+           canonical 36-char UUID regex (NFM-4088 AC-4).  Refusing the
+           INSERT keeps the regression from re-emerging.
+        1. ``doi`` (matches ``uq_data_sources_doi``; DOI-present branch).
         2. ``file_hash`` (no DB constraint today — opportunistic).
-        3. ``content_md`` SHA-256 fingerprint over the first 64 KB.
+        3. ``title`` exact equality (NFM-4088 AC-3 fallback 1 — catches
+           placeholder-reuse: ``"Unattributed source (no DOI)"`` collapses
+           to one canonical row across reruns).
+        4. ``content_md`` LIKE-prefix against the ``source_file`` basename
+           (NFM-4088 AC-3 fallback 2 — NFM-1486 PDF upload pipeline).
+        5. ``content_md`` SHA-256 fingerprint over the first 64 KB
+           (NFM-4089 opportunistic; expensive, last resort).
 
-    When all three lookups miss, a fresh :class:`DataSource` is added to the
+    When every lookup misses, a fresh :class:`DataSource` is added to the
     session using ``title``, ``doi``, ``file_hash``, ``content_md``,
     ``source_type`` plus any extras passed via ``fields``.  The caller is
     responsible for ``db.flush()`` / ``db.commit()`` so existing transaction
@@ -328,6 +426,11 @@ async def get_or_create_source(
     content_md:
         Optional extracted Markdown; used for fingerprint dedup when DOI is
         missing and ``file_hash`` differs across ingest runs.
+    source_file:
+        Optional ingest-time path or basename (``item.source_file`` from
+        the extraction mapper).  Used for the LIKE-prefix dedup against
+        ``content_md`` (NFM-1486 case).  Distinct from ``content_md``
+        which holds the actual parsed text.
     source_type:
         One of ``VALID_SOURCE_TYPES`` (``schemas.source``).  Defaults to
         ``"other"`` to match the pre-existing extraction-mapper behaviour.
@@ -343,6 +446,11 @@ async def get_or_create_source(
         ``(source, created)`` — ``created`` is ``True`` only when this call
         actually added a new row to the session.
     """
+    # 0. NFM-4088 AC-4: refuse INSERT when title is a UUID string.  This
+    # is the regression sentinel — the only way an ingest path lands a
+    # UUID in the title column is a logic bug in the upstream chain.
+    _reject_uuid_title(title)
+
     if doi:
         existing = await _find_source_by_doi(db, doi)
         if existing is not None:
@@ -351,7 +459,18 @@ async def get_or_create_source(
         existing = await _find_source_by_file_hash(db, file_hash)
         if existing is not None:
             return existing, False
-    if content_md:
+    if not doi:
+        # NFM-4088 AC-3 fallback 1: title-exact dedup (placeholder reuse).
+        existing = await _find_source_by_title(db, title)
+        if existing is not None:
+            return existing, False
+        # NFM-4088 AC-3 fallback 2: source-file basename LIKE on content_md
+        # (NFM-1486 PDF upload pipeline).  Only when source_file is set and
+        # the baseline title-exact lookup missed.
+        existing = await _find_source_by_content_md_prefix(db, source_file)
+        if existing is not None:
+            return existing, False
+    if not doi and content_md:
         existing = await _find_source_by_content_fingerprint(db, content_md)
         if existing is not None:
             return existing, False

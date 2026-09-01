@@ -48,13 +48,17 @@ services:
     ports:
       # NFM-112 contract: staging API reachable on the host at 127.0.0.1:8001
       - "${STAGING_API_HOST_PORT:-8001}:8000"
+    # Use env_file (shell-style KEY=VALUE) instead of YAML environment:
+    # with environment:, docker compose v5.5.0 YAML-re-parses the interpolated
+    # ${STAGING_CORS_ORIGINS:-["..."]} value as a flow sequence and strips the
+    # inner double quotes on re-serialisation, producing unparseable CORS env.
+    # env_file passes values verbatim — no YAML re-parsing. The api env file
+    # is generated at deploy time by scripts/staging_deploy.sh from the
+    # STAGING_* vars in docker/.env.staging (NFM-4077).
+    env_file:
+      - docker/.env.staging.api
     environment:
-      # Staging contract vars (STAGING_* prefix) mapped to the app's NFM_* env.
-      NFM_DATABASE_URL: ${STAGING_DATABASE_URL:-postgresql+asyncpg://nfm:${STAGING_POSTGRES_PASSWORD:?Set STAGING_POSTGRES_PASSWORD}@nucpot-staging-db:5432/nfm_db}
-      NFM_SECRET_KEY: ${STAGING_API_SECRET_KEY:?Set STAGING_API_SECRET_KEY in docker/.env.staging}
-      NFM_CORS_ORIGINS: ${STAGING_CORS_ORIGINS:-["http://localhost:3000"]}
-      NFM_DEBUG: ${STAGING_DEBUG:-false}
-      NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${STAGING_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      # Service-discovery vars only (compose service names, not host env).
       NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
       NFM_LIGHTRAG_PORT: "9621"
     depends_on:

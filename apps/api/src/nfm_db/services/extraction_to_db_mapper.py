@@ -43,8 +43,24 @@ from nfm_db.services.health_event_emitter import (
     emit_health_event,
 )
 from nfm_db.services.source_service import (
+    _UUID_TITLE_PATTERN,
+    _reject_uuid_title,
     get_or_create_source,
 )
+
+# Re-exported for backward compat with NFM-4088 unit tests:
+#   tests/test_nfm4088_write_path_guard.py imports
+#   ``_reject_uuid_title`` and ``_UUID_TITLE_PATTERN`` from this module. The
+#   canonical home for both helpers is :mod:`nfm_db.services.source_service`
+#   — they were lifted there in NFM-4089 so ``get_or_create_source`` could
+#   apply the UUID-title rejection before any DB lookup. Keep them visible
+#   from the mapper to avoid churn in the test imports while the single-gate
+#   shape stabilises.
+__all__ = [
+    "_UUID_TITLE_PATTERN",
+    "_reject_uuid_title",
+    "map_and_persist",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +84,17 @@ def _is_dedup_conflict(exc: IntegrityError) -> bool:
     """True if the IntegrityError came from a 5-tuple unique violation."""
     msg = str(exc.orig).lower() if exc.orig else str(exc).lower()
     return any(frag.lower() in msg for frag in _DEDUP_CONFLICT_FRAGMENTS)
+
+
+#: NFM-4088 — placeholder titles that the DOI-empty branch emits when
+#: neither ``reference`` nor ``source_file`` is supplied.  These were
+#: reused across distinct literature sources in production; the
+#: dedup migration 070 collapses them.  The mapper still allows new
+#: INSERTs under these titles (re-run compatibility) but prefers a
+#: dedup hit on file_hash or content_md first.
+_BORING_PLACEHOLDER_TITLES: frozenset[str] = frozenset(
+    {"Unknown Source", "Unattributed source (no DOI)"}
+)
 
 
 #: Pydantic Literal allowed values for ExtractedProperty.property_category.
@@ -694,19 +721,23 @@ async def map_and_persist(
                 or f"Unattributed source ({item.source_doi or 'no DOI'})"
             )
 
-            # NFM-4089 AC2: funnel both DOI-present and DOI-absent branches
-            # through the central dedup gate.  The helper falls through to
-            # INSERT only when DOI, file_hash, and content_md fingerprint all
-            # miss — closing the bypass that produced the 14 UUID-titled rows
-            # NFM-4084 surfaced in production.  When ``source_file`` looks
-            # like a stable path we also pass it as ``content_md`` so the
-            # fingerprint lookup catches re-ingest across re-runs.
+            # NFM-4089 AC2 + NFM-4088 AC-3/AC-4 — funnel BOTH DOI-present and
+            # DOI-absent branches through the central dedup gate. The helper
+            # falls through to INSERT only when DOI, file_hash, title-exact,
+            # content_md-prefix, and content_md-fingerprint all miss. The
+            # UUID-title rejection (NFM-4088 AC-4) runs *before* any DB
+            # lookup, so the regression that produced 14 UUID-titled rows
+            # cannot re-emerge from this site. ``source_file`` is passed
+            # separately from ``content_md`` so the LIKE-prefix dedup sees
+            # the ingest-time path while the SHA-256 fingerprint sees only
+            # the parsed text (NFM-1486 PDF upload reuse case).
             source, was_created = await get_or_create_source(
                 db,
                 title=title,
                 doi=doi,
                 file_hash=None,
-                content_md=item.source_file if (not doi and item.source_file) else None,
+                content_md=None,
+                source_file=item.source_file if (not doi and item.source_file) else None,
                 source_type="journal_article" if doi else "other",
             )
             if was_created:
@@ -925,6 +956,15 @@ async def _find_source_by_doi(
     from nfm_db.services.source_service import _find_source_by_doi as _impl
 
     return await _impl(db, doi)
+
+
+# Note: NFM-4088 helpers ``_reject_uuid_title``, ``_find_source_by_title``,
+# and ``_find_source_by_content_md_prefix`` were lifted into
+# :mod:`nfm_db.services.source_service` (see imports above) so
+# :func:`get_or_create_source` runs the UUID-title rejection and the
+# title-exact / content_md-prefix dedups *before* the DOI / file_hash /
+# content_md-fingerprint cascade. They are re-exported at module top for
+# backward compatibility with NFM-4088 unit tests.
 
 
 async def _find_material_by_formula(

@@ -43,6 +43,10 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     """A self-contained fake repo where the deploy script can find its lib.
 
     Returns (fake_repo, docker_bin, events_path).
+
+    NFM-4066: the deploy script now derives ``STAGING_IMAGE_TAG`` from
+    ``git rev-parse HEAD``. We init a real git checkout here so the
+    derivation step does not die before the test body can run.
     """
     fake = tmp_path / "fake_repo"
     scripts = fake / "scripts"
@@ -70,6 +74,21 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     # Minimal compose file so `docker compose ... build` is at least parseable
     # by the stub.
     (fake / "docker-compose.staging.yml").write_text("services: {}\n")
+
+    # NFM-4066: initialize a git checkout so the deploy script's
+    # ``git rev-parse HEAD`` derivation step succeeds. Without this the
+    # script aborts with "must run from inside the nucpot git repo"
+    # before any of the test bodies can run.
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=fake,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=fake, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=fake, check=True)
+    (fake / "README.md").write_text("fixture\n")
+    subprocess.run(["git", "add", "README.md"], cwd=fake, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=fake, check=True)
 
     bin_dir = tmp_path / "bin"
     events_path = tmp_path / "events.jsonl"
