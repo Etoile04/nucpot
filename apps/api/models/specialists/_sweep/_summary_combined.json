@@ -1,0 +1,262 @@
+{
+  "protocol_version": "v4.0-sweep/NFM-4031-PREREG",
+  "dataset_source": "v3.0 2,909-row PBE DFT export (NFM-1540 PathB)",
+  "feature_vocab": [
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "random_state": 42,
+  "n_splits": 5,
+  "sweep_grid_v1": {
+    "max_iter": [
+      200
+    ],
+    "max_depth": [
+      4,
+      6
+    ],
+    "min_samples_leaf": [
+      5,
+      20
+    ],
+    "learning_rate": [
+      0.05,
+      0.1
+    ]
+  },
+  "sweep_grid_v2": {
+    "max_iter": [
+      200,
+      400
+    ],
+    "max_depth": [
+      3,
+      5,
+      7
+    ],
+    "min_samples_leaf": [
+      5,
+      20,
+      50
+    ],
+    "learning_rate": [
+      0.03,
+      0.1
+    ]
+  },
+  "param_mapping": {
+    "max_iter": "n_estimators",
+    "max_depth": "max_depth",
+    "min_samples_leaf": "min_samples_split (HistGBM equivalent)",
+    "learning_rate": "learning_rate"
+  },
+  "grid_combination_rule": "best per-system R^2 across v1 (8 configs) and v2 (36 configs)",
+  "ac2_verdict": {
+    "ac2_pass_count": 2,
+    "ac2_pass_threshold": 8,
+    "ac2_pass": false,
+    "unviable_trigger_count": 7,
+    "unviable_threshold": 3,
+    "option_b_unviable": true,
+    "borderline_count": 1,
+    "passing_systems": [
+      "Zr",
+      "Ru"
+    ],
+    "borderline_systems": [
+      "Nb"
+    ],
+    "failing_systems": [
+      "Mo",
+      "Ti",
+      "Cr",
+      "Mn",
+      "Al",
+      "Fe",
+      "V"
+    ],
+    "verdict": "AC-2 FAILS: only 2/10 systems reach R\u00b2 >= 0.90 (threshold 8/10); 7/10 systems sit below R\u00b2 0.80 (Option B UNVIABLE trigger fired at 3/10). Per the locked NFM-4031 PREREG decision rule: revert to Option C (NFM-3996 \u00a76 step 4) \u2014 keep v3.0 + NFM-3959 patch as production, abandon the per-element-system specialist path. Best-hyperparameter artifacts preserved for posterity under apps/api/models/specialists/_sweep/."
+  },
+  "per_system": [
+    {
+      "element_system": "Mo",
+      "n_samples": 235,
+      "best_r2": -0.34,
+      "best_r2_std": 0.5743,
+      "baseline_r2": -0.1677,
+      "lift_over_dummy_pp": -17.23,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 50,
+        "learning_rate": 0.03
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Mo_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Zr",
+      "n_samples": 237,
+      "best_r2": 0.9834,
+      "best_r2_std": 0.0158,
+      "baseline_r2": -0.0121,
+      "lift_over_dummy_pp": 99.55,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.1
+      },
+      "chosen_grid": "v1",
+      "log_path": "apps/api/models/specialists/_sweep/Zr_sweep.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Ti",
+      "n_samples": 227,
+      "best_r2": 0.5644,
+      "best_r2_std": 0.2649,
+      "baseline_r2": -0.0598,
+      "lift_over_dummy_pp": 62.42,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 50,
+        "learning_rate": 0.03
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Ti_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Nb",
+      "n_samples": 224,
+      "best_r2": 0.8197,
+      "best_r2_std": 0.2215,
+      "baseline_r2": -0.0796,
+      "lift_over_dummy_pp": 89.93,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 6,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.05
+      },
+      "chosen_grid": "v1",
+      "log_path": "apps/api/models/specialists/_sweep/Nb_sweep.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Cr",
+      "n_samples": 195,
+      "best_r2": 0.0637,
+      "best_r2_std": 0.085,
+      "baseline_r2": -0.0102,
+      "lift_over_dummy_pp": 7.39,
+      "best_params": {
+        "max_iter": 400,
+        "max_depth": 3,
+        "min_samples_leaf": 50,
+        "learning_rate": 0.1
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Cr_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Ru",
+      "n_samples": 187,
+      "best_r2": 0.9941,
+      "best_r2_std": 0.0055,
+      "baseline_r2": -0.0225,
+      "lift_over_dummy_pp": 101.66,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.05
+      },
+      "chosen_grid": "v1",
+      "log_path": "apps/api/models/specialists/_sweep/Ru_sweep.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Mn",
+      "n_samples": 170,
+      "best_r2": 0.7231,
+      "best_r2_std": 0.3918,
+      "baseline_r2": -0.0456,
+      "lift_over_dummy_pp": 76.87,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.1
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Mn_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Al",
+      "n_samples": 164,
+      "best_r2": -2.8999,
+      "best_r2_std": 2.1641,
+      "baseline_r2": -1.5873,
+      "lift_over_dummy_pp": -131.26,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 50,
+        "learning_rate": 0.03
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Al_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "Fe",
+      "n_samples": 131,
+      "best_r2": 0.3962,
+      "best_r2_std": 0.3817,
+      "baseline_r2": -0.0747,
+      "lift_over_dummy_pp": 47.09,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.03
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/Fe_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    },
+    {
+      "element_system": "V",
+      "n_samples": 105,
+      "best_r2": 0.1637,
+      "best_r2_std": 0.2092,
+      "baseline_r2": -0.1122,
+      "lift_over_dummy_pp": 27.59,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 3,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.03
+      },
+      "chosen_grid": "v2",
+      "log_path": "apps/api/models/specialists/_sweep/V_sweep_v2.json",
+      "rd2_label": "[EXPLORATORY]"
+    }
+  ]
+}

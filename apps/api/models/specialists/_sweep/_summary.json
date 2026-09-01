@@ -1,0 +1,207 @@
+{
+  "protocol_version": "v4.0-sweep/NFM-4031-PREREG",
+  "dataset_source": "v3.0 2,909-row PBE DFT export (NFM-1540 PathB)",
+  "random_state": 42,
+  "n_splits": 5,
+  "feature_vocab": [
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "sweep_grid": {
+    "max_iter": [
+      200
+    ],
+    "max_depth": [
+      4,
+      6
+    ],
+    "min_samples_leaf": [
+      5,
+      20
+    ],
+    "learning_rate": [
+      0.05,
+      0.1
+    ]
+  },
+  "param_mapping": {
+    "max_iter": "n_estimators",
+    "max_depth": "max_depth",
+    "min_samples_leaf": "min_samples_split (HistGBM equivalent)",
+    "learning_rate": "learning_rate"
+  },
+  "n_systems": 10,
+  "total_seconds": 42.121,
+  "per_system": [
+    {
+      "element_system": "Zr",
+      "n_samples": 237,
+      "best_r2": 0.9834,
+      "best_r2_std": 0.0158,
+      "baseline_r2": -0.0121,
+      "lift_over_dummy_pp": 99.55,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.1
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Zr_sweep.json"
+    },
+    {
+      "element_system": "Mo",
+      "n_samples": 235,
+      "best_r2": -0.5126,
+      "best_r2_std": 1.0503,
+      "baseline_r2": -0.1677,
+      "lift_over_dummy_pp": -34.49,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Mo_sweep.json"
+    },
+    {
+      "element_system": "Ti",
+      "n_samples": 227,
+      "best_r2": 0.5375,
+      "best_r2_std": 0.2188,
+      "baseline_r2": -0.0598,
+      "lift_over_dummy_pp": 59.73,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 6,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Ti_sweep.json"
+    },
+    {
+      "element_system": "Nb",
+      "n_samples": 224,
+      "best_r2": 0.8197,
+      "best_r2_std": 0.2215,
+      "baseline_r2": -0.0796,
+      "lift_over_dummy_pp": 89.93,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 6,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Nb_sweep.json"
+    },
+    {
+      "element_system": "Cr",
+      "n_samples": 195,
+      "best_r2": 0.0427,
+      "best_r2_std": 0.0949,
+      "baseline_r2": -0.0102,
+      "lift_over_dummy_pp": 5.29,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 6,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Cr_sweep.json"
+    },
+    {
+      "element_system": "Ru",
+      "n_samples": 187,
+      "best_r2": 0.9941,
+      "best_r2_std": 0.0055,
+      "baseline_r2": -0.0225,
+      "lift_over_dummy_pp": 101.66,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 5,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Ru_sweep.json"
+    },
+    {
+      "element_system": "Mn",
+      "n_samples": 170,
+      "best_r2": 0.723,
+      "best_r2_std": 0.3918,
+      "baseline_r2": -0.0456,
+      "lift_over_dummy_pp": 76.86,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.1
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Mn_sweep.json"
+    },
+    {
+      "element_system": "Al",
+      "n_samples": 164,
+      "best_r2": -7.6295,
+      "best_r2_std": 5.0982,
+      "baseline_r2": -1.5873,
+      "lift_over_dummy_pp": -604.22,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 6,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Al_sweep.json"
+    },
+    {
+      "element_system": "Fe",
+      "n_samples": 131,
+      "best_r2": 0.3941,
+      "best_r2_std": 0.3814,
+      "baseline_r2": -0.0747,
+      "lift_over_dummy_pp": 46.88,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/Fe_sweep.json"
+    },
+    {
+      "element_system": "V",
+      "n_samples": 105,
+      "best_r2": 0.1427,
+      "best_r2_std": 0.1541,
+      "baseline_r2": -0.1122,
+      "lift_over_dummy_pp": 25.48,
+      "best_params": {
+        "max_iter": 200,
+        "max_depth": 4,
+        "min_samples_leaf": 20,
+        "learning_rate": 0.05
+      },
+      "rd2_label": "[EXPLORATORY]",
+      "log_path": "apps/api/models/specialists/_sweep/V_sweep.json"
+    }
+  ]
+}

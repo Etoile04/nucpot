@@ -1,0 +1,205 @@
+{
+  "best_config": {
+    "mean_mae": 0.0001,
+    "mean_r2": 0.994073,
+    "mean_rmse": 0.00018,
+    "n_splits": 5,
+    "params": {
+      "learning_rate": 0.05,
+      "max_depth": 4,
+      "max_iter": 200,
+      "min_samples_leaf": 5
+    },
+    "per_fold_mae": [
+      6.3e-05,
+      8.9e-05,
+      8.2e-05,
+      0.000147,
+      0.000119
+    ],
+    "per_fold_r2": [
+      0.9984,
+      0.997199,
+      0.998009,
+      0.983878,
+      0.992881
+    ],
+    "per_fold_rmse": [
+      9.2e-05,
+      0.000134,
+      0.000117,
+      0.000334,
+      0.000225
+    ],
+    "std_r2": 0.005465
+  },
+  "code_sha256": "800b04176523607f56227ad02f9b6c32287e115a26afe7d6ccd254e21f7d28a3",
+  "cross_system_cv": "GroupKFold(n_splits=5) per apps/api/src/nfm_db/ml/group_kfold_cv.py:36-65 (locked)",
+  "data_sha256": "f0a6e0e48b393a983f2cb296e8b7c54921847afd9f636cae3181e26ded5061bf",
+  "dataset_source": "v3.0 2,909-row PBE DFT export (NFM-1540 PathB)",
+  "element_system": "Ru",
+  "feature_vocab": [
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "feature_vocab_dim": 12,
+  "git_commit_sha": "5bf5682ecb6bced3e9ff9d02f5c7d521d0c24fc2",
+  "n_configs_swept": 8,
+  "n_samples": 187,
+  "n_splits": 5,
+  "paired_r2_baseline": {
+    "fold_r2": [
+      -0.003269,
+      -0.049298,
+      -0.011604,
+      -0.002958,
+      -0.045431
+    ],
+    "interpretation": "lift > 0 means the specialist out-scored the constant-mean predictor on the locked within-system splits; lift < 0 is a fail-closed trigger (NFM-3957 paired-baseline tradition).",
+    "lift_over_dummy_pp": 101.6585,
+    "mean_r2": -0.022512,
+    "n_splits": 5,
+    "paired_with_model_splits": true,
+    "std_r2": 0.020564,
+    "strategy": "DummyRegressor(mean)"
+  },
+  "param_mapping": {
+    "learning_rate": "learning_rate",
+    "max_depth": "max_depth",
+    "max_iter": "n_estimators",
+    "min_samples_leaf": "min_samples_split (HistGBM equivalent)"
+  },
+  "protocol_version": "v4.0-sweep/NFM-4031-PREREG",
+  "random_state": 42,
+  "rd2_label": "[EXPLORATORY]",
+  "rd2_reasons": [
+    "sweep log emitted under pre-registered [EXPLORATORY] envelope; [CONFIRMATORY] re-label fires only after Petrov's specialists land AC-1 confirmatory status (NFM-4034)."
+  ],
+  "rd3_triggered": false,
+  "sweep_grid": {
+    "learning_rate": [
+      0.05,
+      0.1
+    ],
+    "max_depth": [
+      4,
+      6
+    ],
+    "max_iter": [
+      200
+    ],
+    "min_samples_leaf": [
+      5,
+      20
+    ]
+  },
+  "top_5_configs": [
+    {
+      "mean_mae": 0.0001,
+      "mean_r2": 0.994073,
+      "mean_rmse": 0.00018,
+      "params": {
+        "learning_rate": 0.05,
+        "max_depth": 4,
+        "max_iter": 200,
+        "min_samples_leaf": 5
+      },
+      "per_fold_r2": [
+        0.9984,
+        0.997199,
+        0.998009,
+        0.983878,
+        0.992881
+      ],
+      "std_r2": 0.005465
+    },
+    {
+      "mean_mae": 9.9e-05,
+      "mean_r2": 0.994073,
+      "mean_rmse": 0.00018,
+      "params": {
+        "learning_rate": 0.1,
+        "max_depth": 4,
+        "max_iter": 200,
+        "min_samples_leaf": 5
+      },
+      "per_fold_r2": [
+        0.99849,
+        0.997217,
+        0.997926,
+        0.98389,
+        0.992842
+      ],
+      "std_r2": 0.005467
+    },
+    {
+      "mean_mae": 0.000101,
+      "mean_r2": 0.994065,
+      "mean_rmse": 0.000181,
+      "params": {
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "max_iter": 200,
+        "min_samples_leaf": 5
+      },
+      "per_fold_r2": [
+        0.99837,
+        0.99712,
+        0.997999,
+        0.983953,
+        0.992883
+      ],
+      "std_r2": 0.005422
+    },
+    {
+      "mean_mae": 9.9e-05,
+      "mean_r2": 0.994048,
+      "mean_rmse": 0.000181,
+      "params": {
+        "learning_rate": 0.1,
+        "max_depth": 6,
+        "max_iter": 200,
+        "min_samples_leaf": 5
+      },
+      "per_fold_r2": [
+        0.998391,
+        0.997145,
+        0.99793,
+        0.983949,
+        0.992827
+      ],
+      "std_r2": 0.005422
+    },
+    {
+      "mean_mae": 0.000172,
+      "mean_r2": 0.983413,
+      "mean_rmse": 0.000309,
+      "params": {
+        "learning_rate": 0.1,
+        "max_depth": 4,
+        "max_iter": 200,
+        "min_samples_leaf": 20
+      },
+      "per_fold_r2": [
+        0.994175,
+        0.99011,
+        0.988759,
+        0.955508,
+        0.988513
+      ],
+      "std_r2": 0.014099
+    }
+  ],
+  "training_seconds": 4.3418,
+  "within_system_cv": "KFold(n_splits=5, shuffle=True, random_state=42)"
+}
