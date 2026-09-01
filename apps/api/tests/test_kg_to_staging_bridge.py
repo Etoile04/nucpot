@@ -27,6 +27,7 @@ from nfm_db.services.kg_to_staging_bridge import (
     bridge_kg_to_staging,
     confidence_from_property_measurement,
 )
+from tests._helpers.owen2023_corpus import snapshot_labels
 
 # --- pure helpers ----------------------------------------------------------
 
@@ -41,6 +42,172 @@ from nfm_db.services.kg_to_staging_bridge import (
     ],
 )
 def test_canonical_element_system(label, expected):
+    assert _canonical_element_system(label) == expected
+
+
+# NFM-4037: morphology adjectives + Cr-bearing UO2 labels that the
+# Owen2023 corpus (source 9320cb50) emits on Material KGNode rows.
+# The F8 scorecard (``audit/f8_scorecard_v050.sql``) only accepts
+# ``element_system IN ('UO2', 'UO2+Cr', 'U-Cr-O')`` so every label in
+# this table must collapse onto one of those three.  Regression tests
+# for the pre-existing subscript path (``U₂Mo`` → ``U-Mo``) live above.
+#
+# NFM-4048: this table is a superset of the production corpus.  The
+# prod half is cross-checked against
+# ``tests/fixtures/owen2023_material_labels.json`` by
+# ``test_canonical_element_system_covers_every_owen2023_label``, so a
+# prod label can no longer be missing from here (QA warning W1).  The
+# remaining rows are deliberate *defensive* coverage for labels prod
+# does not currently hold (``crystalline UO2``, ``nano-Cr``, the
+# ``U-10Mo`` pass-throughs) — keep them.
+_OWEN2023_LABELS: list[tuple[str, str]] = [
+    # Undoped UO2 — the strip-loop must remove the adjective but leave
+    # a label the F8 ``element_system = 'UO2'`` predicate matches.
+    ("UO2", "UO2"),
+    ("amorphous UO2", "UO2"),
+    ("crystalline UO2", "UO2"),
+    ("polycrystalline UO2", "UO2"),
+    # Cr-bearing UO2 — every label collapses onto 'UO2+Cr' (the F8
+    # scorecard accepts BOTH 'UO2+Cr' and 'U-Cr-O'; the Owen2023 corpus
+    # is matrix+dopant so the matrix+dopant form is the unambiguous pick).
+    # NFM-4048 AC-1 (QA warning W1): the at.%Cr ladder is pinned at every
+    # concentration prod actually holds — 10/20/30/40/50, bare AND
+    # amorphous-prefixed.  NFM-4037 shipped with 20/40 (bare-amorphous)
+    # and 40 (bare) unpinned; they worked via substring matching but no
+    # test would have caught a regression.
+    ("UO2-10at.%Cr", "UO2+Cr"),
+    ("UO2-20at.%Cr", "UO2+Cr"),
+    ("UO2-30at.%Cr", "UO2+Cr"),
+    ("UO2-40at.%Cr", "UO2+Cr"),
+    ("UO2-50at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-10at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-20at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-30at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-40at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-50at.%Cr", "UO2+Cr"),
+    ("Cr-doped UO2", "UO2+Cr"),
+    ("Cr-doped amorphous UO2", "UO2+Cr"),
+    ("undoped and Cr-doped amorphous UO2", "UO2+Cr"),
+    # Parenthetical variants: the strip-loop doesn't reach inside the
+    # parens, but the Cr/UO2 substring check on the full label still
+    # resolves to 'UO2+Cr'.  ``UO2 (amorphous)`` has no Cr anywhere, so
+    # it must land on the undoped 'UO2' bucket — pinning it guards the
+    # has_cr gate against a future edit that keys off the paren text.
+    ("amorphous UO2 (undoped and Cr-doped)", "UO2+Cr"),
+    ("Cr-doped UO2 (amorphous)", "UO2+Cr"),
+    ("UO2 (amorphous)", "UO2"),
+    # Pass-through guards: bare Cr without UO2 must NOT be coerced into
+    # 'UO2+Cr' (it would land on a label that doesn't describe its
+    # chemistry).  Pre-NFM-4037 pass-through behaviour is preserved.
+    ("Cr", "Cr"),
+    ("Cr2O3", "Cr2O3"),
+    # Non-UO2 alloys: still pass through so the existing U-10Mo /
+    # polycrystalline paths keep working.
+    ("U-10Mo", "U-10Mo"),
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("nano-Cr", "Cr"),  # bare Cr after prefix strip; pass-through.
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _OWEN2023_LABELS)
+def test_canonical_element_system_owen2023(label, expected):
+    """NFM-4037 AC-1: every Owen2023 (source 9320cb50) Material label
+    must collapse onto an F8-scorecard-recognised element_system."""
+    assert _canonical_element_system(label) == expected
+
+
+def test_canonical_element_system_covers_every_owen2023_label():
+    """NFM-4048 AC-2 (audit pin, tightened): drive the pin from the
+    PRODUCTION corpus, not from this module's own allowlist.
+
+    NFM-4037 shipped this test comparing ``_OWEN2023_LABELS`` against
+    itself, which is vacuous: it passes even when the pin covers only
+    12 of the 17 labels prod holds (QA warnings W1 + W2).  The snapshot
+    at ``tests/fixtures/owen2023_material_labels.json`` records every
+    label in ``kg_nodes`` where ``source_id = 9320cb50-…`` and
+    ``node_type = 'Material'``; this test asserts
+
+      1. every prod label is pinned here, and
+      2. the pinned expectation is what the function actually returns.
+
+    So a corpus that grows fails the suite as soon as the snapshot is
+    refreshed (``scripts/nfm-4048-refresh-owen2023-label-snapshot.py``)
+    instead of drifting silently.  Extra non-prod labels in the pin
+    table are allowed and wanted — they are defensive coverage for
+    labels a future extraction could plausibly emit.
+    """
+    pinned = dict(_OWEN2023_LABELS)
+    prod_labels = snapshot_labels()
+
+    unpinned = [label for label in prod_labels if label not in pinned]
+    assert not unpinned, (
+        f"{len(unpinned)} production Owen2023 label(s) are not pinned in "
+        f"_OWEN2023_LABELS: {unpinned}. Add each one with its expected "
+        "element_system (and check the F8 scorecard predicate still "
+        "accepts it) before this corpus reaches staging."
+    )
+
+    actual = {label: _canonical_element_system(label) for label in prod_labels}
+    expected = {label: pinned[label] for label in prod_labels}
+    assert actual == expected
+
+
+def test_owen2023_pin_table_is_internally_consistent():
+    """Every pinned label — prod or defensive — must still canonicalise to
+    the value pinned beside it.  Guards the non-prod defensive rows
+    (``crystalline UO2``, ``nano-Cr``, ``U-10Mo``, …) that the
+    prod-corpus pin above does not reach."""
+    actual_pairs = sorted(
+        (label, _canonical_element_system(label)) for label, _ in _OWEN2023_LABELS
+    )
+    assert actual_pairs == sorted(set(_OWEN2023_LABELS))
+
+
+def test_canonical_element_system_preserves_subscript_path():
+    """Regression guard for the original NFM-3478 alloy path."""
+    assert _canonical_element_system("U₂Mo") == "U-Mo"
+    # Subscript plus adjective: subscript path wins (we never strip
+    # adjectives on subscript-bearing labels — the alloy branch
+    # returns first).
+    assert _canonical_element_system("amorphous U₂Mo") == "U-Mo"
+
+
+# NFM-4037 AC-3: pin the pre-existing pass-through contract for every
+# label the change does NOT touch.  If a non-Owen2023 source's row gets
+# renormalised, the staging surface for that source silently shifts and
+# the dedup hash changes — this list is the regression guard.
+_REGRESSION_LABELS: list[tuple[str, str]] = [
+    # Subscript-bearing alloy notation — pre-NFM-4037 alloy path.
+    ("U₂Mo", "U-Mo"),
+    ("U₃Si₂", "U-Si"),
+    # Plain formulas — pre-NFM-4037 pass-through.
+    ("U", "U"),
+    ("Mo", "Mo"),
+    ("Cr", "Cr"),
+    ("U3Si2", "U3Si2"),
+    ("Cr2O3", "Cr2O3"),
+    ("Al2O3", "Al2O3"),
+    # Alloy formulas with separator — pre-NFM-4037 pass-through.
+    ("U-10Mo", "U-10Mo"),
+    ("Zr-4", "Zr-4"),
+    # Adjective-prefixed labels whose chemistry is NOT UO2 — strip the
+    # adjective but keep the chemistry.  These were previously
+    # pass-through (the old code returned ``plain`` for ASCII labels);
+    # the strip-loop now collapses them onto the bare chemistry too.
+    # Pin the new behaviour so a future edit cannot silently regress
+    # this into "polycrystalline U-10Mo" leaking back onto the staging
+    # surface.
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("crystalline Al2O3", "Al2O3"),
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _REGRESSION_LABELS)
+def test_canonical_element_system_non_owen2023_pass_through(label, expected):
+    """NFM-4037 AC-3: non-Owen2023 sources must not see their staging
+    surface silently shift.  Every label the change does NOT touch must
+    canonicalise to its pre-NFM-4037 value (or, for adjective-bearing
+    non-UO2 labels, the bare chemistry)."""
     assert _canonical_element_system(label) == expected
 
 
@@ -739,9 +906,7 @@ async def test_v3_pm_value_expression_only_no_numeric_row(db_session, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_nfm4038_pm_query_chains_dataset_material_selectinload(
-    db_session, monkeypatch
-):
+async def test_nfm4038_pm_query_chains_dataset_material_selectinload(db_session, monkeypatch):
     """NFM-4038 AC-2: the bridge's PropertyMeasurement select() must
     chain ``selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material)``
     so the loop reading ``pm.dataset.material`` does not trigger a
@@ -801,8 +966,7 @@ async def test_nfm4038_pm_query_chains_dataset_material_selectinload(
     assert written == 1
 
     assert len(captured_stmts) == 1, (
-        "bridge must issue exactly one PM select; "
-        f"captured {len(captured_stmts)}"
+        f"bridge must issue exactly one PM select; captured {len(captured_stmts)}"
     )
     pm_stmt = captured_stmts[0]
 
@@ -811,9 +975,7 @@ async def test_nfm4038_pm_query_chains_dataset_material_selectinload(
     # ``selectinload(A.b).selectinload(B.c)`` produces a single ``Load``
     # whose path is [A mapper, A.b rel, B mapper, B.c rel, C mapper].
     # We walk the path of every Load and look for the Material mapper.
-    load_options = [
-        o for o in (pm_stmt._with_options or ()) if isinstance(o, Load)
-    ]
+    load_options = [o for o in (pm_stmt._with_options or ()) if isinstance(o, Load)]
     assert load_options, "bridge PM select has no loader Load options"
 
     def _path_targets(load: Load, target_cls: type) -> bool:
@@ -846,9 +1008,7 @@ async def test_nfm4038_pm_query_chains_dataset_material_selectinload(
 
 
 @pytest.mark.asyncio
-async def test_nfm4038_bridge_does_not_lazy_load_pm_dataset_material(
-    db_session, monkeypatch
-):
+async def test_nfm4038_bridge_does_not_lazy_load_pm_dataset_material(db_session, monkeypatch):
     """NFM-4038 AC-1 + AC-3: running the bridge against a real
     PropertyMeasurement row does not raise MissingGreenlet.
 

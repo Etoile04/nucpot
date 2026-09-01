@@ -50,6 +50,8 @@ known-first-party = ["nfm_db"]
 # N999 dash-in-filename rule does not apply to it.
 [tool.ruff.lint.per-file-ignores]
 "scripts/nfm-4012-unknown-property-enumeration.py" = ["N999"]
+# NFM-4048: same hyphenated `nfm-<issue>-<slug>.py` script convention.
+"scripts/nfm-4048-refresh-owen2023-label-snapshot.py" = ["N999"]
 
 [tool.mypy]
 python_version = "3.12"
