@@ -355,6 +355,7 @@ from nfm_db.models.material import Material  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
     Dataset,
     PropertyCategory,
+    PropertyMeasurement,
     PropertyType,
 )
 from nfm_db.models.source import DataSource  # noqa: E402
@@ -706,3 +707,199 @@ async def test_v3_pm_value_expression_only_no_numeric_row(db_session, monkeypatc
     # PM row still surfaces as context for downstream visibility.
     pm_logs = [rec for rec in caplog.records if rec.message == "bridge.pm.expression_only"]
     assert len(pm_logs) == 1, "expected 1 expression-only log entry to carry the text into context"
+
+
+# --- NFM-4038: bridge must not lazy-load pm.dataset.material ----------------
+#
+# Production crash on the deployed image:
+#
+#     sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+#       can't call await_only() here. Was IO attempted in an unexpected place?
+#
+# The bridge's PM select() set up
+#     selectinload(PropertyMeasurement.dataset)
+# but the loop at kg_to_staging_bridge.py:369 reads
+#     pm.dataset.material
+# — a *nested* relationship on ``Dataset`` that is NOT covered by the
+# first selectinload.  asyncpg rejects the sync IO that the implicit
+# lazy load triggers inside the async greenlet.
+#
+# Two-part regression test:
+#  (1) The bridge's PM select() must chain
+#      ``selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material)``
+#      so the Material row is fetched in the second selectinload IN query
+#      rather than as a per-row lazy load inside the loop.  Pinned via
+#      statement introspection so this test fails BEFORE the fix and
+#      passes AFTER.
+#  (2) The end-to-end bridge call against a real PropertyMeasurement
+#      row must complete without raising MissingGreenlet.  Column-level
+#      accesses on ``pm.property_type.name`` / ``pm.unit.symbol`` do NOT
+#      need eager loading (they are columns on already-loaded rows);
+#      only the nested ``Dataset → Material`` relationship does.
+
+
+@pytest.mark.asyncio
+async def test_nfm4038_pm_query_chains_dataset_material_selectinload(
+    db_session, monkeypatch
+):
+    """NFM-4038 AC-2: the bridge's PropertyMeasurement select() must
+    chain ``selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material)``
+    so the loop reading ``pm.dataset.material`` does not trigger a
+    per-row lazy load.
+
+    Before the fix the query only carries the outer selectinload; the
+    Material relationship is left to implicit lazy loading, which
+    asyncpg rejects with ``MissingGreenlet`` inside the async greenlet.
+
+    We assert on the SQLAlchemy ``Load`` option tree attached to the
+    captured PM select: the chained option's path must terminate at the
+    ``Material`` mapper.  This is the public, documented API for
+    inspecting loader strategies in SQLAlchemy 2.x and does not depend
+    on private internals.
+    """
+    from sqlalchemy.orm import Load
+    from sqlalchemy.sql import Select
+
+    source_id = "00000000-0000-0000-0000-00000000d038"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+
+    # Real PM row so the same dialect/SQLAlchemy codepath runs in test.
+    pm = PropertyMeasurement(
+        id=_uuid.uuid4(),
+        dataset_id=dataset.id,
+        property_type_id=property_type.id,
+        unit_id=unit.id,
+        value_scalar=42.0,
+        method="DFT",
+        conditions_hash="x" * 40,
+    )
+    db_session.add(pm)
+    await db_session.flush()
+
+    captured_stmts: list[Select] = []
+    real_execute = db_session.execute
+
+    async def _capturing_execute(stmt, *a, **kw):
+        sql = str(stmt).lower()
+        # Capture the bridge's PM select so we can introspect its
+        # loader option tree.  Other queries (staging insert, KG queries)
+        # are not relevant here.
+        if "property_measurements" in sql and isinstance(stmt, Select):
+            captured_stmts.append(stmt)
+        return await real_execute(stmt, *a, **kw)
+
+    monkeypatch.setattr(db_session, "execute", _capturing_execute)
+
+    written = await bridge_kg_to_staging(
+        db_session,
+        source_id=source_id,
+        corpus_id="NFM4038",
+        source_doi="10.0000/nfm4038",
+    )
+    assert written == 1
+
+    assert len(captured_stmts) == 1, (
+        "bridge must issue exactly one PM select; "
+        f"captured {len(captured_stmts)}"
+    )
+    pm_stmt = captured_stmts[0]
+
+    # SQLAlchemy exposes loader options via ``_with_options``; each entry
+    # is a ``Load`` whose ``.path`` walks the chain.  Chained
+    # ``selectinload(A.b).selectinload(B.c)`` produces a single ``Load``
+    # whose path is [A mapper, A.b rel, B mapper, B.c rel, C mapper].
+    # We walk the path of every Load and look for the Material mapper.
+    load_options = [
+        o for o in (pm_stmt._with_options or ()) if isinstance(o, Load)
+    ]
+    assert load_options, "bridge PM select has no loader Load options"
+
+    def _path_targets(load: Load, target_cls: type) -> bool:
+        """True iff the loader's chain reaches the given ORM class."""
+        path = getattr(load, "path", None)
+        if path is None:
+            return False
+        for node in path:
+            cls = getattr(node, "class_", None)
+            if cls is target_cls:
+                return True
+            mapper = getattr(node, "mapper", None)
+            if mapper is not None and getattr(mapper, "class_", None) is target_cls:
+                return True
+        return False
+
+    assert any(_path_targets(opt, Material) for opt in load_options), (
+        "NFM-4038 regression: bridge PM select does NOT chain "
+        "selectinload(Dataset.material); the loader option tree has "
+        f"no Load whose path reaches Material.  Options seen: "
+        f"{[(type(o).__name__, getattr(o, 'path', None)) for o in load_options]}"
+    )
+
+    # Outer datasets selectinload must still be present so ``pm.dataset``
+    # itself does not lazy-load.
+    assert any(_path_targets(opt, Dataset) for opt in load_options), (
+        "bridge PM select lost selectinload(PropertyMeasurement.dataset); "
+        f"options: {[type(o).__name__ for o in load_options]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_nfm4038_bridge_does_not_lazy_load_pm_dataset_material(
+    db_session, monkeypatch
+):
+    """NFM-4038 AC-1 + AC-3: running the bridge against a real
+    PropertyMeasurement row does not raise MissingGreenlet.
+
+    The previous test pins the eager-loading shape; this test pins the
+    end-to-end behaviour: the bridge completes the PM loop on a real
+    row whose ``Dataset.material`` relationship is fetched through the
+    same selectinload chain.  If a future change drops the chain (or
+    replaces selectinload with a lazy strategy) the loop crashes here
+    on asyncpg-backed sessions and the bridge is unusable on production.
+    """
+    source_id = "00000000-0000-0000-0000-00000000d039"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+
+    pm = PropertyMeasurement(
+        id=_uuid.uuid4(),
+        dataset_id=dataset.id,
+        property_type_id=property_type.id,
+        unit_id=unit.id,
+        value_scalar=12.5,
+        method="ADP",
+        conditions_hash="y" * 40,
+    )
+    db_session.add(pm)
+    await db_session.flush()
+
+    written = await bridge_kg_to_staging(
+        db_session,
+        source_id=source_id,
+        corpus_id="NFM4038E2E",
+        source_doi="10.0000/nfm4038e2e",
+    )
+    assert written == 1
+
+    from sqlalchemy import select as _select
+
+    rows = (
+        (
+            await db_session.execute(
+                _select(RefGapFillStaging).where(RefGapFillStaging.source == "NFM4038E2E")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    # Element-system + property name confirm pm.dataset.material
+    # AND pm.property_type.name were accessible inside the async loop.
+    assert row.element_system == "U-Mo"
+    assert row.property_name == "bulk_modulus"
+    assert row.value == pytest.approx(12.5)
+    assert row.unit == "GPa"

@@ -42,7 +42,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import KGEdge, KGNode
-from nfm_db.models.property import PropertyMeasurement
+from nfm_db.models.property import Dataset, PropertyMeasurement
 from nfm_db.models.ref_gap_fill import Confidence, RefGapFillStaging, StagingStatus
 from nfm_db.services.quality_gate import compute_dedup_hash
 
@@ -355,7 +355,16 @@ async def bridge_kg_to_staging(
                 .join(PropertyMeasurement.dataset)
                 .where(PropertyMeasurement.dataset.has(source_id=source_uuid))
                 .options(
-                    selectinload(PropertyMeasurement.dataset),
+                    # NFM-4038: the loop below reads
+                    # ``pm.dataset.material``; chained selectinload
+                    # fetches the Material row in a second IN-query
+                    # rather than triggering an implicit lazy load
+                    # inside the async greenlet (asyncpg raises
+                    # ``MissingGreenlet`` on the sync IO).  The outer
+                    # ``pm.property_type.name`` / ``pm.unit.symbol``
+                    # accesses are scalar columns on already-loaded
+                    # rows and do not need eager loading.
+                    selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material),
                     selectinload(PropertyMeasurement.property_type),
                     selectinload(PropertyMeasurement.unit),
                 )
