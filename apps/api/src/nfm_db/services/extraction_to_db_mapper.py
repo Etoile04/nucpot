@@ -42,6 +42,9 @@ from nfm_db.services.health_event_emitter import (
     build_context,
     emit_health_event,
 )
+from nfm_db.services.source_service import (
+    get_or_create_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -691,30 +694,27 @@ async def map_and_persist(
                 or f"Unattributed source ({item.source_doi or 'no DOI'})"
             )
 
-            if doi:
-                existing = await _find_source_by_doi(db, doi)
-                if existing:
-                    source_map[s_key] = existing
-                    reused_entities += 1
-                else:
-                    source = DataSource(
-                        doi=doi,
-                        title=title,
-                        source_type="journal_article",
-                    )
-                    db.add(source)
-                    await db.flush()
-                    source_map[s_key] = source
-                    created_sources += 1
-            else:
-                source = DataSource(
-                    title=title,
-                    source_type="other",
-                )
-                db.add(source)
+            # NFM-4089 AC2: funnel both DOI-present and DOI-absent branches
+            # through the central dedup gate.  The helper falls through to
+            # INSERT only when DOI, file_hash, and content_md fingerprint all
+            # miss — closing the bypass that produced the 14 UUID-titled rows
+            # NFM-4084 surfaced in production.  When ``source_file`` looks
+            # like a stable path we also pass it as ``content_md`` so the
+            # fingerprint lookup catches re-ingest across re-runs.
+            source, was_created = await get_or_create_source(
+                db,
+                title=title,
+                doi=doi,
+                file_hash=None,
+                content_md=item.source_file if (not doi and item.source_file) else None,
+                source_type="journal_article" if doi else "other",
+            )
+            if was_created:
                 await db.flush()
-                source_map[s_key] = source
                 created_sources += 1
+            else:
+                reused_entities += 1
+            source_map[s_key] = source
 
         source = source_map[s_key]
 
@@ -916,9 +916,15 @@ async def _find_source_by_doi(
     db: AsyncSession,
     doi: str,
 ) -> DataSource | None:
-    """Find existing DataSource by DOI."""
-    stmt = select(DataSource).where(DataSource.doi == doi)
-    return (await db.execute(stmt)).scalar_one_or_none()
+    """Back-compat shim — delegates to ``source_service``.
+
+    NFM-4089 AC2: the canonical implementation now lives in
+    :mod:`nfm_db.services.source_service`.  We keep this thin wrapper so any
+    external caller still importing the private symbol keeps working.
+    """
+    from nfm_db.services.source_service import _find_source_by_doi as _impl
+
+    return await _impl(db, doi)
 
 
 async def _find_material_by_formula(

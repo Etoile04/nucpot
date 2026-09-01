@@ -2,11 +2,17 @@
 
 Provides async functions for listing, retrieving, and creating
 data sources with eager-loaded author relationships.
+
+NFM-4089 (F4 followup): also exposes :func:`get_or_create_source` and the
+``_find_source_by_*`` lookup helpers so every known ingest path (PDF upload,
+DOI fetch, admin POST /sources, extraction mapper with-DOI, extraction
+mapper no-DOI) goes through a single dedup gate before INSERT.
 """
 
+import hashlib
 import logging
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +29,11 @@ from nfm_db.schemas.source import (
 )
 
 logger = logging.getLogger(__name__)
+
+# NFM-4089 AC2: cap how much text we hash for content_fingerprint dedup.
+# Beyond ~64 KB the chance of accidental collision rises sharply while the
+# per-ingest cost of the SHA-256 becomes noticeable.
+_CONTENT_FINGERPRINT_CAP_BYTES = 65536
 
 
 async def list_sources(
@@ -158,11 +169,209 @@ async def create_source(
     db: AsyncSession,
     data: DataSourceCreate,
 ) -> DataSourceResponse:
-    """Create a new data source and return the response."""
+    """Create a new data source and return the response.
 
-    source = DataSource(**data.model_dump())
-    db.add(source)
-    await db.commit()
-    await db.refresh(source)
+    NFM-4089 AC2: now routed through :func:`get_or_create_source` so the
+    admin ``POST /sources`` endpoint cannot accidentally re-insert a source
+    that already exists by DOI / file_hash / content_md.  If a match is
+    found we return that row as-is (no UPDATE) — callers asking "create"
+    with a duplicate key receive the existing record back, matching the
+    idempotency contract used by the PDF/DOI upload endpoints.
+    """
+
+    payload = data.model_dump()
+    source, was_created = await get_or_create_source(
+        db,
+        title=payload["title"],
+        doi=payload.get("doi"),
+        file_hash=payload.get("file_hash"),
+        content_md=payload.get("content_md"),
+        source_type=payload.get("source_type", "other"),
+        # All remaining payload fields (journal, year, abstract, etc.) are
+        # applied only on first INSERT — existing rows are returned unchanged.
+        fields={k: v for k, v in payload.items() if k not in {"doi", "title", "source_type", "file_hash", "content_md"}},
+    )
+    if was_created:
+        await db.commit()
+        await db.refresh(source)
+    # When ``was_created`` is False the helper returned a pre-existing row
+    # without ``db.add``-ing anything, so there is nothing to commit or roll
+    # back.  The session remains usable for follow-up work in the caller.
 
     return DataSourceResponse.model_validate(source)
+
+
+# ---------------------------------------------------------------------------
+# NFM-4089 AC2 — dedup helpers
+#
+# Single ingest gate for every code path that wants to write a row to
+# ``data_sources``.  Dedup order is DOI → file_hash → content_md fingerprint,
+# matching the existing unique constraint (``uq_data_sources_doi``) plus the
+# soft constraints implied by the upload-path idempotency check.  Callers
+# still own the transaction: this function never commits, only ``db.add``'s a
+# new row when no existing match is found.
+# ---------------------------------------------------------------------------
+
+
+async def _find_source_by_doi(
+    db: AsyncSession,
+    doi: str,
+) -> DataSource | None:
+    """Find an existing :class:`DataSource` by DOI.
+
+    Returns ``None`` when no match.  ``doi`` must be non-empty — callers
+    should pre-filter ``None`` to keep the SQL plan trivial.
+    """
+    stmt = select(DataSource).where(DataSource.doi == doi)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _find_source_by_file_hash(
+    db: AsyncSession,
+    file_hash: str,
+) -> DataSource | None:
+    """Find an existing :class:`DataSource` by SHA-256 ``file_hash``.
+
+    The ``file_hash`` column has no UNIQUE constraint today (NFM-4089), so
+    this lookup is opportunistic — it short-circuits accidental re-ingest of
+    an identical PDF/Markdown payload but does not guarantee uniqueness.
+    We return the first match by primary key without any ordering, which is
+    deterministic and avoids relying on ``updated_at`` when two near-simultaneous
+    inserts share the same value.
+    """
+    stmt = select(DataSource).where(DataSource.file_hash == file_hash).limit(1)
+    return (await db.execute(stmt)).scalars().first()
+
+
+def _content_fingerprint(content_md: str) -> str:
+    """SHA-256 over the first ``_CONTENT_FINGERPRINT_CAP_BYTES`` of content.
+
+    Cheap fingerprint used by :func:`_find_source_by_content_fingerprint` for
+    the DOI-less / file_hash-less ingest path.  We do NOT store the fingerprint
+    on the row (would require a schema change); instead we hash on lookup.
+    Two sources that share a fingerprint are very likely the same literature.
+    """
+    sample = content_md.encode("utf-8")[:_CONTENT_FINGERPRINT_CAP_BYTES]
+    return hashlib.sha256(sample).hexdigest()
+
+
+async def _find_source_by_content_fingerprint(
+    db: AsyncSession,
+    content_md: str,
+) -> DataSource | None:
+    """Find an existing :class:`DataSource` whose ``content_md`` matches.
+
+    Scans the most-recently-updated rows that have a non-null
+    ``content_md`` and compares fingerprints in Python.  Only used when DOI /
+    file_hash are unavailable, which is rare; we accept the O(N) cost.
+    """
+    if not content_md:
+        return None
+    target_fp = _content_fingerprint(content_md)
+    stmt = (
+        select(DataSource)
+        .where(DataSource.content_md.is_not(None))
+        .order_by(DataSource.updated_at.desc())
+        .limit(50)
+    )
+    for row in (await db.execute(stmt)).scalars().all():
+        if row.content_md is None:
+            continue
+        if _content_fingerprint(row.content_md) == target_fp:
+            return row
+    return None
+
+
+async def get_or_create_source(
+    db: AsyncSession,
+    *,
+    title: str,
+    doi: str | None = None,
+    file_hash: str | None = None,
+    content_md: str | None = None,
+    source_type: str = "other",
+    fields: dict[str, Any] | None = None,
+) -> tuple[DataSource, bool]:
+    """Return an existing :class:`DataSource` matching the inputs, or create one.
+
+    NFM-4089 AC2: this is the single ingest gate every code path must funnel
+    through before INSERTing into ``data_sources``.  It replaces ad-hoc
+    ``DataSource(...)`` + ``db.add(...)`` blocks in:
+
+      * ``apps/api/src/nfm_db/api/v1/literature.py`` (PDF upload, DOI ingest)
+      * ``apps/api/src/nfm_db/services/source_service.py`` (POST /sources)
+      * ``apps/api/src/nfm_db/services/extraction_to_db_mapper.py`` (with-DOI, no-DOI)
+
+    Dedup order:
+
+        1. ``doi`` (matches ``uq_data_sources_doi``).
+        2. ``file_hash`` (no DB constraint today — opportunistic).
+        3. ``content_md`` SHA-256 fingerprint over the first 64 KB.
+
+    When all three lookups miss, a fresh :class:`DataSource` is added to the
+    session using ``title``, ``doi``, ``file_hash``, ``content_md``,
+    ``source_type`` plus any extras passed via ``fields``.  The caller is
+    responsible for ``db.flush()`` / ``db.commit()`` so existing transaction
+    semantics are preserved.
+
+    Parameters
+    ----------
+    db:
+        Active async session.
+    title:
+        Human-readable title; used both for the lookup-miss INSERT and for
+        callers that want to attach a label after the fact.
+    doi:
+        Optional DOI; primary dedup key.
+    file_hash:
+        Optional SHA-256 of the stored artifact (PDF bytes or Markdown bytes).
+    content_md:
+        Optional extracted Markdown; used for fingerprint dedup when DOI is
+        missing and ``file_hash`` differs across ingest runs.
+    source_type:
+        One of ``VALID_SOURCE_TYPES`` (``schemas.source``).  Defaults to
+        ``"other"`` to match the pre-existing extraction-mapper behaviour.
+    fields:
+        Extra :class:`DataSource` column values to set on a fresh row only
+        (ignored when an existing row is returned).  Useful for attaching
+        ``file_path``, ``parse_status``, ``original_filename`` etc. without
+        a separate update.
+
+    Returns
+    -------
+    tuple[DataSource, bool]
+        ``(source, created)`` — ``created`` is ``True`` only when this call
+        actually added a new row to the session.
+    """
+    if doi:
+        existing = await _find_source_by_doi(db, doi)
+        if existing is not None:
+            return existing, False
+    if file_hash:
+        existing = await _find_source_by_file_hash(db, file_hash)
+        if existing is not None:
+            return existing, False
+    if content_md:
+        existing = await _find_source_by_content_fingerprint(db, content_md)
+        if existing is not None:
+            return existing, False
+
+    payload: dict[str, Any] = {
+        "doi": doi,
+        "title": title,
+        "source_type": source_type,
+    }
+    if file_hash is not None:
+        payload["file_hash"] = file_hash
+    if content_md is not None:
+        payload["content_md"] = content_md
+    if fields:
+        # Allow callers to override defaults, but never let `fields` clobber
+        # the dedup keys we just used to look up.
+        for key in ("doi", "title", "source_type", "file_hash", "content_md"):
+            fields.pop(key, None)
+        payload.update(fields)
+
+    source = DataSource(**payload)
+    db.add(source)
+    return source, True

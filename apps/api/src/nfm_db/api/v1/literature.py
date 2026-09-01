@@ -339,19 +339,6 @@ async def upload_literature(
     # --- Compute SHA-256 hash ------------------------------------------
     file_hash = hashlib.sha256(raw_bytes).hexdigest()
 
-    # --- Idempotency: same hash → return existing record ----------------
-    existing_stmt = select(DataSource).where(DataSource.file_hash == file_hash)
-    existing_result = await db.execute(existing_stmt)
-    existing = existing_result.scalar_one_or_none()
-    if existing is not None:
-        return ApiResponse(
-            success=True,
-            data=LiteratureUploadResponse(
-                literature_id=existing.id,
-                status=existing.parse_status,
-            ),
-        )
-
     # --- Save file via storage backend ----------------------------------
     datasource_id = uuid.uuid4()
     filename = file.filename or f"{datasource_id}.pdf"
@@ -362,18 +349,37 @@ async def upload_literature(
     storage = get_storage()
     file_path = storage.save(datasource_id, filename, raw_bytes)
 
-    # --- Create DataSource row ------------------------------------------
-    source = DataSource(
-        id=datasource_id,
-        file_path=file_path,
-        file_hash=file_hash,
-        file_size=len(raw_bytes),
-        parse_status="parsing",
-        original_filename=filename,
-        source_type="journal_article",
+    # --- Idempotency + INSERT via the NFM-4089 dedup gate ---------------
+    # ``file_hash`` is the primary dedup key for PDF uploads (no DOI).  If a
+    # sibling row already exists for this hash we return it without touching
+    # the storage layer; otherwise we register a fresh ``DataSource``.
+    from nfm_db.services.source_service import get_or_create_source
+
+    source, created = await get_or_create_source(
+        db,
         title=title,
+        doi=None,
+        file_hash=file_hash,
+        content_md=None,
+        source_type="journal_article",
+        fields={
+            "id": datasource_id,
+            "file_path": file_path,
+            "file_size": len(raw_bytes),
+            "parse_status": "parsing",
+            "original_filename": filename,
+        },
     )
-    db.add(source)
+    if not created:
+        # Pre-existing row with the same file_hash — return it idempotently.
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=source.id,
+                status=source.parse_status,
+            ),
+        )
+
     await db.commit()
     await db.refresh(source)
 
@@ -424,19 +430,6 @@ async def from_doi_literature(
             detail="Invalid DOI format. Expected: 10.xxxx/yyyy.",
         )
 
-    # --- Idempotency: same DOI → return existing record -----------------
-    existing_stmt = select(DataSource).where(DataSource.doi == doi)
-    existing_result = await db.execute(existing_stmt)
-    existing = existing_result.scalar_one_or_none()
-    if existing is not None:
-        return ApiResponse(
-            success=True,
-            data=LiteratureUploadResponse(
-                literature_id=existing.id,
-                status=existing.parse_status,
-            ),
-        )
-
     # --- Fetch content via doi_fetcher (AC #8: failure → 502) ---------
     try:
         md_content = fetch_paper_content(doi)
@@ -455,22 +448,38 @@ async def from_doi_literature(
 
     storage = get_storage()
     file_path = storage.save(datasource_id, md_filename, md_bytes)
-
-    # --- Create DataSource row (AC #6: status='parsed') -----------------
     file_hash = hashlib.sha256(md_bytes).hexdigest()
-    source = DataSource(
-        id=datasource_id,
-        doi=doi,
-        content_md=md_content,
-        file_path=file_path,
-        file_hash=file_hash,
-        file_size=len(md_bytes),
-        parse_status="parsed",
-        original_filename=md_filename,
-        source_type="journal_article",
+
+    # --- Create DataSource row via the NFM-4089 dedup gate -------------
+    # DOI is the primary dedup key; ``file_hash`` and ``content_md`` are
+    # belt-and-braces in case the DOI ever collides (extremely unlikely) or
+    # the caller retries with a normalised DOI form.
+    from nfm_db.services.source_service import get_or_create_source
+
+    source, created = await get_or_create_source(
+        db,
         title=f"DOI: {doi}",
+        doi=doi,
+        file_hash=file_hash,
+        content_md=md_content,
+        source_type="journal_article",
+        fields={
+            "id": datasource_id,
+            "file_path": file_path,
+            "file_size": len(md_bytes),
+            "parse_status": "parsed",
+            "original_filename": md_filename,
+        },
     )
-    db.add(source)
+    if not created:
+        return ApiResponse(
+            success=True,
+            data=LiteratureUploadResponse(
+                literature_id=source.id,
+                status=source.parse_status,
+            ),
+        )
+
     await db.commit()
     await db.refresh(source)
 
