@@ -23,6 +23,21 @@ Coverage:
        ``nfm_db.ml.prediction_service`` and ``nfm_db.ml.model_version`` do
        not advertise ``R^2 = 0.9858`` (or any variant spelling) as the
        model headline. They reference the grouped-CV LOW bucket instead.
+
+NFM-4059: model-card merge.
+    5. ``_load_energy_card_metrics`` loads the sidecar JSON with caching +
+       graceful degradation when the card is missing or malformed.
+    6. ``_merge_energy_card_metrics`` applies the artifact-wins precedence
+       rule and is non-mutating.
+    7. ``_predict_energy_v30`` merges the card into runtime ``metrics``
+       before computing confidence so the response carries
+       ``rd2_label`` / ``rd2_label_status`` / honest
+       grouped-CV ``confidence`` / ``energy_model_exploratory`` warning
+       when only the model card carries them (this is the AC-OC-4 fix).
+    8. Mandate-1 guard still fires through the merge path: an
+       [EXPLORATORY] artifact with no grouped_cv_summary and no card
+       raises ``RuntimeError`` rather than silently advertising the
+       legacy fallback.
 """
 
 from __future__ import annotations
@@ -800,3 +815,385 @@ class TestEndpointPropagatesConfidenceSource:
         wire_legacy = response_legacy.model_dump()
         assert wire_legacy["confidence"] is None
         assert wire_legacy["confidence_source"] == "random_split_r2"
+
+
+# ---------------------------------------------------------------------------
+# 9. NFM-4059 — model card sidecar merge
+# ---------------------------------------------------------------------------
+#
+# The v3.0 joblib's metrics dict (as it ships in prod today) does NOT
+# carry ``rd2_label``, ``rd2_label_status``, or ``grouped_cv_summary`` —
+# those keys live in the model card JSON sidecar
+# (``models/energy_predictor_v3.0_metrics.json``). Before NFM-4059 the
+# prediction endpoint read only the joblib metrics, so the response
+# never exposed those honesty tokens even though they were deployed.
+#
+# The fix is a runtime merge: load the card, fill the missing keys,
+# never overwrite keys the artifact already carries, and degrade
+# gracefully when the card is missing or malformed. These tests pin
+# the merge contract.
+
+
+def _build_card_payload() -> dict:
+    """The model card JSON as it ships in prod (NFM-4053 / AC-OC-1)."""
+    return {
+        "model_version": "v3.0",
+        "n_samples": 2909,
+        "r2": 0.9858,
+        "rmse": 0.077557,
+        "mae": 0.038144,
+        "cv_r2": 0.9678,
+        "cv_r2_std": 0.0102,
+        "cv_rmse": 0.108608,
+        "cv_mae": 0.046255,
+        "rd2_label": "[EXPLORATORY]",
+        "rd2_label_status": "permanent",
+        "rd3_triggered": True,
+        "grouped_cv_summary": {
+            "sidecar": "models/energy_predictor_v3.0_groupedcv_metrics.json",
+            "r2_mean": GROUPED_CV_R2_MEAN,
+            "r2_std": GROUPED_CV_R2_STD,
+            "n_groups": 68,
+            "splitter": "GroupKFold(n_splits=5) by element system",
+            "seed": 42,
+            "delta_vs_incumbent_random_kfold_cv_r2": -0.6567,
+            "preregistration": "NFM-3953 PREREG-APPROVED 2026-08-31T22:13Z",
+            "rd2_label_pinned": True,
+        },
+    }
+
+
+def _build_artifact_payload(
+    *,
+    with_rd2_label: bool = False,
+    with_grouped_cv: bool = False,
+) -> dict:
+    """A v3.0 joblib metrics dict as it ships in prod today (no honesty keys)."""
+    metrics: dict = {
+        "r2": FORBIDDEN_HEADLINE_R2,
+        "cv_r2": 0.9678,
+        "rmse": 0.077557,
+        "mae": 0.038144,
+    }
+    if with_rd2_label:
+        metrics["rd2_label"] = "[EXPLORATORY]"
+        metrics["rd2_label_status"] = "permanent"
+    if with_grouped_cv:
+        metrics["grouped_cv_summary"] = {
+            "r2_mean": GROUPED_CV_R2_MEAN,
+            "r2_std": GROUPED_CV_R2_STD,
+        }
+    return metrics
+
+
+@pytest.fixture(autouse=True)
+def _reset_energy_card_cache():
+    """Reset the model-card loader cache between tests so each test
+    observes an isolated read. The cache is a module-level dict on
+    ``prediction_service``; we patch it back to its sentinel start
+    state after each test."""
+    from nfm_db.ml import prediction_service
+
+    yield
+    # Best-effort: the cache attribute may not exist yet during the
+    # RED phase (the implementation hasn't landed). The try/except
+    # keeps the fixture green for both pre- and post-implementation
+    # test runs so the suite isn't self-blocking on the cache wiring.
+    if hasattr(prediction_service, "_ENERGY_CARD_CACHE"):
+        prediction_service._ENERGY_CARD_CACHE = None
+
+
+class TestLoadEnergyCardMetrics:
+    """``_load_energy_card_metrics`` reads the sidecar JSON once per
+    process, caches the result, and degrades gracefully (returns
+    ``None``) when the card is missing or malformed. This is the
+    loader that the merge step relies on; a missing or partially
+    parsed card must not propagate as a 5xx.
+    """
+
+    def test_returns_card_dict_when_present(self) -> None:
+        """The loader returns the parsed JSON dict when the card exists."""
+        from nfm_db.ml.prediction_service import _load_energy_card_metrics
+
+        card = _load_energy_card_metrics()
+        # The card ships in the repo (NFM-4053 / AC-OC-1 done); this
+        # test pins the contract that the loader returns a dict whose
+        # honesty keys are present.
+        assert isinstance(card, dict)
+        assert card.get("rd2_label") == "[EXPLORATORY]"
+        assert card.get("rd2_label_status") == "permanent"
+        assert "r2_mean" in (card.get("grouped_cv_summary") or {})
+
+    def test_returns_none_when_card_missing(self, tmp_path, monkeypatch) -> None:
+        """Point the loader at a non-existent path and assert it returns
+        ``None`` rather than raising. This is the graceful-degradation
+        contract for the AC: a missing card must NOT 5xx."""
+        from nfm_db.ml import prediction_service
+
+        missing_path = tmp_path / "no_such_card.json"
+        monkeypatch.setattr(
+            prediction_service,
+            "_ENERGY_CARD_PATH",
+            missing_path,
+        )
+        # Reset the cache so the loader actually re-reads.
+        if hasattr(prediction_service, "_ENERGY_CARD_CACHE"):
+            prediction_service._ENERGY_CARD_CACHE = None
+
+        assert prediction_service._load_energy_card_metrics() is None
+
+    def test_returns_none_on_malformed_json(self, tmp_path, monkeypatch) -> None:
+        """A card with corrupt JSON must degrade to ``None``, not raise."""
+        from nfm_db.ml import prediction_service
+
+        bad_card = tmp_path / "bad_card.json"
+        bad_card.write_text("{not valid json", encoding="utf-8")
+        monkeypatch.setattr(
+            prediction_service,
+            "_ENERGY_CARD_PATH",
+            bad_card,
+        )
+        if hasattr(prediction_service, "_ENERGY_CARD_CACHE"):
+            prediction_service._ENERGY_CARD_CACHE = None
+
+        assert prediction_service._load_energy_card_metrics() is None
+
+    def test_caches_result_across_calls(self) -> None:
+        """The loader caches its result so it only opens the file once
+        per process. Subsequent calls return the same dict by identity
+        without re-reading the file."""
+        from nfm_db.ml import prediction_service
+
+        # Reset cache to a sentinel so we observe a fresh read.
+        prediction_service._ENERGY_CARD_CACHE = None
+
+        first = prediction_service._load_energy_card_metrics()
+        cache_after_first = prediction_service._ENERGY_CARD_CACHE
+        second = prediction_service._load_energy_card_metrics()
+
+        # Identity: the second call returns the same dict object that
+        # was cached after the first call — no re-read happened.
+        assert first is second
+        assert first is cache_after_first
+        # The cache is now populated (sentinel is gone).
+        assert prediction_service._ENERGY_CARD_CACHE is not None
+        assert prediction_service._ENERGY_CARD_CACHE is first
+
+
+class TestMergeEnergyCardMetrics:
+    """``_merge_energy_card_metrics`` merges the sidecar JSON into the
+    artifact metrics, with the artifact always winning precedence.
+    Pure function — never mutates inputs.
+    """
+
+    def test_card_fills_missing_artifact_keys(self) -> None:
+        """Card keys fill the artifact's missing honesty keys."""
+        from nfm_db.ml.prediction_service import _merge_energy_card_metrics
+
+        artifact = _build_artifact_payload()
+        card = _build_card_payload()
+        merged = _merge_energy_card_metrics(artifact, card)
+
+        # The honesty keys were absent from the artifact; the card fills them.
+        assert merged["rd2_label"] == "[EXPLORATORY]"
+        assert merged["rd2_label_status"] == "permanent"
+        assert merged["grouped_cv_summary"]["r2_mean"] == GROUPED_CV_R2_MEAN
+
+    def test_artifact_keys_win_over_card(self) -> None:
+        """When both artifact and card carry the same key, the artifact
+        value is preserved (artifact is the source of truth, card is
+        the fallback)."""
+        from nfm_db.ml.prediction_service import _merge_energy_card_metrics
+
+        artifact = _build_artifact_payload(with_rd2_label=True)
+        # Card disagrees (e.g. an older card with a different label).
+        card = _build_card_payload()
+        card["rd2_label"] = "[DEPRECATED]"
+        card["rd2_label_status"] = "transient"
+        # The artifact carries no grouped_cv_summary — card fills it.
+        merged = _merge_energy_card_metrics(artifact, card)
+
+        # Artifact rd2 wins.
+        assert merged["rd2_label"] == "[EXPLORATORY]"
+        assert merged["rd2_label_status"] == "permanent"
+        # Card still fills the missing grouped_cv_summary.
+        assert merged["grouped_cv_summary"]["r2_mean"] == GROUPED_CV_R2_MEAN
+
+    def test_does_not_mutate_inputs(self) -> None:
+        """Pure function: neither the artifact nor the card dict is
+        mutated by the merge."""
+        from nfm_db.ml.prediction_service import _merge_energy_card_metrics
+
+        artifact = _build_artifact_payload()
+        card = _build_card_payload()
+        artifact_snapshot = {k: v for k, v in artifact.items()}
+        card_snapshot = {k: v for k, v in card.items()}
+
+        _merge_energy_card_metrics(artifact, card)
+
+        assert artifact == artifact_snapshot
+        assert card == card_snapshot
+
+    def test_no_card_returns_artifact_unchanged(self) -> None:
+        """When the card is ``None`` (missing/malformed), the artifact
+        is returned unchanged — the merge step must be a no-op when
+        the sidecar is unavailable so the legacy path still works."""
+        from nfm_db.ml.prediction_service import _merge_energy_card_metrics
+
+        artifact = _build_artifact_payload()
+        merged = _merge_energy_card_metrics(artifact, None)
+        assert merged == artifact
+
+
+class TestPredictEnergyV30MergesModelCard:
+    """End-to-end through ``_predict_energy_v30``: the model-card merge
+    must reach the API response so AC-OC-4 passes against the real
+    artifact (joblib metrics + sidecar JSON combined).
+    """
+
+    def _stub_v30_artifact(self, monkeypatch, artifact_metrics: dict) -> None:
+        """Patch the joblib load + module cache so ``_predict_energy_v30``
+        runs against a synthetic v3.0 artifact (without requiring the
+        real model file to exist in the test environment)."""
+        from nfm_db.ml import prediction_service
+
+        # Build a tiny sklearn-shaped "model" so the predict call works.
+        class _StubModel:
+            def predict(self, X):
+                import numpy as _np  # local import keeps top of file clean
+                return _np.array([0.295201])
+
+        feature_names = [
+            "mo_equivalent", "allen_chi_diff", "config_entropy", "bv_ratio",
+            "u_density", "mixing_enthalpy", "lattice_distortion", "vec",
+            "avg_allen_chi", "avg_atomic_volume", "avg_d_electron",
+            "avg_work_function", "avg_bulk_modulus", "hr_valence_diff",
+            "dg_en_radius_distance", "max_pair_en_diff", "en_variance",
+            "volume_variance", "d_electron_variance", "bulk_modulus_variance",
+        ]
+
+        def _fake_load(_path):
+            return {
+                "model": _StubModel(),
+                "version": "v3.0",
+                "metrics": dict(artifact_metrics),
+                "feature_names": feature_names,
+            }
+
+        monkeypatch.setattr("joblib.load", _fake_load)
+        # Pin the artifact path so the ``v30_path.exists()`` gate passes.
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix=".joblib", delete=False)
+        tmp.close()
+        monkeypatch.setattr(prediction_service, "ENERGY_MODEL_PATH", Path(tmp.name))
+        # Reset the module-level lazy-load cache so the patched joblib.load
+        # is actually invoked.
+        prediction_service._energy_model = None
+
+    def _stub_card_loader(self, monkeypatch, payload):
+        """Pin the card loader to a fixed payload (or None)."""
+        from nfm_db.ml import prediction_service
+
+        monkeypatch.setattr(
+            prediction_service,
+            "_load_energy_card_metrics",
+            lambda: payload,
+        )
+
+    def test_response_carries_card_rd2_keys(self, monkeypatch) -> None:
+        """When the artifact lacks rd2 keys but the card carries them,
+        the response must surface ``rd2_label="[EXPLORATORY]"`` and
+        ``rd2_label_status="permanent"``. This is the AC-OC-4 fix."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        self._stub_v30_artifact(monkeypatch, _build_artifact_payload())
+        self._stub_card_loader(monkeypatch, _build_card_payload())
+
+        result = _predict_energy_v30({})
+
+        assert result is not None
+        assert result["rd2_label"] == "[EXPLORATORY]"
+        assert result["rd2_label_status"] == "permanent"
+        # Honest confidence figure comes from the card too.
+        assert result["confidence"] == pytest.approx(GROUPED_CV_R2_MEAN, abs=1e-4)
+        assert result["confidence_source"] == "grouped_cv_r2_mean"
+        codes = [w["code"] for w in result["warnings"]]
+        assert "energy_model_exploratory" in codes
+
+    def test_response_handles_missing_card_gracefully(self, monkeypatch) -> None:
+        """A missing card must NOT 5xx. The legacy fallback
+        (no rd2 keys, random_split_r2, energy_model_pre_grouped_cv
+        warning) takes over."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        self._stub_v30_artifact(monkeypatch, _build_artifact_payload())
+        self._stub_card_loader(monkeypatch, None)
+
+        result = _predict_energy_v30({})
+
+        assert result is not None
+        # No card, no honesty tokens in the artifact → legacy fallback.
+        assert result["rd2_label"] is None
+        assert result["rd2_label_status"] is None
+        assert result["confidence"] is None
+        assert result["confidence_source"] == "random_split_r2"
+        codes = [w["code"] for w in result["warnings"]]
+        assert "energy_model_pre_grouped_cv" in codes
+
+    def test_artifact_rd2_keys_override_card(self, monkeypatch) -> None:
+        """When the artifact already carries rd2 keys (e.g. a future
+        rebuild that re-pickles the card into the joblib), the artifact
+        values win and the card is only used to fill missing keys.
+        Precedence holds end-to-end, not just in the helper."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        artifact = _build_artifact_payload(
+            with_rd2_label=True,
+            with_grouped_cv=True,
+        )
+        # Card disagrees.
+        card = _build_card_payload()
+        card["rd2_label"] = "[WRONG]"
+        card["rd2_label_status"] = "transient"
+
+        self._stub_v30_artifact(monkeypatch, artifact)
+        self._stub_card_loader(monkeypatch, card)
+
+        result = _predict_energy_v30({})
+
+        assert result is not None
+        # Artifact wins.
+        assert result["rd2_label"] == "[EXPLORATORY]"
+        assert result["rd2_label_status"] == "permanent"
+
+    def test_mandate1_guard_fires_through_merge_path(self, monkeypatch) -> None:
+        """Mandate-1 guard survives the merge: an artifact that is
+        labeled [EXPLORATORY] but carries no grouped_cv_summary, with
+        a card that ALSO lacks grouped_cv_summary, must raise
+        RuntimeError (not silently advertise the legacy fallback)."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        # Artifact: labeled [EXPLORATORY] but no grouped_cv_summary.
+        artifact = _build_artifact_payload(with_rd2_label=True)
+        # Card: missing grouped_cv_summary too.
+        card = _build_card_payload()
+        card.pop("grouped_cv_summary", None)
+
+        self._stub_v30_artifact(monkeypatch, artifact)
+        self._stub_card_loader(monkeypatch, card)
+
+        with pytest.raises(RuntimeError, match=r"grouped_cv_summary\.r2_mean"):
+            _predict_energy_v30({})
+
+    def test_mandate1_guard_fires_when_card_missing(self, monkeypatch) -> None:
+        """Same mandate, but with the card completely absent: the
+        artifact's misconfiguration must still raise."""
+        from nfm_db.ml.prediction_service import _predict_energy_v30
+
+        artifact = _build_artifact_payload(with_rd2_label=True)
+        # No grouped_cv_summary in artifact.
+        self._stub_v30_artifact(monkeypatch, artifact)
+        self._stub_card_loader(monkeypatch, None)
+
+        with pytest.raises(RuntimeError, match=r"grouped_cv_summary\.r2_mean"):
+            _predict_energy_v30({})

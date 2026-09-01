@@ -289,11 +289,14 @@ class TestV30Integration:
     def test_v30_prediction_service_returns_v30_version(self, v30_artifact: dict) -> None:
         """predict_energy() returns model_version='v3.0' when using real artifact.
 
-        NFM-3956 round 2: the on-disk v3.0 artifact predates the NFM-3953
-        grouped-CV re-evaluation, so ``confidence`` is ``None`` (legacy
-        fallback path) and ``confidence_source='random_split_r2'``. The
-        helper emits an ``energy_model_pre_grouped_cv`` warning carrying
-        the raw R^2 figure so UIs can render the at-risk disclaimer.
+        NFM-4059 / AC-OC-4: the on-disk v3.0 joblib lacks the honesty
+        tokens (``rd2_label``, ``rd2_label_status``, ``grouped_cv_summary``)
+        but the model-card sidecar JSON
+        (``models/energy_predictor_v3.0_metrics.json``) carries them.
+        The runtime merge fills the missing keys, so the response
+        reports the honest grouped-CV figure (R^2 = 0.3111) with an
+        ``energy_model_exploratory`` warning rather than the inflated
+        0.9858 random-split headline.
         """
         from nfm_db.ml.prediction_service import _predict_energy_v30
 
@@ -303,12 +306,16 @@ class TestV30Integration:
         assert result is not None
         assert result["model_version"] == "v3.0"
         assert "predicted_energy" in result
-        # Legacy fallback returns None so the inflated headline is not
-        # advertised; the warning carries the raw figure.
-        assert result["confidence"] is None
-        assert result["confidence_source"] == "random_split_r2"
+        # NFM-4059 / AC-OC-4: card merge fills the honesty tokens, so
+        # the response surfaces the grouped-CV figure (not the inflated
+        # 0.9858 headline) and the EXPLORATORY pin.
+        assert result["confidence"] == pytest.approx(0.3111, abs=1e-4)
+        assert result["confidence_source"] == "grouped_cv_r2_mean"
+        assert result["rd2_label"] == "[EXPLORATORY]"
+        assert result["rd2_label_status"] == "permanent"
         codes = [w["code"] for w in result["warnings"]]
-        assert "energy_model_pre_grouped_cv" in codes
+        assert "energy_model_exploratory" in codes
+        assert "energy_model_pre_grouped_cv" not in codes
 
     def test_v30_composition_prediction(self, v30_artifact: dict) -> None:
         """predict_energy_from_composition() routes through v3.0 model."""
