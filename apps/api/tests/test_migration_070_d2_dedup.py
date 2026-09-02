@@ -185,7 +185,18 @@ class TestMigration070RebindAndMerge:
         assert "_dataset_redirect" in migration_source
 
     def test_pm_migration_uses_uq_pm_dedup(self, migration_source: str) -> None:
-        assert "ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING" in migration_source
+        # NFM-4095: switch from ``ON CONFLICT ON CONSTRAINT uq_pm_dedup``
+        # to column-list ``ON CONFLICT (dataset_id, property_type_id,
+        # conditions_hash, method)`` because asyncpg server-side prepared
+        # statements can't reliably resolve constraint-name bindings
+        # inside ``DO`` blocks.  Both forms target the same constraint;
+        # accept either so the structural check passes against the new
+        # syntax.
+        assert (
+            "ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING" in migration_source
+            or "ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING"
+            in migration_source
+        ), "must ON CONFLICT DO NOTHING on the uq_pm_dedup columns (constraint name or column list)"
 
     def test_pm_migration_source_present(self, migration_source: str) -> None:
         # The INSERT-SELECT pulls from property_measurements joined

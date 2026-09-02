@@ -629,7 +629,30 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 --     to themselves — leader is its own canonical — and
                 --     their PMs were already migrated by step 4).
                 --     datasets.source_id is ON DELETE CASCADE so any
-                --     leftover reference gets wiped.
+                --     leftover reference would be silently wiped by
+                --     that CASCADE — that would be silent data loss.
+                --     Final defence-in-depth guard: refuse the DELETE
+                --     if any dataset still references a bad source.
+                --
+                --     NFM-4095: this guard is a regression net for
+                --     future schema changes that might break the
+                --     4c/5a/5b cleanup chain.  Step 5b's bad-to-bad
+                --     cluster fold is what enables step 5c — without
+                --     it, 27 of 32 prod bad sources still had datasets
+                --     at step 5c, and the CASCADE would have wiped
+                --     ~32 datasets.  With the guard in place a future
+                --     regression in step 5b fails the migration loudly
+                --     instead of silently losing rows.
+                SELECT COUNT(*) INTO deleted_ds_count
+                FROM datasets d
+                JOIN _canonical_map cm ON d.source_id = cm.bad_id;
+                IF deleted_ds_count > 0 THEN
+                    RAISE EXCEPTION
+                        'NFM-4088: refusing DELETE — % datasets still reference bad sources '
+                        '(step 5b cluster fold likely broken)',
+                        deleted_ds_count;
+                END IF;
+
                 DELETE FROM data_sources WHERE id IN (SELECT bad_id FROM _canonical_map);
 
                 GET DIAGNOSTICS deleted_ds_count = ROW_COUNT;

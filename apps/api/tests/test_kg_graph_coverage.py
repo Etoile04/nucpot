@@ -45,7 +45,6 @@ from nfm_db.models.kg import KGNode
 from nfm_db.models.material import Material
 from nfm_db.models.source import DataSource
 
-
 # ---------------------------------------------------------------------------
 # UUIDs & helpers
 # ---------------------------------------------------------------------------
