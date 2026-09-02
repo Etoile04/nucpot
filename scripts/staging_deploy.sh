@@ -292,7 +292,10 @@ EOF
   # touching its mode: hosts with a pre-existing 0644 copy (every deploy
   # before this change) would otherwise stay world-readable.
   chmod 600 "$api_env"
-  log "Wrote $api_env (NFM_CORS_ORIGINS preserved verbatim via grep)."
+  # Self-verifying log (NFM-4215 scope #3): every deploy prints the resulting
+  # mode so the 0600 invariant is checked by inspection of the deploy log
+  # itself. Falls back to '?' where GNU stat is unavailable (macOS dev boxes).
+  log "Wrote $api_env (NFM_CORS_ORIGINS preserved verbatim via grep, mode $(stat -c %a "$api_env" 2>/dev/null || echo '?'))."
 }
 
 snapshot_rollback_target() {
