@@ -71,12 +71,22 @@ Audit log schema:
 
 | Code | Meaning                                                                |
 | ---- | ---------------------------------------------------------------------- |
-| 0    | pass — every alembic HEAD file-commit is on the base ref               |
-| 70   | `HEAD_NOT_ON_REF` — at least one head's file-commit is not on ref      |
+| 0    | pass — every alembic HEAD file is in the tree of the base ref         |
+| 70   | `HEAD_NOT_ON_REF` — at least one head's file is in the image but NOT in the tree of the base ref (the NFM-1692/2104/2136 class; deploy must be blocked unless override supplied) |
 | 71   | `OVERRIDE_APPLIED` — override rationale supplied AND audit row written |
 | 72   | `USAGE` — bad command-line arguments                                   |
-| 73   | `HEAD_FILE_NOT_FOUND` — image has revision file but host tree does not |
-| 74   | `GIT_ERROR` — `git merge-base` or `git log` failed                      |
+| 73   | `HEAD_FILE_NOT_FOUND` — image's alembic heads references a revision whose file is not in `/app/migrations/versions/` (image-layout defect; distinct from 70, which is "file in image but not on base ref") |
+| 74   | `GIT_ERROR` — `git fetch`, `git cat-file`, or `git log` returned a non-zero exit that was not a clean "not on ref" answer |
+
+> **NFM-4126 — base-ref tree, not working tree.** The script now refreshes
+> the base ref via `git fetch origin <branch>` and checks `git cat-file -e
+> <resolved>:<path>` (file presence in the base ref's tree), NOT in the
+> working tree. If the file is at the base ref but missing from the
+> working tree, the gate passes with a `DIVERGENCE_DIAGNOSTIC` warning
+> on stderr (the deploy is safe — the file IS on main — but the runner
+> checkout is stale). Pre-NFM-4126 this case exited 73 spuriously and
+> blocked every deploy whose trigger commit was behind `origin/main`
+> HEAD (run 33570937619).
 
 ### Tests
 

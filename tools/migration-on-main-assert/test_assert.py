@@ -298,12 +298,20 @@ def test_override_rationale_exits_71_and_writes_audit_log(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Failure path: file present in image but not in host working tree
+# NFM-4126: file present in image and at base-ref tree, but missing from the
+# host working tree (image is AHEAD of working tree) — exit 0 with divergence
+# diagnostic. This is the bug fix: previously this case exited 73 and blocked
+# every deploy whose trigger commit was behind origin/main HEAD.
 # ---------------------------------------------------------------------------
 
 
-def test_head_file_missing_in_host_exits_73(tmp_path):
-    """Image has the revision file but the host working tree does not — exit 73."""
+def test_file_on_base_ref_missing_in_working_tree_exits_0_with_divergence(tmp_path):
+    """NFM-4126 fix: file in image AND at base ref's tree, but NOT in working
+    tree. The deploy must PASS with a divergence diagnostic, not fail with
+    HEAD_FILE_NOT_FOUND. Mirrors run 33570937619 / image candidate-9d24414
+    where origin/main had advanced past the trigger commit (commit 7ccc1ac2b
+    added 071_f4_uuid_titled_source_guard).
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
@@ -312,21 +320,164 @@ def test_head_file_missing_in_host_exits_73(tmp_path):
     (repo / "README").write_text("x")
     subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    # main is at the init commit; we will commit a migration to a feature
+    # branch, merge it to main, then check out an OLDER commit (the deploy
+    # trigger) to simulate the working tree being behind origin/main.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "NFM-4126-feature"], check=True)
+    (repo / "apps" / "api" / "migrations" / "versions").mkdir(parents=True)
+    mig = repo / "apps" / "api" / "migrations" / "versions" / "071_f4_uuid_titled_source_guard.py"
+    mig.write_text("\"\"\"NFM-4126 test migration\"\"\"\n")
+    subprocess.run(["git", "-C", str(repo), "add", "apps/api/migrations/versions/071_f4_uuid_titled_source_guard.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "NFM-4126 add 071"], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
+    subprocess.run(["git", "-C", str(repo), "merge", "--no-ff", "-q", "-m", "merge NFM-4126", "NFM-4126-feature"], check=True)
+    # Now check out the pre-merge commit (working tree missing the file)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD~1"], check=True)
+    assert not mig.exists(), "working tree setup: file should be missing after checkout HEAD~1"
+
+    heads = ["071f4abcd1234 (head)"]
+    body = _docker_shim_for_heads(
+        heads,
+        file_per_head={"071f4abcd1234": "/app/migrations/versions/071_f4_uuid_titled_source_guard.py"},
+    )
+    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-divergence"), body)
+    result = _run_assert(
+        # NOTE: --base-ref main (post-merge), NOT HEAD (pre-merge). The image
+        # was built from main, so we compare against main's tree. --no-fetch
+        # so the test doesn't try to talk to a real origin remote.
+        ["--image", "fake:latest", "--base-ref", "main", "--repo-root", str(repo),
+         "--no-fetch"],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"NFM-4126 fix: expected exit 0 with divergence diagnostic; "
+        f"got {result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "ASSERT_OK" in result.stdout
+    assert "DIVERGENCE_DIAGNOSTIC" in result.stderr, (
+        f"expected DIVERGENCE_DIAGNOSTIC on stderr when file is at base ref but "
+        f"missing from working tree; got stderr={result.stderr}"
+    )
+    assert "071f4abcd1234" in result.stderr
+    assert "commits behind" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Failure path: file present in image but NOT at the base-ref tree (the
+# original NFM-2141 invariant). Distinct from the divergence case above:
+# here the file is genuinely off-main and the deploy MUST be blocked.
+# ---------------------------------------------------------------------------
+
+
+def test_head_file_missing_from_base_ref_exits_70(tmp_path):
+    """Image has the revision file, but the base-ref tree does not — exit 70.
+
+    This replaces the pre-NFM-4126 test_head_file_missing_in_host_exits_73:
+    the old behavior conflated 'file missing from working tree' (a benign
+    divergence) with 'file missing from origin/main' (the actual NFM-2141
+    invariant violation). NFM-4126 splits these: the divergence case now
+    passes with a diagnostic; only the off-main case fails.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "README").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    # Add the migration on a feature branch (unmerged to main)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "NFM-9999-feature"], check=True)
+    (repo / "apps" / "api" / "migrations" / "versions").mkdir(parents=True)
+    mig = repo / "apps" / "api" / "migrations" / "versions" / "034_unmerged.py"
+    mig.write_text("\"\"\"hotfix migration\"\"\"\n")
+    subprocess.run(["git", "-C", str(repo), "add", "apps/api/migrations/versions/034_unmerged.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "NFM-9999 add hotfix migration"], check=True)
+    # Stay on the feature branch so the working tree HAS the file, but main
+    # does not — this is the genuine NFM-1692/2104/2136 condition.
     heads = ["034abcdef0123 (head)"]
     body = _docker_shim_for_heads(
         heads,
-        file_per_head={"034abcdef0123": "/app/migrations/versions/034_missing_in_host.py"},
+        file_per_head={"034abcdef0123": "/app/migrations/versions/034_unmerged.py"},
     )
-    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-missing"), body)
+    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-notonref"), body)
     result = _run_assert(
-        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        ["--image", "fake:latest", "--base-ref", "main", "--repo-root", str(repo),
+         "--no-fetch"],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 70, (
+        f"expected exit 70 (HEAD_NOT_ON_REF); got {result.returncode}\n"
+        f"stderr={result.stderr}"
+    )
+    assert "NOT in tree of main" in result.stderr
+    assert "NFM-1692/2104/2136 condition" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Failure path: file absent from the IMAGE entirely (image-layout defect).
+# Distinct from "file in image but not on base ref" — exit 73 here, not 70.
+# ---------------------------------------------------------------------------
+
+
+def test_head_file_missing_from_image_exits_73(tmp_path):
+    """Image's alembic heads output references a revision, but
+    ``docker run ls /app/migrations/versions/<rev>*.py`` returns nothing —
+    this is an image-layout defect, exit 73 (HEAD_FILE_NOT_FOUND).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "README").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    # Custom shim: returns alembic heads normally, but the per-rev ls returns
+    # empty for the heads block (simulating a real image-layout defect —
+    # /app/migrations/versions/ exists but doesn't contain this rev). We
+    # write it inline because the default _docker_shim_for_heads template
+    # falls through to a default-case printf that would mask the failure.
+    heads = ["abcdef0123456 (head)"]
+    body = (
+        "#!/usr/bin/env bash\n"
+        "set -e\n"
+        "case \"$1\" in\n"
+        "  run)\n"
+        "    found_alembic=0\n"
+        "    found_ls=0\n"
+        "    for arg in \"$@\"; do\n"
+        "      case \"$arg\" in\n"
+        "        *alembic*heads*) found_alembic=1 ;;\n"
+        "        */app/migrations/versions/*) found_ls=1 ;;\n"
+        "      esac\n"
+        "    done\n"
+        "    if [ \"$found_alembic\" = \"1\" ]; then\n"
+        f"      printf '{heads[0]}\\n'\n"
+        "      exit 0\n"
+        "    fi\n"
+        "    if [ \"$found_ls\" = \"1\" ]; then\n"
+        "      # Image-layout defect: the rev is in alembic heads but not in\n"
+        "      # /app/migrations/versions/. Return empty (no path).\n"
+        "      exit 0\n"
+        "    fi\n"
+        "    exit 0\n"
+        "    ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-noimgfile"), body)
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo),
+         "--no-fetch"],
         bin_dir=bin_dir,
     )
     assert result.returncode == 73, (
-        f"expected exit 73 (HEAD_FILE_NOT_FOUND); got {result.returncode}\n"
-        f"stderr={result.stderr}"
+        f"expected exit 73 (HEAD_FILE_NOT_FOUND for image-layout defect); "
+        f"got {result.returncode}\nstderr={result.stderr}"
     )
     assert "HEAD_FILE_NOT_FOUND" in result.stderr
+    assert "absent from image" in result.stderr
 
 
 # ---------------------------------------------------------------------------

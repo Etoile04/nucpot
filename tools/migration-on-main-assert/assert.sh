@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# migration-on-main-assert.sh — NFM-2141 / ADR-NFM-2139 §5 D4
+# migration-on-main-assert.sh — NFM-2141 / NFM-4126 / ADR-NFM-2139 §5 D4
 # =============================================================================
-# Refuses a deploy when the candidate image's alembic HEAD migration file's
-# last-touched commit is NOT an ancestor of the configured base ref
-# (default ``origin/main``).
+# Refuses a deploy when the candidate image's alembic HEAD migration file is
+# NOT present at the configured base ref's tree (default ``origin/main``).
 #
 # Why this gate exists
 # --------------------
@@ -29,16 +28,38 @@
 # What this script does
 # ---------------------
 # For each alembic head reported by ``alembic heads`` inside the candidate
-# image, it locates the migration file's last-touched commit in the host
-# git repo and runs ``git merge-base --is-ancestor <sha> <ref>``. If any
-# head is not on the ref, the gate fails.
+# image, it locates the migration file's path inside the image, maps it to
+# the host-relative path (``apps/api/migrations/versions/...``), and then
+# checks whether that path exists in the resolved base-ref tree (NOT in
+# the working tree — see NFM-4126 below).
+#
+# Why check the base-ref tree, not the working tree (NFM-4126)
+# ------------------------------------------------------------
+# Production deployments run in a checkout pinned to the deploy's trigger
+# commit. The candidate image is built from the same tree as the deploy, so
+# the file IS in the image — but the workflow can advance ``origin/main``
+# between when the trigger commit landed and when the image is built (e.g.
+# a BEHIND-merge race, NFM-4106). When that happens the working tree is
+# BEHIND ``origin/main``, so looking for the file there produced a spurious
+# ``HEAD_FILE_NOT_FOUND`` failure on every deploy (NFM-4126 / run 33570937619
+# with image ``nucpot-prod-api:candidate-9d24414`` and origin/main advanced
+# to include migration 071_f4_uuid_titled_source_guard).
+#
+# Fix: we resolve the base ref after ``git fetch origin <branch>`` so the
+# local ``refs/remotes/origin/main`` reflects the current upstream, then
+# use ``git cat-file -e <resolved>:<path>`` to check the file at the
+# resolved commit's tree. The working tree is no longer consulted for the
+# pass/fail decision; if the file is at the base ref but missing from the
+# working tree, we emit a divergence diagnostic (working tree is N commits
+# behind origin/main HEAD) so the operator knows their checkout is stale.
 #
 # Failure modes — distinct exit codes (ADR §5 D2)
 # -----------------------------------------------
-#   0   pass — every alembic head's file-commit is on the base ref
-#   70  HEAD_NOT_ON_REF     — at least one head's file-commit is not on
-#                              ``<ref>``; deploy must be blocked unless
-#                              the operator supplies ``--override-rationale``
+#   0   pass — every alembic head's file is on the base ref's tree
+#   70  HEAD_NOT_ON_REF     — at least one head's file is in the image but
+#                              NOT in the base-ref tree; deploy must be
+#                              blocked unless the operator supplies
+#                              ``--override-rationale``
 #   71  OVERRIDE_APPLIED    — override rationale was supplied AND audit
 #                              log write succeeded; deploy may proceed
 #                              (audit row in ``$AUDIT_LOG`` records the
@@ -47,11 +68,15 @@
 #                              hiding the gate trip.
 #   72  USAGE               — bad command-line arguments
 #   73  HEAD_FILE_NOT_FOUND — could not locate a head's file inside the
-#                              host repo (the file is in the image but not
-#                              in the working tree)
-#   74  GIT_ERROR           — ``git merge-base`` or ``git log`` returned a
-#                              non-zero exit that was not a "not ancestor"
-#                              answer (network / corrupt repo)
+#                              candidate image (e.g. /app/migrations/versions
+#                              does not contain ``<rev>*.py``). Distinct
+#                              from 70: 70 is "file in image, not on ref";
+#                              73 is "image's alembic output references a
+#                              revision we can't find in the image" — an
+#                              image-layout defect.
+#   74  GIT_ERROR           — ``git fetch``/``git cat-file``/``git log``
+#                              returned a non-zero exit that was not a
+#                              "not on ref" answer (network / corrupt repo)
 #   75  DB_READ_FAIL        — ``--db-container`` was supplied and we could
 #                              not read ``alembic_version`` (analogous to
 #                              pre-deploy-assert exit 66)
@@ -61,14 +86,18 @@
 #   assert.sh --image IMAGE [--base-ref REF] [--repo-root DIR]
 #             [--db-container NAME] [--audit-log PATH]
 #             [--override-rationale TEXT]
+#             [--no-fetch]
 #
 # Required:
 #   --image IMAGE             candidate image tag, e.g. nucpot-prod-api:abc123
 #
 # Optional:
-#   --base-ref REF            git ref the heads must be ancestors of
+#   --base-ref REF            git ref the heads must be present at
 #                             (default: origin/main)
-#   --repo-root DIR           host repo root (default: $PWD)
+#   --repo-root DIR           host repo root (default: $PWD). Used only as
+#                             the CWD for git operations; the host
+#                             working tree is NOT consulted for pass/fail
+#                             (see NFM-4126).
 #   --db-container NAME       prod DB container, used for the DB-side
 #                             cross-check that pre-deploy-assert performs;
 #                             we re-read alembic_version here only when
@@ -79,6 +108,9 @@
 #                             (default: ./migration-on-main-audit.jsonl)
 #   --override-rationale TXT  bypass the gate for emergencies. The string
 #                             must be non-empty. Recorded in the audit log.
+#   --no-fetch                skip the ``git fetch origin <branch>`` step
+#                             (used by tests; production CI must NOT pass
+#                             this — see NFM-4126 acceptance criterion #3).
 #   -h, --help                show usage and exit 0
 #
 # Examples
@@ -99,9 +131,10 @@ REPO_ROOT="${PWD}"
 DB_CONTAINER=""
 AUDIT_LOG="./migration-on-main-audit.jsonl"
 OVERRIDE_RATIONALE=""
+DO_FETCH=1
 
 usage() {
-  sed -n '2,55p' "$0"
+  sed -n '2,79p' "$0"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -112,6 +145,7 @@ while [[ $# -gt 0 ]]; do
     --db-container)       DB_CONTAINER="$2"; shift 2 ;;
     --audit-log)          AUDIT_LOG="$2"; shift 2 ;;
     --override-rationale) OVERRIDE_RATIONALE="$2"; shift 2 ;;
+    --no-fetch)           DO_FETCH=0; shift ;;
     -h|--help)            usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage >&2; exit 72 ;;
   esac
@@ -123,9 +157,37 @@ if [ -z "${IMAGE}" ]; then
   exit 72
 fi
 
+log() { printf '\033[1;34m[on-main-assert]\033[0m %s\n' "$*"; }
+err() { printf '\033[1;31m[on-main-assert]\033[0m %s\n' "$*" >&2; }
+ok()  { printf '\033[1;32m[on-main-assert]\033[0m %s\n' "$*"; }
+warn(){ printf '\033[1;33m[on-main-assert]\033[0m %s\n' "$*" >&2; }
+
+# ---- 0. Refresh origin/<branch> so the base ref is current (NFM-4126) -----
+# The runner is checked out at the deploy's trigger commit. ``origin/main``
+# is the comparison ref: it advances independently (other merges, BEHIND-
+# merges, hotfixes), and the candidate image is built from whatever state
+# origin/main is in *now* — not from the trigger commit. We therefore fetch
+# origin/<branch> before resolving so we compare against the live upstream.
+# Skipping this step is a NFM-4126 regression; --no-fetch exists only for
+# hermetic test runs.
+if [ "${DO_FETCH}" = "1" ] && [[ "${BASE_REF}" == origin/* ]]; then
+  REMOTE_BRANCH="${BASE_REF#origin/}"
+  log "Fetching ${BASE_REF} (NFM-4126: refresh base ref to current upstream)..."
+  set +e
+  git -C "${REPO_ROOT}" fetch --no-tags --depth=1 origin "${REMOTE_BRANCH}" >/dev/null 2>&1
+  FETCH_RC=$?
+  set -e
+  if [ "${FETCH_RC}" -ne 0 ]; then
+    warn "FETCH_WARN: git fetch origin ${REMOTE_BRANCH} exited ${FETCH_RC}; continuing with cached ${BASE_REF}"
+    warn "FETCH_WARN: the gate may run against a stale base ref. If this is unexpected,"
+    warn "FETCH_WARN: check the runner's network egress (NFM-3842 — ssh.github.com:443)."
+  fi
+fi
+
 # Resolve BASE_REF — accept branch names, full refs, or SHAs.
-# `git merge-base --is-ancestor <sha> <ref>` is the load-bearing primitive.
-# We resolve once so the subsequent --is-ancestor calls compare against the
+# `git cat-file -e <sha>:<path>` is the load-bearing primitive (NFM-4126):
+# we check the file in the resolved commit's tree, NOT in the working tree.
+# We resolve once so the subsequent cat-file calls compare against the
 # same OID and avoid reflog drift.
 if ! git -C "${REPO_ROOT}" rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null 2>&1 \
    && ! git -C "${REPO_ROOT}" rev-parse --verify --quiet "${BASE_REF}" >/dev/null 2>&1; then
@@ -137,10 +199,12 @@ if [ -z "${RESOLVED_REF}" ]; then
   echo "ERROR: could not resolve --base-ref '${BASE_REF}'" >&2
   exit 72
 fi
+log "Resolved ${BASE_REF} -> ${RESOLVED_REF:0:9}"
 
-log() { printf '\033[1;34m[on-main-assert]\033[0m %s\n' "$*"; }
-err() { printf '\033[1;31m[on-main-assert]\033[0m %s\n' "$*" >&2; }
-ok()  { printf '\033[1;32m[on-main-assert]\033[0m %s\n' "$*"; }
+# Capture the working-tree HEAD so we can surface a divergence diagnostic
+# when the file is on the base ref but missing from the working tree
+# (NFM-4126 acceptance criterion #2: "image built from X, working tree at Y").
+WT_HEAD="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD 2>/dev/null || true)"
 
 # ---- 1. Run 'alembic heads' inside the candidate image -------------------
 # We need the head revisions exactly as the image would apply them. The
@@ -185,13 +249,13 @@ fi
 # /app/migrations/versions/<rev>_<slug>.py (or <rev>.py for hand-merge files).
 # Map back to apps/api/migrations/versions/... in the host repo.
 HEAD_FILE_MAP=""   # "<rev>|<host-relative-path>|<image-relative-path>"
-HEAD_MISSING=""    # collect any heads whose file we can't locate
+HEAD_NOT_IN_IMAGE=""  # heads whose IMAGE_FILE lookup failed -> exit 73
 
 for rev in ${HEAD_REVS}; do
   IMAGE_FILE="$(docker run --rm "${IMAGE}" \
       sh -c "ls /app/migrations/versions/${rev}*.py 2>/dev/null | head -1" 2>/dev/null || true)"
   if [ -z "${IMAGE_FILE}" ]; then
-    HEAD_MISSING="${HEAD_MISSING} ${rev}"
+    HEAD_NOT_IN_IMAGE="${HEAD_NOT_IN_IMAGE} ${rev}"
     continue
   fi
   # /app/migrations/versions/X.py  ->  apps/api/migrations/versions/X.py
@@ -199,62 +263,81 @@ for rev in ${HEAD_REVS}; do
   # ${var#/app} strips only "app" — the leading slash is treated as a
   # path separator inside the glob pattern. sed is portable.
   HOST_REL="$(printf '%s' "${IMAGE_FILE}" | sed 's|^/app/|apps/api/|')"
-  if [ ! -f "${REPO_ROOT}/${HOST_REL}" ]; then
-    HEAD_MISSING="${HEAD_MISSING} ${rev}"
-    continue
-  fi
   HEAD_FILE_MAP="${HEAD_FILE_MAP}${rev}|${HOST_REL}|${IMAGE_FILE}"$'\n'
 done
 
-if [ -n "${HEAD_MISSING}" ]; then
-  err "HEAD_FILE_NOT_FOUND: could not locate migration file(s) for heads:"
-  for r in ${HEAD_MISSING}; do err "  - ${r}"; done
-  err "  (the image contains the revision but the host working tree does not;"
-  err "   the candidate image was likely built from a different tree than"
-  err "   the one this script is checking against. Pass --repo-root or rebuild"
-  err "   the image from ${REPO_ROOT}.)"
+# HEAD_NOT_IN_IMAGE is a real image-layout defect (the image's alembic head
+# references a revision whose file isn't in /app/migrations/versions/).
+# Distinguish from 70 (file in image, not on base ref) — see exit-code table.
+if [ -n "${HEAD_NOT_IN_IMAGE}" ]; then
+  err "HEAD_FILE_NOT_FOUND: alembic head references revision(s) absent from image:"
+  for r in ${HEAD_NOT_IN_IMAGE}; do err "  - ${r}"; done
+  err "  (the image's alembic heads output references ${HEAD_NOT_IN_IMAGE%% *} but"
+  err "   'docker run ls /app/migrations/versions/<rev>*.py' returned nothing."
+  err "   This is an image-build defect, not a working-tree divergence —"
+  err "   inspect the candidate image's /app/migrations/versions/ directory.)"
   exit 73
 fi
 
-# ---- 3. For each head's file, run merge-base --is-ancestor ---------------
+# ---- 3. For each head's file, check presence in the BASE-REF tree --------
+# NFM-4126 fix: we check ``git cat-file -e ${RESOLVED_REF}:${HOST_REL}`` —
+# the file must exist at the resolved base-ref commit, NOT in the working
+# tree. This is the actual NFM-2141 invariant ("revision file is on main")
+# and it survives a working tree that is behind origin/main.
 NOT_ON_REF=""
+DIVERGENCE_REPORT=""
 while IFS='|' read -r rev host_rel image_rel; do
   [ -z "${rev}" ] && continue
-  FILE_COMMIT="$(git -C "${REPO_ROOT}" log -1 --format=%H -- "${host_rel}" 2>/dev/null || true)"
+  set +e
+  git -C "${REPO_ROOT}" cat-file -e "${RESOLVED_REF}:${host_rel}" 2>/dev/null
+  ON_REF_RC=$?
+  set -e
+  if [ "${ON_REF_RC}" -ne 0 ]; then
+    NOT_ON_REF="${NOT_ON_REF} ${rev}"
+    err "  ${rev}: ${host_rel} is NOT in tree of ${BASE_REF} (${RESOLVED_REF:0:9})"
+    err "    (image built from a tree that does not contain this revision's file;"
+    err "     this is the NFM-1692/2104/2136 condition)"
+    continue
+  fi
+  # Compute the file's last-touched commit AT THE BASE REF so the audit log
+  # and the success log have a stable SHA. This is by construction an
+  # ancestor of RESOLVED_REF, so we still surface the merge-base check for
+  # the audit row but we no longer need it for the pass/fail decision.
+  FILE_COMMIT="$(git -C "${REPO_ROOT}" log -1 --format=%H "${RESOLVED_REF}" -- "${host_rel}" 2>/dev/null || true)"
   if [ -z "${FILE_COMMIT}" ]; then
-    err "GIT_ERROR: git log failed for ${host_rel}"
+    err "GIT_ERROR: git log failed for ${host_rel} at ${RESOLVED_REF:0:9}"
     exit 74
   fi
-  # merge-base --is-ancestor exits 0 when the first commit is an ancestor
-  # of the second (i.e. FILE_COMMIT is reachable from RESOLVED_REF). Exit
-  # 1 means "not an ancestor" — that is the case we want to flag. Anything
-  # else (2+, transport error) is a real git failure.
-  set +e
-  git -C "${REPO_ROOT}" merge-base --is-ancestor "${FILE_COMMIT}" "${RESOLVED_REF}" >/dev/null 2>&1
-  ANCESTOR_RC=$?
-  set -e
-  case "${ANCESTOR_RC}" in
-    0)
-      ok "  ${rev}: ${host_rel} @ ${FILE_COMMIT:0:9} is on ${BASE_REF}"
-      ;;
-    1)
-      NOT_ON_REF="${NOT_ON_REF} ${rev}"
-      err "  ${rev}: ${host_rel} @ ${FILE_COMMIT:0:9} is NOT on ${BASE_REF}"
-      err "    full sha: ${FILE_COMMIT}"
-      err "    base ref: ${RESOLVED_REF}"
-      err "    branches containing this commit:"
-      git -C "${REPO_ROOT}" branch -a --contains "${FILE_COMMIT}" 2>/dev/null | sed 's/^/      /' >&2 || true
-      ;;
-    *)
-      err "GIT_ERROR: git merge-base --is-ancestor exited ${ANCESTOR_RC} for ${rev}"
-      exit 74
-      ;;
-  esac
+  ok "  ${rev}: ${host_rel} @ ${FILE_COMMIT:0:9} is in tree of ${BASE_REF} (${RESOLVED_REF:0:9})"
+  # Divergence diagnostic (NFM-4126 acceptance criterion #2): if the file is
+  # in the base-ref tree but missing from the working tree, the working tree
+  # is behind origin/main. This is informational, NOT a failure.
+  if [ -n "${WT_HEAD}" ] && [ ! -f "${REPO_ROOT}/${host_rel}" ]; then
+    set +e
+    git -C "${REPO_ROOT}" merge-base --is-ancestor "${WT_HEAD}" "${RESOLVED_REF}" >/dev/null 2>&1
+    WT_BEHIND_RC=$?
+    set -e
+    if [ "${WT_BEHIND_RC}" -eq 0 ]; then
+      BEHIND_COUNT="$(git -C "${REPO_ROOT}" rev-list --count "${WT_HEAD}..${RESOLVED_REF}" 2>/dev/null || echo "?")"
+      DIVERGENCE_REPORT="${DIVERGENCE_REPORT}    ${rev}: image built from ${BASE_REF} ${RESOLVED_REF:0:9}, working tree at ${WT_HEAD:0:9} (${BEHIND_COUNT} commits behind)"$'\n'
+    else
+      DIVERGENCE_REPORT="${DIVERGENCE_REPORT}    ${rev}: image built from ${BASE_REF} ${RESOLVED_REF:0:9}, working tree at ${WT_HEAD:0:9} (DIVERGED — not an ancestor of base ref)"$'\n'
+    fi
+  fi
 done <<< "${HEAD_FILE_MAP%$'\n'}"
+
+# ---- 3b. Surface the divergence diagnostic --------------------------------
+if [ -n "${DIVERGENCE_REPORT}" ]; then
+  warn "DIVERGENCE_DIAGNOSTIC: working tree is not at ${BASE_REF} HEAD. This is"
+  warn "  not a gate failure (the file is at the base ref, so the deploy can"
+  warn "  proceed), but the runner checkout is stale:"
+  printf '%s' "${DIVERGENCE_REPORT}" | sed 's/^/  /' >&2
+  warn "  (NFM-4126: image built from X=${RESOLVED_REF:0:9}, working tree at Y=${WT_HEAD:0:9})"
+fi
 
 # ---- 4. Decide pass / block / override ------------------------------------
 if [ -z "${NOT_ON_REF}" ]; then
-  ok "ASSERT_OK: all alembic heads are on ${BASE_REF}"
+  ok "ASSERT_OK: all alembic heads are present in tree of ${BASE_REF} (${RESOLVED_REF:0:9})"
   exit 0
 fi
 
