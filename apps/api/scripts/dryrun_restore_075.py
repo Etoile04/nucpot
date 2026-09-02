@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""NFM-4139 dry-run for migration 073_restore_placeholder_sources_datasets.
+"""NFM-4139 dry-run for migration 075_restore_placeholder_sources_datasets.
 
-Wraps the two INSERT blocks from migration 073 in BEGIN; ... ROLLBACK;
+Wraps the two INSERT blocks from migration 075 in BEGIN; ... ROLLBACK;
 on a target DB so we can prove idempotency + expected counts without
 persisting any change.
 
@@ -23,7 +23,7 @@ the script exits.
 Usage
 -----
 
-    python dryrun_restore_073.py \\
+    python dryrun_restore_075.py \\
         --database-url postgresql://nfm:nfm@localhost:55432/nfm_db_clone
 
 Exit codes
@@ -48,10 +48,10 @@ import psycopg
 
 
 # ---------------------------------------------------------------------------
-# Migration 073 SQL — duplicated here (NOT imported) so the dry-run
+# Migration 075 SQL — duplicated here (NOT imported) so the dry-run
 # script can be invoked on any DB without requiring the alembic
 # migration environment to load.  Keep in lockstep with
-# migrations/versions/073_restore_placeholder_sources_datasets.py
+# migrations/versions/075_restore_placeholder_sources_datasets.py
 # ---------------------------------------------------------------------------
 
 # SQL to count what WOULD be inserted by the data_sources block, BEFORE
@@ -82,7 +82,7 @@ _DRYRUN_COUNTS_DDL: str = textwrap.dedent(
     """
 )
 
-# The two INSERT blocks (verbatim from migration 073 upgrade()).
+# The two INSERT blocks (verbatim from migration 075 upgrade()).
 # ON CONFLICT DO NOTHING makes these idempotent.
 _INSERT_DATA_SOURCES: str = textwrap.dedent(
     """
@@ -186,7 +186,7 @@ EXPECTED_UUID_PAIRS: list[tuple[str, str]] = [
 
 
 def dryrun(database_url: str) -> int:
-    """Run the migration 073 INSERT blocks in a rolled-back transaction.
+    """Run the migration 075 INSERT blocks in a rolled-back transaction.
 
     Returns the script exit code (0 = pass, 1 = mismatch, 2 = unique
     violation, 3 = config error).

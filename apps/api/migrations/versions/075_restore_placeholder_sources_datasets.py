@@ -1,7 +1,7 @@
 """Restore 18 placeholder ``data_sources`` + 10 ``datasets`` rows from ``*_backup_070``.
 
-Revision ID: 073_restore_placeholder_sources_datasets
-Revises: 072_material_kg_bridge_coverage
+Revision ID: 075_restore_placeholder_sources_datasets
+Revises: 073_create_nfm_preview_role
 Create Date: 2026-09-02
 
 NFM-4139 — Option B (recast) from NFM-4135 verdict
@@ -111,8 +111,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "073_restore_placeholder_sources_datasets"
-down_revision: str | Sequence[str] | None = "072_material_kg_bridge_coverage"
+revision: str = "075_restore_placeholder_sources_datasets"
+down_revision: str | Sequence[str] | None = "073_create_nfm_preview_role"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -145,27 +145,48 @@ _EXPECTED_DATASETS_DELTA: int = 10
 
 
 def upgrade() -> None:
-    """Re-insert 18 placeholder sources + 10 datasets from backup tables."""
+    """Re-insert 18 placeholder sources + 10 datasets from backup tables.
+
+    On a fresh database (no backup tables from migration 070), this is a
+    safe no-op — the backup tables never existed so there is nothing to
+    restore.  This allows ``alembic upgrade head`` from an empty schema
+    to succeed without errors (schema-drift guard requirement).
+    """
     bind = op.get_bind()
+
+    # ------------------------------------------------------------------
+    # Fresh-DB guard: skip when backup tables are absent.
+    # ------------------------------------------------------------------
+    # ``to_regclass()`` returns NULL when the relation does not exist,
+    # so the COALESCE yields FALSE — and the whole upgrade becomes a
+    # no-op.  This is the correct behaviour: a fresh DB never ran
+    # migration 070, so there is nothing to restore.
+    row = bind.execute(
+        sa.text(
+            """
+            SELECT to_regclass('public.data_sources_backup_070') IS NOT NULL
+              AND to_regclass('public.datasets_backup_070') IS NOT NULL
+            AS backup_tables_exist
+            """
+        )
+    ).one()
+    if not row[0]:
+        return
 
     # ------------------------------------------------------------------
     # Pre-state: capture before counts for AC-3 self-attestation.
     # ------------------------------------------------------------------
-    # DROP IF EXISTS first so the migration is safely re-runnable
-    # within a single transaction (TEMP TABLE ... ON COMMIT DROP only
-    # fires on COMMIT, not ROLLBACK, so the temp table persists across
-    # re-runs in the same transaction).
     bind.execute(
         sa.text(
             """
-            DROP TABLE IF EXISTS _restore_073_pre_counts
+            DROP TABLE IF EXISTS _restore_075_pre_counts
             """
         )
     )
     bind.execute(
         sa.text(
             """
-            CREATE TEMP TABLE _restore_073_pre_counts ON COMMIT DROP AS
+            CREATE TEMP TABLE _restore_075_pre_counts ON COMMIT DROP AS
             SELECT
                 (SELECT count(*) FROM data_sources)              AS data_sources_pre,
                 (SELECT count(*) FROM datasets)                  AS datasets_pre,
@@ -249,14 +270,14 @@ def upgrade() -> None:
     bind.execute(
         sa.text(
             """
-            DROP TABLE IF EXISTS _restore_073_post_counts
+            DROP TABLE IF EXISTS _restore_075_post_counts
             """
         )
     )
     bind.execute(
         sa.text(
             """
-            CREATE TEMP TABLE _restore_073_post_counts ON COMMIT DROP AS
+            CREATE TEMP TABLE _restore_075_post_counts ON COMMIT DROP AS
             SELECT
                 (SELECT count(*) FROM data_sources)              AS data_sources_post,
                 (SELECT count(*) FROM datasets)                  AS datasets_post
@@ -268,7 +289,7 @@ def upgrade() -> None:
         sa.text(
             """
             SELECT
-                'restore_073_summary'                 AS check_name,
+                'restore_075_summary'                 AS check_name,
                 pre.data_sources_pre                  AS data_sources_pre,
                 post.data_sources_post                AS data_sources_post,
                 post.data_sources_post - pre.data_sources_pre
@@ -278,7 +299,7 @@ def upgrade() -> None:
                 post.datasets_post - pre.datasets_pre
                                                     AS datasets_delta,
                 pre.placeholder_in_backup             AS placeholder_in_backup
-            FROM _restore_073_pre_counts pre, _restore_073_post_counts post
+            FROM _restore_075_pre_counts pre, _restore_075_post_counts post
             """
         )
     )
@@ -326,8 +347,23 @@ def downgrade() -> None:
     CASCADE chain is not triggered.  The 18 placeholder sources have
     no FK references from canonical rows (their dataset restoration
     is what we just reversed).
+
+    On a fresh database this is a no-op (backup tables never existed).
     """
     bind = op.get_bind()
+
+    # Fresh-DB guard (mirrors upgrade).
+    row = bind.execute(
+        sa.text(
+            """
+            SELECT to_regclass('public.data_sources_backup_070') IS NOT NULL
+              AND to_regclass('public.datasets_backup_070') IS NOT NULL
+            AS backup_tables_exist
+            """
+        )
+    ).one()
+    if not row[0]:
+        return
 
     # ------------------------------------------------------------------
     # 1. Delete the 10 restored datasets (only those whose ids exist

@@ -1,4 +1,4 @@
-"""Runtime regression tests for migration 073 — NFM-4139.
+"""Runtime regression tests for migration 075 — NFM-4139.
 
 Validates the recast Option B (NFM-4135 verdict) that re-inserts the
 18 placeholder ``data_sources`` rows + 10 ``datasets`` rows from
@@ -7,11 +7,11 @@ Validates the recast Option B (NFM-4135 verdict) that re-inserts the
 Why we drive this against a real Postgres clone (not SQLite)
 ------------------------------------------------------------
 
-Migration 073 executes raw SQL via ``op.get_bind()`` and relies on
+Migration 075 executes raw SQL via ``op.get_bind()`` and relies on
 Postgres-specific extensions (``jsonb``, ``gen_random_uuid()``,
 ``uuid`` type). SQLite would either crash or require mocking the
 extension layer. Instead, the test connects to the throwaway prod
-clone used for AC-2 dry-run (see ``scripts/dryrun_restore_073.py``).
+clone used for AC-2 dry-run (see ``scripts/dryrun_restore_075.py``).
 
 Each test starts a transaction, runs ``upgrade()``, asserts the
 expected deltas + UUID pairs, then rolls back — leaving the DB
@@ -39,7 +39,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 _MIGRATION_PATH = Path(
-    "migrations/versions/073_restore_placeholder_sources_datasets.py"
+    "migrations/versions/075_restore_placeholder_sources_datasets.py"
 ).resolve()
 
 _TEST_DB_URL = os.environ.get(
@@ -64,7 +64,7 @@ EXPECTED_UUID_PAIRS: list[tuple[str, str]] = [
 
 
 def _load_migration_module():
-    """Import migration 073 by file path (digit-prefixed module name)."""
+    """Import migration 075 by file path (digit-prefixed module name)."""
     spec = importlib.util.spec_from_file_location(
         "_nfm4139_migration_under_test", _MIGRATION_PATH
     )
@@ -121,8 +121,8 @@ def _run_migration_against_connection(conn, migration_module, func_name: str):
         getattr(migration_module, func_name)()
 
 
-class TestMigration073RestorePlaceholder:
-    """Verify migration 073 implements the recast Option B correctly."""
+class TestMigration075RestorePlaceholder:
+    """Verify migration 075 implements the recast Option B correctly."""
 
     def test_upgrade_inserts_18_placeholder_sources(self, clone_db):
         """AC-2: upgrade() inserts exactly +18 placeholder data_sources rows."""
