@@ -285,6 +285,13 @@ NFM_ACCESS_TOKEN_EXPIRE_MINUTES=${access_minutes}
 NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=${canonicals}
 NFMD_PREVIEW_DB_PASSWORD=${preview_pw}
 EOF
+  # NFM-4215: the file carries NFM_SECRET_KEY, NFM_DATABASE_URL and
+  # NFMD_PREVIEW_DB_PASSWORD (NFM-4197) — pin it to 0600, matching the
+  # parent docker/.env.staging (NFM-4190). Explicit chmod rather than a
+  # scoped umask because ``>`` truncates an existing file without
+  # touching its mode: hosts with a pre-existing 0644 copy (every deploy
+  # before this change) would otherwise stay world-readable.
+  chmod 600 "$api_env"
   log "Wrote $api_env (NFM_CORS_ORIGINS preserved verbatim via grep)."
 }
 
