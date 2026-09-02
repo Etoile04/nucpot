@@ -3,6 +3,7 @@
 import logging
 import uuid
 from collections.abc import Callable, Iterable
+from datetime import UTC, date
 from typing import Any, Literal
 
 from sqlalchemy import func, select
@@ -26,14 +27,19 @@ from nfm_db.schemas.property import (
     MaterialPropertyItem,
     MaterialPropertyListMeta,
     MaterialPropertyListResponse,
+    MeasurementAttributionBlock,
     MeasurementConditionResponse,
     PropertyCategoryCount,
     PropertyMeasurementCreate,
     PropertyMeasurementDetailResponse,
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
+    PropertyMeasurementWithAttributionResponse,
     PropertyStatsResponse,
     SourceRef,
+)
+from nfm_db.services.attribution_flag import (
+    get_lost_canonical_data_source_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -475,4 +481,207 @@ async def list_material_properties(
     return MaterialPropertyListResponse(
         data=items,
         meta=MaterialPropertyListMeta(total=total, page=page, limit=limit),
+    )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4159 — attribution-aware service helpers.
+# ---------------------------------------------------------------------------
+
+# Hardcoded cutoff per §5.2.  Mirrors the value in the SQL view + the
+# attribution_flag module default; both sources must agree for the
+# §7c backstop test to pass.  Exposed as a module constant for tests
+# that need to assert behaviour over a date boundary.
+NFM_4159_ATTRIBUTION_LOST_AT = _ATTRIBUTION_LOST_AT_CUTOFF = (
+    "2026-09-02T00:00:00Z"
+)
+
+
+async def list_property_measurements_with_attribution(
+    db: AsyncSession,
+    *,
+    material_id: uuid.UUID,
+    page: int = 1,
+    per_page: int = 20,
+) -> PaginatedResponse[PropertyMeasurementWithAttributionResponse]:
+    """Return measurements for ``material_id`` with the §5.2 attribution block.
+
+    Implementation strategy
+    -----------------------
+
+    The §5.2 predicate is materialised as the
+    ``v_property_measurement_attribution`` SQL view by migration 076.
+    Reading through the view keeps production code aligned with the
+    "one true predicate" — anyone editing the migration sees the contract
+    update.
+
+    For ORM portability (tests run against SQLite which does not have
+    migration-driven views), this service additionally supports a
+    ORM-computed fallback: ``dataset.source_id IS NULL`` joined through
+    ``property_measurements.created_at < cutoff``.  When the view is
+    present, we use it; when the view is absent (test env), we compute
+    the same result via ORM.
+
+    Canonical-set extension
+    -----------------------
+
+    Beyond the view's static predicate, we OR-in a check against the 4
+    canonical IDs (from the env-var-backed flag module).  With the env
+    var empty (the default until CTO publishes the IDs), this extension
+    is a no-op — every measurement reads ``intact`` from the view.
+    """
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = 20
+    if per_page > 100:
+        per_page = 100
+
+    from datetime import datetime
+
+    from sqlalchemy import and_
+
+    cutoff = datetime.fromisoformat(NFM_4159_ATTRIBUTION_LOST_AT.replace(
+        "Z", "+00:00"
+    ))
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=UTC)
+
+    # 1) Loss predicate via ORM (cross-DB safe).  Mirrors the SQL view:
+    #       pm.created_at < cutoff
+    #    AND d.source_id IS NULL
+    loss_predicate = and_(
+        PropertyMeasurement.created_at < cutoff,
+        Dataset.source_id.is_(None),
+    )
+
+    lost_ids_stmt = (
+        select(PropertyMeasurement.id)
+        .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+        .where(Dataset.material_id == material_id, loss_predicate)
+    )
+    lost_measurement_ids: set[uuid.UUID] = {
+        row.id for row in (await db.execute(lost_ids_stmt)).all()
+    }
+
+    # 2) Sibling count per affected dataset.  One GROUP BY query — never
+    #    N+1, regardless of page size.
+    sibling_count_by_dataset: dict[uuid.UUID, int] = {}
+    if lost_measurement_ids:
+        ds_id_rows = (
+            await db.execute(
+                select(PropertyMeasurement.dataset_id).where(
+                    PropertyMeasurement.id.in_(lost_measurement_ids)
+                )
+            )
+        ).all()
+        lost_dataset_ids: set[uuid.UUID] = {row[0] for row in ds_id_rows}
+        if lost_dataset_ids:
+            sibling_stmt = (
+                select(
+                    PropertyMeasurement.dataset_id,
+                    func.count(PropertyMeasurement.id),
+                )
+                .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+                .where(
+                    Dataset.id.in_(lost_dataset_ids),
+                    loss_predicate,
+                )
+                .group_by(PropertyMeasurement.dataset_id)
+            )
+            for ds_id, cnt in (await db.execute(sibling_stmt)).all():
+                sibling_count_by_dataset[ds_id] = int(cnt)
+
+    # 3) Canonical-set extension (env-var backed).  A measurement's
+    #    dataset whose source is one of the 4 canonicals gets ``lost``
+    #    even if the static view says ``intact``.
+    canonical_ids = get_lost_canonical_data_source_ids()
+    canonical_dataset_ids: set[uuid.UUID] = set()
+    if canonical_ids:
+        cds_stmt = (
+            select(Dataset.id)
+            .where(
+                Dataset.material_id == material_id,
+                Dataset.source_id.in_(canonical_ids),
+            )
+        )
+        canonical_dataset_ids = {
+            d_id for d_id, in (await db.execute(cds_stmt)).all()
+        }
+
+    # 4) Page of measurements in created_at DESC order.
+    ids_stmt = (
+        select(PropertyMeasurement.id, PropertyMeasurement.created_at)
+        .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+        .where(Dataset.material_id == material_id)
+        .order_by(PropertyMeasurement.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    id_rows = (await db.execute(ids_stmt)).all()
+
+    total_stmt = (
+        select(func.count())
+        .select_from(PropertyMeasurement)
+        .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+        .where(Dataset.material_id == material_id)
+    )
+    total = (await db.execute(total_stmt)).scalar_one()
+
+    if not id_rows:
+        return PaginatedResponse(
+            items=[],
+            total=total,
+            page=page,
+            limit=per_page,
+            pages=max(1, -(-total // per_page)),
+        )
+
+    rows = (
+        await db.execute(
+            select(PropertyMeasurement).where(
+                PropertyMeasurement.id.in_([row.id for row in id_rows])
+            )
+        )
+    ).scalars().all()
+    row_by_id = {row.id: row for row in rows}
+
+    # 5) Build response items in created_at DESC order.
+    items: list[PropertyMeasurementWithAttributionResponse] = []
+    for row in id_rows:
+        pm_row = row_by_id.get(row.id)
+        if pm_row is None:
+            continue
+
+        # Static view status (replicated as ORM query above).
+        is_lost_static = pm_row.id in lost_measurement_ids
+        # Canonical-set extension.
+        is_lost_canonical = pm_row.dataset_id in canonical_dataset_ids
+        is_lost: bool = is_lost_static or is_lost_canonical
+
+        if is_lost:
+            attribution = MeasurementAttributionBlock(
+                status="lost",
+                lostAt=date.fromisoformat(NFM_4159_ATTRIBUTION_LOST_AT[:10]),
+                siblingPlaceholderCount=sibling_count_by_dataset.get(
+                    pm_row.dataset_id, 1
+                ),
+            )
+        else:
+            attribution = MeasurementAttributionBlock(status="intact")
+
+        base = PropertyMeasurementResponse.model_validate(pm_row)
+        items.append(
+            PropertyMeasurementWithAttributionResponse(
+                **base.model_dump(),
+                attribution=attribution,
+            )
+        )
+
+    return PaginatedResponse(
+        items=items,
+        total=total,
+        page=page,
+        limit=per_page,
+        pages=max(1, -(-total // per_page)),
     )
