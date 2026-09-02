@@ -333,7 +333,7 @@ NFM-4106 acceptance criterion 1.
 The role is created by the alembic migration
 `apps/api/migrations/versions/073_create_nfm_preview_role.py`,
 which runs after the 070 embargo lifts (the chain head is
-`072_material_kg_bridge_coverage` as of 2026-09-02; 073 depends on
+`080_kg_orphan_bridge_u10mo_u3si_puo2` as of 2026-09-03; 073 depends on
 072). The canonical DDL — including all GRANTs, the
 `ALTER DEFAULT PRIVILEGES` set, and the `alembic_version` read-only
 revocation — lives at
