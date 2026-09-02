@@ -183,6 +183,20 @@ jobs:
         run: |
           uv run pytest tests/test_deploy_lock.py -v --no-cov --override-ini="addopts="
 
+      # NFM-4185 gate review: behavioral coverage of migration 080 (KG
+      # orphan bridge). The execution-based suite in
+      # tests/test_migration_080_kg_orphan_bridge.py runs the real
+      # upgrade()/downgrade() against this job's live Postgres service —
+      # pinning the fresh-database no-op, the materials-present /
+      # anchors-absent state that was the pre-fix NOT NULL crash shape,
+      # the prod-shape happy path, idempotency, and downgrade isolation.
+      # Without this step the suite is skip-by-default (NFM-2032 opt-in
+      # via NFM_TEST_DATABASE_URL) and no workflow executes it.
+      # ``--no-cov`` keeps this job independent of the coverage gate.
+      - name: Run migration-080 execution tests
+        run: |
+          uv run pytest tests/test_migration_080_kg_orphan_bridge.py -v --no-cov --override-ini="addopts="
+
   # NFM-3199: Restore parity test execution inside the standard backend CI
   # workflow now that .github/workflows/extraction-parity*.yml have been
   # removed (NFM-3193 / PR #808). Mirrors the invocation shape of the deleted
