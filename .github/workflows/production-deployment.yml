@@ -67,6 +67,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Install yamllint
         run: pip install yamllint
@@ -80,6 +82,8 @@ jobs:
     if: always()
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Run security scan
         run: |
@@ -102,6 +106,8 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: pnpm/action-setup@v6
 
@@ -125,6 +131,8 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -152,6 +160,8 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: pnpm/action-setup@v6
 
@@ -185,6 +195,8 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -219,6 +231,8 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -278,6 +292,8 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: pnpm/action-setup@v6
 
@@ -345,6 +361,8 @@ jobs:
           done
           echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Verify env key sync (NFM-2406)
         run: |
@@ -537,6 +555,8 @@ jobs:
           done
           echo "WARNING: github.com still unreachable after 5 attempts; relying on SSH egress alias"
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Run migration-on-main-assert against candidate image
         run: |
@@ -614,6 +634,8 @@ jobs:
           done
           echo "WARNING: github.com still unreachable after 5 attempts; relying on SSH egress alias"
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Run assert.sh unit tests (no Docker required)
         # Catches logical regressions in the bash script even when the
@@ -737,6 +759,8 @@ jobs:
           done
           echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Deploy via Docker Compose (loopback SSH)
         id: deploy
@@ -937,6 +961,8 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - uses: pnpm/action-setup@v6
 
@@ -1002,6 +1028,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Compute deploy duration in milliseconds
         id: duration
