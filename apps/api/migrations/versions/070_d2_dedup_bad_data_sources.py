@@ -196,6 +196,7 @@ _DO_BLOCK_SQL_TEMPLATE = """
         matched_count     INTEGER;
         migrated_pm_count INTEGER;
         deleted_ds_count  INTEGER;
+        deleted_unmatched_datasets_count INTEGER;
         unmatched_count   INTEGER;
     BEGIN
         -- ------------------------------------------------------------
@@ -539,17 +540,38 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 -- ------------------------------------------------------------
                 -- 5. Delete bad source rows.
                 -- ------------------------------------------------------------
-                -- Defence-in-depth: refuse the delete if any dataset
-                -- still references the bad source (it shouldn't, but
-                -- this catches a regression in any of the previous
-                -- steps and aborts the migration loudly).
+                -- 5a. Clean up datasets/PMs/conditions belonging to
+                --     UNMATCHED bad sources (their canonical_id is NULL,
+                --     so they have nothing to redirect to).  CASCADE on
+                --     datasets → property_measurements → measurement_
+                --     conditions handles the rest.  NFM-4095 follow-up:
+                --     prod at 069 had 32 bad sources, ALL unmatched,
+                --     carrying 30 datasets / 31 PMs.  Without this step
+                --     the safety guard at 5b refuses the source DELETE.
+                DELETE FROM datasets d
+                USING _canonical_map cm
+                WHERE d.source_id = cm.bad_id
+                  AND cm.is_unmatched;
+
+                GET DIAGNOSTICS deleted_unmatched_datasets_count = ROW_COUNT;
+                RAISE NOTICE 'NFM-4088: deleted % datasets under unmatched bad sources',
+                    deleted_unmatched_datasets_count;
+
+                -- 5b. Defence-in-depth: refuse the delete if any dataset
+                --     still references a MATCHED bad source (it
+                --     shouldn't, but this catches a regression in any of
+                --     the previous steps and aborts the migration
+                --     loudly).  Unmatched bad sources had their datasets
+                --     wiped in 5a.
                 IF EXISTS (
                     SELECT 1
                     FROM datasets ds
-                    JOIN _bad_sources bs ON bs.id = ds.source_id
+                    JOIN _canonical_map cm
+                        ON cm.bad_id = ds.source_id
+                    WHERE NOT cm.is_unmatched
                 ) THEN
                     RAISE EXCEPTION
-                        'NFM-4088: refusing DELETE — datasets still reference bad sources';
+                        'NFM-4088: refusing DELETE — datasets still reference MATCHED bad sources';
                 END IF;
 
                 DELETE FROM data_sources WHERE id IN (SELECT bad_id FROM _canonical_map);
