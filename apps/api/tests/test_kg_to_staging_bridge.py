@@ -27,6 +27,7 @@ from nfm_db.services.kg_to_staging_bridge import (
     bridge_kg_to_staging,
     confidence_from_property_measurement,
 )
+from tests._helpers.owen2023_corpus import snapshot_labels
 
 # --- pure helpers ----------------------------------------------------------
 
@@ -41,6 +42,172 @@ from nfm_db.services.kg_to_staging_bridge import (
     ],
 )
 def test_canonical_element_system(label, expected):
+    assert _canonical_element_system(label) == expected
+
+
+# NFM-4037: morphology adjectives + Cr-bearing UO2 labels that the
+# Owen2023 corpus (source 9320cb50) emits on Material KGNode rows.
+# The F8 scorecard (``audit/f8_scorecard_v050.sql``) only accepts
+# ``element_system IN ('UO2', 'UO2+Cr', 'U-Cr-O')`` so every label in
+# this table must collapse onto one of those three.  Regression tests
+# for the pre-existing subscript path (``U₂Mo`` → ``U-Mo``) live above.
+#
+# NFM-4048: this table is a superset of the production corpus.  The
+# prod half is cross-checked against
+# ``tests/fixtures/owen2023_material_labels.json`` by
+# ``test_canonical_element_system_covers_every_owen2023_label``, so a
+# prod label can no longer be missing from here (QA warning W1).  The
+# remaining rows are deliberate *defensive* coverage for labels prod
+# does not currently hold (``crystalline UO2``, ``nano-Cr``, the
+# ``U-10Mo`` pass-throughs) — keep them.
+_OWEN2023_LABELS: list[tuple[str, str]] = [
+    # Undoped UO2 — the strip-loop must remove the adjective but leave
+    # a label the F8 ``element_system = 'UO2'`` predicate matches.
+    ("UO2", "UO2"),
+    ("amorphous UO2", "UO2"),
+    ("crystalline UO2", "UO2"),
+    ("polycrystalline UO2", "UO2"),
+    # Cr-bearing UO2 — every label collapses onto 'UO2+Cr' (the F8
+    # scorecard accepts BOTH 'UO2+Cr' and 'U-Cr-O'; the Owen2023 corpus
+    # is matrix+dopant so the matrix+dopant form is the unambiguous pick).
+    # NFM-4048 AC-1 (QA warning W1): the at.%Cr ladder is pinned at every
+    # concentration prod actually holds — 10/20/30/40/50, bare AND
+    # amorphous-prefixed.  NFM-4037 shipped with 20/40 (bare-amorphous)
+    # and 40 (bare) unpinned; they worked via substring matching but no
+    # test would have caught a regression.
+    ("UO2-10at.%Cr", "UO2+Cr"),
+    ("UO2-20at.%Cr", "UO2+Cr"),
+    ("UO2-30at.%Cr", "UO2+Cr"),
+    ("UO2-40at.%Cr", "UO2+Cr"),
+    ("UO2-50at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-10at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-20at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-30at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-40at.%Cr", "UO2+Cr"),
+    ("amorphous UO2-50at.%Cr", "UO2+Cr"),
+    ("Cr-doped UO2", "UO2+Cr"),
+    ("Cr-doped amorphous UO2", "UO2+Cr"),
+    ("undoped and Cr-doped amorphous UO2", "UO2+Cr"),
+    # Parenthetical variants: the strip-loop doesn't reach inside the
+    # parens, but the Cr/UO2 substring check on the full label still
+    # resolves to 'UO2+Cr'.  ``UO2 (amorphous)`` has no Cr anywhere, so
+    # it must land on the undoped 'UO2' bucket — pinning it guards the
+    # has_cr gate against a future edit that keys off the paren text.
+    ("amorphous UO2 (undoped and Cr-doped)", "UO2+Cr"),
+    ("Cr-doped UO2 (amorphous)", "UO2+Cr"),
+    ("UO2 (amorphous)", "UO2"),
+    # Pass-through guards: bare Cr without UO2 must NOT be coerced into
+    # 'UO2+Cr' (it would land on a label that doesn't describe its
+    # chemistry).  Pre-NFM-4037 pass-through behaviour is preserved.
+    ("Cr", "Cr"),
+    ("Cr2O3", "Cr2O3"),
+    # Non-UO2 alloys: still pass through so the existing U-10Mo /
+    # polycrystalline paths keep working.
+    ("U-10Mo", "U-10Mo"),
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("nano-Cr", "Cr"),  # bare Cr after prefix strip; pass-through.
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _OWEN2023_LABELS)
+def test_canonical_element_system_owen2023(label, expected):
+    """NFM-4037 AC-1: every Owen2023 (source 9320cb50) Material label
+    must collapse onto an F8-scorecard-recognised element_system."""
+    assert _canonical_element_system(label) == expected
+
+
+def test_canonical_element_system_covers_every_owen2023_label():
+    """NFM-4048 AC-2 (audit pin, tightened): drive the pin from the
+    PRODUCTION corpus, not from this module's own allowlist.
+
+    NFM-4037 shipped this test comparing ``_OWEN2023_LABELS`` against
+    itself, which is vacuous: it passes even when the pin covers only
+    12 of the 17 labels prod holds (QA warnings W1 + W2).  The snapshot
+    at ``tests/fixtures/owen2023_material_labels.json`` records every
+    label in ``kg_nodes`` where ``source_id = 9320cb50-…`` and
+    ``node_type = 'Material'``; this test asserts
+
+      1. every prod label is pinned here, and
+      2. the pinned expectation is what the function actually returns.
+
+    So a corpus that grows fails the suite as soon as the snapshot is
+    refreshed (``scripts/nfm-4048-refresh-owen2023-label-snapshot.py``)
+    instead of drifting silently.  Extra non-prod labels in the pin
+    table are allowed and wanted — they are defensive coverage for
+    labels a future extraction could plausibly emit.
+    """
+    pinned = dict(_OWEN2023_LABELS)
+    prod_labels = snapshot_labels()
+
+    unpinned = [label for label in prod_labels if label not in pinned]
+    assert not unpinned, (
+        f"{len(unpinned)} production Owen2023 label(s) are not pinned in "
+        f"_OWEN2023_LABELS: {unpinned}. Add each one with its expected "
+        "element_system (and check the F8 scorecard predicate still "
+        "accepts it) before this corpus reaches staging."
+    )
+
+    actual = {label: _canonical_element_system(label) for label in prod_labels}
+    expected = {label: pinned[label] for label in prod_labels}
+    assert actual == expected
+
+
+def test_owen2023_pin_table_is_internally_consistent():
+    """Every pinned label — prod or defensive — must still canonicalise to
+    the value pinned beside it.  Guards the non-prod defensive rows
+    (``crystalline UO2``, ``nano-Cr``, ``U-10Mo``, …) that the
+    prod-corpus pin above does not reach."""
+    actual_pairs = sorted(
+        (label, _canonical_element_system(label)) for label, _ in _OWEN2023_LABELS
+    )
+    assert actual_pairs == sorted(set(_OWEN2023_LABELS))
+
+
+def test_canonical_element_system_preserves_subscript_path():
+    """Regression guard for the original NFM-3478 alloy path."""
+    assert _canonical_element_system("U₂Mo") == "U-Mo"
+    # Subscript plus adjective: subscript path wins (we never strip
+    # adjectives on subscript-bearing labels — the alloy branch
+    # returns first).
+    assert _canonical_element_system("amorphous U₂Mo") == "U-Mo"
+
+
+# NFM-4037 AC-3: pin the pre-existing pass-through contract for every
+# label the change does NOT touch.  If a non-Owen2023 source's row gets
+# renormalised, the staging surface for that source silently shifts and
+# the dedup hash changes — this list is the regression guard.
+_REGRESSION_LABELS: list[tuple[str, str]] = [
+    # Subscript-bearing alloy notation — pre-NFM-4037 alloy path.
+    ("U₂Mo", "U-Mo"),
+    ("U₃Si₂", "U-Si"),
+    # Plain formulas — pre-NFM-4037 pass-through.
+    ("U", "U"),
+    ("Mo", "Mo"),
+    ("Cr", "Cr"),
+    ("U3Si2", "U3Si2"),
+    ("Cr2O3", "Cr2O3"),
+    ("Al2O3", "Al2O3"),
+    # Alloy formulas with separator — pre-NFM-4037 pass-through.
+    ("U-10Mo", "U-10Mo"),
+    ("Zr-4", "Zr-4"),
+    # Adjective-prefixed labels whose chemistry is NOT UO2 — strip the
+    # adjective but keep the chemistry.  These were previously
+    # pass-through (the old code returned ``plain`` for ASCII labels);
+    # the strip-loop now collapses them onto the bare chemistry too.
+    # Pin the new behaviour so a future edit cannot silently regress
+    # this into "polycrystalline U-10Mo" leaking back onto the staging
+    # surface.
+    ("polycrystalline U-10Mo", "U-10Mo"),
+    ("crystalline Al2O3", "Al2O3"),
+]
+
+
+@pytest.mark.parametrize(("label", "expected"), _REGRESSION_LABELS)
+def test_canonical_element_system_non_owen2023_pass_through(label, expected):
+    """NFM-4037 AC-3: non-Owen2023 sources must not see their staging
+    surface silently shift.  Every label the change does NOT touch must
+    canonicalise to its pre-NFM-4037 value (or, for adjective-bearing
+    non-UO2 labels, the bare chemistry)."""
     assert _canonical_element_system(label) == expected
 
 
@@ -69,6 +236,151 @@ def test_property_slug_map_covers_starikov2023_labels():
         assert label in _PROPERTY_SLUGS, f"missing slug mapping for {label!r}"
     # both slope labels canonicalize to the same slug (dedup-safe)
     assert _PROPERTY_SLUGS["相平衡线斜率"] == _PROPERTY_SLUGS["Clausius-Clapeyron斜率"]
+
+
+# --- F8 Owen2023 (NFM-4036) -------------------------------------------------
+#
+# Source ``9320cb50-…`` (Owen2023, DOI 10.1016/j.jnucmat.2023.154270) emits
+# 22 distinct Property labels.  Before NFM-4036, 17 of them fell to the
+# ``_slugify`` CJK fallback (which returns the literal ``"unknown"``) and
+# the bridge dropped them at the ``== "unknown"`` guard.  The other 5
+# survived as corrupt ASCII fragments; the two Cr-doped labels collided on
+# ``"Cr"``, silently merging the Cr-doped activation energy with the
+# Cr-doped pre-exponential factor on the staging surface.
+#
+# Acceptance for NFM-4036 / AC-1 / AC-2 is locked in by the scorecard
+# ``apps/api/src/nfm_db/audit/f8_scorecard_v050.sql`` whose PASS predicates
+# are on these five slugs: ``activation_energy``, ``pre_exponential_factor``
+# / ``diffusion_coefficient``, ``density``, ``rdf_peak``, ``bond_length``.
+# The scorecard separates undoped from Cr-doped by ``element_system`` and
+# value band, never by ``property_name``, so multiple Chinese synonyms may
+# legitimately collapse onto one slug — but the Cr-doped Ea and Cr-doped D0
+# must NOT collapse onto each other.
+
+
+# Slugs the F8 scorecard predicates on (PASS criterion only).
+_F8_PASS_SLUGS = {
+    "activation_energy",
+    "pre_exponential_factor",
+    "diffusion_coefficient",
+    "density",
+    "rdf_peak",
+    "bond_length",
+}
+
+
+# Every Chinese label the F8 scorecard diagnostic CTE classifies as one of
+# the F8 properties.  Pulled verbatim from
+# ``audit/f8_scorecard_v050.sql::kg_classified``.  The bridge slug map must
+# cover all of these so the kg_nodes loop emits the right ``property_name``.
+_F8_CHINESE_LABELS = [
+    # activation_energy (F8 checkpoints 1 and 3)
+    "扩散激活能",
+    "扩散活化能",
+    "活化能",
+    "激活能",
+    "氧扩散激活能",
+    "Cr掺杂扩散激活能",
+    # pre_exponential_factor (F8 checkpoints 2 and 4 — scorecard also
+    # accepts diffusion_coefficient as an alias for D0)
+    "扩散前指数因子",
+    "扩散指前因子",
+    "扩散系数指前因子",
+    "扩散预指数因子",
+    "预指数因子",
+    "氧扩散前指数因子",
+    "氧扩散指前因子",
+    "Cr掺杂扩散前指数因子",
+    # diffusion_coefficient (kept distinct from D0; same F8 IN-list)
+    "扩散系数",
+    # density (F8 checkpoints 5 and 6)
+    "密度",
+    # rdf_peak (F8 checkpoint 7)
+    "RDF峰",
+    # bond_length (F8 checkpoint 8)
+    "键长",
+]
+
+
+@pytest.mark.parametrize("label", _F8_CHINESE_LABELS)
+def test_f8_owen2023_label_resolves_to_pass_criterion_slug(label):
+    """AC-1: every F8 Owen2023 Chinese label must land on a slug the
+    scorecard predicates on (so the staging surface and the scorecard
+    agree on which rows count as PASS)."""
+    assert label in _PROPERTY_SLUGS, (
+        f"F8 label {label!r} missing from _PROPERTY_SLUGS — bridge will "
+        f"drop the row at the == 'unknown' guard"
+    )
+    slug = _PROPERTY_SLUGS[label]
+    assert slug in _F8_PASS_SLUGS, (
+        f"F8 label {label!r} maps to {slug!r} which is NOT an F8 PASS "
+        f"slug; scorecard will not count this row"
+    )
+
+
+def test_f8_owen2023_slug_distribution_lands_every_checkpoint():
+    """AC-1 (exhaustiveness): every F8 PASS slug has at least one
+    Chinese label mapped to it, so no checkpoint is unreachable."""
+    slugs_seen = {
+        _PROPERTY_SLUGS[label] for label in _F8_CHINESE_LABELS
+    }
+    missing = _F8_PASS_SLUGS - slugs_seen
+    assert not missing, (
+        f"No F8 Chinese label maps to these PASS slugs: {missing}. "
+        f"Corresponding scorecard checkpoints will stay 0/0."
+    )
+
+
+def test_f8_cr_doped_ea_and_d0_do_not_collide():
+    """AC-2 (no silent collision): the two Cr-doped labels previously
+    both ``_slugify``'d to ``"Cr"``, silently merging Cr-doped Ea and
+    Cr-doped D0 on the staging surface. The map must keep them apart so
+    the scorecard can tell them apart by value band."""
+    ea_label = "Cr掺杂扩散激活能"
+    d0_label = "Cr掺杂扩散前指数因子"
+    # First confirm the underlying _slugify collision actually exists
+    # (so this test is anchored in a real defect, not a hypothetical).
+    assert _slugify(ea_label) == "Cr"
+    assert _slugify(d0_label) == "Cr"
+    # Now confirm the map fixes it.
+    assert ea_label in _PROPERTY_SLUGS
+    assert d0_label in _PROPERTY_SLUGS
+    assert _PROPERTY_SLUGS[ea_label] != _PROPERTY_SLUGS[d0_label], (
+        f"Cr-doped Ea ({ea_label!r}) and Cr-doped D0 ({d0_label!r}) "
+        f"must map to distinct slugs — otherwise checkpoints 3 and 4 "
+        f"silently merge on the staging surface"
+    )
+    # And both must target F8 PASS slugs (otherwise the fix is no fix).
+    assert _PROPERTY_SLUGS[ea_label] in _F8_PASS_SLUGS
+    assert _PROPERTY_SLUGS[d0_label] in _F8_PASS_SLUGS
+
+
+def test_f8_diffusion_coefficient_kept_distinct_from_d0():
+    """AC-2 (semantic): ``扩散系数`` is the diffusivity (D), a
+    physically distinct quantity from the Arrhenius pre-exponential
+    factor (D0). The scorecard accepts both as PASS for checkpoints 2
+    and 4 (``property_name IN ('pre_exponential_factor',
+    'diffusion_coefficient')``), but the bridge must NOT silently
+    collapse ``扩散系数`` onto the pre-exponential_factor slug — that
+    would corrupt future queries that need to distinguish D from D0."""
+    assert _PROPERTY_SLUGS["扩散系数"] == "diffusion_coefficient"
+    assert (
+        _PROPERTY_SLUGS["扩散系数"]
+        != _PROPERTY_SLUGS["扩散前指数因子"]
+    )
+
+
+def test_f8_thermal_diffusivity_kept_apart_from_diffusion_coefficient():
+    """AC-2 (semantic): ``热扩散率`` is thermal diffusivity (cm²/s in a
+    thermal-conductivity/heat-capacity sense), which is *not* the same
+    quantity as either D (mass diffusivity) or D0 (Arrhenius prefactor).
+    It is NOT an F8 checkpoint target — the scorecard lists it as a
+    ``d0`` synonym in its diagnostic CTE, but no F8 PASS predicate
+    matches ``thermal_diffusivity``. Mapping it to ``thermal_diffusivity``
+    is therefore semantically correct (no false positives for D0) and
+    keeps the staging surface honest."""
+    assert _PROPERTY_SLUGS["热扩散率"] == "thermal_diffusivity"
+    assert _PROPERTY_SLUGS["热扩散率"] not in _F8_PASS_SLUGS
 
 
 @pytest.mark.parametrize(
@@ -355,6 +667,7 @@ from nfm_db.models.material import Material  # noqa: E402
 from nfm_db.models.property import (  # noqa: E402
     Dataset,
     PropertyCategory,
+    PropertyMeasurement,
     PropertyType,
 )
 from nfm_db.models.source import DataSource  # noqa: E402
@@ -706,3 +1019,192 @@ async def test_v3_pm_value_expression_only_no_numeric_row(db_session, monkeypatc
     # PM row still surfaces as context for downstream visibility.
     pm_logs = [rec for rec in caplog.records if rec.message == "bridge.pm.expression_only"]
     assert len(pm_logs) == 1, "expected 1 expression-only log entry to carry the text into context"
+
+
+# --- NFM-4038: bridge must not lazy-load pm.dataset.material ----------------
+#
+# Production crash on the deployed image:
+#
+#     sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+#       can't call await_only() here. Was IO attempted in an unexpected place?
+#
+# The bridge's PM select() set up
+#     selectinload(PropertyMeasurement.dataset)
+# but the loop at kg_to_staging_bridge.py:369 reads
+#     pm.dataset.material
+# — a *nested* relationship on ``Dataset`` that is NOT covered by the
+# first selectinload.  asyncpg rejects the sync IO that the implicit
+# lazy load triggers inside the async greenlet.
+#
+# Two-part regression test:
+#  (1) The bridge's PM select() must chain
+#      ``selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material)``
+#      so the Material row is fetched in the second selectinload IN query
+#      rather than as a per-row lazy load inside the loop.  Pinned via
+#      statement introspection so this test fails BEFORE the fix and
+#      passes AFTER.
+#  (2) The end-to-end bridge call against a real PropertyMeasurement
+#      row must complete without raising MissingGreenlet.  Column-level
+#      accesses on ``pm.property_type.name`` / ``pm.unit.symbol`` do NOT
+#      need eager loading (they are columns on already-loaded rows);
+#      only the nested ``Dataset → Material`` relationship does.
+
+
+@pytest.mark.asyncio
+async def test_nfm4038_pm_query_chains_dataset_material_selectinload(db_session, monkeypatch):
+    """NFM-4038 AC-2: the bridge's PropertyMeasurement select() must
+    chain ``selectinload(PropertyMeasurement.dataset).selectinload(Dataset.material)``
+    so the loop reading ``pm.dataset.material`` does not trigger a
+    per-row lazy load.
+
+    Before the fix the query only carries the outer selectinload; the
+    Material relationship is left to implicit lazy loading, which
+    asyncpg rejects with ``MissingGreenlet`` inside the async greenlet.
+
+    We assert on the SQLAlchemy ``Load`` option tree attached to the
+    captured PM select: the chained option's path must terminate at the
+    ``Material`` mapper.  This is the public, documented API for
+    inspecting loader strategies in SQLAlchemy 2.x and does not depend
+    on private internals.
+    """
+    from sqlalchemy.orm import Load
+    from sqlalchemy.sql import Select
+
+    source_id = "00000000-0000-0000-0000-00000000d038"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+
+    # Real PM row so the same dialect/SQLAlchemy codepath runs in test.
+    pm = PropertyMeasurement(
+        id=_uuid.uuid4(),
+        dataset_id=dataset.id,
+        property_type_id=property_type.id,
+        unit_id=unit.id,
+        value_scalar=42.0,
+        method="DFT",
+        conditions_hash="x" * 40,
+    )
+    db_session.add(pm)
+    await db_session.flush()
+
+    captured_stmts: list[Select] = []
+    real_execute = db_session.execute
+
+    async def _capturing_execute(stmt, *a, **kw):
+        sql = str(stmt).lower()
+        # Capture the bridge's PM select so we can introspect its
+        # loader option tree.  Other queries (staging insert, KG queries)
+        # are not relevant here.
+        if "property_measurements" in sql and isinstance(stmt, Select):
+            captured_stmts.append(stmt)
+        return await real_execute(stmt, *a, **kw)
+
+    monkeypatch.setattr(db_session, "execute", _capturing_execute)
+
+    written = await bridge_kg_to_staging(
+        db_session,
+        source_id=source_id,
+        corpus_id="NFM4038",
+        source_doi="10.0000/nfm4038",
+    )
+    assert written == 1
+
+    assert len(captured_stmts) == 1, (
+        f"bridge must issue exactly one PM select; captured {len(captured_stmts)}"
+    )
+    pm_stmt = captured_stmts[0]
+
+    # SQLAlchemy exposes loader options via ``_with_options``; each entry
+    # is a ``Load`` whose ``.path`` walks the chain.  Chained
+    # ``selectinload(A.b).selectinload(B.c)`` produces a single ``Load``
+    # whose path is [A mapper, A.b rel, B mapper, B.c rel, C mapper].
+    # We walk the path of every Load and look for the Material mapper.
+    load_options = [o for o in (pm_stmt._with_options or ()) if isinstance(o, Load)]
+    assert load_options, "bridge PM select has no loader Load options"
+
+    def _path_targets(load: Load, target_cls: type) -> bool:
+        """True iff the loader's chain reaches the given ORM class."""
+        path = getattr(load, "path", None)
+        if path is None:
+            return False
+        for node in path:
+            cls = getattr(node, "class_", None)
+            if cls is target_cls:
+                return True
+            mapper = getattr(node, "mapper", None)
+            if mapper is not None and getattr(mapper, "class_", None) is target_cls:
+                return True
+        return False
+
+    assert any(_path_targets(opt, Material) for opt in load_options), (
+        "NFM-4038 regression: bridge PM select does NOT chain "
+        "selectinload(Dataset.material); the loader option tree has "
+        f"no Load whose path reaches Material.  Options seen: "
+        f"{[(type(o).__name__, getattr(o, 'path', None)) for o in load_options]}"
+    )
+
+    # Outer datasets selectinload must still be present so ``pm.dataset``
+    # itself does not lazy-load.
+    assert any(_path_targets(opt, Dataset) for opt in load_options), (
+        "bridge PM select lost selectinload(PropertyMeasurement.dataset); "
+        f"options: {[type(o).__name__ for o in load_options]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_nfm4038_bridge_does_not_lazy_load_pm_dataset_material(db_session, monkeypatch):
+    """NFM-4038 AC-1 + AC-3: running the bridge against a real
+    PropertyMeasurement row does not raise MissingGreenlet.
+
+    The previous test pins the eager-loading shape; this test pins the
+    end-to-end behaviour: the bridge completes the PM loop on a real
+    row whose ``Dataset.material`` relationship is fetched through the
+    same selectinload chain.  If a future change drops the chain (or
+    replaces selectinload with a lazy strategy) the loop crashes here
+    on asyncpg-backed sessions and the bridge is unusable on production.
+    """
+    source_id = "00000000-0000-0000-0000-00000000d039"
+    _source, _material, property_type, unit, dataset = await _seed_pm_environment(
+        db_session, source_id=source_id
+    )
+
+    pm = PropertyMeasurement(
+        id=_uuid.uuid4(),
+        dataset_id=dataset.id,
+        property_type_id=property_type.id,
+        unit_id=unit.id,
+        value_scalar=12.5,
+        method="ADP",
+        conditions_hash="y" * 40,
+    )
+    db_session.add(pm)
+    await db_session.flush()
+
+    written = await bridge_kg_to_staging(
+        db_session,
+        source_id=source_id,
+        corpus_id="NFM4038E2E",
+        source_doi="10.0000/nfm4038e2e",
+    )
+    assert written == 1
+
+    from sqlalchemy import select as _select
+
+    rows = (
+        (
+            await db_session.execute(
+                _select(RefGapFillStaging).where(RefGapFillStaging.source == "NFM4038E2E")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    # Element-system + property name confirm pm.dataset.material
+    # AND pm.property_type.name were accessible inside the async loop.
+    assert row.element_system == "U-Mo"
+    assert row.property_name == "bulk_modulus"
+    assert row.value == pytest.approx(12.5)
+    assert row.unit == "GPa"

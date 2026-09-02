@@ -1,13 +1,65 @@
 """Application configuration via environment variables."""
 
+import json
 import os
+from typing import Annotated
 
-from pydantic_settings import BaseSettings
+from pydantic import BeforeValidator
+from pydantic_settings import BaseSettings, NoDecode
 
 # ---------------------------------------------------------------------------
 # Version lock — must match docker/lightrag.Dockerfile ARG LIGHTRAG_VERSION
 # ---------------------------------------------------------------------------
 LIGHTRAG_VERSION: str = os.environ.get("LIGHTRAG_VERSION", "1.5.4")
+
+# Default CORS origin set when NFM_CORS_ORIGINS is unset, blank, or unparseable.
+# Mirrors the historical local-dev convenience list so a broken env never
+# degrades the API to "no allowed origins" silently.
+_DEFAULT_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+
+
+def _parse_cors_origins(value: object) -> list[str]:
+    """Tolerantly parse ``NFM_CORS_ORIGINS`` from any source.
+
+    The field is declared with :class:`pydantic_settings.NoDecode` so this
+    function receives the raw env string instead of pydantic-settings
+    attempting ``json.loads`` first. We accept three shapes in order of
+    preference:
+
+    1. ``list`` — passed through (programmatic construction, tests).
+    2. JSON list — ``["https://a","https://b"]`` (NFM-4077 staging env_file).
+    3. Comma-separated — ``https://a,https://b`` (ad-hoc operator format,
+       also what the legacy ``main.py`` ``CORS_ORIGINS`` reader expects).
+
+    NFM-4090 hardening: any malformed input (the ``docker compose`` v5.5.0
+    YAML re-parse that produced ``[ "url" ]`` with whitespace, the
+    ``STAGING_CORS_ORIGINS:-[...]`` shell default that lost its outer
+    brackets, etc.) falls through to :data:`_DEFAULT_CORS_ORIGINS` rather
+    than crashing ``get_settings()`` during ``alembic upgrade head``.
+    """
+    if value is None:
+        return list(_DEFAULT_CORS_ORIGINS)
+    if isinstance(value, list):
+        cleaned = [str(v).strip() for v in value if v is not None and str(v).strip()]
+        return cleaned if cleaned else list(_DEFAULT_CORS_ORIGINS)
+    if not isinstance(value, str):
+        return list(_DEFAULT_CORS_ORIGINS)
+    s = value.strip()
+    if not s:
+        return list(_DEFAULT_CORS_ORIGINS)
+    # JSON-shaped input (starts with [ or {): try to parse. Only accept a
+    # list of strings — JSON objects are not a valid shape for CORS and
+    # fall through to the comma-split rescue path.
+    if s.startswith(("[", "{")):
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            cleaned = [str(v).strip() for v in parsed if v is not None and str(v).strip()]
+            return cleaned if cleaned else list(_DEFAULT_CORS_ORIGINS)
+    items = [o.strip() for o in s.split(",") if o.strip()]
+    return items if items else list(_DEFAULT_CORS_ORIGINS)
 
 
 def _resolve_service_jwt_ttl() -> int:
@@ -35,7 +87,13 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_db"
     debug: bool = True
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # NFM-4090 defense-in-depth: declare with NoDecode + BeforeValidator so
+    # the raw NFM_CORS_ORIGINS env value reaches our tolerant parser
+    # without pydantic-settings first attempting json.loads and crashing
+    # on malformed input (the SRE-detected crash loop in this issue).
+    cors_origins: Annotated[list[str], NoDecode, BeforeValidator(_parse_cors_origins)] = list(
+        _DEFAULT_CORS_ORIGINS
+    )
     secret_key: str = "CHANGE_THIS_IN_PRODUCTION"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 480  # 8 hours

@@ -14,6 +14,8 @@ behaviour mandated by ADR-NFM-2081 §D2: a commit subject containing
 literal marker must NOT be allowed to launder the KR-2 metric.
 """
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import json
@@ -33,10 +35,10 @@ from scripts.okr.commit_efficiency import (
     run_git_log,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_git_log
 # ---------------------------------------------------------------------------
+
 
 class TestParseGitLog:
     """Parse raw git log --oneline output into structured commit records."""
@@ -75,6 +77,7 @@ class TestParseGitLog:
 # extract_issue_refs
 # ---------------------------------------------------------------------------
 
+
 class TestExtractIssueRefs:
     """Extract NFM-XXX references from a commit message."""
 
@@ -108,6 +111,7 @@ class TestExtractIssueRefs:
 # fetch_issue_statuses
 # ---------------------------------------------------------------------------
 
+
 class TestFetchIssueStatuses:
     """Query Paperclip API for issue statuses, with caching and error handling."""
 
@@ -120,14 +124,17 @@ class TestFetchIssueStatuses:
         ]
 
         result = fetch_issue_statuses(
-            ["NFM-100", "NFM-200"], "http://localhost:3000", "co-1",
+            ["NFM-100", "NFM-200"],
+            "http://localhost:3000",
+            "co-1",
         )
         assert result["NFM-100"] == "done"
         assert result["NFM-200"] == "in_progress"
 
     @patch("scripts.okr.commit_efficiency.fetch_all_issues")
     def test_returns_status_map_from_api_identifier(
-        self, mock_fetch: MagicMock,
+        self,
+        mock_fetch: MagicMock,
     ) -> None:
         """Paperclip issue references come from the ``identifier`` field."""
         mock_fetch.return_value = [
@@ -158,7 +165,9 @@ class TestFetchIssueStatuses:
         mock_fetch.side_effect = PaperclipFetchError("API down")
         with pytest.raises(PaperclipFetchError):
             fetch_issue_statuses(
-                ["NFM-999"], "http://localhost:3000", "co-1",
+                ["NFM-999"],
+                "http://localhost:3000",
+                "co-1",
                 api_key="test-key",
             )
 
@@ -169,14 +178,18 @@ class TestFetchIssueStatuses:
             {"identifier": "NFM-100", "status": "done"},
         ]
         result = fetch_issue_statuses(
-            ["NFM-100", "NFM-999"], "http://localhost:3000", "co-1",
+            ["NFM-100", "NFM-999"],
+            "http://localhost:3000",
+            "co-1",
         )
         assert result["NFM-100"] == "done"
         assert result["NFM-999"] == "unknown"
 
     def test_returns_empty_dict_for_empty_refs(self) -> None:
         result = fetch_issue_statuses(
-            [], "http://localhost:3000", "co-1",
+            [],
+            "http://localhost:3000",
+            "co-1",
         )
         assert result == {}
 
@@ -184,6 +197,7 @@ class TestFetchIssueStatuses:
 # ---------------------------------------------------------------------------
 # calculate_metrics
 # ---------------------------------------------------------------------------
+
 
 class TestCalculateMetrics:
     """Compute commit efficiency and structural waste rate from commit/issue data."""
@@ -217,8 +231,11 @@ class TestCalculateMetrics:
             {"hash": "h", "message": "chore3", "issue_refs": []},
         ]
         statuses = {
-            "NFM-1": "done", "NFM-2": "done", "NFM-3": "done",
-            "NFM-4": "in_progress", "NFM-5": "in_progress",
+            "NFM-1": "done",
+            "NFM-2": "done",
+            "NFM-3": "done",
+            "NFM-4": "in_progress",
+            "NFM-5": "in_progress",
         }
         result = calculate_metrics(commits, statuses)
         # commit_efficiency = completed / total = 3 / 8
@@ -266,6 +283,7 @@ class TestCalculateMetrics:
 # build_report
 # ---------------------------------------------------------------------------
 
+
 class TestBuildReport:
     """Assemble the final JSON-serializable report."""
 
@@ -311,6 +329,7 @@ class TestBuildReport:
 # enrich_commits_with_refs
 # ---------------------------------------------------------------------------
 
+
 class TestEnrichCommitsWithRefs:
     """Add issue_refs field to each commit dict by parsing its message."""
 
@@ -345,7 +364,6 @@ class TestEnrichCommitsWithRefs:
 # The acceptance criterion is "pin, do not fix": if any of these tests
 # fail, that's a regression — the regex would have to change to add
 # ``[no-issue]`` as a positive match, which the ADR explicitly forbids.
-
 
 
 from scripts.okr.commit_efficiency import _ISSUE_REF_PATTERN
@@ -470,6 +488,7 @@ class TestCalculateMetricsWithNoIssue:
 # run_git_log — revision basis (NFM-2204 / R2)
 # ---------------------------------------------------------------------------
 
+
 class TestRunGitLogRevisionBasis:
     """Pin the revision basis the KR-2 metric is computed against.
 
@@ -501,9 +520,7 @@ class TestRunGitLogRevisionBasis:
         return captured
 
     @pytest.mark.unit
-    def test_revision_basis_appears_in_argv(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_revision_basis_appears_in_argv(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The caller-supplied revision must reach git as an explicit token."""
         captured = self._capture(monkeypatch)
 
@@ -515,9 +532,7 @@ class TestRunGitLogRevisionBasis:
         )
 
     @pytest.mark.unit
-    def test_merge_commits_are_excluded_from_argv(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_merge_commits_are_excluded_from_argv(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """--max-parents=1 must be passed so merges are dropped.
 
         The CI gate exempts merge commits by construction. If the metric counts
@@ -555,14 +570,11 @@ class TestRunGitLogRevisionBasis:
 
         assert "v1.2.3" in captured["cmd"]
         assert "origin/main" not in captured["cmd"], (
-            "default basis leaked into an explicitly-parameterised call: "
-            f"argv={captured['cmd']}"
+            f"default basis leaked into an explicitly-parameterised call: argv={captured['cmd']}"
         )
 
     @pytest.mark.unit
-    def test_date_window_still_reaches_git(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_date_window_still_reaches_git(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Pinning the basis must not drop the --since/--until window."""
         captured = self._capture(monkeypatch)
 
@@ -578,9 +590,7 @@ class TestRevCliFlag:
     @pytest.mark.unit
     def test_rev_flag_defaults_to_origin_main(self) -> None:
         """Default basis is the shared remote branch, not the local checkout."""
-        args = build_arg_parser().parse_args(
-            ["--since", "2026-07-27", "--until", "2026-08-03"]
-        )
+        args = build_arg_parser().parse_args(["--since", "2026-07-27", "--until", "2026-08-03"])
         assert args.rev == "origin/main"
 
     @pytest.mark.unit

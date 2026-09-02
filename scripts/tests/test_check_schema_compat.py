@@ -1,4 +1,5 @@
 """Unit tests for scripts/check_schema_compat.py."""
+
 from __future__ import annotations
 
 import subprocess
@@ -9,7 +10,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = SCRIPT_DIR / "check_schema_compat.py"
 
 
-SAMPLE_SOURCE = '''
+SAMPLE_SOURCE = """
 from typing import Literal
 from pydantic import BaseModel, Field
 
@@ -22,62 +23,62 @@ class Plot(BaseModel):
     points: list[int] = Field(default_factory=list)
     axis: AxisInfo = Field(default_factory=AxisInfo)
     plot_type: Literal["line", "scatter"] = "line"
-'''
+"""
 
 
-SOURCE_NO_BREAK = '''
+SOURCE_NO_BREAK = """
 from pydantic import BaseModel
 
 class Stable(BaseModel):
     a: str
     b: int = 0
-'''
+"""
 
 
-SOURCE_WITH_NEW_FIELD = '''
+SOURCE_WITH_NEW_FIELD = """
 from pydantic import BaseModel
 
 class Stable(BaseModel):
     a: str
     b: int = 0
     c: float = 1.0
-'''
+"""
 
 
-SOURCE_WITH_REMOVED_FIELD = '''
+SOURCE_WITH_REMOVED_FIELD = """
 from pydantic import BaseModel
 
 class Stable(BaseModel):
     a: str
-'''
+"""
 
 
-SOURCE_TYPE_CHANGED = '''
+SOURCE_TYPE_CHANGED = """
 from pydantic import BaseModel
 
 class Stable(BaseModel):
     a: int
     b: int = 0
-'''
+"""
 
 
-SOURCE_REQUIRED_ADDED = '''
+SOURCE_REQUIRED_ADDED = """
 from pydantic import BaseModel
 
 class Stable(BaseModel):
     a: str
     b: int = 0
     c: float
-'''
+"""
 
 
-SOURCE_LITERAL_REMOVED = '''
+SOURCE_LITERAL_REMOVED = """
 from typing import Literal
 from pydantic import BaseModel
 
 class Plot(BaseModel):
     plot_type: Literal["line"] = "line"
-'''
+"""
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
@@ -99,8 +100,7 @@ def test_update_then_check_no_change(tmp_path: Path) -> None:
     baseline = tmp_path / "bl"
     baseline.mkdir()
 
-    r1 = _run(["--update-baseline", "--baseline", str(baseline),
-               "--source", str(src)])
+    r1 = _run(["--update-baseline", "--baseline", str(baseline), "--source", str(src)])
     assert r1.returncode == 0, r1.stderr
     assert (baseline / "Stable.json").exists()
 

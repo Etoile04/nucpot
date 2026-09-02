@@ -27,8 +27,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-import pytest
-
 SCRIPT: Path = Path(__file__).resolve().parents[1] / "verify-cloudflared-token.sh"
 
 PROD_TUNNEL_ID: str = "04b1e559-4547-4568-b77e-e018ca9fa6d6"
@@ -285,8 +283,7 @@ def test_no_hardcoded_prod_token_id_in_logic() -> None:
     # Allow the id on a single `:-` default-assignment line; flag any other
     # non-comment occurrence as hardcoded.
     offending: list[str] = [
-        line.strip() for line in code_lines
-        if PROD_TUNNEL_ID in line and ":-" not in line
+        line.strip() for line in code_lines if PROD_TUNNEL_ID in line and ":-" not in line
     ]
     assert not offending, (
         f"prod tunnel id must only appear in a defaultable variable assignment, "
@@ -314,7 +311,7 @@ def test_staging_deploy_invokes_the_guard() -> None:
     assert load_idx < text.index("verify-cloudflared-token.sh"), (
         "guard must be called after load_env_file()"
     )
-    up_marker: str = 'compose up'  # the command that brings the cloudflared container up
+    up_marker: str = "compose up"  # the command that brings the cloudflared container up
     assert text.index("verify-cloudflared-token.sh") < text.index(up_marker), (
         "guard must run before 'compose up'"
     )

@@ -524,6 +524,14 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         }
 
     try:
+        # NFM-4013 / Path (a): ``mapping`` is conditionally assigned inside
+        # ``if raw_properties:`` below. Initialise to None so the empty-
+        # extraction branch (and any other branch that returns before
+        # ``map_and_persist`` runs) can still reference the structured
+        # unknown-property capture list at the success return without
+        # tripping UnboundLocalError.
+        mapping: Any | None = None
+
         # --- Step 2: ensure content_md --------------------------------
         pdf_bytes_for_meta: bytes | None = None
         if ds.content_md is None:
@@ -800,7 +808,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 "process_literature: datasource_id=%s mapped "
                 "sources=%d materials=%d datasets=%d measurements=%d "
                 "reused=%d dedup_meas=%d skipped_unknown=%d "
-                "validation_errors=%d",
+                "skipped_unknown_details=%d validation_errors=%d",
                 ds.id,
                 mapping.created_sources,
                 mapping.created_materials,
@@ -809,6 +817,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 mapping.reused_entities,
                 mapping.skipped_duplicate_measurements,
                 mapping.skipped_unknown_properties,
+                len(mapping.skipped_unknown_details),
                 mapping.validation_errors,
             )
 
@@ -950,6 +959,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             "datasource_id": str(ds.id),
             "status": "completed",
             "extracted": len(raw_properties),
+            # NFM-4013 / Path (a): surface the structured capture list from
+            # ``MappingResult.skipped_unknown_details`` so the LE enumeration
+            # harness can aggregate by (category_slug, property_name) without
+            # touching the prod ``property_types`` table.
+            "skipped_unknown_properties": (
+                mapping.skipped_unknown_properties if mapping is not None else 0
+            ),
+            "skipped_unknown_details": (
+                list(mapping.skipped_unknown_details) if mapping is not None else []
+            ),
         }
 
     except Exception as exc:

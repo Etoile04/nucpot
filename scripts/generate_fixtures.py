@@ -21,6 +21,7 @@ Usage:
         [--seed 42] \\
         [--counts plots=20 tables=15 microstructure=10 diagrams=5]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,10 +54,10 @@ def _synthetic_png(width: int, height: int, seed: int, fig_type: str) -> bytes:
     """
     rng = random.Random(f"{fig_type}-{seed}")
     palette = {
-        "plot":            [(245, 245, 245), (35, 70, 130),  (220, 60, 60),  (60, 130, 60)],
-        "table":           [(250, 250, 250), (220, 220, 220), (60, 60, 60),   (130, 130, 130)],
-        "microstructure":  [(240, 240, 240), (90, 90, 90),    (50, 50, 50),   (160, 160, 160)],
-        "diagram":         [(250, 250, 250), (200, 140, 50),  (80, 80, 80),   (60, 90, 130)],
+        "plot": [(245, 245, 245), (35, 70, 130), (220, 60, 60), (60, 130, 60)],
+        "table": [(250, 250, 250), (220, 220, 220), (60, 60, 60), (130, 130, 130)],
+        "microstructure": [(240, 240, 240), (90, 90, 90), (50, 50, 50), (160, 160, 160)],
+        "diagram": [(250, 250, 250), (200, 140, 50), (80, 80, 80), (60, 90, 130)],
     }[fig_type]
     raw = bytearray()
     for y in range(height):
@@ -73,17 +74,21 @@ def _synthetic_png(width: int, height: int, seed: int, fig_type: str) -> bytes:
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     idat = zlib.compress(bytes(raw), 9)
-    return (
-        sig
-        + _png_chunk(b"IHDR", ihdr)
-        + _png_chunk(b"IDAT", idat)
-        + _png_chunk(b"IEND", b"")
-    )
+    return sig + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
 
 
 NUCLEAR_SYSTEMS = (
-    "UO2", "MOX", "Zr-4", "Inconel-718", "HT9", "F82H", "SiC-SiC",
-    "BaFe12O19", "WC-Co", "BeO", "Li2O-Al2O3-SiO2",
+    "UO2",
+    "MOX",
+    "Zr-4",
+    "Inconel-718",
+    "HT9",
+    "F82H",
+    "SiC-SiC",
+    "BaFe12O19",
+    "WC-Co",
+    "BeO",
+    "Li2O-Al2O3-SiO2",
 )
 
 
@@ -96,10 +101,7 @@ class Fixture:
 
 
 def _axis(label: str, unit: str, count: int, scale: str, lo: float, hi: float, rng: random.Random):
-    values = [
-        round(lo + (hi - lo) * i / max(count - 1, 1), 4)
-        for i in range(count)
-    ]
+    values = [round(lo + (hi - lo) * i / max(count - 1, 1), 4) for i in range(count)]
     return {
         "label": label,
         "unit": unit,
@@ -141,8 +143,7 @@ def _build_plot(paper_id: str, idx: int, rng: random.Random) -> dict:
             "x_axis": _axis("Temperature", "K", count, "linear", x_lo, x_hi, rng),
             "y_axis": _axis("Stress", "MPa", count, "linear", y_lo, y_hi, rng),
             "series": [
-                _series(f"sample {i}", count, y_lo * 0.8, y_hi * 1.2, rng)
-                for i in range(n_series)
+                _series(f"sample {i}", count, y_lo * 0.8, y_hi * 1.2, rng) for i in range(n_series)
             ],
             "legend_entries": [f"sample {i}" for i in range(n_series)],
             "annotations": [],
@@ -160,17 +161,51 @@ def _build_plot(paper_id: str, idx: int, rng: random.Random) -> dict:
 def _build_table(paper_id: str, idx: int, rng: random.Random) -> dict:
     n_cols = rng.choice([3, 4, 5])
     n_rows = rng.randint(6, 12)
-    headers = ["temperature_K", "stress_MPa", "strain_pct", "youngs_modulus_GPa", "density_gcc"][:n_cols]
+    headers = ["temperature_K", "stress_MPa", "strain_pct", "youngs_modulus_GPa", "density_gcc"][
+        :n_cols
+    ]
     rows = []
     for _r in range(n_rows):
         temp = round(rng.uniform(300, 1200), 1)
-        rows.append([
-            {"value": str(temp), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},
-            {"value": str(round(rng.uniform(50, 800), 2)), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},
-            {"value": str(round(rng.uniform(0.1, 25.0), 2)), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},
-            {"value": str(round(rng.uniform(50, 250), 1)), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},
-            {"value": str(round(rng.uniform(1.0, 13.5), 3)), "row_span": 1, "col_span": 1, "is_header": False, "confidence": 1.0},
-        ][:n_cols])
+        rows.append(
+            [
+                {
+                    "value": str(temp),
+                    "row_span": 1,
+                    "col_span": 1,
+                    "is_header": False,
+                    "confidence": 1.0,
+                },
+                {
+                    "value": str(round(rng.uniform(50, 800), 2)),
+                    "row_span": 1,
+                    "col_span": 1,
+                    "is_header": False,
+                    "confidence": 1.0,
+                },
+                {
+                    "value": str(round(rng.uniform(0.1, 25.0), 2)),
+                    "row_span": 1,
+                    "col_span": 1,
+                    "is_header": False,
+                    "confidence": 1.0,
+                },
+                {
+                    "value": str(round(rng.uniform(50, 250), 1)),
+                    "row_span": 1,
+                    "col_span": 1,
+                    "is_header": False,
+                    "confidence": 1.0,
+                },
+                {
+                    "value": str(round(rng.uniform(1.0, 13.5), 3)),
+                    "row_span": 1,
+                    "col_span": 1,
+                    "is_header": False,
+                    "confidence": 1.0,
+                },
+            ][:n_cols]
+        )
     return {
         "figure_type": "table",
         "title": f"Table {idx + 1}: {rng.choice(NUCLEAR_SYSTEMS)} mechanical properties",
@@ -234,10 +269,7 @@ def _build_diagram(paper_id: str, idx: int, rng: random.Random) -> dict:
             "plot_type": "line",
             "x_axis": _axis("Step", "", count, "linear", 1, count, rng),
             "y_axis": _axis("Temperature", "K", count, "linear", 300, 1500, rng),
-            "series": [
-                _series(f"path {i}", count, 300, 1500, rng)
-                for i in range(n_series)
-            ],
+            "series": [_series(f"path {i}", count, 300, 1500, rng) for i in range(n_series)],
             "legend_entries": [f"path {i}" for i in range(n_series)],
             "annotations": [
                 "inlet",
@@ -301,9 +333,7 @@ def generate(
                 )
 
             gt = builder(paper_id, idx, rng)
-            (fixture_dir / "ground_truth.json").write_text(
-                json.dumps(gt, indent=2) + "\n"
-            )
+            (fixture_dir / "ground_truth.json").write_text(json.dumps(gt, indent=2) + "\n")
             fixtures.append(Fixture(paper_id, fig_type, fixture_dir, gt))
     return fixtures
 
@@ -327,19 +357,26 @@ def _parse_counts(spec):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--output", type=Path, required=True,
+        "--output",
+        type=Path,
+        required=True,
         help="Output root directory (e.g. apps/api/tests/fixtures/extraction).",
     )
     parser.add_argument(
-        "--seed", type=int, default=20260101,
+        "--seed",
+        type=int,
+        default=20260101,
         help="Deterministic RNG seed (default 20260101).",
     )
     parser.add_argument(
-        "--counts", action="append", default=[],
+        "--counts",
+        action="append",
+        default=[],
         help="Override per-type counts as plot=20,table=15,... (repeatable).",
     )
     parser.add_argument(
-        "--skip-images", action="store_true",
+        "--skip-images",
+        action="store_true",
         help="Do not write image.png (used by tests that only need JSON).",
     )
     args = parser.parse_args(argv)
@@ -348,7 +385,9 @@ def main(argv=None) -> int:
     args.output.mkdir(parents=True, exist_ok=True)
 
     fixtures = generate(
-        args.output, counts, args.seed,
+        args.output,
+        counts,
+        args.seed,
         write_images=not args.skip_images,
     )
 

@@ -19,6 +19,8 @@ Contract under test (acceptance criteria from NFM-2111):
   so a partial write cannot corrupt the JSONL.
 """
 
+# ruff: noqa: RUF059
+
 from __future__ import annotations
 
 import hashlib
@@ -36,18 +38,20 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_LIB = REPO_ROOT / "scripts" / "lib"
 COLLECTOR = SCRIPTS_LIB / "collect_prod_events.py"
 
-SCHEMA_FIELDS = frozenset({
-    "event_id",
-    "ts",
-    "environment",
-    "triggered_by",
-    "commit_sha",
-    "first_pass_success",
-    "health_gate_first_poll_passed",
-    "rollback_triggered",
-    "skip_flag_used",
-    "duration_ms",
-})
+SCHEMA_FIELDS = frozenset(
+    {
+        "event_id",
+        "ts",
+        "environment",
+        "triggered_by",
+        "commit_sha",
+        "first_pass_success",
+        "health_gate_first_poll_passed",
+        "rollback_triggered",
+        "skip_flag_used",
+        "duration_ms",
+    }
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -92,9 +96,11 @@ def _import_collector():
     """Reload the collector module on each call so test isolation is robust."""
     sys.path.insert(0, str(SCRIPTS_LIB))
     import importlib
+
     if "collect_prod_events" in sys.modules:
         importlib.reload(sys.modules["collect_prod_events"])
     import collect_prod_events  # type: ignore[import-not-found]
+
     sys.path.pop(0)
     return collect_prod_events
 
@@ -133,12 +139,15 @@ class TestValidateEvent:
         assert ok is False
         assert err is not None and "object" in err
 
-    @pytest.mark.parametrize("field", [
-        "first_pass_success",
-        "health_gate_first_poll_passed",
-        "rollback_triggered",
-        "skip_flag_used",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "first_pass_success",
+            "health_gate_first_poll_passed",
+            "rollback_triggered",
+            "skip_flag_used",
+        ],
+    )
     def test_non_bool_boolean_field_fails(self, field: str) -> None:
         mod = _import_collector()
         ev = _valid_event(**{field: "true"})
@@ -232,8 +241,7 @@ class TestProcessEvent:
         mod = _import_collector()
         jsonl, processed, _ = _paths(tmp_path)
         e1 = _valid_event(event_id="11111111-2222-4333-8444-555555555551")
-        e2 = _valid_event(event_id="11111111-2222-4333-8444-555555555552",
-                           first_pass_success=False)
+        e2 = _valid_event(event_id="11111111-2222-4333-8444-555555555552", first_pass_success=False)
         mod.process_event(jsonl, processed, _canonical_json(e1), run_id="r1")
         mod.process_event(jsonl, processed, _canonical_json(e2), run_id="r2")
         assert len(jsonl.read_text().splitlines()) == 2
@@ -365,9 +373,7 @@ class TestProcessEvent:
             original_flock(fd, op)
 
         monkeypatch.setattr(mod.fcntl, "flock", counting_flock)
-        mod.process_event(
-            jsonl, processed, _canonical_json(_valid_event()), run_id="r-lock"
-        )
+        mod.process_event(jsonl, processed, _canonical_json(_valid_event()), run_id="r-lock")
         # LOCK_EX then LOCK_UN.
         assert mod.fcntl.LOCK_EX in calls
         assert mod.fcntl.LOCK_UN in calls
@@ -442,10 +448,17 @@ class TestCliSubprocess:
         text = _canonical_json(_valid_event())
         event_file.write_text(text)
         result = self._run_cli(
-            ["process", "--run-id", "r-cli-1",
-             "--event-json", str(event_file),
-             "--jsonl", str(jsonl),
-             "--processed", str(processed)],
+            [
+                "process",
+                "--run-id",
+                "r-cli-1",
+                "--event-json",
+                str(event_file),
+                "--jsonl",
+                str(jsonl),
+                "--processed",
+                str(processed),
+            ],
             env={},
         )
         assert result.returncode == 0, result.stderr
@@ -459,10 +472,17 @@ class TestCliSubprocess:
         event_file = tmp_path / "event.json"
         event_file.write_text("not valid json")
         result = self._run_cli(
-            ["process", "--run-id", "r-bad-cli",
-             "--event-json", str(event_file),
-             "--jsonl", str(jsonl),
-             "--processed", str(processed)],
+            [
+                "process",
+                "--run-id",
+                "r-bad-cli",
+                "--event-json",
+                str(event_file),
+                "--jsonl",
+                str(jsonl),
+                "--processed",
+                str(processed),
+            ],
             env={},
         )
         assert result.returncode == 0
@@ -477,17 +497,31 @@ class TestCliSubprocess:
         event_file.write_text(text)
         env: dict[str, str] = {}
         r1 = self._run_cli(
-            ["process", "--run-id", "r-cli-a",
-             "--event-json", str(event_file),
-             "--jsonl", str(jsonl),
-             "--processed", str(processed)],
+            [
+                "process",
+                "--run-id",
+                "r-cli-a",
+                "--event-json",
+                str(event_file),
+                "--jsonl",
+                str(jsonl),
+                "--processed",
+                str(processed),
+            ],
             env=env,
         )
         r2 = self._run_cli(
-            ["process", "--run-id", "r-cli-b",
-             "--event-json", str(event_file),
-             "--jsonl", str(jsonl),
-             "--processed", str(processed)],
+            [
+                "process",
+                "--run-id",
+                "r-cli-b",
+                "--event-json",
+                str(event_file),
+                "--jsonl",
+                str(jsonl),
+                "--processed",
+                str(processed),
+            ],
             env=env,
         )
         assert r1.stdout.strip() == "processed"
@@ -502,8 +536,7 @@ class TestCliSubprocess:
         event_file = tmp_path / "event.json"
         event_file.write_text(_canonical_json(_valid_event()))
         result = self._run_cli(
-            ["process", "--run-id", "r-env",
-             "--event-json", str(event_file)],
+            ["process", "--run-id", "r-env", "--event-json", str(event_file)],
             env={
                 "NFMD_DEPLOY_EVENTS_PATH": str(jsonl),
                 "NFMD_DEPLOY_EVENTS_PROCESSED_PATH": str(processed),
@@ -545,9 +578,7 @@ class TestConcurrencySafety:
     the reviewer flagged.
     """
 
-    def test_lockfile_is_created_alongside_processed_ledger(
-        self, tmp_path: Path
-    ) -> None:
+    def test_lockfile_is_created_alongside_processed_ledger(self, tmp_path: Path) -> None:
         """``process_event`` opens a lockfile co-located with the ledger.
         Used purely as an ``fcntl.flock`` handle; its contents are
         irrelevant."""
@@ -559,9 +590,7 @@ class TestConcurrencySafety:
         assert lock_path.parent == processed.parent
         assert lock_path.name == processed.name + mod._LOCK_SUFFIX
 
-    def test_concurrent_threads_with_same_sha_produce_one_jsonl_line(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concurrent_threads_with_same_sha_produce_one_jsonl_line(self, tmp_path: Path) -> None:
         """Spawn N threads all calling ``process_event`` with the SAME
         sha. The ``fcntl.flock`` must serialise them so exactly one
         JSONL line is appended, regardless of how many threads race.
@@ -586,10 +615,7 @@ class TestConcurrencySafety:
             with results_lock:
                 results.append(status)
 
-        threads = [
-            threading.Thread(target=worker, args=(f"r{i}",))
-            for i in range(n)
-        ]
+        threads = [threading.Thread(target=worker, args=(f"r{i}",)) for i in range(n)]
         for t in threads:
             t.start()
         for t in threads:
@@ -606,9 +632,7 @@ class TestConcurrencySafety:
         assert sum(1 for r in rows if r[2] == "processed") == 1
         assert sum(1 for r in rows if r[2] == "duplicate") == n - 1
 
-    def test_concurrent_distinct_shas_all_persist(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concurrent_distinct_shas_all_persist(self, tmp_path: Path) -> None:
         """Sanity: the lock serialises correctly but does NOT block
         independent events. N distinct shas must each append exactly
         one JSONL line under contention."""
@@ -627,9 +651,7 @@ class TestConcurrencySafety:
             barrier.wait()
             mod.process_event(jsonl, processed, _canonical_json(ev), run_id=f"r{idx}")
 
-        threads = [
-            threading.Thread(target=worker, args=(i,)) for i in range(n)
-        ]
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
         for t in threads:
             t.start()
         for t in threads:

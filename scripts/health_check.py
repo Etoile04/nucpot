@@ -9,6 +9,8 @@ Usage:
     ALERT_WEBHOOK=https://... python scripts/health_check.py  # with alerts
 """
 
+# ruff: noqa: F841
+
 from __future__ import annotations
 
 import json
@@ -16,11 +18,10 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -59,21 +60,21 @@ TARGETS: list[CheckTarget] = [
     ),
     CheckTarget(
         name="Backend API Health",
-        url="https://verify.nucpot.dpdns.org/api/v1/health",
+        url="https://nucpot.dpdns.org/api/v1/health",
         expected_status=200,
         expected_contains='"ok"',
         severity="P0",
     ),
     CheckTarget(
         name="Backend API Potentials",
-        url="https://verify.nucpot.dpdns.org/api/v1/potentials",
+        url="https://nucpot.dpdns.org/api/v1/potentials",
         expected_status=200,
         max_response_ms=10000,
         severity="P1",
     ),
     CheckTarget(
         name="Backend API Reference Values",
-        url="https://verify.nucpot.dpdns.org/api/v1/reference-values/pending-review",
+        url="https://nucpot.dpdns.org/api/v1/reference-values/pending-review",
         expected_status=200,
         max_response_ms=10000,
         severity="P1",
@@ -101,9 +102,7 @@ class CheckResult:
     status_code: int | None = None
     response_time_ms: int | None = None
     error: str | None = None
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 def check_url(target: CheckTarget) -> CheckResult:
@@ -126,10 +125,7 @@ def check_url(target: CheckTarget) -> CheckResult:
                         success=False,
                         status_code=resp.status,
                         response_time_ms=elapsed_ms,
-                        error=(
-                            f"Expected status {target.expected_status}, "
-                            f"got {resp.status}"
-                        ),
+                        error=(f"Expected status {target.expected_status}, got {resp.status}"),
                     )
 
                 if target.expected_contains and target.expected_contains not in body:
@@ -138,10 +134,7 @@ def check_url(target: CheckTarget) -> CheckResult:
                         success=False,
                         status_code=resp.status,
                         response_time_ms=elapsed_ms,
-                        error=(
-                            f"Response body does not contain "
-                            f"'{target.expected_contains}'"
-                        ),
+                        error=(f"Response body does not contain '{target.expected_contains}'"),
                     )
 
                 if elapsed_ms > target.max_response_ms:
@@ -151,8 +144,7 @@ def check_url(target: CheckTarget) -> CheckResult:
                         status_code=resp.status,
                         response_time_ms=elapsed_ms,
                         error=(
-                            f"Response time {elapsed_ms}ms exceeds "
-                            f"limit {target.max_response_ms}ms"
+                            f"Response time {elapsed_ms}ms exceeds limit {target.max_response_ms}ms"
                         ),
                     )
 
@@ -178,7 +170,7 @@ def check_url(target: CheckTarget) -> CheckResult:
             last_error = f"Connection error: {exc.reason}"
         except TimeoutError:
             last_error = f"Timeout after {TIMEOUT_SECONDS}s"
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_error = str(exc)
 
         if attempt < RETRY_COUNT:
@@ -241,17 +233,15 @@ def send_alert(results: list[CheckResult], webhook_url: str) -> None:
     for r in failures:
         ms = f"{r.response_time_ms}ms" if r.response_time_ms is not None else "N/A"
         failure_lines.append(
-            f"**{r.target.name}** ({r.target.severity}): {r.error or 'Failed'} "
-            f"| Response: {ms}"
+            f"**{r.target.name}** ({r.target.severity}): {r.error or 'Failed'} | Response: {ms}"
         )
 
     # Format for Feishu/Lark webhook
     content_text = (
         f"{alert_level}\n\n"
         f"**NucPot Site Monitor Alert**\n"
-        f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
-        f"Failed: {len(failures)}/{len(results)} checks\n\n"
-        + "\n".join(failure_lines)
+        f"Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"Failed: {len(failures)}/{len(results)} checks\n\n" + "\n".join(failure_lines)
     )
 
     payload: dict[str, Any] = {
@@ -284,7 +274,7 @@ def send_alert(results: list[CheckResult], webhook_url: str) -> None:
     try:
         with urlopen(req, timeout=10):
             pass
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Failed to send alert: {exc}", file=sys.stderr)
 
 
