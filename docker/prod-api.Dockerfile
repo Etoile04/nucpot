@@ -72,6 +72,18 @@ RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
 # + readiness-wait contract that guards concurrent migrators.
 COPY apps/api/alembic.ini ./
 
+# NFM-4106: bake the prod-migration pre-flight guard so the deploy path
+# can invoke ``python /usr/local/bin/check_prod_migration.py`` from any
+# ephemeral container built off this image. The script refuses to allow
+# ``alembic upgrade head`` against the production database unless the
+# caller sets ``NFMD_PROD_MIGRATION_PERMITTED=1``. The flag is only set
+# by ``scripts/prod_migrate.sh`` and ``.github/workflows/production-
+# deployment.yml``, so a QA / preview container pointed at
+# ``nucpot-prod-db`` cannot advance ``alembic_version`` on prod by
+# accident. See ``docs/runbooks/prod-deploy.md`` §6 for the audit log
+# contract.
+COPY apps/api/scripts/check_prod_migration.py /usr/local/bin/check_prod_migration.py
+
 # ML model artifacts for prediction endpoints (phase classifier + temp predictor)
 # prediction_service.py resolves MODELS_DIR = parents[3] of /app/src/nfm_db/ml/ -> /app/models
 COPY apps/api/models/ ./models/

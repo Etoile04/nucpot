@@ -17,7 +17,22 @@ const { Title, Text } = Typography
 
 // Static layout value — kept at module scope (avoids per-render allocation
 // and the unnecessary `useMemo` wrapping a literal).
-const GRAPH_HEIGHT = "calc(100vh - 220px)"
+//
+// NFM-4085 (B): the subtraction now accounts for the full chrome stack
+// outside the canvas so the outer <main> (overflow-y-auto) doesn't show
+// a small scrollbar on a typical viewport. Breakdown:
+//   - Root Nav:            ~64px
+//   - Root Footer:         ~88px
+//   - Page py-8 (top+bot): 64px
+//   - Page header (Title + Text + mb-6): ~80px
+//   - Bottom buffer:       ~4px (avoids 1-2px scroll on tall windows)
+// ----------------------------------------------------------------------------
+//   - Total:              ~300px
+//
+// We deliberately leave the canvas a touch taller than the strict math
+// says — a small overflow on tiny (e.g. 600px) windows is preferable to
+// the canvas being too short to interact with on a 1080p display.
+const GRAPH_HEIGHT = "calc(100vh - 300px)"
 
 // ── Lazy-loaded GraphCanvas (minimises bundle impact) ──────────────────
 

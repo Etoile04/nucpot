@@ -17,13 +17,65 @@ import type {
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+/**
+ * Structured citation for a property measurement's data source.
+ *
+ * NFM-4086 — D1 来源可读化. The backend (apps/api/src/nfm_db/schemas/
+ * property.py::SourceRef) returns this shape so the citation column can
+ * render an interactive "Authors (Year). Journal." cell with a DOI link
+ * instead of the legacy bare-title string.
+ *
+ *   - `authors`  Collapsed to ≤3 names + "et al." (see backend
+ *                `_format_authors`).
+ *   - `url`      Resolved by the backend: DOI resolver first, then the
+ *                source's external_url. May still be null when neither
+ *                identifier exists.
+ */
+export interface SourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly doi: string | null;
+  readonly journal: string | null;
+  readonly year: number | null;
+  readonly authors: ReadonlyArray<string>;
+  readonly url: string | null;
+}
+
+/**
+ * Experimental conditions captured alongside a single measurement.
+ *
+ * NFM-4087 — D2 duplicate-row disposition. Mirrors the backend
+ * `MeasurementConditionResponse` schema (apps/api/src/nfm_db/schemas/
+ * property.py). Every numeric field is nullable because the upstream
+ * extraction chain does not always supply every dimension; the
+ * MaterialPropertyTable "+N conditions" expander renders the supplied
+ * dimensions and leaves the rest blank.
+ */
+export interface MeasurementCondition {
+  readonly id: string;
+  readonly measurement_id: string;
+  readonly temperature: number | null;
+  readonly pressure: number | null;
+  readonly environment: string | null;
+  readonly irradiation_dose: number | null;
+  readonly notes: string | null;
+}
+
 export interface MaterialProperty {
   readonly id: string;
   readonly name: string;
   readonly value: string;
   readonly unit: string | null;
-  readonly source: string;
+  readonly source: SourceRef | null;
   readonly confidence: number;
+  /**
+   * NFM-4087 — conditions captured alongside this measurement. The
+   * MaterialPropertyTable groups rows by (name, value, source.id); when
+   * more than one measurement folds into a single display row the
+   * frontend exposes each underlying ``conditions`` list via the
+   * "+N conditions" expander.
+   */
+  readonly conditions: ReadonlyArray<MeasurementCondition>;
 }
 
 export interface MaterialPropertyMeta {
@@ -167,7 +219,7 @@ export async function getMaterial(
 
 // ── Subgraph (NFM-1258) ───────────────────────────────────────────────
 
-/** Raw API node shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API node shape returned by the KG graph endpoints. */
 export interface KgGraphApiNode {
   readonly id: string;
   readonly label: string;
@@ -175,14 +227,14 @@ export interface KgGraphApiNode {
   readonly properties?: Readonly<Record<string, unknown>>;
 }
 
-/** Raw API edge shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API edge shape returned by the KG graph endpoints. */
 export interface KgGraphApiEdge {
   readonly source: string;
   readonly target: string;
   readonly type: string;
 }
 
-/** Raw API response from `GET /api/v1/kg/graph`. */
+/** Raw API response from the KG graph endpoints. */
 export interface KgGraphApiResponse {
   readonly nodes: ReadonlyArray<KgGraphApiNode>;
   readonly edges: ReadonlyArray<KgGraphApiEdge>;
@@ -249,8 +301,13 @@ export function mapSubgraphResponse(
  * `"material:<id>"`; these pass through verbatim and are stripped only
  * at navigation time.
  *
- * Endpoint contract (NFM-1258.3):
- *   GET /api/v1/kg/graph?nodeId=<id>&depth=<n>
+ * Endpoint contract (NFM-1258.3, NFM-4083):
+ *   GET /api/v1/kg/graph/subgraph?nodeId=<id>&depth=<n>
+ *
+ * NFM-4083 moved this from ``/api/v1/kg/graph`` to ``/kg/graph/subgraph``
+ * because the global-pool ``/kg/graph`` endpoint registered first was
+ * shadowing it. ``nodeId`` may be either a ``materials.id`` (resolved via
+ * the materials→KG bridge on the server) or a ``KGNode`` UUID.
  */
 export async function getMaterialSubgraph(
   materialId: string,
@@ -260,7 +317,7 @@ export async function getMaterialSubgraph(
   sp.set("nodeId", materialId);
   sp.set("depth", String(depth));
   const response = await request<KgGraphApiResponse>(
-    `/api/v1/kg/graph?${sp.toString()}`,
+    `/api/v1/kg/graph/subgraph?${sp.toString()}`,
   );
   return mapSubgraphResponse(response);
 }
