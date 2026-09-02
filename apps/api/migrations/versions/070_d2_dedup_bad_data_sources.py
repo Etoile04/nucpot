@@ -545,9 +545,8 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 --     so they have nothing to redirect to).  CASCADE on
                 --     datasets → property_measurements → measurement_
                 --     conditions handles the rest.  NFM-4095 follow-up:
-                --     prod at 069 had 32 bad sources, ALL unmatched,
-                --     carrying 30 datasets / 31 PMs.  Without this step
-                --     the safety guard at 5b refuses the source DELETE.
+                --     prod at 069 had 32 bad sources, 5 unmatched,
+                --     carrying orphan datasets / PMs.
                 DELETE FROM datasets d
                 USING _canonical_map cm
                 WHERE d.source_id = cm.bad_id
@@ -557,23 +556,80 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 RAISE NOTICE 'NFM-4088: deleted % datasets under unmatched bad sources',
                     deleted_unmatched_datasets_count;
 
-                -- 5b. Defence-in-depth: refuse the delete if any dataset
-                --     still references a MATCHED bad source (it
-                --     shouldn't, but this catches a regression in any of
-                --     the previous steps and aborts the migration
-                --     loudly).  Unmatched bad sources had their datasets
-                --     wiped in 5a.
-                IF EXISTS (
-                    SELECT 1
-                    FROM datasets ds
-                    JOIN _canonical_map cm
-                        ON cm.bad_id = ds.source_id
+                -- 5b. Fold MATCHED bad sources whose candidate is ITSELF
+                --     bad into the cluster leader (the candidate).
+                --     Bad-to-bad matches are caused by UUID-title sharing
+                --     ("9320cb50-…" matched by title equality across
+                --     multiple bad rows).  After this step every bad
+                --     source that still owns datasets will either be
+                --     the leader of its bad-cluster, or have been wiped
+                --     in 5a.  This is what enables the final DELETE on
+                --     bad sources — by the time we reach step 5c the
+                --     only datasets referencing bad sources belong to
+                --     cluster leaders, which step 5c keeps.
+                WITH bad_cluster_members AS (
+                    -- A bad source whose candidate is also a bad source.
+                    SELECT
+                        cm.bad_id     AS member_bad_id,
+                        cm.candidate_id AS leader_bad_id
+                    FROM _canonical_map cm
+                    JOIN _bad_sources leader ON leader.id = cm.candidate_id
                     WHERE NOT cm.is_unmatched
-                ) THEN
-                    RAISE EXCEPTION
-                        'NFM-4088: refusing DELETE — datasets still reference MATCHED bad sources';
-                END IF;
+                      AND cm.candidate_id IS NOT NULL
+                ),
+                leader_dataset_redirect AS (
+                    -- For each (member_bad_id, leader_bad_id) pair, find
+                    -- the leader's dataset on the same material and
+                    -- mark member datasets for PM-merge into it.
+                    SELECT
+                        mem_d.id         AS member_dataset_id,
+                        lea_d.id         AS leader_dataset_id,
+                        mem_d.material_id AS material_id
+                    FROM bad_cluster_members bcm
+                    JOIN datasets mem_d ON mem_d.source_id = bcm.member_bad_id
+                    JOIN datasets lea_d
+                        ON lea_d.source_id = bcm.leader_bad_id
+                       AND lea_d.material_id = mem_d.material_id
+                ),
+                fold_pm_migrated AS (
+                    INSERT INTO property_measurements (
+                        dataset_id, property_type_id, value_scalar, value_min, value_max,
+                        value_expression, value_list, value_text, uncertainty, unit_id,
+                        notes, review_status, reviewer_note, reviewed_at,
+                        conditions_hash, method, created_at, updated_at
+                    )
+                    SELECT
+                        ldr.leader_dataset_id,
+                        pm.property_type_id,
+                        pm.value_scalar, pm.value_min, pm.value_max,
+                        pm.value_expression, pm.value_list, pm.value_text,
+                        pm.uncertainty, pm.unit_id,
+                        pm.notes, pm.review_status, pm.reviewer_note, pm.reviewed_at,
+                        pm.conditions_hash, pm.method,
+                        NOW(), NOW()
+                    FROM property_measurements pm
+                    JOIN leader_dataset_redirect ldr
+                        ON ldr.member_dataset_id = pm.dataset_id
+                    ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING
+                    RETURNING 1
+                ),
+                fold_member_datasets_deleted AS (
+                    DELETE FROM datasets d
+                    USING bad_cluster_members bcm
+                    WHERE d.source_id = bcm.member_bad_id
+                    RETURNING 1
+                )
+                SELECT 1 INTO bad_count
+                ;
+                RAISE NOTICE 'NFM-4095: bad-to-bad cluster fold complete';
 
+                -- 5c. DELETE bad sources.  Datasets for member bad
+                --     sources have been deleted in 5b's fold; datasets
+                --     for cluster leaders remain (they'll be repointed
+                --     to themselves — leader is its own canonical — and
+                --     their PMs were already migrated by step 4).
+                --     datasets.source_id is ON DELETE CASCADE so any
+                --     leftover reference gets wiped.
                 DELETE FROM data_sources WHERE id IN (SELECT bad_id FROM _canonical_map);
 
                 GET DIAGNOSTICS deleted_ds_count = ROW_COUNT;
