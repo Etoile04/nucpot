@@ -55,6 +55,12 @@
 #   75  DB_READ_FAIL        — ``--db-container`` was supplied and we could
 #                              not read ``alembic_version`` (analogous to
 #                              pre-deploy-assert exit 66)
+#   76  SHALLOW_REPO        — ``--repo-root`` is a shallow clone. Both the
+#                              file-commit lookup (``git log -1 -- <path>``)
+#                              and ``git merge-base --is-ancestor`` are
+#                              unreliable across shallow boundaries, so the
+#                              gate refuses to emit a possibly-wrong verdict
+#                              (NFM-4125). Fetch full history and re-run.
 #
 # Usage
 # -----
@@ -101,7 +107,7 @@ AUDIT_LOG="./migration-on-main-audit.jsonl"
 OVERRIDE_RATIONALE=""
 
 usage() {
-  sed -n '2,55p' "$0"
+  sed -n '2,63p' "$0"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -141,6 +147,61 @@ fi
 log() { printf '\033[1;34m[on-main-assert]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[on-main-assert]\033[0m %s\n' "$*" >&2; }
 ok()  { printf '\033[1;32m[on-main-assert]\033[0m %s\n' "$*"; }
+
+# ---- NFM-4125: refuse to judge ancestry in a shallow repository -----------
+# Both load-bearing git primitives go wrong across a shallow boundary:
+#   * `git log -1 -- <path>` grafts the last-touched commit to the checkout
+#     tip (every path "appears" at the cut), so FILE_COMMIT is misattributed
+#     to a commit that never touched the file;
+#   * `git merge-base --is-ancestor A B` cannot walk past the boundary, so a
+#     true ancestor is reported as unrelated.
+# Production deploy run 33652998346 (2026-09-02) was blocked by exactly this
+# false negative: 079_restore_070_measurement_casualties.py @ b3c6c643c was
+# reported NOT on origin/main although b3c6c643c is an ancestor of main. A
+# shallow gate can be wrong in BOTH directions (it "passed" run 33656526092
+# only because HEAD == origin/main made the check vacuous), so refuse loudly
+# instead of guessing. This is a strictness increase, not a bypass: nothing
+# that previously failed now passes.
+GIT_DIR_PATH="$(git -C "${REPO_ROOT}" rev-parse --git-dir 2>/dev/null || true)"
+SHALLOW_MARKER=""
+if [ -n "${GIT_DIR_PATH}" ]; then
+  case "${GIT_DIR_PATH}" in
+    /*) SHALLOW_MARKER="${GIT_DIR_PATH}/shallow" ;;
+    *)  SHALLOW_MARKER="${REPO_ROOT}/${GIT_DIR_PATH}/shallow" ;;
+  esac
+  if [ -f "${SHALLOW_MARKER}" ]; then
+    err "SHALLOW_REPO: ${REPO_ROOT} is a shallow clone — the ancestry check"
+    err "  is unreliable here (git log grafts file commits to the checkout"
+    err "  tip; git merge-base cannot see past the fetch boundary)."
+    err "  Refusing to emit a possibly-wrong verdict. To fix:"
+    err "    CI: actions/checkout with fetch-depth: 0 (production-deployment.yml,"
+    err "        migration-on-main-assert job — NFM-4125)."
+    err "    manual: git -C <repo> fetch --unshallow origin, then re-run."
+    exit 76
+  fi
+fi
+
+# ---- NFM-4125 (AC #2): divergence diagnostics on every gate trip ----------
+# Report where the working tree stands relative to the base ref so an
+# operator can tell "image built from a tree that diverged from the base
+# ref" apart from "revision genuinely absent from origin/main". Pure
+# diagnostics — this never influences the verdict.
+report_divergence() {
+  local wt_short wt_subject base_short counts ahead behind subject_suffix
+  wt_short="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || true)"
+  wt_subject="$(git -C "${REPO_ROOT}" log -1 --format=%s 2>/dev/null || true)"
+  base_short="${RESOLVED_REF:0:9}"
+  counts="$(git -C "${REPO_ROOT}" rev-list --left-right --count "HEAD...${RESOLVED_REF}" 2>/dev/null || true)"
+  ahead="${counts%%$'\t'*}"
+  behind="${counts##*$'\t'}"
+  if [ -z "${ahead}" ]; then ahead="?"; fi
+  if [ -z "${behind}" ]; then behind="?"; fi
+  subject_suffix=""
+  if [ -n "${wt_subject}" ]; then subject_suffix=" (${wt_subject})"; fi
+  err "    working-tree HEAD: ${wt_short:-unknown}${subject_suffix}"
+  err "    ${BASE_REF}: ${base_short}"
+  err "    divergence: working tree is ${ahead} ahead / ${behind} behind ${BASE_REF}"
+}
 
 # ---- 1. Run 'alembic heads' inside the candidate image -------------------
 # We need the head revisions exactly as the image would apply them. The
@@ -233,6 +294,7 @@ if [ -n "${HEAD_MISSING}" ]; then
   err "   the candidate image was likely built from a different tree than"
   err "   the one this script is checking against. Pass --repo-root or rebuild"
   err "   the image from ${REPO_ROOT}.)"
+  report_divergence
   exit 73
 fi
 
@@ -284,6 +346,7 @@ FAILURE_FINGERPRINT="$(printf '%s' "${NOT_ON_REF}" | tr -d ' ' | git hash-object
 
 if [ -z "${OVERRIDE_RATIONALE}" ]; then
   err "ASSERT_FAIL: alembic head(s) NOT on ${BASE_REF}:${NOT_ON_REF}"
+  report_divergence
   err "ASSERT_FAIL: refusing deploy (exit 70)"
   err "ASSERT_FAIL: this is the NFM-2136 condition — the candidate image"
   err "ASSERT_FAIL: will stamp the prod DB to a revision whose file is"

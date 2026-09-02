@@ -59,6 +59,12 @@ def gh_issue_list(label: str, state: str, limit: int = 20) -> list[dict]:
             timeout=30,
         )
         if result.returncode != 0:
+            print(
+                f"CI Issue Router: WARNING: gh issue list failed "
+                f"(label={label}, state={state}): "
+                f"{(result.stderr or result.stdout or '').strip()[:200]}",
+                file=sys.stderr,
+            )
             return []
         return json.loads(result.stdout) if result.stdout.strip() else []
     except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
@@ -89,6 +95,16 @@ def extract_sha(title: str, body: str) -> str | None:
     return None
 
 
+def gh_ref_pattern(gh_number: int) -> str:
+    """Postgres regex matching `#<n>` only when not followed by another digit.
+
+    Substring LIKE '%#1118%' also matches hex colors such as #111827 in
+    unrelated issues, which silently suppressed routing of GitHub #1118
+    (found 2026-09-03). Use an anchored regex for dedup and auto-close.
+    """
+    return f"#{gh_number}([^0-9]|$)"
+
+
 def main() -> int:
     # Gather GitHub issues
     open_issues = merge_dedup([gh_issue_list(label, "open") for label in LABELS])
@@ -108,12 +124,13 @@ def main() -> int:
     # Close Paperclip issues whose GitHub counterparts are closed
     for gi in closed_issues:
         gh_number = gi["number"]
+        pattern = gh_ref_pattern(gh_number)
         cur.execute(
             """SELECT id, identifier, status FROM issues
                WHERE project_id = %s
-                 AND (title LIKE %s OR description LIKE %s)
+                 AND (title ~ %s OR description ~ %s)
                  AND status NOT IN ('done', 'cancelled')""",
-            (PROJECT_ID, f"%#{gh_number}%", f"%#{gh_number}%"),
+            (PROJECT_ID, pattern, pattern),
         )
         for issue_id, identifier, _ in cur.fetchall():
             cur.execute(
@@ -129,11 +146,12 @@ def main() -> int:
         gh_body = gi.get("body", "") or ""
 
         # Check if Paperclip issue already exists
+        pattern = gh_ref_pattern(gh_number)
         cur.execute(
             """SELECT id FROM issues
                WHERE project_id = %s
-                 AND (title LIKE %s OR description LIKE %s)""",
-            (PROJECT_ID, f"%#{gh_number}%", f"%#{gh_number}%"),
+                 AND (title ~ %s OR description ~ %s)""",
+            (PROJECT_ID, pattern, pattern),
         )
         if cur.fetchone():
             skipped_pc += 1
