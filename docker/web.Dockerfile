@@ -33,6 +33,16 @@ RUN pnpm config set registry https://registry.npmmirror.com && \
     pnpm install --frozen-lockfile
 
 COPY apps/web/ ./apps/web/
+
+# NFM-4207: DATA_LOSS_NOTICE feature flag (spec §6.1). NEXT_PUBLIC_* vars
+# are inlined into the client bundle by `next build` — this ARG must be set
+# at BUILD time; changing the container's runtime env afterwards does NOT
+# flip the flag (see apps/web/src/components/data-loss-notice/feature-flag.ts).
+# Default `off` = fail-closed; staging/prod compose files pass it through
+# from STAGING_/PROD_DATA_LOSS_NOTICE.
+ARG NEXT_PUBLIC_DATA_LOSS_NOTICE=off
+ENV NEXT_PUBLIC_DATA_LOSS_NOTICE=${NEXT_PUBLIC_DATA_LOSS_NOTICE}
+
 RUN pnpm --filter @nfm-db/web build
 
 FROM node:22-slim AS runner
