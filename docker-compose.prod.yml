@@ -338,6 +338,11 @@ services:
       dockerfile: docker/web.Dockerfile
       args:
         API_SERVER_URL: "http://nucpot-prod-api:8000"
+        # NFM-4207: DATA_LOSS_NOTICE flag (spec §6.1). BAKED into the client
+        # bundle by `next build` — changing it requires an image rebuild, not
+        # a restart. Default OFF; SRE flips prod via PROD_DATA_LOSS_NOTICE=on
+        # per the NFM-4177 rollout (staging canary first).
+        NEXT_PUBLIC_DATA_LOSS_NOTICE: "${PROD_DATA_LOSS_NOTICE:-off}"
     image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-web
     restart: unless-stopped
@@ -355,6 +360,10 @@ services:
       # Force-disable the rewrite here. The web container only serves the
       # Next.js UI; all /api/* traffic is handled by nginx upstream.
       DISABLE_API_REWRITE: "true"
+      # NFM-4207: observability only — the flag value reached the browser
+      # bundle at BUILD time (see build.args above); this runtime env does
+      # NOT flip it.
+      NEXT_PUBLIC_DATA_LOSS_NOTICE: "${PROD_DATA_LOSS_NOTICE:-off}"
       # NFM-741: LightRAG WebUI reverse proxy target. The LightRAG
       # sidecar exposes a built-in React SPA at /webui on port 9621.
       # Next.js rewrites /lightrag-webui/* → this URL so users can
