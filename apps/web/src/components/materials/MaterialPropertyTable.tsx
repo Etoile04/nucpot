@@ -53,6 +53,7 @@ import { Table, Input, Empty, Spin, Typography, Tooltip, Badge } from "antd"
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table"
 import type { SorterResult } from "antd/es/table/interface"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
+import { DataLossNotice } from "@/components/data-loss-notice"
 import type {
   MaterialProperty,
   MeasurementCondition,
@@ -523,7 +524,34 @@ export function MaterialPropertyTable({
         key: "source",
         width: 240,
         ellipsis: true,
-        render: (source: SourceRef | null) => renderSourceCell(source),
+        // NFM-4146 — render the data-loss disclosure when ANY underlying
+        // measurement in this grouped row carries attribution.status ===
+        // "lost". Spec §3.3 places the notice alongside the source cell.
+        // The smallest-id measurement is the dismiss key (same id used as
+        // the row's `key`), so dismiss state is shared across the group.
+        render: (
+          source: SourceRef | null,
+          row: GroupedMaterialProperty,
+        ): React.ReactNode => {
+          const lostMeasurement = row.allMeasurements.find(
+            (m) => m.attribution?.status === "lost",
+          )
+          if (lostMeasurement && lostMeasurement.attribution) {
+            return (
+              <span className="inline-flex items-center gap-1.5">
+                {renderSourceCell(source)}
+                <DataLossNotice
+                  variant="inline"
+                  measurementId={lostMeasurement.id}
+                  attribution={lostMeasurement.attribution}
+                  surface="property-detail"
+                  popoverPlacement="right"
+                />
+              </span>
+            )
+          }
+          return renderSourceCell(source)
+        },
       },
       {
         title: "置信度",
