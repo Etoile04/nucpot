@@ -445,7 +445,7 @@ class TestDirectKgNodeRegression:
 # ---------------------------------------------------------------------------
 # NFM-4185 — KG orphan fix: U-10Mo edges + U-3Si/PuO2 stub nodes
 #
-# Mirrors the post-migration-079 graph shape so the API + BFS service are
+# Mirrors the post-migration-080 graph shape so the API + BFS service are
 # pinned against the exact subgraphs AC1/AC2 require and the AC3
 # no-regression invariant (edge-bearing materials keep n/e ±0).
 # ---------------------------------------------------------------------------
@@ -482,7 +482,7 @@ def _make_dataset_node(
     dataset_id: uuid.UUID,
     title: str = "U-10Mo - Unknown Source",
 ) -> KGNode:
-    """Build the Measurement node migration 079 creates per dataset."""
+    """Build the Measurement node migration 080 creates per dataset."""
     return KGNode(
         id=node_id,
         node_type="Measurement",
@@ -498,7 +498,7 @@ def _make_dataset_node(
 
 
 def _seed_u10mo_with_dataset_bridge(db_session: AsyncSession) -> None:
-    """Seed the post-079 U-10Mo subgraph shape (AC1 baseline)."""
+    """Seed the post-080 U-10Mo subgraph shape (AC1 baseline)."""
     from nfm_db.models.property import Dataset
 
     db_session.add(_make_material(_MAT_U10MO, "U-10Mo", formula="U-10Mo"))
@@ -553,7 +553,7 @@ class TestNFM4185U10MoDatasetBridge:
     ) -> None:
         """AC4 orphan-regression guard — U-10Mo edge count must be > 0.
 
-        Pre-079 prod state was n=1/e=0 at every depth (the headline
+        Pre-080 prod state was n=1/e=0 at every depth (the headline
         defect).  This test fails if the dataset bridge edges ever
         disappear again.
         """
@@ -665,7 +665,7 @@ class TestNFM4185NoRegressionOnEdgeBearers:
     async def test_uo2_subgraph_unchanged_by_orphan_bridge(self, db_session: AsyncSession) -> None:
         """UO2 (edge-bearing, n=2/e=1 baseline) keeps n/e exactly.
 
-        The 079 bridge only attaches to orphan components (U-10Mo, the
+        The 080 bridge only attaches to orphan components (U-10Mo, the
         new Measurement dataset nodes, U-3Si/PuO2, and their orphan
         anchors).  An edge-bearing focal must see none of them at
         depth 1 — the literal AC3 "n/e within +/-0" invariant.

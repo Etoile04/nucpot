@@ -73,7 +73,9 @@ wrong.
 Fix shipped here: insert the two ``Material`` nodes with
 ``source_id = NULL`` and **no** ``data_sources`` existence guard
 (pinned by ``test_migration_080_kg_orphan_bridge.py::
-TestMigration080StubNodes::test_stub_node_sql_has_no_source_exists_guard``).
+TestMigration080Execution::test_absent_anchors_insert_stubs_but_no_edges``,
+which seeds the materials with no ``data_sources`` rows at all and
+asserts both stubs still land).
 A ``materials``-existence guard (``m.name = :label``) keeps the stub
 nodes tied to real material rows, so an empty database stays node-free.
 
