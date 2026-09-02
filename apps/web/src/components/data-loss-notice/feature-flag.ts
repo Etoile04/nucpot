@@ -13,6 +13,10 @@
  *
  *   NEXT_PUBLIC_DATA_LOSS_NOTICE=on   → enable in dev
  *
+ * The env value is BAKED into the client bundle at `next build` time
+ * (docker/web.Dockerfile ARG of the same name) — changing the container's
+ * runtime env after the build does not flip the flag (NFM-4207).
+ *
  * Default = OFF. The SRE owner flips the actual rollout behind
  * `feature_flags.DATA_LOSS_NOTICE` once the backend's `attribution`
  * field ships (NFM-4159).
@@ -57,9 +61,19 @@ export function resolveFeatureFlag(): FeatureFlagSnapshot {
 }
 
 function readBuildTimeEnv(): boolean | null {
-  // Next.js exposes only `NEXT_PUBLIC_*` vars to the browser; the
-  // absence of a public env var means OFF.
-  const env = (globalThis as any)?.process?.env?.NEXT_PUBLIC_DATA_LOSS_NOTICE
+  // Next.js exposes only `NEXT_PUBLIC_*` vars to the browser by inlining
+  // them at build time: DefinePlugin replaces *free*
+  // `process.env.NEXT_PUBLIC_*` member expressions with the literal value.
+  // The read MUST therefore be rooted at the bare `process` identifier —
+  // a lookup chain rooted at `globalThis` (or any other object) is never
+  // replaced, and browsers have no `process` global, so it silently
+  // resolved to `undefined` (flag stuck OFF) in the shipped client bundle
+  // (NFM-4207 Finding 1). The `typeof` guard is for un-bundled consumers
+  // only; after inlining the expression is a string literal.
+  const env =
+    typeof process === "undefined"
+      ? undefined
+      : process.env.NEXT_PUBLIC_DATA_LOSS_NOTICE
   if (typeof env !== "string") return null
   const normalized = env.trim().toLowerCase()
   if (normalized === "on" || normalized === "true" || normalized === "1") {
