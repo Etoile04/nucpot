@@ -94,18 +94,18 @@ afterEach(() => {
 // ─── AC-1: AbortController timeout ─────────────────────────────────
 
 describe("AC-1 — AbortController timeout", () => {
-  it("defaults to 14 000 ms, not the removed 60 000 ms", () => {
-    expect(DEFAULT_RAG_QUERY_TIMEOUT_MS).toBe(14_000)
-    expect(resolveRagQueryTimeoutMs()).toBe(14_000)
+  it("defaults to 45 000 ms (covers cold LightRAG queries post 2026-08-30)", () => {
+    expect(DEFAULT_RAG_QUERY_TIMEOUT_MS).toBe(45_000)
+    expect(resolveRagQueryTimeoutMs()).toBe(45_000)
   })
 
-  it("aborts a hung query at the 14s default and stays pending before it", async () => {
+  it("aborts a hung query at the 45s default and stays pending before it", async () => {
     vi.useFakeTimers()
     vi.stubGlobal("fetch", hangingFetch())
 
     const { state, done } = trackQuery()
 
-    await vi.advanceTimersByTimeAsync(13_999)
+    await vi.advanceTimersByTimeAsync(44_999)
     expect(state.settled).toBeNull()
 
     await vi.advanceTimersByTimeAsync(1)
@@ -153,12 +153,12 @@ describe("AC-4 — Chinese fast-fail messages", () => {
     }
   })
 
-  it("rejects a 20s-hung query with the friendly message, not the raw abort text", async () => {
+  it("rejects a hung query with the friendly message, not the raw abort text", async () => {
     vi.useFakeTimers()
     vi.stubGlobal("fetch", hangingFetch())
 
     const { state, done } = trackQuery()
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(50_000)
     await done
 
     expect(state.settled).toBe(RAG_TIMEOUT_MESSAGE)
@@ -170,7 +170,7 @@ describe("AC-4 — Chinese fast-fail messages", () => {
     vi.stubGlobal("fetch", hangingFetch())
 
     const { state, done } = trackQuery()
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(50_000)
     await done
 
     expect(state.settled).not.toContain(REMOVED_LEGACY_MESSAGE)

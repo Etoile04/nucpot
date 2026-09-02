@@ -22,22 +22,22 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LIB = REPO_ROOT / "scripts" / "lib" / "deploy_event.sh"
 
-SCHEMA_FIELDS = frozenset({
-    "event_id",
-    "ts",
-    "environment",
-    "triggered_by",
-    "commit_sha",
-    "first_pass_success",
-    "health_gate_first_poll_passed",
-    "rollback_triggered",
-    "skip_flag_used",
-    "duration_ms",
-})
-
-_UUID4_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+SCHEMA_FIELDS = frozenset(
+    {
+        "event_id",
+        "ts",
+        "environment",
+        "triggered_by",
+        "commit_sha",
+        "first_pass_success",
+        "health_gate_first_poll_passed",
+        "rollback_triggered",
+        "skip_flag_used",
+        "duration_ms",
+    }
 )
+
+_UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 _BASE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
@@ -179,9 +179,7 @@ deploy_event_emit {_DEFAULT_ARGS}
         assert "event writer failed" in result.stderr.lower()
 
         events = tmp_path / "events.jsonl"
-        args = _DEFAULT_ARGS.replace(
-            "--triggered-by alice", "--triggered-by 'bob\"quote'"
-        )
+        args = _DEFAULT_ARGS.replace("--triggered-by alice", "--triggered-by 'bob\"quote'")
         run_emit(events, args=args)
         assert read_events(events)[0]["triggered_by"] == 'bob"quote'
 

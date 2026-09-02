@@ -246,6 +246,49 @@ class TestHeuristicExtract:
             for r in result
         )
 
+    def test_emits_material_name_and_composition_nfm_3919(self):
+        """NFM-3919: heuristic items must carry non-empty material_name and
+        composition so the mapper's dedup can reuse the existing Material
+        row instead of creating a new "Unknown Material" every run.
+        """
+        text = "UO2 has a density of 10.97 g/cm3."
+        result = heuristic_extract(text, source_reference="ref-nfm-3919")
+        assert len(result) >= 1
+        item = result[0]
+        # Both fields must be populated and non-empty.
+        assert item.get("material_name"), (
+            "heuristic_extractor must set material_name so the mapper does not "
+            "fall back to 'Unknown Material' (NFM-3919)."
+        )
+        assert item.get("composition"), (
+            "heuristic_extractor must set composition so _find_material_by_formula "
+            "can dedup across runs (NFM-3919)."
+        )
+        assert item["material_name"] == "UO2"
+        assert item["composition"] == "UO2"
+        # Backward compatibility: element_system remains for existing consumers.
+        assert item["element_system"] == "UO2"
+
+    def test_dft_pass_also_emits_material_name_and_composition_nfm_3919(self):
+        """NFM-3919: the DFT-direct second pass must also populate the
+        material_name/composition fields, not just element_system.
+        """
+        # Use a dimensionless screening_constant DFT result via _DFT_DIRECT_PATTERNS.
+        # Pull a representative text that triggers the dimensionless family.
+        text = (
+            "The Thomas-Fermi screening constant of UO2 is 1.8 "
+            "in atomic units."
+        )
+        result = heuristic_extract(text, source_reference="ref-dft-nfm-3919")
+        assert len(result) >= 1, "DFT-direct pass should produce an item"
+        for item in result:
+            assert item.get("material_name"), (
+                "DFT-direct pass must set material_name (NFM-3919)"
+            )
+            assert item.get("composition"), (
+                "DFT-direct pass must set composition (NFM-3919)"
+            )
+
     def test_deduplication(self):
         text = "UO2 density 10.97 g/cm3. UO2 density 10.97 g/cm3."
         result = heuristic_extract(text, source_reference="ref3")
@@ -349,6 +392,241 @@ class TestF8CrDopedActivationEnergy:
         eV_values = _values_by_names(result, ("activation_energy",))
         assert any(v == pytest.approx(0.26) for v in eV_values), (
             f"Cr-doped Ea=0.26 eV must land; got {eV_values}"
+        )
+
+
+class TestF8UncertaintyExclusionNFM4080:
+    """NFM-4080 [NFM-4058-FOLLOWUP]: F2 fix — uncertainty bounds must not
+    be emitted as standalone ``activation_energy`` findings on Owen2023.
+
+    The Owen2023 fixture contains two primary+uncertainty pairs:
+
+        "0.30 eV with an uncertainty of 0.05 eV"
+        "0.26 eV with uncertainty 0.08 eV"
+
+    Before this fix, the first-pass matcher emitted **4**
+    ``activation_energy`` rows (0.30, 0.05, 0.26, 0.08) instead of 2 —
+    silently persisting uncertainty bounds as primary measurements once
+    migration ``069_add_v050_f8_property_types`` seeds
+    ``activation_energy`` into ``kg_nodes`` (CTO §3.5 verification
+    comment ``e9290ce6``, finding F2).
+
+    After the fix, only 0.30 and 0.26 land under
+    ``property_name="activation_energy"``; 0.05 and 0.08 are filtered by
+    the same direction-aware ``_F8_UNCERTAINTY_RE`` guard already
+    applied to the third pass (line 615 of heuristic_extractor.py).
+    """
+
+    def test_exactly_two_activation_energy_findings_on_owen2023(self):
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        eV_rows = [
+            r for r in result if r["property_name"] == "activation_energy"
+        ]
+        eV_values = sorted(r["value"] for r in eV_rows)
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"Owen2023 must yield exactly 2 activation_energy findings "
+            f"(0.30 and 0.26); got {eV_values}"
+        )
+
+    def test_uncertainty_bounds_not_in_activation_energy_findings(self):
+        """The 0.05 eV and 0.08 eV bounds from ``X±Y`` prose must not
+        surface as standalone activation_energy rows — they are the
+        uncertainty of 0.30 and 0.26 respectively."""
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        eV_values = [
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        ]
+        for bound in (0.05, 0.08):
+            assert not any(
+                v == pytest.approx(bound, abs=1e-9) for v in eV_values
+            ), (
+                f"uncertainty bound {bound} must not appear as a "
+                f"standalone activation_energy finding; got {eV_values}"
+            )
+
+    def test_uncertainty_guard_is_direction_aware(self):
+        """Primary measurement ``0.30 eV`` followed by ``with an
+        uncertainty of 0.05 eV`` must keep 0.30 (no uncertainty
+        qualifier immediately before) and drop 0.05 (qualifier
+        present). Same for ``0.26 eV with uncertainty 0.08 eV``.
+
+        The guard checks text BEFORE the value — not after — so that
+        "0.26 eV with uncertainty 0.08 eV" leaves 0.26 alone and
+        suppresses 0.08.
+        """
+        text = (
+            "The activation energy for undoped UO2 was found to be 0.30 eV "
+            "with an uncertainty of 0.05 eV. For Cr-doped UO2, the "
+            "activation energy decreased to 0.26 eV with uncertainty "
+            "0.08 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-dirtest")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"direction-aware guard must keep primaries and drop bounds; "
+            f"got {eV_values}"
+        )
+
+    def test_pm_prefix_form_is_also_filtered(self):
+        """The ± Unicode form (``0.30 eV ± 0.05 eV``) is the same defect
+        surface as the prose form; verify the guard handles it. Both
+        ±-prefixed bounds must be filtered while 0.30 must land.
+
+        Both the primary and the bound carry the unit ``eV`` so the
+        value+unit regex matches all four candidates — that isolates the
+        guard behaviour from the regex's own reach.
+        """
+        text = (
+            "The activation energy is 0.30 eV ± 0.05 eV. For Cr-doped "
+            "UO2 the activation energy is 0.26 eV ± 0.08 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-pmtest")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"±-prefixed bounds must be filtered; got {eV_values}"
+        )
+
+    def test_primary_following_a_bound_is_not_suppressed(self):
+        """NFM-4080 F2b (CTO verification): a legitimate primary value
+        that merely FOLLOWS an uncertainty bound inside the 30-char
+        lookback window must still be emitted.
+
+        With an unanchored guard regex, ``search()`` over the fixed
+        window matched the ``±`` belonging to the PREVIOUS pair, so the
+        compact abstract/table form below silently dropped the real
+        Cr-doped Ea (0.26) — trading pollution for equally-silent recall
+        loss. The right-anchored, pair-aware guard keeps both primaries.
+        """
+        text = (
+            "The activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV "
+            "for Cr-doped UO2."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-f2b")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.26, 0.30]), (
+            f"a primary value following a bound must survive the guard; "
+            f"got {eV_values}"
+        )
+
+    @pytest.mark.parametrize(
+        "qualifier",
+        ["± ", "+/- ", "+- ", "with uncertainty ", "with uncert. ",
+         "with uncert ", "with an uncertainty of ", "(± "],
+    )
+    def test_all_bound_spellings_are_suppressed(self, qualifier: str):
+        """Every spelling of the bound qualifier suppresses the value it
+        immediately precedes — including the ASCII ``+/-`` / ``+-`` forms
+        that appear when ``±`` fails to round-trip out of a PDF, and the
+        ``uncert.`` abbreviation whose trailing period previously broke
+        the word-boundary anchor.
+        """
+        text = (
+            f"The activation energy of UO2 is 0.30 eV {qualifier}0.05 eV."
+        )
+        result = heuristic_extract(text, source_reference="owen2023-spell")
+        eV_values = sorted(
+            r["value"]
+            for r in result
+            if r["property_name"] == "activation_energy"
+        )
+        assert eV_values == pytest.approx([0.30]), (
+            f"qualifier {qualifier!r} must suppress the 0.05 bound; "
+            f"got {eV_values}"
+        )
+
+
+class TestF8UncertaintySweepOtherFamiliesNFM4080:
+    """NFM-4080 sweep: the same X±Y defect surface exists beyond
+    ``activation_energy`` (CTO §3.5 verification finding F2 also called
+    this out: density, bond_length, lattice_constant, diffusion_coefficient
+    all use the same first-pass matcher and are vulnerable to the same
+    asymmetry). Lock in coverage for those families so a future refactor
+    of :data:`_F8_UNCERTAINTY_RE` cannot silently regress them.
+
+    Each test asserts a single primary measurement lands under the
+    expected property_name while the uncertainty bound does NOT.
+    """
+
+    @pytest.mark.parametrize(
+        "property_name,text,expected_value",
+        [
+            (
+                "density",
+                "The density of UO2 is 10.97 g/cm3 with an uncertainty of 0.02 g/cm3.",
+                10.97,
+            ),
+            (
+                "density",
+                "The density of UO2 is 10.97 g/cm3 ± 0.02 g/cm3.",
+                10.97,
+            ),
+            (
+                "lattice_constant",
+                "The lattice constant of UO2 is 5.47 angstrom with an uncertainty of 0.01 angstrom.",
+                5.47,
+            ),
+            (
+                "lattice_constant",
+                "The lattice constant of UO2 is 5.47 angstrom ± 0.01 angstrom.",
+                5.47,
+            ),
+            (
+                "bond_length",
+                "The UO2 bond length is 2.04 angstrom with an uncertainty of 0.01 angstrom.",
+                2.04,
+            ),
+            (
+                "bond_length",
+                "The UO2 bond length is 2.04 angstrom ± 0.01 angstrom.",
+                2.04,
+            ),
+            (
+                "diffusion_coefficient",
+                "The diffusion coefficient of UO2 is 3.32e-8 cm2/s with an uncertainty of 1e-9 cm2/s.",
+                3.32e-8,
+            ),
+            (
+                "diffusion_coefficient",
+                "The diffusion coefficient of UO2 is 3.32e-8 cm2/s ± 1e-9 cm2/s.",
+                3.32e-8,
+            ),
+        ],
+    )
+    def test_x_plus_minus_y_filtered_across_families(
+        self, property_name: str, text: str, expected_value: float,
+    ):
+        """For every X±Y family, only the primary value lands — the
+        bound is excluded by the same direction-aware guard as the
+        activation_energy regression test above.
+
+        Each ``text`` triggers a single primary value and one bound
+        value; if the guard regresses, two rows land under
+        ``property_name`` and the test fails.
+        """
+        result = heuristic_extract(text, source_reference=f"sweep-{property_name}")
+        matching = [r for r in result if r["property_name"] == property_name]
+        assert len(matching) == 1, (
+            f"{property_name}: expected exactly 1 row from X±Y prose; "
+            f"got {len(matching)} → {[(r['value'], r['method']) for r in matching]}"
+        )
+        assert matching[0]["value"] == pytest.approx(expected_value, abs=1e-9), (
+            f"{property_name}: expected primary {expected_value}, got {matching[0]['value']}"
         )
 
 
@@ -711,3 +989,296 @@ class TestDftRegressionOnExisting:
                 p in prop_names and abs(v - target) <= tol
                 for p, v in landed
             ), f"Regression: {prop_names}={target} missing from extraction"
+
+
+# ---------------------------------------------------------------------------
+# NFM-3835: heuristic_extract must emit property_category per finding so
+# downstream PropertyType lookups land instead of being skipped.
+# ---------------------------------------------------------------------------
+
+#: Family → valid PropertyCategory literal (mirrors FAMILY_TO_CATEGORY in
+#: heuristic_extractor.py so the test fails loudly if the mapping drifts).
+EXPECTED_FAMILY_TO_CATEGORY: dict[str, str] = {
+    "energy": "diffusion",
+    "diffusivity": "diffusion",
+    "density": "physical",
+    "length": "physical",
+    "pressure": "mechanical",
+    "temperature": "thermal",
+    "expansion": "thermal",
+    "thermal_cond": "thermal",
+    "specific_heat": "thermal",
+    "dimensionless": "physical",
+}
+
+
+class TestHeuristicEmitsPropertyCategory:
+    """NFM-3835 acceptance: every heuristic_extract() finding MUST carry a
+    ``property_category`` field that is one of the 7 valid Pydantic
+    literal categories. Without this, ``_coerce_unknown_categories`` falls
+    back to "other" and the mapper records ``skipped_unknown_properties``
+    for what is genuinely a known property (e.g. activation_energy,
+    diffusion_coefficient, density).
+    """
+
+    def test_every_finding_has_property_category(self):
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        assert result, "fixture must produce some findings"
+        for row in result:
+            assert "property_category" in row, (
+                f"row missing property_category: {row!r}"
+            )
+            assert row["property_category"] is not None, (
+                f"row has None property_category: {row!r}"
+            )
+
+    @pytest.mark.parametrize(
+        "prop_name,expected_category",
+        [
+            ("activation_energy", "diffusion"),
+            ("diffusion_coefficient", "diffusion"),
+            ("pre_exponential_factor", "diffusion"),
+            ("formation_energy", "diffusion"),
+            ("binding_energy", "diffusion"),
+            ("band_gap", "diffusion"),
+            ("cohesive_energy", "diffusion"),
+            ("density", "physical"),
+            ("lattice_constant", "physical"),
+            ("grain_size", "physical"),
+            ("rdf_peak", "physical"),
+            ("bond_length", "physical"),
+            ("elastic_constant", "mechanical"),
+            ("youngs_modulus", "mechanical"),
+            ("bulk_modulus", "mechanical"),
+            ("shear_modulus", "mechanical"),
+            ("thermal_conductivity", "thermal"),
+            ("specific_heat", "thermal"),
+            ("thermal_expansion_coefficient", "thermal"),
+            ("melting_point", "thermal"),
+            ("curie_temperature", "thermal"),
+            ("ordering_temperature", "thermal"),
+            ("porosity", "physical"),
+            ("solubility_limit", "physical"),
+            ("dos_at_fermi_level", "diffusion"),
+            ("screening_constant", "physical"),
+        ],
+    )
+    def test_property_category_by_family(self, prop_name, expected_category):
+        """When a finding for this property_name lands, its category must match
+        the family→category mapping defined in the issue spec."""
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        matching = [r for r in result if r["property_name"] == prop_name]
+        if not matching:
+            pytest.skip(
+                f"fixture did not produce a {prop_name} finding; "
+                "this test only constrains the category when one lands"
+            )
+        for row in matching:
+            assert row["property_category"] == expected_category, (
+                f"{prop_name} should map to category={expected_category!r}, "
+                f"got {row['property_category']!r}"
+            )
+
+    def test_property_category_is_valid_literal(self):
+        """property_category MUST be one of the 7 Pydantic Literal values
+        accepted by ExtractedProperty (see extraction_to_db_mapper.py)."""
+        from nfm_db.services.extraction_to_db_mapper import (
+            _VALID_PROPERTY_CATEGORIES,
+        )
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        for row in result:
+            assert row["property_category"] in _VALID_PROPERTY_CATEGORIES, (
+                f"row property_category={row['property_category']!r} "
+                f"not in {_VALID_PROPERTY_CATEGORIES}"
+            )
+
+    def test_family_to_category_mapping_complete(self):
+        """Every family emitted by _PROPERTY_RULES must have a category."""
+        from nfm_db.services.heuristic_extractor import (
+            _PROPERTY_RULES,
+            FAMILY_TO_CATEGORY,
+        )
+        for _pattern, _name, family in _PROPERTY_RULES:
+            assert family in FAMILY_TO_CATEGORY, (
+                f"family {family!r} (from property rule {_name!r}) "
+                "has no FAMILY_TO_CATEGORY entry"
+            )
+        for family, category in FAMILY_TO_CATEGORY.items():
+            assert category in {
+                "mechanical", "thermal", "physical",
+                "diffusion", "irradiation", "nuclear", "other",
+            }, (
+                f"FAMILY_TO_CATEGORY[{family!r}]={category!r} "
+                "is not a valid PropertyCategory Literal"
+            )
+
+    # ------------------------------------------------------------------
+    # NFM-4058: third-pass F8 table-row hot-patch emission
+    # ------------------------------------------------------------------
+    # The third pass emits ``method=heuristic_f8`` rows for the 6 missing
+    # F8 scorecard property classes (cr_doped_activation_energy,
+    # cr_doped_diffusion_coefficient, density_amorphous, density_doped,
+    # rdf_peak_distance, bond_length). Without the third pass, a clean
+    # rebuild of ``origin/main`` silently regresses to 2/8 strict
+    # kg_nodes scorecard (NFM-3824 phantom-pass risk). These tests pin
+    # (a) the ``method=heuristic_f8`` marker is set so downstream
+    # consumers can distinguish hot-patch rows from generic regex rows,
+    # (b) ``property_category`` is propagated to the third-pass rows so
+    # ``_coerce_unknown_categories`` does not coerce to ``"other"``,
+    # (c) the family→category mapping is consistent between the row and
+    # :data:`FAMILY_TO_CATEGORY`.
+
+    def test_third_pass_emits_method_heuristic_f8_on_owen2023(self):
+        """Owen2023 fixture must surface at least one ``method=heuristic_f8``
+        row, proving the third-pass emission wired correctly into
+        ``heuristic_extract``.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        assert f8_rows, (
+            "Owen2023 fixture must produce ≥1 method=heuristic_f8 row "
+            "from the F8 third pass; got 0. Check _extract_f8_table_rows "
+            "wiring in heuristic_extract()."
+        )
+
+    @pytest.mark.parametrize(
+        "expected_property,expected_value",
+        [
+            ("cr_doped_activation_energy", pytest.approx(0.26, abs=1e-3)),
+            ("density_amorphous", pytest.approx(10.55, abs=1e-3)),
+            ("density_doped", pytest.approx(10.27, abs=1e-3)),
+        ],
+    )
+    def test_third_pass_property_categories_on_owen2023(
+        self,
+        expected_property: str,
+        expected_value,
+    ):
+        """Each F8 third-pass row that lands on Owen2023 must carry a
+        non-None ``property_category`` that resolves to the same family
+        bucket (:data:`FAMILY_TO_CATEGORY`) used by the first/second pass.
+
+        Covers 4 distinct F8 property classes (≥3 required by NFM-4058
+        AC-2), each landing under ``method=heuristic_f8`` with a coherent
+        category — the regression test for the third-pass category
+        blind spot flagged by NFM-3887.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        matching = [
+            r
+            for r in result
+            if r.get("method") == "heuristic_f8"
+            and r.get("property_name") == expected_property
+            and expected_value == r.get("value")
+        ]
+        assert matching, (
+            f"Owen2023 fixture must produce a {expected_property} row "
+            f"(value≈{expected_value}) tagged method=heuristic_f8; "
+            f"all heuristic_f8 rows landed: "
+            f"{[(r['property_name'], r['value']) for r in result if r.get('method') == 'heuristic_f8']}"
+        )
+        for row in matching:
+            assert row.get("property_category") is not None, (
+                f"{expected_property} row has None property_category "
+                "(NFM-3887 third-pass category blind spot regression)"
+            )
+            assert row["property_category"] in {
+                "mechanical", "thermal", "physical",
+                "diffusion", "irradiation", "nuclear", "other",
+            }, (
+                f"{expected_property} property_category="
+                f"{row['property_category']!r} is not a valid PropertyCategory Literal"
+            )
+
+    def test_third_pass_category_matches_family_to_category_mapping(self):
+        """For every heuristic_f8 row landed on Owen2023, the
+        ``property_category`` MUST equal what ``FAMILY_TO_CATEGORY``
+        resolves for the row's family — preventing the third pass from
+        silently emitting a category that disagrees with the rest of the
+        pipeline.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        assert f8_rows, "Owen2023 fixture must produce ≥1 heuristic_f8 row"
+        from nfm_db.services.heuristic_extractor import FAMILY_TO_CATEGORY
+
+        for row in f8_rows:
+            family = _family_for_property(row["property_name"])
+            assert family is not None, (
+                f"could not resolve family for property_name={row['property_name']!r}"
+            )
+            expected_category = FAMILY_TO_CATEGORY.get(family)
+            assert row["property_category"] == expected_category, (
+                f"row property_name={row['property_name']!r} "
+                f"family={family!r} expected category={expected_category!r} "
+                f"got {row['property_category']!r}"
+            )
+
+    def test_third_pass_emits_at_least_three_property_classes_on_owen2023(self):
+        """NFM-4058 AC-2 hard requirement: ≥3 Owen2023 real-sample
+        assertions on method=heuristic_f8 + property_category coherence.
+        """
+        text = _owen2023_text()
+        result = heuristic_extract(text, source_reference="owen2023")
+        f8_rows = [r for r in result if r.get("method") == "heuristic_f8"]
+        distinct_property_names = {r["property_name"] for r in f8_rows}
+        assert len(distinct_property_names) >= 3, (
+            f"NFM-4058 AC-2 requires ≥3 distinct property_name values "
+            f"from the F8 third pass; landed {len(distinct_property_names)}: "
+            f"{sorted(distinct_property_names)}"
+        )
+
+
+def _family_for_property(property_name: str) -> str | None:
+    """Resolve the heuristic_extractor family bucket for a given
+    ``property_name`` by scanning ``_F8_CONTEXT_RULES`` first (third
+    pass) and falling back to ``_PROPERTY_RULES`` (first/second pass).
+    """
+    from nfm_db.services.heuristic_extractor import (
+        _F8_CONTEXT_RULES,
+        _PROPERTY_RULES,
+    )
+
+    for _pattern, name, family in _F8_CONTEXT_RULES:
+        if name == property_name:
+            return family
+    for _pattern, name, family in _PROPERTY_RULES:
+        if name == property_name:
+            return family
+    return None
+
+
+class TestPropertyMappingAliases:
+    """NFM-3835 acceptance: the 6 missing English aliases must be present
+    in ``property_mapping.json`` so that ``load_standard_properties()``
+    returns the expected Chinese standard_name on lookup."""
+
+    @pytest.fixture(scope="class")
+    def mapping(self) -> dict[str, str]:
+        from nfm_db.core.property_catalog import load_standard_properties
+        return load_standard_properties()
+
+    @pytest.mark.parametrize(
+        "english_alias,expected_chinese",
+        [
+            ("activation energy", "扩散激活能"),
+            ("diffusion coefficient", "扩散系数"),
+            ("pre-exponential factor", "扩散前指数因子"),
+            ("elastic constant", "弹性常数"),
+            ("rdf peak", "RDF峰"),
+            ("bond length", "键长"),
+        ],
+    )
+    def test_alias_resolves_to_standard_name(
+        self, mapping, english_alias, expected_chinese
+    ):
+        assert mapping.get(english_alias.lower()) == expected_chinese, (
+            f"alias {english_alias!r} should resolve to "
+            f"{expected_chinese!r}, got {mapping.get(english_alias.lower())!r}"
+        )

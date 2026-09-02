@@ -29,6 +29,7 @@ Usage:
 
 Exits 0 on success, non-zero if the fixture root is missing or empty.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,12 +58,12 @@ def _perturb_bbox(bbox: dict, rng: random.Random) -> dict:
     shift_y = max(MAX_BBOX_SHIFT_PX, MAX_BBOX_SHIFT_FRAC * max(height, 1.0))
     out["x"] = float(bbox.get("x", 0)) + rng.uniform(-shift_x, shift_x)
     out["y"] = float(bbox.get("y", 0)) + rng.uniform(-shift_y, shift_y)
-    out["width"] = float(bbox.get("width", 0)) * (1.0 + rng.uniform(
-        -MAX_NUMERIC_JITTER, MAX_NUMERIC_JITTER
-    ))
-    out["height"] = float(bbox.get("height", 0)) * (1.0 + rng.uniform(
-        -MAX_NUMERIC_JITTER, MAX_NUMERIC_JITTER
-    ))
+    out["width"] = float(bbox.get("width", 0)) * (
+        1.0 + rng.uniform(-MAX_NUMERIC_JITTER, MAX_NUMERIC_JITTER)
+    )
+    out["height"] = float(bbox.get("height", 0)) * (
+        1.0 + rng.uniform(-MAX_NUMERIC_JITTER, MAX_NUMERIC_JITTER)
+    )
     return out
 
 
@@ -160,8 +161,7 @@ def main(argv=None) -> int:
 
     written = build_candidates(args.fixtures, args.output, seed=args.seed)
     if not written:
-        print(f"ERROR: no fixtures discovered under {args.fixtures}",
-              file=sys.stderr)
+        print(f"ERROR: no fixtures discovered under {args.fixtures}", file=sys.stderr)
         return 2
     print(f"Wrote {len(written)} candidate files to {args.output}")
     return 0

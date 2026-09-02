@@ -16,6 +16,7 @@ Usage:
     python -m scripts.okr.coverage apps/api/coverage.xml [apps/web/coverage.xml ...]
 """
 
+# ruff: noqa: B905, SIM103
 from __future__ import annotations
 
 import argparse
@@ -58,10 +59,7 @@ def _segments(path: str) -> list[str]:
 def _contains_run(segments: list[str], run: tuple[str, ...]) -> bool:
     """True when ``run`` appears as a contiguous slice of ``segments``."""
     span = len(run)
-    return any(
-        tuple(segments[i:i + span]) == run
-        for i in range(len(segments) - span + 1)
-    )
+    return any(tuple(segments[i : i + span]) == run for i in range(len(segments) - span + 1))
 
 
 def is_core_path(path: str) -> bool:
@@ -84,6 +82,7 @@ def is_core_path(path: str) -> bool:
 # ---------------------------------------------------------------------------
 # Cobertura parsing
 # ---------------------------------------------------------------------------
+
 
 class FileCoverage(NamedTuple):
     """Line and branch counts for a single covered file."""
@@ -143,15 +142,17 @@ def parse_cobertura(xml_text: str) -> list[FileCoverage]:
                 covered_branches += hit_conditions
                 total_branches += all_conditions
 
-            files.append(FileCoverage(
-                package=package_name,
-                filename=filename,
-                path=_join_source(source, filename),
-                covered_lines=covered_lines,
-                total_lines=total_lines,
-                covered_branches=covered_branches,
-                total_branches=total_branches,
-            ))
+            files.append(
+                FileCoverage(
+                    package=package_name,
+                    filename=filename,
+                    path=_join_source(source, filename),
+                    covered_lines=covered_lines,
+                    total_lines=total_lines,
+                    covered_branches=covered_branches,
+                    total_branches=total_branches,
+                )
+            )
 
     return files
 
@@ -219,16 +220,12 @@ def aggregate(files: list[FileCoverage]) -> dict[str, Any]:
 
     report = overall.as_dict()
     report["branch_rate"] = (
-        _rate(overall.covered_branches, overall.total_branches)
-        if overall.total_branches
-        else None
+        _rate(overall.covered_branches, overall.total_branches) if overall.total_branches else None
     )
     report["covered_branches"] = overall.covered_branches
     report["total_branches"] = overall.total_branches
     report["skipped_stubs"] = skipped_stubs
-    report["per_package"] = {
-        name: totals.as_dict() for name, totals in sorted(per_package.items())
-    }
+    report["per_package"] = {name: totals.as_dict() for name, totals in sorted(per_package.items())}
     return report
 
 

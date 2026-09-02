@@ -32,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ def _parse_created_at(raw: str) -> date | None:
     """
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.astimezone(timezone.utc).date()
+        return dt.astimezone(UTC).date()
     except (ValueError, AttributeError):
         return None
 
@@ -301,9 +301,7 @@ def build_alert_body(
         )
 
     if budget.in_progress > budget.wip_budget:
-        lines.append(
-            f"⚠️ **WIP over by {budget.in_progress - budget.wip_budget} issue(s).**"
-        )
+        lines.append(f"⚠️ **WIP over by {budget.in_progress - budget.wip_budget} issue(s).**")
 
     return "\n".join(lines)
 
@@ -403,8 +401,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not all([api_url, api_key, company_id]):
         print(
-            "Error: PAPERCLIP_API_URL, PAPERCLIP_API_KEY, "
-            "and PAPERCLIP_COMPANY_ID must be set.",
+            "Error: PAPERCLIP_API_URL, PAPERCLIP_API_KEY, and PAPERCLIP_COMPANY_ID must be set.",
             file=sys.stderr,
         )
         return 1
@@ -452,8 +449,13 @@ def main(argv: list[str] | None = None) -> int:
         for budget in budgets:
             if budget.over_budget:
                 result = create_budget_alert(
-                    api_url, company_id, api_key, budget, config,
-                    cto_agent_id=cto_id, parent_issue_id=parent_id,
+                    api_url,
+                    company_id,
+                    api_key,
+                    budget,
+                    config,
+                    cto_agent_id=cto_id,
+                    parent_issue_id=parent_id,
                 )
                 if result:
                     print(

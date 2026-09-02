@@ -47,9 +47,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 # The single source of truth for the threshold. NFM-2042 deliverable 4
 # requires this to appear in the report; NFM-2035 spec section 4 criterion 1
@@ -70,6 +71,7 @@ _DEFAULT_EVENTS_PATH = _REPO_ROOT / "docker" / ".deploy-events.jsonl"
 # ---------------------------------------------------------------------------
 # IO
 # ---------------------------------------------------------------------------
+
 
 def _default_prod_path() -> Path:
     """Runtime-expanded fallback for the production-series JSONL.
@@ -146,6 +148,7 @@ def load_events(path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
+
 
 def filter_window(
     events: list[dict[str, Any]],
@@ -262,24 +265,22 @@ def build_report(
         "value": value,
         "target": KR3_TARGET,
         "n": len(windowed),
-        "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "computed_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source_window": {"since": since, "until": until},
         "environment": environment,
     }
-
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _validate_date(value: str) -> str:
     try:
         datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"must be YYYY-MM-DD, got: {value}"
-        ) from exc
+        raise argparse.ArgumentTypeError(f"must be YYYY-MM-DD, got: {value}") from exc
     return value
 
 

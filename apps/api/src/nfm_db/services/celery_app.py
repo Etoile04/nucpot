@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,30 @@ celery_app.conf.task_routes = {
         "queue": "literature_processing",
     },
 }
+
+# NFM-3902: per-task time limits.  Literature extraction drives an Ollama-
+# served LLM (qwen3.8:27b-mlx in prod) whose cold-load from disk takes
+# 50-60 s on the host's Metal MLX weights, and whose throughput after warm-up
+# is ~0.07 tok/s on the actual prompt sizes (system_prompt_len=3553 +
+# user_message_len=19065 per chunk x 3 chunks).  The Celery default soft /
+# hard time limits are too tight to survive even a single cold start, let
+# alone the full 3-chunk extraction.  These values are mirrored by
+# test_celery_config.test_task_time_limits and test_md_tasks
+# .test_task_time_limits.
+celery_app.conf.task_soft_time_limit = 3600  # 1h — SoftTimeLimitExceeded, log + cleanup
+celery_app.conf.task_time_limit = 7200  # 2h — SIGTERM, hard kill
+
+# NFM-3902: prefetch + ack discipline already pinned in
+# test_celery_config.test_worker_optimization_for_long_running_tasks; spell
+# them out here too so the running worker matches the test contract even
+# if the test module is lazily imported on a partial deploy.
+celery_app.conf.worker_prefetch_multiplier = 1
+celery_app.conf.task_acks_late = True
+celery_app.conf.worker_max_tasks_per_child = 1000
+celery_app.conf.task_serializer = "json"
+celery_app.conf.result_serializer = "json"
+celery_app.conf.accept_content = ["json"]
+celery_app.conf.result_expires = timedelta(days=1)
 
 
 @celery_app.task(

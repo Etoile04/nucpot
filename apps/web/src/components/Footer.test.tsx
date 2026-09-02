@@ -67,9 +67,9 @@ function extractColorClass(className: string, prefix: string): string | null {
 describe("Footer -- color-contrast (NFM-3803)", () => {
   it("renders the feedback email link on non-hidden paths", () => {
     render(<Footer />)
-    const link = screen.getByRole("link", { name: /feedback@nucpot\.org/i })
+    const link = screen.getByRole("link", { name: /nucpot@agentmail\.to/i })
     expect(link).toBeInTheDocument()
-    expect(link).toHaveAttribute("href", "mailto:feedback@nucpot.org")
+    expect(link).toHaveAttribute("href", "mailto:nucpot@agentmail.to")
   })
 
   it("hides itself on /ontology to maximize viewer space", () => {
@@ -80,7 +80,7 @@ describe("Footer -- color-contrast (NFM-3803)", () => {
 
   it("uses a text-* utility with WCAG AA (>=4.5:1) contrast against bg-gray-900", () => {
     render(<Footer />)
-    const link = screen.getByRole("link", { name: /feedback@nucpot\.org/i })
+    const link = screen.getByRole("link", { name: /nucpot@agentmail\.to/i })
     const cls = link.getAttribute("class") ?? ""
 
     const colorClass =
@@ -111,7 +111,7 @@ describe("Footer -- color-contrast (NFM-3803)", () => {
     // collapses to 3.42:1. The bang-prefix in Tailwind v4 produces
     // `color: ... !important`, which must appear on the link.
     render(<Footer />)
-    const link = screen.getByRole("link", { name: /feedback@nucpot\.org/i })
+    const link = screen.getByRole("link", { name: /nucpot@agentmail\.to/i })
     const cls = link.getAttribute("class") ?? ""
 
     const hasImportantClass = cls

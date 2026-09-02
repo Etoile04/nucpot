@@ -19,6 +19,7 @@ on the in-memory SQLite ``db_session`` fixture from ``conftest.py``.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -684,9 +685,7 @@ class TestFailureStatusPersistsAcrossAbortedSession:
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
                 new=_fake_extract,
             ),
-            patch.object(
-                lit_svc, "async_session_factory", _sqlite_passthrough_factory
-            ),
+            patch.object(lit_svc, "async_session_factory", _sqlite_passthrough_factory),
         ):
             # The upstream LLM extract raises. The contract is simply
             # that *some* RuntimeError propagates so the Celery
@@ -811,6 +810,11 @@ class TestEdgeCases:
         mock_build.assert_not_called()
         assert result["status"] == "completed"
         assert result["extracted"] == 0
+        # NFM-4013 / Path (a): even when the mapping step is skipped, the
+        # return shape carries an empty capture list — the harness can
+        # iterate uniformly across datasources.
+        assert result["skipped_unknown_details"] == []
+        assert result["skipped_unknown_properties"] == 0
 
         await db_session.refresh(ds)
         assert ds.parse_status == "completed"
@@ -1127,9 +1131,7 @@ class TestLightRAGIngestAfterCommit:
         assert result["extracted"] == 1
 
     @pytest.mark.asyncio
-    async def test_literature_does_not_dispatch_on_failure(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_literature_does_not_dispatch_on_failure(self, db_session: AsyncSession) -> None:
         """If the pipeline raises BEFORE the final commit, the dispatch
         guard must NOT fire. This guarantees no ghost entities on rollback.
 
@@ -1149,9 +1151,7 @@ class TestLightRAGIngestAfterCommit:
             ),
             patch(
                 "nfm_db.services.extraction_to_db_mapper.map_and_persist",
-                new=AsyncMock(
-                    side_effect=RuntimeError("simulated mapping failure")
-                ),
+                new=AsyncMock(side_effect=RuntimeError("simulated mapping failure")),
             ),
             patch(
                 "nfm_db.services.kg_re.dispatch_build_result",
@@ -1201,9 +1201,7 @@ class TestLightRAGIngestAfterCommit:
                 "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
                 new=AsyncMock(return_value=empty_build_result),
             ),
-            patch(
-                "nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag"
-            ) as mock_fire,
+            patch("nfm_db.services.kg_lightrag_sync.fire_ingest_to_lightrag") as mock_fire,
         ):
             await lit_svc.process_literature(db_session, ds.id)
 
@@ -1222,9 +1220,7 @@ class TestBibliographicMetadataExtraction:
     to the DataSource row (only filling currently-null fields)."""
 
     @pytest.mark.asyncio
-    async def test_metadata_extracted_from_content_md(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_metadata_extracted_from_content_md(self, db_session: AsyncSession) -> None:
         """content_md contains DOI/journal/year/abstract → fields populated."""
         content_md = (
             "# Owen et al. - 2023 - Diffusion in UO2\n\n"
@@ -1244,7 +1240,8 @@ class TestBibliographicMetadataExtraction:
         empty_build_result = _make_empty_build_result()
         with (
             patch.object(
-                lit_svc, "_parse_pdf_to_markdown",
+                lit_svc,
+                "_parse_pdf_to_markdown",
             ) as mock_parse,
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
@@ -1324,9 +1321,7 @@ class TestBibliographicMetadataExtraction:
         assert ds.title == "Wrong Title"
 
     @pytest.mark.asyncio
-    async def test_metadata_extracted_after_pdf_parse(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_metadata_extracted_after_pdf_parse(self, db_session: AsyncSession) -> None:
         """Metadata is also extracted when content_md comes from PDF parsing."""
         parsed_md = (
             "# Parsed Paper Title\n\n"
@@ -1378,3 +1373,616 @@ class TestBibliographicMetadataExtraction:
         assert ds.year == 2024
         assert ds.journal == "Journal of Materials"
         assert ds.abstract == "The abstract text."
+
+
+# ---------------------------------------------------------------------------
+# NFM-3835: heuristic items must survive into map_and_persist with a valid
+# property_category so they land as KG nodes instead of being counted in
+# skipped_unknown_properties.
+# ---------------------------------------------------------------------------
+
+
+def _make_demo_heuristic_item(
+    *,
+    element_system: str = "UO2",
+    property_name: str = "activation_energy",
+    value: float = 0.30,
+    unit: str = "eV",
+    property_category: str | None = None,
+) -> dict[str, Any]:
+    """Construct a single heuristic_extract() payload in canonical shape."""
+    item: dict[str, Any] = {
+        "element_system": element_system,
+        "phase": "Unknown",
+        "property_name": property_name,
+        "value": value,
+        "unit": unit,
+        "method": "heuristic_regex",
+        "source": "test-source",
+        "source_doi": None,
+        "confidence": "medium",
+        "uncertainty": 0.01,
+        "temperature": None,
+        "cache_level": "L2",
+    }
+    if property_category is not None:
+        item["property_category"] = property_category
+    return item
+
+
+class TestHeuristicItemsPersisted:
+    """NFM-3835 acceptance: heuristic items appended to raw_properties in
+    ``process_literature`` must reach ``map_and_persist`` carrying a valid
+    ``property_category``. Regression: prior to NFM-3835 the heuristic
+    path bypassed ``_post_process_extracted``, so the items landed with
+    ``property_category`` either missing or set to a Chinese standard
+    name — both paths tripped ``_coerce_unknown_categories`` or the
+    mapper's PropertyType lookup, inflating
+    ``skipped_unknown_properties``.
+
+    These tests use the REAL ``heuristic_extract`` against the Owen2023
+    fixture (with ``ontofuel_extract`` mocked to empty so the heuristic
+    path is the only source) so they actually exercise the production
+    regression — mocked ``heuristic_extract`` would mask the bug.
+    """
+
+    async def test_real_heuristic_extract_emits_property_category(
+        self, db_session: AsyncSession
+    ) -> None:
+        """End-to-end: real heuristic_extract on Owen2023 fixture produces
+        items with a valid property_category field, and they reach
+        map_and_persist carrying that field unchanged.
+        """
+        from pathlib import Path
+
+        fixture_path = Path(__file__).parent / "fixtures" / "extraction" / "owen2023_sample.txt"
+        owen2023_text = fixture_path.read_text(encoding="utf-8")
+
+        ds = await _add_datasource(
+            db_session,
+            content_md=owen2023_text,
+            file_path=None,
+        )
+
+        # LLM path is empty — heuristic is the only source so we can
+        # assert deterministically on the heuristic items alone.
+        empty_llm: list[dict[str, Any]] = []
+
+        empty_build_result = _make_empty_build_result()
+
+        captured_payload: list[list[dict[str, Any]]] = []
+
+        async def _capture_map(
+            db: AsyncSession, items: list[dict[str, Any]], **_kwargs: Any
+        ) -> MagicMock:
+            captured_payload.append(items)
+            return MagicMock()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=empty_llm),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(side_effect=_capture_map),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed", result
+        assert captured_payload, "map_and_persist was never invoked"
+        merged = captured_payload[0]
+
+        heuristic_items = [item for item in merged if item.get("method") == "heuristic_regex"]
+        assert heuristic_items, f"no heuristic items reached mapper on Owen2023 fixture: {merged!r}"
+
+        valid_categories = {
+            "mechanical",
+            "thermal",
+            "physical",
+            "diffusion",
+            "irradiation",
+            "nuclear",
+            "other",
+        }
+        for item in heuristic_items:
+            assert "property_category" in item, (
+                f"heuristic item missing property_category: {item!r}"
+            )
+            assert item["property_category"] in valid_categories, (
+                f"heuristic item property_category={item['property_category']!r} "
+                f"not in {valid_categories}"
+            )
+
+        # Specific assertion: activation_energy findings (family=energy) must
+        # land with category="diffusion" so they don't trip the
+        # skipped_unknown_properties counter at map_and_persist.
+        ea_items = [
+            item for item in heuristic_items if item.get("property_name") == "activation_energy"
+        ]
+        assert ea_items, (
+            f"activation_energy not produced by heuristic on Owen2023 fixture: {heuristic_items!r}"
+        )
+        for item in ea_items:
+            assert item["property_category"] == "diffusion", (
+                f"activation_energy category should be 'diffusion', "
+                f"got {item['property_category']!r}"
+            )
+
+        # Density findings (family=density) must map to category="physical"
+        density_items = [item for item in heuristic_items if item.get("property_name") == "density"]
+        assert density_items, (
+            f"density not produced by heuristic on Owen2023 fixture: {heuristic_items!r}"
+        )
+        for item in density_items:
+            assert item["property_category"] == "physical", (
+                f"density category should be 'physical', got {item['property_category']!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3888 / NFM-3892 — per-stage log counter instrumentation
+# ---------------------------------------------------------------------------
+#
+# NFM-3887 root-cause analysis could not determine WHY the post-patch
+# re-extraction of source 9320cb50 produced 0 new kg_nodes / 0 new
+# property_measurements / 0 new _ref_gap_fill_staging rows. The CTO spec
+# in NFM-3888 requires six structured log lines so the next re-extraction
+# reveals which stage silently dropped the items.
+#
+# These tests pin the format strings, field-name order, and field bindings
+# to the spec exactly. If any line is renamed or its field set drifts,
+# the spec's downstream grep / Prometheus scraping breaks — so fail loud.
+
+
+class TestPerStageLogCounters:
+    """NFM-3888 / NFM-3892: assert all six per-stage log counters fire
+    with the exact field names from the CTO spec.
+
+    AC-1 (spec table) is verified by ``caplog.records``; the format
+    strings in :mod:`literature_service` are the source of truth for
+    grep / Prometheus scraping, so we assert on the rendered message
+    rather than the placeholder order.
+    """
+
+    async def test_all_six_stage_logs_emit_with_spec_field_names(
+        self,
+        db_session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+        # Stage 6 (bridge) only fires as ``bridged %d rows`` when
+        # corpus_id resolves from metadata_ or doi. Seed metadata_ so
+        # the ``bridged`` log path is exercised, not the
+        # ``no corpus_id, KG→staging bridge skipped`` fallback.
+        ds.metadata_ = {"corpus_id": "test-corpus"}
+        await db_session.flush()
+
+        # --- Mocks -------------------------------------------------
+        # BuildResult shape (see kg_re.BuildResult) so the
+        # ``nodes_created=`` / ``nodes_matched=`` / ``edges_created=`` /
+        # ``review_queue=`` counter log renders cleanly.
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        mock_node.label = "UO2"
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 2
+        mock_build_result.edges_created = 3
+        mock_build_result.review_queue_items = 4
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        # MappingResult shape (see extraction_to_db_mapper.MappingResult)
+        # so the eight-field ``mapped`` log renders with the new
+        # ``skipped_unknown=`` and ``validation_errors=`` fields.
+        mock_mapping = MagicMock()
+        mock_mapping.created_sources = 1
+        mock_mapping.created_materials = 2
+        mock_mapping.created_datasets = 3
+        mock_mapping.created_measurements = 4
+        mock_mapping.reused_entities = 5
+        mock_mapping.skipped_duplicate_measurements = 6
+        mock_mapping.skipped_unknown_properties = 7
+        mock_mapping.validation_errors = 8
+
+        with (
+            caplog.at_level(logging.INFO, logger="nfm_db.services.literature_service"),
+            patch.object(lit_svc, "_parse_pdf_to_markdown"),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.heuristic_extractor.heuristic_extract",
+                # Return one item so the dedup-merge + post_process
+                # branches execute and emit Stage 2 + Stage 3.
+                new=MagicMock(return_value=[_make_demo_extraction()[0]]),
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._post_process_extracted",
+                new=MagicMock(side_effect=lambda items, **_kw: items),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=mock_mapping),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=mock_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=9),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge._slugify",
+                new=MagicMock(return_value="corpus-slug"),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed", (
+            f"process_literature failed early; caplog:\n{caplog.text}"
+        )
+
+        # Filter to records produced by process_literature so unrelated
+        # INFO records (e.g. health-event emitter) do not skew the
+        # field-name assertions.
+        plog_records = [
+            r
+            for r in caplog.records
+            if r.name == "nfm_db.services.literature_service"
+            and "process_literature:" in r.getMessage()
+            and f"datasource_id={ds.id}" in r.getMessage()
+        ]
+        text = "\n".join(r.getMessage() for r in plog_records)
+
+        # ---- Stage 1: heuristic_extract -----------------------------
+        assert "heuristic_extract returned 1 items" in text, (
+            f"Stage 1 log missing or wrong count:\n{text}"
+        )
+
+        # ---- Stage 2: raw_properties after merge --------------------
+        assert "raw_properties after merge:" in text, f"Stage 2 log missing:\n{text}"
+        assert "heuristic added 1" in text, f"Stage 2 missing 'heuristic added' field:\n{text}"
+
+        # ---- Stage 3: raw_properties after _post_process_extracted --
+        assert "raw_properties after _post_process_extracted:" in text, (
+            f"Stage 3 log missing:\n{text}"
+        )
+        assert "delta=0" in text, (
+            f"Stage 3 missing 'delta=0' field (post-process is a no-op "
+            f"identity in the mock):\n{text}"
+        )
+
+        # ---- Stage 4: mapped (8-field format) ------------------------
+        mapping_line = next(
+            (r.getMessage() for r in plog_records if " mapped " in r.getMessage()),
+            None,
+        )
+        assert mapping_line is not None, f"Stage 4 mapping log missing:\n{text}"
+        for field in (
+            "sources=1",
+            "materials=2",
+            "datasets=3",
+            "measurements=4",
+            "reused=5",
+            "dedup_meas=6",
+            "skipped_unknown=7",
+            "validation_errors=8",
+        ):
+            assert field in mapping_line, f"Stage 4 missing {field!r} field:\n{mapping_line}"
+
+        # ---- Stage 5: graph built (4-field format) -------------------
+        graph_line = next(
+            (r.getMessage() for r in plog_records if " graph built: " in r.getMessage()),
+            None,
+        )
+        assert graph_line is not None, f"Stage 5 graph log missing:\n{text}"
+        for field in (
+            "nodes_created=1",
+            "nodes_matched=2",
+            "edges_created=3",
+            "review_queue=4",
+        ):
+            assert field in graph_line, f"Stage 5 missing {field!r} field:\n{graph_line}"
+
+        # ---- Stage 6: bridge (3-field format) ------------------------
+        bridge_line = next(
+            (r.getMessage() for r in plog_records if " bridged " in r.getMessage()),
+            None,
+        )
+        assert bridge_line is not None, f"Stage 6 bridge log missing:\n{text}"
+        assert "9 rows to _ref_gap_fill_staging" in bridge_line, (
+            f"Stage 6 missing 'rows to _ref_gap_fill_staging' phrase:\n{bridge_line}"
+        )
+        # corpus_id came from ``metadata_.corpus_id`` (seeded above);
+        # the spec only pins the field name ``corpus=%s``, not the value.
+        assert "corpus=" in bridge_line, f"Stage 6 missing 'corpus=' field:\n{bridge_line}"
+
+        # ---- AC-1 sanity: every spec marker is present at least once
+        for stage, marker in [
+            ("Stage 1", "heuristic_extract returned"),
+            ("Stage 2", "raw_properties after merge:"),
+            ("Stage 3", "raw_properties after _post_process_extracted:"),
+            ("Stage 4", " mapped "),
+            ("Stage 5", " graph built: "),
+            ("Stage 6", " bridged "),
+        ]:
+            assert any(marker in r.getMessage() for r in plog_records), (
+                f"{stage} marker {marker!r} not found in:\n{text}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# NFM-3901: heuristic dedup must survive non-numeric ``value`` fields on the
+# LLM side. Prior to this fix, ``f"{r.get("value", 0):g}"`` raised
+# ``ValueError: Unknown format code 'g' for object of type 'str'`` whenever
+# any LLM-extracted item had a string ``value``, and the outer
+# ``except Exception`` at the end of the heuristic block silently dropped
+# the entire heuristic batch — never reaching merge (Stage 2) or
+# post-process (Stage 3).
+# ---------------------------------------------------------------------------
+
+
+def _make_string_value_extraction() -> list[dict[str, Any]]:
+    """LLM payload where one item has a string ``value`` (the regression
+    trigger from NFM-3893 / source 9320cb50)."""
+    return [
+        {
+            "element_system": "UO2",
+            "phase": "FCC",
+            "property_name": "lattice_constant",
+            "value": "not-a-number",  # NFM-3901: triggers the original ValueError
+            "unit": "angstrom",
+            "method": "LLM",
+            "source": "test-upload.pdf",
+            "source_doi": None,
+            "confidence": "high",
+            "uncertainty": 0.01,
+            "temperature": 300.0,
+            "cache_level": "L1",
+            "material_name": "UO2",
+            "composition": "UO2",
+            "property": "lattice_constant",
+        },
+        {
+            "element_system": "PuO2",
+            "phase": "FCC",
+            "property_name": "lattice_constant",
+            "value": 5.40,  # numeric — also exercised to keep the test honest
+            "unit": "angstrom",
+            "method": "LLM",
+            "source": "test-upload.pdf",
+            "source_doi": None,
+            "confidence": "high",
+            "uncertainty": 0.01,
+            "temperature": 300.0,
+            "cache_level": "L1",
+            "material_name": "PuO2",
+            "composition": "PuO2",
+            "property": "lattice_constant",
+        },
+    ]
+
+
+class TestHeuristicDedupWithStringValues:
+    """NFM-3901: heuristic items must reach the final mapper batch even when
+    the LLM payload contains items with non-numeric ``value`` fields.
+
+    Regression: prior to the fix, the merge-block
+    ``existing_keys`` comprehension at literature_service.py:644 raised
+    ``ValueError: Unknown format code 'g' for object of type 'str'`` and
+    the outer ``except Exception`` swallowed the entire heuristic batch
+    (line 1 fired, lines 2 and 3 never fired). Source 9320cb50 exhibited
+    exactly this silent-zero in prod (NFM-3887 / NFM-3893).
+
+    These tests use the same mocking shape as
+    :class:`TestPerStageLogCounters` so the per-stage counter logs are the
+    authoritative witness that the merge and post-process stages ran.
+    """
+
+    async def test_heuristic_items_reach_mapper_when_llm_value_is_string(
+        self,
+        db_session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Preset\n\nUO2 FCC lattice 5.47",
+            file_path=None,
+        )
+        ds.metadata_ = {"corpus_id": "test-corpus"}
+        await db_session.flush()
+
+        # Heuristic items: one numeric (must append), one matching the
+        # string-valued LLM item by (system, property) so we can also
+        # observe that dedup still works for the numeric side.
+        heuristic_items = [
+            _make_demo_heuristic_item(
+                element_system="UO2",
+                property_name="lattice_constant",
+                value=5.47,  # distinct numeric — should append
+                unit="angstrom",
+            ),
+            _make_demo_heuristic_item(
+                element_system="ThO2",
+                property_name="lattice_constant",
+                value=5.60,  # distinct numeric — should append
+                unit="angstrom",
+            ),
+        ]
+
+        # BuildResult / MappingResult mocks so the Stage 4-6 logs render.
+        mock_node = MagicMock()
+        mock_node.id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+        mock_node.label = "UO2"
+        mock_build_result = MagicMock()
+        mock_build_result.nodes_created = 1
+        mock_build_result.nodes_matched = 0
+        mock_build_result.edges_created = 0
+        mock_build_result.review_queue_items = 0
+        mock_build_result.ingest_nodes = (mock_node,)
+        mock_build_result.ingest_edges = ()
+
+        mock_mapping = MagicMock()
+        mock_mapping.created_sources = 0
+        mock_mapping.created_materials = 0
+        mock_mapping.created_datasets = 0
+        mock_mapping.created_measurements = 0
+        mock_mapping.reused_entities = 0
+        mock_mapping.skipped_duplicate_measurements = 0
+        mock_mapping.skipped_unknown_properties = 0
+        mock_mapping.validation_errors = 0
+
+        captured_payload: list[list[dict[str, Any]]] = []
+
+        async def _capture_map(
+            db: AsyncSession, items: list[dict[str, Any]], **_kwargs: Any
+        ) -> MagicMock:
+            captured_payload.append(items)
+            return mock_mapping
+
+        with (
+            caplog.at_level(logging.INFO, logger="nfm_db.services.literature_service"),
+            patch.object(lit_svc, "_parse_pdf_to_markdown"),
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                # NFM-3901: include a string-value item — the regression trigger.
+                new=AsyncMock(return_value=_make_string_value_extraction()),
+            ),
+            patch(
+                "nfm_db.services.heuristic_extractor.heuristic_extract",
+                new=MagicMock(return_value=heuristic_items),
+            ),
+            patch(
+                "nfm_db.services.extraction_pipeline._post_process_extracted",
+                new=MagicMock(side_effect=lambda items, **_kw: items),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(side_effect=_capture_map),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=mock_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge._slugify",
+                new=MagicMock(return_value="corpus-slug"),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        # Filter to process_literature's own log records.
+        plog_records = [
+            r
+            for r in caplog.records
+            if r.name == "nfm_db.services.literature_service"
+            and "process_literature:" in r.getMessage()
+            and f"datasource_id={ds.id}" in r.getMessage()
+        ]
+        text = "\n".join(r.getMessage() for r in plog_records)
+
+        # --- Acceptance gate 1: the heuristic block did not raise ----
+        # Pre-fix this log fired (and everything inside the try block was
+        # dropped). Post-fix it must NOT fire.
+        assert "Heuristic extractor failed" not in text, (
+            f"NFM-3901 regression: heuristic block raised and was "
+            f"swallowed; process_literature log:\n{text}"
+        )
+
+        # --- Acceptance gate 2: Stage 2 (merge) fired -----------------
+        # Before the fix, the comprehension at the old line 644 raised
+        # before reaching the ``raw_properties after merge`` logger, so
+        # Stage 2 was silently absent.
+        merge_line = next(
+            (
+                r.getMessage()
+                for r in plog_records
+                if "raw_properties after merge:" in r.getMessage()
+            ),
+            None,
+        )
+        assert merge_line is not None, (
+            f"NFM-3901 regression: Stage 2 'raw_properties after merge' "
+            f"log never fired (the heuristic block raised before it):\n{text}"
+        )
+        assert "heuristic added 2" in merge_line, (
+            f"Stage 2 must report 'heuristic added 2' (both ThO2 and UO2 "
+            f"heuristic items are new vs. the LLM payload); got: {merge_line!r}"
+        )
+
+        # --- Acceptance gate 3: Stage 3 (post-process) fired ----------
+        post_line = next(
+            (
+                r.getMessage()
+                for r in plog_records
+                if "raw_properties after _post_process_extracted:" in r.getMessage()
+            ),
+            None,
+        )
+        assert post_line is not None, (
+            f"NFM-3901 regression: Stage 3 'raw_properties after "
+            f"_post_process_extracted' log never fired (the heuristic "
+            f"block raised before it):\n{text}"
+        )
+        assert "delta=0" in post_line, (
+            f"Stage 3 must report delta=0 (post-process mocked as identity); got: {post_line!r}"
+        )
+
+        # --- Acceptance gate 4: heuristic items reach the mapper ------
+        # map_and_persist sees the final batch; both heuristic items
+        # must survive the merge so they land as KG nodes / measurements.
+        assert result["status"] == "completed", result
+        assert captured_payload, "map_and_persist was never invoked"
+        final_batch = captured_payload[0]
+
+        heuristic_in_final = [
+            item for item in final_batch if item.get("method") == "heuristic_regex"
+        ]
+        assert len(heuristic_in_final) == len(heuristic_items), (
+            f"NFM-3901: expected all {len(heuristic_items)} heuristic "
+            f"items in the final batch, got {len(heuristic_in_final)}: "
+            f"{heuristic_in_final!r}"
+        )
+        seen_systems = {item["element_system"] for item in heuristic_in_final}
+        assert {"UO2", "ThO2"} <= seen_systems, (
+            f"both UO2 and ThO2 heuristic items must reach the mapper; got systems={seen_systems!r}"
+        )
+
+    async def test_safe_g_helper_handles_non_numeric_values(self) -> None:
+        """Unit test for the NFM-3901 ``_safe_g`` helper: numeric values
+        keep the existing ``:g`` rendering so dedup matches
+        ``heuristic_extractor``; non-numeric values fall back to ``repr``
+        so the key remains hashable and never raises.
+        """
+        # Numeric inputs — match ``heuristic_extractor``'s key format.
+        assert lit_svc._safe_g(5.47) == "5.47"
+        assert lit_svc._safe_g(1.0) == "1"
+        assert lit_svc._safe_g(0) == "0"
+
+        # Non-numeric inputs — must NOT raise; must return a stable
+        # string so two equal string-valued items dedupe.
+        assert lit_svc._safe_g("not-a-number") == repr("not-a-number")
+        assert lit_svc._safe_g(None) == repr(None)
+        # ``True``/``False`` are numeric-coercible, exercise that path.
+        assert lit_svc._safe_g(True) == "1"
+        # Equality on strings — two items with the same string value
+        # must dedupe to the same key.
+        assert lit_svc._safe_g("foo") == lit_svc._safe_g("foo")
+        assert lit_svc._safe_g("foo") != lit_svc._safe_g("bar")

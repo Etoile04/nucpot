@@ -17,16 +17,18 @@ Environment variables:
     ALERT_WEBHOOK   — Feishu/Lark webhook URL (optional alerts)
 """
 
+# ruff: noqa: F841
+
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import ssl
+import subprocess
 import sys
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -42,9 +44,7 @@ SSL_DOMAINS = [
 # GitHub repo — used for Actions status check
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "NFM-DB/nfm-db")
 
-HEALTH_CHECK_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "health_check.py"
-)
+HEALTH_CHECK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "health_check.py")
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +67,7 @@ class InspectionReport:
     """Aggregated inspection results."""
 
     items: list[InspectionItem] = field(default_factory=list)
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
     def all_passed(self) -> bool:
@@ -102,14 +100,12 @@ def check_ssl_cert(domain: str, min_days: int = SSL_MIN_DAYS) -> InspectionItem:
                 detail="No certificate returned",
             )
 
-        not_before = datetime.strptime(
-            cert["notBefore"], "%b %d %H:%M:%S %Y %Z"
-        ).replace(tzinfo=timezone.utc)
-        not_after = datetime.strptime(
-            cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
-        ).replace(tzinfo=timezone.utc)
+        not_before = datetime.strptime(cert["notBefore"], "%b %d %H:%M:%S %Y %Z").replace(
+            tzinfo=UTC
+        )
+        not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
 
-        remaining = not_after - datetime.now(timezone.utc)
+        remaining = not_after - datetime.now(UTC)
         remaining_days = remaining.days
 
         if remaining_days < 0:
@@ -132,7 +128,7 @@ def check_ssl_cert(domain: str, min_days: int = SSL_MIN_DAYS) -> InspectionItem:
             passed=True,
             detail=f"Valid for {remaining_days} more days (expires {not_after:%Y-%m-%d})",
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return InspectionItem(
             name=f"SSL: {domain}",
             passed=False,
@@ -168,7 +164,7 @@ def check_github_actions() -> InspectionItem:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return InspectionItem(
             name="GitHub Actions",
             passed=False,
@@ -258,7 +254,7 @@ def run_health_check() -> InspectionItem:
             passed=True,
             detail="Skipped (health_check.py not found)",
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return InspectionItem(
             name="Site Health",
             passed=False,
@@ -281,9 +277,7 @@ def format_report(report: InspectionReport) -> str:
     if report.all_passed:
         lines.append("**All checks PASSED** ✅")
     else:
-        lines.append(
-            f"**{len(report.failures)}/{len(report.items)} check(s) FAILED** ❌"
-        )
+        lines.append(f"**{len(report.failures)}/{len(report.items)} check(s) FAILED** ❌")
 
     lines.append("")
     lines.append("| # | Check | Status | Severity | Detail |")
@@ -291,9 +285,7 @@ def format_report(report: InspectionReport) -> str:
 
     for idx, item in enumerate(report.items, start=1):
         icon = "✅" if item.passed else "❌"
-        lines.append(
-            f"| {idx} | {item.name} | {icon} | {item.severity} | {item.detail} |"
-        )
+        lines.append(f"| {idx} | {item.name} | {icon} | {item.severity} | {item.detail} |")
 
     lines.append("")
     if report.failures:
@@ -314,21 +306,15 @@ def send_alert(report: InspectionReport, webhook_url: str) -> None:
     if report.all_passed:
         return
 
-    failure_lines = [
-        f"**{f.name}** ({f.severity}): {f.detail}"
-        for f in report.failures
-    ]
+    failure_lines = [f"**{f.name}** ({f.severity}): {f.detail}" for f in report.failures]
     alert_level = (
-        "🔴 P0 CRITICAL"
-        if any(f.severity == "P0" for f in report.failures)
-        else "🟡 P1 WARNING"
+        "🔴 P0 CRITICAL" if any(f.severity == "P0" for f in report.failures) else "🟡 P1 WARNING"
     )
     content_text = (
         f"{alert_level}\n\n"
         f"**NucPot Daily Inspection Alert**\n"
         f"Time: {report.timestamp[:16].replace('T', ' ')} UTC\n"
-        f"Failed: {len(report.failures)}/{len(report.items)} checks\n\n"
-        + "\n".join(failure_lines)
+        f"Failed: {len(report.failures)}/{len(report.items)} checks\n\n" + "\n".join(failure_lines)
     )
 
     payload: dict[str, Any] = {
@@ -337,14 +323,10 @@ def send_alert(report: InspectionReport, webhook_url: str) -> None:
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": (
-                        f"NucPot Inspection: {len(report.failures)} check(s) failed"
-                    ),
+                    "content": (f"NucPot Inspection: {len(report.failures)} check(s) failed"),
                 },
                 "template": (
-                    "red"
-                    if any(f.severity == "P0" for f in report.failures)
-                    else "orange"
+                    "red" if any(f.severity == "P0" for f in report.failures) else "orange"
                 ),
             },
             "elements": [
@@ -360,7 +342,7 @@ def send_alert(report: InspectionReport, webhook_url: str) -> None:
     try:
         with urllib.request.urlopen(req, timeout=10):
             pass
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"Failed to send alert: {exc}", file=sys.stderr)
 
 

@@ -25,6 +25,8 @@ test database — the fixture stays as offline validation, but CI will
 exercise the actual query layer.
 """
 
+# ruff: noqa: B007
+
 from __future__ import annotations
 
 import argparse
@@ -38,9 +40,7 @@ def load_fixture(fixture_dir: Path) -> dict[str, Any]:
     """Load the query correctness test fixture."""
     ground_truth_path = fixture_dir / "ground_truth.json"
     if not ground_truth_path.exists():
-        raise FileNotFoundError(
-            f"Missing ground_truth.json in {fixture_dir}"
-        )
+        raise FileNotFoundError(f"Missing ground_truth.json in {fixture_dir}")
     with open(ground_truth_path, encoding="utf-8") as f:
         return json.load(f)
 
@@ -125,26 +125,24 @@ def run_queries(
 
         if expected_count is not None and result["count"] != expected_count:
             passed = False
-            failures.append(
-                f"count: expected {expected_count}, got {result['count']}"
-            )
+            failures.append(f"count: expected {expected_count}, got {result['count']}")
 
         if expected_targets is not None and result["targets"] != expected_targets:
             passed = False
-            failures.append(
-                f"targets: expected {expected_targets}, got {result['targets']}"
-            )
+            failures.append(f"targets: expected {expected_targets}, got {result['targets']}")
 
-        results.append({
-            "query_id": query["id"],
-            "description": query["description"],
-            "passed": passed,
-            "expected_count": expected_count,
-            "actual_count": result["count"],
-            "expected_targets": expected_targets,
-            "actual_targets": result["targets"],
-            "failures": failures,
-        })
+        results.append(
+            {
+                "query_id": query["id"],
+                "description": query["description"],
+                "passed": passed,
+                "expected_count": expected_count,
+                "actual_count": result["count"],
+                "expected_targets": expected_targets,
+                "actual_targets": result["targets"],
+                "failures": failures,
+            }
+        )
 
     return results
 
@@ -161,7 +159,9 @@ def print_report(results: list[dict[str, Any]]) -> None:
     for result in results:
         status = "PASS" if result["passed"] else "FAIL"
         print(f"\n[{status}] {result['query_id']}: {result['description']}")
-        print(f"       Expected count: {result['expected_count']} | Actual: {result['actual_count']}")
+        print(
+            f"       Expected count: {result['expected_count']} | Actual: {result['actual_count']}"
+        )
         if result["failures"]:
             for failure in result["failures"]:
                 print(f"       - {failure}")
@@ -173,9 +173,7 @@ def print_report(results: list[dict[str, Any]]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Test query correctness against fixture KG"
-    )
+    parser = argparse.ArgumentParser(description="Test query correctness against fixture KG")
     parser.add_argument(
         "--fixtures-dir",
         type=Path,

@@ -25,6 +25,41 @@ concurrency:
 
 jobs:
   # =============================================================================
+  # Fast-fail egress probe (NFM-3842, F1 fixed)
+  # ----------------------------------------------------------------------
+  # Surfaces a dead-egress state in ≤ 2 min instead of waiting 20 min for
+  # the alembic-on-main job to time out its checkout. The downstream
+  # self-hosted jobs (migration-on-main-assert, pre-deploy-assert-smoke,
+  # and via `needs` the rest) use SSH egress via ssh.github.com:443 —
+  # see their "Configure SSH egress" steps — so this probe targets the
+  # SAME path. Probing HTTPS-direct would dead-code the SSH fix in the
+  # very failure mode it targets (HTTPS blocked, SSH works): pre-flight
+  # would fail and gate the four downstream jobs via `needs: [...,
+  # pre-flight, ...]`, making the SSH path unreachable.
+  #
+  # `ssh-keyscan` exercises the same SSH handshake the downstream
+  # `actions/checkout` will use, over port 443, and reads the host key
+  # as a side effect (priming known_hosts for the downstream jobs).
+  # On healthy egress this returns in <1 s; on dead egress it returns in
+  # 5 s (the `-T` ConnectTimeout).
+  # =============================================================================
+  pre-flight:
+    name: Egress fast-fail probe (NFM-3842)
+    runs-on: [self-hosted, production]
+    timeout-minutes: 2
+    steps:
+      - name: Probe ssh.github.com:443 (NFM-3842 F1 fix)
+        run: |
+          if ssh-keyscan -p 443 -T 5 ssh.github.com >/dev/null 2>&1; then
+            echo "ssh.github.com:443 reachable (SSH egress OK)"
+            exit 0
+          fi
+          echo "::error::ssh.github.com:443 unreachable after 5 s."
+          echo "::error::The SSH egress alias regressed or the runner's network state changed."
+          echo "::error::See NFM-3837 (root cause) and NFM-3842 (workflow fix)."
+          exit 1
+
+  # =============================================================================
   # Pre-deployment Checks
   # =============================================================================
   yaml-lint:
@@ -285,7 +320,7 @@ jobs:
   pre-deploy-assert:
     name: Pre-deploy DB↔code alembic assertion
     runs-on: [self-hosted, production]
-    needs: [build-web, test-api]
+    needs: [pre-flight, build-web, test-api]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success'
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
@@ -451,7 +486,7 @@ jobs:
   migration-on-main-assert:
     name: Pre-deploy alembic-on-main assertion (NFM-2141)
     runs-on: [self-hosted, production]
-    needs: [build-web, test-api, pre-deploy-assert]
+    needs: [pre-flight, build-web, test-api, pre-deploy-assert]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success' && needs.pre-deploy-assert.result == 'success'
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
@@ -459,19 +494,48 @@ jobs:
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
+      - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
+        # NFM-3837 root cause: direct github.com:443 is GFW-blocked on
+        # wenjiedeMac-Studio, but ssh.github.com:443 reaches GitHub through
+        # the existing SSH egress alias. The runner-local key
+        # ~/.ssh/id_ed25519_paperclip_egress is the durable fix; this step
+        # rewires GitHub SSH transport to use it. actions/checkout below
+        # uses HTTPS by default — the global gitconfig rewrite
+        # (`url.git@github.com:.insteadOf https://github.com/`) turns the
+        # clone URL into SSH shorthand, which then resolves via this
+        # config to ssh.github.com:443.
+        run: |
+          set -euo pipefail
+          KEY=~/.ssh/id_ed25519_paperclip_egress
+          test -f "$KEY" || { echo "::error::$KEY not present on runner — see NFM-3842 acceptance"; exit 1; }
+          chmod 600 "$KEY"
+          mkdir -p ~/.ssh
+          {
+            echo "Host github.com"
+            echo "  HostName ssh.github.com"
+            echo "  Port 443"
+            echo "  IdentityFile $KEY"
+            echo "  User git"
+            echo "  StrictHostKeyChecking accept-new"
+            echo "  UserKnownHostsFile ~/.ssh/known_hosts"
+          } >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -p 443 ssh.github.com 2>/dev/null >> ~/.ssh/known_hosts || true
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+          echo "SSH egress configured: github.com → ssh.github.com:443 (key $KEY)"
+      - name: Warm up direct route to github.com (GFW transience, belt-and-braces)
         working-directory: ${{ github.workspace }}
         run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout. Must run before
-          # checkout with an absolute working-directory (repo dirs don't
-          # exist yet; job defaults point at apps/* subdirs).
+          # NFM-3842: the primary egress path is now SSH (above), but
+          # keep this HTTPS probe as a regression canary — if direct
+          # github.com answers, it means a proxy is up and the SSH alias
+          # may be unnecessary for this run. Failures here are warnings,
+          # not errors, because the SSH path can still succeed.
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
           done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
+          echo "WARNING: github.com still unreachable after 5 attempts; relying on SSH egress alias"
       - uses: actions/checkout@v7
 
       - name: Run migration-on-main-assert against candidate image
@@ -509,24 +573,46 @@ jobs:
   pre-deploy-assert-smoke:
     name: Pre-deploy-assert smoke test (NFM-2149)
     runs-on: [self-hosted, production]
+    needs: [pre-flight]
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
-      - name: Warm up direct route to github.com (GFW transience)
+      - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
+        # Mirror of the migration-on-main-assert fix. Direct github.com
+        # is GFW-blocked on wenjiedeMac-Studio; route through the
+        # existing SSH egress alias using the runner-local key. See
+        # the migration-on-main-assert job for the full rationale.
+        run: |
+          set -euo pipefail
+          KEY=~/.ssh/id_ed25519_paperclip_egress
+          test -f "$KEY" || { echo "::error::$KEY not present on runner — see NFM-3842 acceptance"; exit 1; }
+          chmod 600 "$KEY"
+          mkdir -p ~/.ssh
+          {
+            echo "Host github.com"
+            echo "  HostName ssh.github.com"
+            echo "  Port 443"
+            echo "  IdentityFile $KEY"
+            echo "  User git"
+            echo "  StrictHostKeyChecking accept-new"
+            echo "  UserKnownHostsFile ~/.ssh/known_hosts"
+          } >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -p 443 ssh.github.com 2>/dev/null >> ~/.ssh/known_hosts || true
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+      - name: Warm up direct route to github.com (GFW transience, belt-and-braces)
         working-directory: ${{ github.workspace }}
         run: |
-          # Direct github.com TLS is intermittently killed by GFW. Probe
-          # until it answers so the checkout's git fetch lands on a live
-          # route instead of racing a 75s connect timeout. Must run before
-          # checkout with an absolute working-directory (repo dirs don't
-          # exist yet; job defaults point at apps/* subdirs).
+          # NFM-3842: belt-and-braces HTTPS probe. Primary egress is now
+          # SSH via the config above; this loop is a regression canary.
+          # Warnings only — SSH path can still succeed.
           for i in 1 2 3 4 5; do
             curl -sf --max-time 10 -o /dev/null https://github.com && { echo "github.com reachable (attempt $i)"; exit 0; }
             echo "github.com not reachable (attempt $i), waiting 15s..."; sleep 15
           done
-          echo "WARNING: github.com still unreachable after 5 attempts; checkout may fail"
+          echo "WARNING: github.com still unreachable after 5 attempts; relying on SSH egress alias"
       - uses: actions/checkout@v7
 
       - name: Run assert.sh unit tests (no Docker required)
@@ -626,7 +712,7 @@ jobs:
   deploy-prod:
     name: Deploy Production (Docker Compose)
     runs-on: [self-hosted, production]
-    needs: [build-web, test-api, pre-deploy-assert, migration-on-main-assert]
+    needs: [pre-flight, build-web, test-api, pre-deploy-assert, migration-on-main-assert]
     if: always() && needs.build-web.result == 'success' && needs.pre-deploy-assert.result == 'success' && needs.migration-on-main-assert.result == 'success'
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
@@ -654,213 +740,63 @@ jobs:
 
       - name: Deploy via Docker Compose (loopback SSH)
         id: deploy
+        env:
+          # NFM-3777/#1050 (5 recurrences): the deploy body now runs from a
+          # script ON DISK on the remote host, uploaded by scp and executed
+          # as `ssh ... bash /tmp/nfm-deploy-prod.sh`. The old streamed
+          # heredoc used stdin as the script transport, so any inner command
+          # that touched stdin (docker compose run < /dev/null, empty-var
+          # command mangling) could silently swallow the tail of the deploy —
+          # cutover, assertions, health gates — while the job stayed green.
+          # GH expressions are injected via environment (never interpolated
+          # into the script body) and validated with :? inside the script.
+          DEPLOY_SHA: ${{ github.sha }}
+          PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
-            # NFM-3328: fail-fast. Prior deploys slid past failed steps (build
-            # errors, `docker compose` unavailable) into green health checks
-            # against stale containers — four consecutive false-success deploys
-            # (2026-08-18..19). Without -e the heredoc reports the exit code of
-            # the LAST command only; every intermediate failure was swallowed.
-            set -euo pipefail
-            cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-            # github.com must go DIRECT: the proxy route for it is dead
-            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
-            # do not inherit job env, so this must be re-exported here.
-            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
-            export no_proxy=$NO_PROXY
-            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
-            mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
-            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
-            # NFM-3328: DOCKER_CONFIG redirects the CLI-plugin search path, so
-            # an otherwise-empty config dir SILENTLY REMOVES `docker compose`
-            # (verified empirically: `docker compose version` → "unknown
-            # command"). Every `docker compose -f ...` line then failed with
-            # "unknown shorthand flag: 'f'" and the deploy continued on stale
-            # containers. Symlink the host's compose plugin into the override
-            # dir to keep compose available without restoring the keychain.
-            ln -sf ~/.docker/cli-plugins/docker-compose \
-              /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
-            docker compose version
+          set -euo pipefail
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key \
+            scripts/deploy_prod.sh lwj04@127.0.0.1:/tmp/nfm-deploy-prod.sh
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' bash /tmp/nfm-deploy-prod.sh"
 
-            # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
-            # commit SHA so a bad deploy can be rolled back by re-tagging, not
-            # by rebuilding. The local daemon keeps the last 10 successful
-            # nucpot-prod-* tags per repository (see prune step at end).
-            export PROD_IMAGE_TAG="${{ github.sha }}"
-            echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
-
-            for i in 1 2 3 4 5; do
-              git fetch origin main && break
-              [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
-              echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
-            done
-            git reset --hard origin/main
-
-            # Build the 3 distinct images (D1, NFM-2148). The api image is
-            # shared by the api and worker services (docker-compose.prod.yml:62,
-            # :216), so one build tag covers both. --build is BANNED below in
-            # the compose step — it would re-tag the new image as `latest` and
-            # destroy the prior SHA-tagged image, breaking rollback.
-            # pre-deploy-assert (D2, NFM-2149) has already validated the
-            # DB↔code alembic match against the candidate image before this
-            # point; see the pre-deploy-assert job in this workflow.
-            # --no-cache on all builds (NFM-2376 root cause: stale layer cache)
-            echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
-            # NFM-2502: clear proxy for Docker build (apt/pip use CN mirrors directly)
-            # NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
-            HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
-            docker build --no-cache -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
-
-            echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
-            DOCKER_BUILDKIT=0 \
-            docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
-              -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
-
-            echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
-            DOCKER_BUILDKIT=0 \
-            docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
-              -f docker/web.Dockerfile \
-              --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
-              --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
-
-            # NFM-2146 / ADR-NFM-2139 §5 D3 (revised by NFM-2196): deploy-time
-            # migration runs BEFORE the new containers come up. The Postgres
-            # advisory lock (key 7423912) is acquired by env.py on the
-            # migration's own async connection (apps/api/migrations/env.py:
-            # run_async_migrations), so concurrent migrators (cron jobs,
-            # manual ssh, parallel CI) block at the SQL level until the
-            # in-flight migration disconnects. The shell-level acquire loop
-            # the NFM-2146 v1 used was a no-op (session-level lock released
-            # on session-end before alembic started). The script runs
-            # `alembic upgrade head` inside an ephemeral api container
-            # (overridden entrypoint); a migration failure aborts the deploy
-            # before any traffic is cut over — failure-mode shift from "502
-            # on boot" to "failed deploy step" (alertable, retryable). See
-            # scripts/prod_migrate.sh for the orchestration and
-            # apps/api/migrations/env.py for the lock primitive.
-            ./scripts/prod_migrate.sh
-
-            # NFM-3320 AC-1/AC-2 — post-deploy cutover assertion. The 2026-08-18
-            # incident showed that `docker compose ... up -d` can return success
-            # while leaving the old containers in place. We now snapshot every
-            # nucpot-prod-* service container before `up -d` (Image ID + Created
-            # timestamp) and re-assert after, refusing to declare a green deploy
-            # unless each running container's Image ID matches a SHA-tagged image
-            # that was actually built this run, AND its Created timestamp moved
-            # forward. Distinct exit codes (71/72/73/74) let the workflow branch
-            # (skipped/failure) on the failure type.
-            #
-            # The snapshot directory lives on the host because the deploy-prod
-            # job runs on the Mac Studio self-hosted runner (loopback SSH) and
-            # /tmp survives both phases inside the same heredoc.
-            #
-            # NFM-3777: `docker compose run ... < /dev/null` in prod_migrate.sh
-            # above can leave the SSH heredoc's stdin in a state that swallows
-            # every subsequent command (observed 2026-08-28 on run 33139959669:
-            # build + alembic succeed, cutover segment completely silent, prod
-            # stays on the old image, job still green). Reset stdin to a known
-            # terminal-less FD here and emit a HEREDOC-START anchor so future
-            # silent-exit incidents are diagnosable from logs alone.
-            exec 0</dev/null
-            echo "==> HEREDOC CUTOVER START (anchor for NFM-3777 diagnosis)"
-            export NFM_CUTOVER_SNAPSHOT_DIR="/tmp/nfm-cutover-${PROD_IMAGE_TAG}"
-            rm -rf "${NFM_CUTOVER_SNAPSHOT_DIR}"
-            echo "==> Capturing BEFORE snapshot of nucpot-prod-* containers..."
-            bash tools/post-deploy-cutover-assert/assert.sh \
-              --phase before \
-              --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}"
-
-            # Restart ALL containers using the SHA-tagged images. PROD_IMAGE_TAG
-            # resolves each service's `image:` (docker-compose.prod.yml:62, :126,
-            # :216, :275) to the matching SHA-tagged image we just built.
-            # Schema authority is unchanged: Alembic-only via apps/api/migrations/
-            # versions/, applied deploy-time by the step above (NFM-2146), not
-            # on container boot (D3).
-            docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
-
-            # Wait for services to start
-            sleep 20
-
-            # NFM-3320 AC-1/AC-2 (continued) — AFTER-phase assertion. Hard-fails
-            # the deploy step on image-digest mismatch (exit 71), no-recreate
-            # (exit 72), missing expected tag (exit 73), or missing service
-            # container (exit 74). On success, prints the before/after cutover
-            # table so the reviewer can confirm a real cutover happened.
-            #
-            # This must run BEFORE the curl health checks — the original 2026-08-18
-            # bug was: curl against the old (still-healthy) containers returns
-            # 200 and the workflow reports green. The whole point of this
-            # assertion is to be the FIRST signal that the new code is live, with
-            # health checks serving as confirmation rather than the gate.
-            echo "==> Asserting post-deploy cutover (expected tag: ${PROD_IMAGE_TAG})..."
-            bash tools/post-deploy-cutover-assert/assert.sh \
-              --phase after \
-              --expected-tag "${PROD_IMAGE_TAG}" \
-              --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}" \
-              --distinct-exit 71
-
-            # Schema authority: Alembic-only (ADR-NFM-2139 §5 D4, deploy-time
-            # migration per §5 D3 — NFM-2146). All DDL is applied through
-            # Alembic revisions under apps/api/migrations/versions/ by the
-            # deploy step above. No path in this deploy writes to the prod DB
-            # except through Alembic.
-
-            # Internal health checks — the first curl-f is the production
-            # equivalent of staging's first-poll gate (ADR-KR3-A2 §Failure-mode 6).
-            # We write a marker file on success so the "Emit prod deploy-event
-            # fragment" post-step can read the outcome without re-parsing the
-            # heredoc. The deploy-prod job runs on a self-hosted runner on the
-            # same Mac Studio host (header comment lines 270-275), so the
-            # runner's /tmp is the host's /tmp.
-            echo "Checking API health..."
-            rm -f /tmp/nfmd_prod_health_passed
-            if curl -f http://localhost:8001/api/v1/health; then
-              touch /tmp/nfmd_prod_health_passed
-            else
-              exit 1
+      # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
+      # the deploy heredoc, so the same silent-skip that ate `docker compose
+      # up -d` also ate the defenses. This assertion runs in the JOB context,
+      # after the heredoc returns — it cannot be skipped by whatever eats the
+      # heredoc's tail. If the containers are not running THIS run's SHA-tagged
+      # image, the deploy is a phantom success and we fail loudly here.
+      - name: Assert prod containers run this SHA (outside-script cutover guard, NFM-3777/#1050)
+        id: cutover-assert
+        run: |
+          set -euo pipefail
+          # Non-interactive SSH shell (zsh) lacks /usr/local/bin where docker
+          # lives on this host — same PATH fix the deploy script applies.
+          SSH_DOCKER='export PATH="/usr/local/bin:/usr/local/sbin:$PATH"; docker'
+          EXPECTED="nucpot-prod-api:${{ github.sha }}"
+          echo "Expected api image: ${EXPECTED}"
+          ACTUAL=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "${SSH_DOCKER} inspect nucpot-prod-api --format '{{.Config.Image}}'")
+          echo "Actual api image:   ${ACTUAL}"
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::PHANTOM CUTOVER DETECTED (NFM-3777 pattern, issue #1050)."
+            echo "::error::nucpot-prod-api is running ${ACTUAL} but this deploy built ${EXPECTED}."
+            echo "::error::The deploy script (scripts/deploy_prod.sh) exited before cutover; prod is on a stale image."
+            echo "::error::Manual recovery: PROD_IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d"
+            exit 71
+          fi
+          # Same check for the other three nucpot-prod services (web/worker/lightrag)
+          for SVC in nucpot-prod-web:web nucpot-prod-worker:api nucpot-prod-lightrag:lightrag; do
+            CONTAINER="${SVC%%:*}"; REPO="nucpot-prod-${SVC##*:}"
+            ACTUAL_SVC=$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+              "${SSH_DOCKER} inspect ${CONTAINER} --format '{{.Config.Image}}'")
+            EXPECTED_SVC="${REPO}:${{ github.sha }}"
+            echo "${CONTAINER}: expected ${EXPECTED_SVC}, actual ${ACTUAL_SVC}"
+            if [ "${ACTUAL_SVC}" != "${EXPECTED_SVC}" ]; then
+              echo "::error::PHANTOM CUTOVER: ${CONTAINER} on ${ACTUAL_SVC}, expected ${EXPECTED_SVC} (NFM-3777/#1050)"
+              exit 72
             fi
-
-            echo "Checking Web health..."
-            curl -f http://localhost:3000/ || exit 1
-
-            # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent
-            # 10 nucpot-prod-* tags per repository in the local daemon. Tags
-            # are sorted by Docker's CreatedAt timestamp; everything past the
-            # 10th newest is removed. The new SHA we just built is always
-            # newest, so it is never pruned. Disk cap: ~60-80 GB on the
-            # Mac Studio (4 images × 10 tags × ~1.5-2 GB).
-            echo "==> Pruning nucpot-prod-* tags older than the last 10 per repository"
-            for REPO in nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web; do
-              OLD_IDS=$(docker images --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}' \
-                | grep "^${REPO}|" \
-                | sort -t'|' -k4,4 -r \
-                | tail -n +11 \
-                | cut -d'|' -f3 \
-                | sort -u)
-              if [ -n "$OLD_IDS" ]; then
-                echo "    removing old ${REPO} tags: $(echo "$OLD_IDS" | tr '\n' ' ')"
-                echo "$OLD_IDS" | xargs -r docker image rm -f
-              else
-                echo "    ${REPO}: nothing to prune"
-              fi
-            done
-
-            # NFM-3448: candidate-tag retention. The pre-deploy-assert job
-            # (ADR-NFM-2139 §5 D2) writes nucpot-prod-{api,web,lightrag}:
-            # candidate-<sha> at every build. Those tags are redundant with
-            # the SHA-tagged image deploy-prod just promoted (same content)
-            # and would otherwise accumulate at ~6 per 16 h (~13 GB/day
-            # across the three repositories) — see NFM-3447 disk pressure.
-            # Keep the most-recent 3 candidate tags per repository; remove
-            # older entries via tools/prod-tag-retention/prune.sh.
-            echo "==> Pruning candidate-* tags older than the last 3 per repository (NFM-3448)"
-            for REPO in nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web; do
-              bash tools/prod-tag-retention/prune.sh --repo "$REPO" --keep 3
-            done
-            echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
-            echo "==> HEREDOC CUTOVER END (anchor for NFM-3777 diagnosis)"
-          ENDSSH
+          done
+          echo "CUTOVER_ASSERT_OK: all 4 nucpot-prod containers on ${{ github.sha }}"
 
       - name: External smoke tests
         id: external-smoke-tests

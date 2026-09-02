@@ -305,3 +305,189 @@ def test_uncovered_property_frozen():
     )
     with pytest.raises(AttributeError):
         up.entity_type = "Other"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Tests: BUG-22 fix — Path A (NFM-3874 / C-S3)
+#
+# Coverage scan historically returned coverage_rate=1.0 for any ontology
+# whose ``entity_types[].properties`` was empty, because the scanner only
+# read the declared ``properties`` field.  In v0.4.0 (and later) the
+# authoritative property list lives under ``datatype_properties`` (279
+# entries keyed by property name), and ``entity_types`` carries only
+# ``name`` + ``description``.  Path A is the runtime stop-gap: when
+# declared properties are absent, fall back to ``datatype_properties``.
+# ---------------------------------------------------------------------------
+
+
+def _make_ontology_data_v040(entity_types: list[dict]) -> dict:
+    """Wrap entity_types + datatype_properties in the v0.4.0 ontology shape."""
+    return {
+        "entity_types": entity_types,
+        "relation_types": [],
+        "datatype_properties": {
+            "hasDensity": {
+                "uri": "http://example.org/materials/composition#hasDensity",
+                "comment": "Density",
+                "domain": None,
+            },
+            "hasMeltingPoint": {
+                "uri": "http://example.org/materials/composition#hasMeltingPoint",
+                "comment": "Melting point",
+                "domain": None,
+            },
+            "hasThermalConductivity": {
+                "uri": "http://example.org/materials/composition#hasThermalConductivity",
+                "comment": "Thermal conductivity",
+                "domain": None,
+            },
+        },
+    }
+
+
+@pytest.mark.unit
+async def test_path_a_falls_back_to_datatype_properties(db_session):
+    """Path A: empty entity_types[].properties falls back to datatype_properties.
+
+    Reproduces BUG-22: without the fallback, total_expected=0 and
+    coverage_rate=1.0 (a vacuous truth). With the fallback, total_expected
+    reflects the 3 datatype_property keys.
+    """
+    # entity_types carry NO properties — same as v0.4.0 production data
+    entity_types = [
+        {"name": "Material", "description": "A nuclear fuel or structural material"},
+        {"name": "Property", "description": "A physical/material property"},
+        {"name": "Condition", "description": "Experimental conditions"},
+        {"name": "Experiment", "description": "An experimental measurement"},
+    ]
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data_v040(entity_types),
+    )
+    svc = CoverageScanService(db_session)
+    metrics = await svc.compute_metrics(ov.id)
+
+    # The 3 datatype_properties keys are now the expected set
+    assert metrics.total_expected == 3
+    assert metrics.covered == 0
+    assert metrics.uncovered == 3
+    # 0/3 != 1.0 any more — BUG-22 fixed
+    assert metrics.coverage_rate == 0.0
+
+
+@pytest.mark.unit
+async def test_path_a_run_scan_creates_requests_from_datatype_properties(db_session):
+    """Path A: run_scan emits DataCollectionRequest rows for datatype_properties."""
+    entity_types = [
+        {"name": "Material", "description": "A nuclear fuel or structural material"},
+    ]
+    ov = await _seed_version(
+        db_session,
+        ontology_data=_make_ontology_data_v040(entity_types),
+    )
+    svc = CoverageScanService(db_session)
+    result = await svc.run_scan(ov.id, material_system="UO2")
+
+    assert result.metrics.total_expected == 3
+    assert result.requests_created == 3
+    prop_names = {r.property_name for r in result.uncovered_properties}
+    assert prop_names == {"hasDensity", "hasMeltingPoint", "hasThermalConductivity"}
+
+
+@pytest.mark.unit
+async def test_path_a_declared_properties_take_precedence(db_session):
+    """Path A: when entity_types DO declare properties, the fallback is skipped.
+
+    Ensures the fix doesn't double-count when both sources are present.
+    """
+    entity_types = [
+        {
+            "name": "NuclearMaterial",
+            "properties": ["density"],
+        },
+    ]
+    # Provide datatype_properties too — Path A must NOT add them
+    ontology_data = {
+        "entity_types": entity_types,
+        "relation_types": [],
+        "datatype_properties": {
+            "hasDensity": {"uri": "x", "comment": "y", "domain": None},
+            "hasMeltingPoint": {"uri": "x", "comment": "y", "domain": None},
+        },
+    }
+    ov = await _seed_version(db_session, ontology_data=ontology_data)
+    svc = CoverageScanService(db_session)
+    metrics = await svc.compute_metrics(ov.id)
+
+    # Only the declared "density" counts; datatype_properties is ignored
+    assert metrics.total_expected == 1
+    assert metrics.coverage_rate == 0.0
+
+
+@pytest.mark.unit
+async def test_path_a_no_datatype_properties_returns_zero(db_session):
+    """Path A edge case: empty entity_types AND empty datatype_properties
+    → no false coverage (regression guard for the original bug)."""
+    ov = await _seed_version(
+        db_session,
+        ontology_data={
+            "entity_types": [{"name": "Material", "description": "x"}],
+            "relation_types": [],
+        },
+    )
+    svc = CoverageScanService(db_session)
+    metrics = await svc.compute_metrics(ov.id)
+
+    assert metrics.total_expected == 0
+    assert metrics.coverage_rate == 1.0  # Empty corpus semantics preserved
+
+
+@pytest.mark.unit
+def test_iter_datatype_property_names_unit():
+    """Path A helper: yields property names from ontology_data['datatype_properties']."""
+    from nfm_db.services.gap_scanner import iter_datatype_property_names
+
+    class _StubOV:
+        ontology_data = {
+            "entity_types": [{"name": "Material"}],
+            "datatype_properties": {
+                "hasDensity": {"uri": "x"},
+                "hasMeltingPoint": {"uri": "x"},
+                "": {"uri": "x"},  # empty key — must be filtered
+            },
+        }
+
+    names = list(iter_datatype_property_names(_StubOV()))
+    assert names == ["hasDensity", "hasMeltingPoint"]
+
+
+@pytest.mark.unit
+def test_extract_expected_pairs_unit():
+    """Path A: extract_expected_pairs prefers declared, falls back to dtp."""
+    from nfm_db.services.gap_scanner import extract_expected_pairs
+
+    class _StubOV:
+        # declared properties present → fallback not used
+        ontology_data = {
+            "entity_types": [
+                {"name": "M", "properties": ["a", "b"]},
+            ],
+        }
+
+    pairs = extract_expected_pairs(_StubOV())
+    assert pairs == [("M", "a"), ("M", "b")]
+
+    class _StubOVFallback:
+        # declared properties empty → fall back to datatype_properties
+        ontology_data = {
+            "entity_types": [{"name": "Material", "description": "x"}],
+            "datatype_properties": {
+                "hasDensity": {"uri": "x"},
+                "hasMass": {"uri": "x"},
+            },
+        }
+
+    pairs = extract_expected_pairs(_StubOVFallback())
+    assert ("Material", "hasDensity") in pairs
+    assert ("Material", "hasMass") in pairs
+    assert len(pairs) == 2

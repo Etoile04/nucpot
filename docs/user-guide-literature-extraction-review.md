@@ -455,4 +455,4 @@ Use any of these UUIDs in the extraction/trigger call to verify end-to-end behav
 
 ---
 
-*Questions? Email `feedback@nucpot.org` or open a Paperclip issue under the Knowledge Management project.*
+*Questions? Email `nucpot@agentmail.to` or open a Paperclip issue under the Knowledge Management project.*

@@ -140,7 +140,8 @@ class TestMapAndPersistValidation:
         assert result.created_measurements == 0
 
     async def test_float_value_now_coerced_and_validates(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Numeric ``value`` is now coerced to string (NFM-3374).
 
@@ -156,6 +157,10 @@ class TestMapAndPersistValidation:
         """
         bad_input = [
             {
+                "material_name": "UO2",  # NFM-3919 — present so the item reaches
+                "composition": "UO2",  # the PropertyType lookup, not the
+                # material guard, which is what this
+                # test is asserting on.
                 "property": "Thermal Conductivity",
                 "value": 8.5,  # float → coerced to "8.5"
                 "unit": "W/(m·K)",
@@ -585,19 +590,26 @@ class TestOntofuelCategoryNormalization:
         assert result.skipped_unknown_properties == 0
 
     async def test_none_category_skips_unknown(self, db_session: AsyncSession):
-        """A None property_category is skipped (skipped_unknown_properties)."""
+        """A None property_category + unseeded property_name is dropped.
+
+        NFM-4019: the name-only fallback in ``_lookup_property_type`` only
+        resolves names that already exist in ``property_types`` (so the
+        canonical catalog gaps like ``elastic_constant`` / ``solubility_limit``
+        remain in ``skipped_unknown_details``). Property names that do NOT
+        exist in the catalog continue to drop on the unknown-property path.
+        """
         await _seed_property_type(
             db_session,
             category_name="Thermal properties",
             category_slug="thermal",
-            property_name="Thermal Conductivity",
+            property_name="thermal_conductivity",
             property_slug="thermal-conductivity",
         )
 
         extraction_output = [
             _make_extracted_property(
                 property_category=None,
-                property_name="Thermal Conductivity",
+                property_name="nonexistent_property_name",
                 value="8.5",
                 unit="W/(m·K)",
             ),
@@ -605,6 +617,7 @@ class TestOntofuelCategoryNormalization:
         result = await map_and_persist(db_session, extraction_output)
         assert result.created_measurements == 0
         assert result.skipped_unknown_properties == 1
+        assert result.skipped_unknown_details[0]["property_name"] == "nonexistent_property_name"
 
     async def test_other_literal_falls_back_to_thermal(self, db_session: AsyncSession):
         """OntoFuel 'other' has no DB category; falls back to 'thermal'."""
@@ -627,6 +640,114 @@ class TestOntofuelCategoryNormalization:
         result = await map_and_persist(db_session, extraction_output)
         assert result.created_measurements == 1
         assert result.skipped_unknown_properties == 0
+
+    async def test_skipped_unknown_details_captures_drop(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Unknown properties are recorded in ``skipped_unknown_details``.
+
+        NFM-4013 / Path (a): the drop site in ``_lookup_property_type``
+        must populate ``MappingResult.skipped_unknown_details`` so the
+        measurement harness can enumerate the LLM-only 14 names that
+        static gap analysis (heuristic_extractor vs 031_seed) misses.
+        """
+        # Only seed a single property type — anything else drops.
+        await _seed_property_type(
+            db_session,
+            category_name="Thermal properties",
+            category_slug="thermal",
+            property_name="thermal_conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        extraction_output = [
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="thermal_conductivity",  # known — persists
+                value="8.5",
+                unit="W/(m·K)",
+                source_doi="10.1000/known",
+            ),
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="mysterious_unknown_property",
+                value="3.14",
+                unit="unitless",
+                source_doi="10.1000/unknown",
+                material_name="Mystery alloy",
+            ),
+            _make_extracted_property(
+                property_category="thermal",
+                property_name="another_oddity",
+                value="2.71",
+                unit="eV",
+                source_file="literature/unknown.pdf",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 2
+        assert len(result.skipped_unknown_details) == 2
+
+        names = {d["property_name"] for d in result.skipped_unknown_details}
+        assert names == {"mysterious_unknown_property", "another_oddity"}
+
+        # First drop entry preserves structured context.
+        first = next(
+            d
+            for d in result.skipped_unknown_details
+            if d["property_name"] == "mysterious_unknown_property"
+        )
+        assert first["category_slug"] == "thermal"
+        assert first["raw_category"] == "thermal"
+        assert first["sample_value"] == "3.14"
+        assert first["source_doi"] == "10.1000/unknown"
+        assert first["material_name"] == "Mystery alloy"
+
+        second = next(
+            d for d in result.skipped_unknown_details if d["property_name"] == "another_oddity"
+        )
+        assert second["category_slug"] == "thermal"
+        assert second["source_doi"] is None
+        assert second["source_file"] == "literature/unknown.pdf"
+
+    async def test_skipped_unknown_details_unknown_category_slug(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``property_category=None`` → ``category_slug is None``.
+
+        The drop site must preserve the ``None`` slug — downstream
+        aggregation relies on it to bucket names with no category.
+        (Non-Literal OntoFuel strings are coerced to ``"other"`` upstream
+        by :func:`_coerce_unknown_categories`, so they cannot exercise
+        this branch directly; ``None`` is the only real path to ``None``.)
+        """
+        extraction_output = [
+            _make_extracted_property(
+                property_category=None,
+                property_name="foo_bar",
+                value="1.0",
+                unit="u",
+            ),
+        ]
+        result = await map_and_persist(db_session, extraction_output)
+
+        assert result.skipped_unknown_properties == 1
+        assert len(result.skipped_unknown_details) == 1
+        assert result.skipped_unknown_details[0]["category_slug"] is None
+        assert result.skipped_unknown_details[0]["raw_category"] is None
+        assert result.skipped_unknown_details[0]["property_name"] == "foo_bar"
+
+    def test_skipped_unknown_details_default_empty(self) -> None:
+        """``MappingResult`` defaults ``skipped_unknown_details`` to ``[]``."""
+        result = MappingResult()
+        assert result.skipped_unknown_details == []
+        # Mutable list should be per-instance, not shared.
+        result.skipped_unknown_details.append({"x": 1})
+        assert MappingResult().skipped_unknown_details == []
 
     def test_normalize_category_slug_direct_matches(self):
         """The four OntoFuel literals with direct DB slugs map 1:1."""
@@ -673,7 +794,8 @@ class TestSplitCounterSeparation:
     """
 
     async def test_entity_reuse_increments_reused_entities(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Pre-seeded DataSource in DB + same DOI → reused_entities incremented.
 
@@ -700,16 +822,18 @@ class TestSplitCounterSeparation:
 
         result = await map_and_persist(db_session, inputs)
 
-        assert result.reused_entities == 1, (
-            "DataSource found by DOI in DB → entity reuse"
-        )
+        assert result.reused_entities == 1, "DataSource found by DOI in DB → entity reuse"
         assert result.skipped_duplicate_measurements == 0, (
             "No measurement dedup — single unique item"
         )
-        assert result.skipped_duplicates == result.reused_entities + result.skipped_duplicate_measurements
+        assert (
+            result.skipped_duplicates
+            == result.reused_entities + result.skipped_duplicate_measurements
+        )
 
     async def test_material_reuse_increments_reused_entities(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Pre-seeded Material in DB + same formula → reused_entities incremented.
 
@@ -739,12 +863,11 @@ class TestSplitCounterSeparation:
 
         result = await map_and_persist(db_session, inputs)
 
-        assert result.reused_entities >= 1, (
-            "Material found by formula in DB → entity reuse"
-        )
+        assert result.reused_entities >= 1, "Material found by formula in DB → entity reuse"
 
     async def test_measurement_dedup_increments_skipped_duplicate_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Two items with identical 5-tuple → second is measurement dedup.
 
@@ -774,7 +897,8 @@ class TestSplitCounterSeparation:
         )
 
     async def test_unknown_property_not_in_split_counters(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Unknown PropertyType should NOT increment reused_entities or
         skipped_duplicate_measurements — it's a separate skip reason.
@@ -785,9 +909,7 @@ class TestSplitCounterSeparation:
         result = await map_and_persist(db_session, inputs)
 
         assert result.created_measurements == 0
-        assert result.reused_entities == 0, (
-            "Unknown property skip is not entity reuse"
-        )
+        assert result.reused_entities == 0, "Unknown property skip is not entity reuse"
         assert result.skipped_duplicate_measurements == 0, (
             "Unknown property skip is not measurement dedup"
         )
@@ -950,16 +1072,12 @@ class TestValueFloatConversion:
         assert measurements[0].value_scalar is None
         assert measurements[0].value_text == "3 to 4"
         # Warning emitted with the raw value so we can diagnose upstream
-        warning_records = [
-            r for r in caplog.records if r.levelname == "WARNING"
-        ]
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
         assert any("3 to 4" in r.getMessage() for r in warning_records), (
             f"expected WARNING mentioning '3 to 4', got: {[r.getMessage() for r in warning_records]}"
         )
 
-    async def test_non_parseable_value_does_not_block_batch(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_non_parseable_value_does_not_block_batch(self, db_session: AsyncSession) -> None:
         """One bad value must NOT block other items in the same batch."""
         await _seed_property_type(
             db_session,
@@ -1013,9 +1131,7 @@ class TestConditionsStandardKeysRoundTrip:
     Unknown keys are captured in `notes`.
     """
 
-    async def test_standard_conditions_round_trip(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_standard_conditions_round_trip(self, db_session: AsyncSession) -> None:
         await _seed_property_type(
             db_session,
             property_name="Thermal Conductivity",
@@ -1050,9 +1166,7 @@ class TestConditionsStandardKeysRoundTrip:
         assert "neutron_flux" in c.notes
         assert "strain_rate" in c.notes
 
-    async def test_unknown_conditions_key_captured_in_notes(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_unknown_conditions_key_captured_in_notes(self, db_session: AsyncSession) -> None:
         """An unknown conditions key (e.g., 'humidity') is preserved in notes."""
         await _seed_property_type(
             db_session,
@@ -1060,11 +1174,7 @@ class TestConditionsStandardKeysRoundTrip:
             property_slug="thermal-conductivity",
         )
 
-        inputs = [
-            _make_extracted_property(
-                conditions={"temperature": 300, "humidity": 0.65}
-            )
-        ]
+        inputs = [_make_extracted_property(conditions={"temperature": 300, "humidity": 0.65})]
 
         await map_and_persist(db_session, inputs)
 
@@ -1107,7 +1217,8 @@ class TestFiveTupleMeasurementDedup:
     """
 
     async def test_exact_5tuple_match_skips_duplicate(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Two items with identical 5-tuple → second is skipped.
 
@@ -1137,7 +1248,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.skipped_duplicates == 1
 
     async def test_different_conditions_two_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Same material+property+source+method but different conditions → 2 rows.
 
@@ -1173,7 +1285,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.skipped_duplicates == 0
 
     async def test_different_method_two_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Same material+property+source+conditions but different method → 2 rows.
 
@@ -1217,8 +1330,7 @@ class TestFiveTupleMeasurementDedup:
         # expectation, restored after the rejected `11eef99` test was
         # incorrectly inverted to accept data loss).
         assert result.created_measurements == 2, (
-            "NFM-2032: different measurement methods must produce 2 "
-            "distinct rows (5-tuple dedup)."
+            "NFM-2032: different measurement methods must produce 2 distinct rows (5-tuple dedup)."
         )
         assert result.skipped_duplicate_measurements == 0
 
@@ -1227,15 +1339,12 @@ class TestFiveTupleMeasurementDedup:
 
         from nfm_db.models.property import PropertyMeasurement
 
-        count = (
-            await db_session.execute(
-                select(func.count(PropertyMeasurement.id))
-            )
-        ).scalar_one()
+        count = (await db_session.execute(select(func.count(PropertyMeasurement.id)))).scalar_one()
         assert count == 2
 
     async def test_different_material_two_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Different material_name → 2 measurements (different 5-tuple)."""
         await _seed_property_type(
@@ -1261,7 +1370,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.skipped_duplicates == 0
 
     async def test_different_property_two_measurements(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Different property name → 2 measurements (different 5-tuple)."""
         await _seed_property_type(
@@ -1291,7 +1401,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.skipped_duplicates == 0
 
     async def test_skipped_duplicates_reproducible_in_response(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """skipped_duplicates count must be deterministic and verifiable.
 
@@ -1316,7 +1427,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.created_measurements == 1
 
     async def test_conditions_hash_stable_across_key_order(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """conditions dict with different key order must produce same hash.
 
@@ -1342,7 +1454,8 @@ class TestFiveTupleMeasurementDedup:
         assert result.skipped_duplicates == 1
 
     async def test_none_conditions_vs_empty_conditions_same_key(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """None conditions and {} conditions should hash identically.
 
@@ -1460,7 +1573,8 @@ class TestMapAndPersistHeuristicPayload:
     """Integration tests: heuristic-shaped items must reach the DB."""
 
     async def test_heuristic_payload_passes_validation_and_persists(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """A heuristic_regex item with float value + ``property_name`` must write a row.
 
@@ -1476,6 +1590,8 @@ class TestMapAndPersistHeuristicPayload:
 
         heuristic_item: dict[str, Any] = {
             "element_system": "UO2",
+            "material_name": "UO2",  # NFM-3919
+            "composition": "UO2",  # NFM-3919
             "phase": "Unknown",
             "property_name": "activation_energy",
             "value": 0.3,
@@ -1493,9 +1609,7 @@ class TestMapAndPersistHeuristicPayload:
 
         assert result.validation_errors == 0
         assert result.created_measurements == 1
-        measurements = (
-            await db_session.execute(select(PropertyMeasurement))
-        ).scalars().all()
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 1
         # The float 0.3 was coerced to "0.3" then re-parsed by the mapper;
         # value_scalar is stored as Decimal in the DB, so cast to float
@@ -1503,7 +1617,8 @@ class TestMapAndPersistHeuristicPayload:
         assert float(measurements[0].value_scalar) == pytest.approx(0.3)
 
     async def test_multiple_heuristic_items_persist(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """All heuristic items in a batch must be persisted (>= 4 rows per AC-alpha)."""
         await _seed_property_type(
@@ -1514,6 +1629,8 @@ class TestMapAndPersistHeuristicPayload:
 
         items: list[dict[str, Any]] = [
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",  # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.3,
                 "unit": "eV",
@@ -1522,6 +1639,8 @@ class TestMapAndPersistHeuristicPayload:
                 "property_category": "thermal",
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",  # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.5,
                 "unit": "eV",
@@ -1531,6 +1650,8 @@ class TestMapAndPersistHeuristicPayload:
                 "conditions": {"temperature": 1000},
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",  # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.7,
                 "unit": "eV",
@@ -1540,6 +1661,8 @@ class TestMapAndPersistHeuristicPayload:
                 "conditions": {"temperature": 1200},
             },
             {
+                "material_name": "UO2",  # NFM-3919
+                "composition": "UO2",  # NFM-3919
                 "property_name": "activation_energy",
                 "value": 0.9,
                 "unit": "eV",
@@ -1556,16 +1679,22 @@ class TestMapAndPersistHeuristicPayload:
         assert result.created_measurements >= 4
         # AC-β: count(DISTINCT property_name) for that source ≥ 1.
         meas_count = (
-            await db_session.execute(
-                select(PropertyMeasurement).join(Dataset).join(DataSource).where(
-                    DataSource.doi == "10.1000/heuristic-batch"
+            (
+                await db_session.execute(
+                    select(PropertyMeasurement)
+                    .join(Dataset)
+                    .join(DataSource)
+                    .where(DataSource.doi == "10.1000/heuristic-batch")
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(meas_count) >= 4
 
     async def test_heuristic_does_not_regress_llm_items(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """LLM-style items (string value + populated ``property``) still validate.
 
@@ -1584,6 +1713,8 @@ class TestMapAndPersistHeuristicPayload:
             unit="W/(m·K)",
         )
         heuristic_item: dict[str, Any] = {
+            "material_name": "UO2",  # NFM-3919
+            "composition": "UO2",  # NFM-3919
             "property_name": "thermal_conductivity",
             "value": 9.2,  # float — heuristic shape
             "unit": "W/(m·K)",
@@ -1598,7 +1729,8 @@ class TestMapAndPersistHeuristicPayload:
         assert result.created_measurements == 2
 
     async def test_payload_missing_both_property_and_property_name_still_rejected(
-        self, db_session: AsyncSession,
+        self,
+        db_session: AsyncSession,
     ) -> None:
         """Coercion must not invent a property name when both are absent.
 
@@ -1640,9 +1772,7 @@ class TestNFM3405ProvenanceThreading:
     """
 
     @pytest.mark.unit
-    async def test_source_uses_reference_not_unknown_source(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_source_uses_reference_not_unknown_source(self, db_session: AsyncSession) -> None:
         """AC-1: when an extraction provides a citation, the persisted
         DataSource title is that citation, NOT the "Unknown Source" fallback.
         """
@@ -1659,9 +1789,7 @@ class TestNFM3405ProvenanceThreading:
         assert result.created_measurements == 1
         assert result.validation_errors == 0
 
-        ds_rows = (
-            await db_session.execute(select(DataSource))
-        ).scalars().all()
+        ds_rows = (await db_session.execute(select(DataSource))).scalars().all()
         assert len(ds_rows) == 1
         # Source must NOT be the default "Unknown Source" string when a
         # reference was supplied on the extraction item.
@@ -1688,9 +1816,7 @@ class TestNFM3405ProvenanceThreading:
         assert result.created_measurements == 1
         assert result.validation_errors == 0
 
-        measurements = (
-            await db_session.execute(select(PropertyMeasurement))
-        ).scalars().all()
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 1
         measurement = measurements[0]
 
@@ -1744,11 +1870,7 @@ class TestNFM3405ProvenanceThreading:
         assert result.created_measurements == 3
         assert result.validation_errors == 0
 
-        measurements = (
-            (await db_session.execute(select(PropertyMeasurement)))
-            .scalars()
-            .all()
-        )
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 3
 
         # Group by reference so we can assert per-property mapping without
@@ -1793,18 +1915,559 @@ class TestNFM3405ProvenanceThreading:
         assert result.created_measurements == 1
         assert result.validation_errors == 0
 
-        ds_rows = (
-            (await db_session.execute(select(DataSource))).scalars().all()
-        )
+        ds_rows = (await db_session.execute(select(DataSource))).scalars().all()
         assert len(ds_rows) == 1
         assert ds_rows[0].title == "Heuristic Ref"
 
-        measurements = (
-            (await db_session.execute(select(PropertyMeasurement)))
-            .scalars()
-            .all()
-        )
+        measurements = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(measurements) == 1
         m = measurements[0]
         assert m.unit_id is not None
         assert m.review_status == "approved"  # high → approved
+
+
+# ---------------------------------------------------------------------------
+# NFM-3919: block new "Unknown Material" rows at the mapper bottom line
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNFM3919UnknownMaterialGuard:
+    """NFM-3919 [Tier 1B / P0]: double-None material items must NOT spawn new
+    Material(name='Unknown Material') rows; they must be counted as skipped
+    and logged. Cross-run reuse of an existing Material via formula must
+    also be restored so the unique measurement index can fire.
+    """
+
+    async def test_double_none_item_is_rejected_and_counted(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """An item where BOTH material_name and composition are None must
+        not create a Material row, and must bump skipped_unknown_materials.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        bad_item = _make_extracted_property(
+            material_name=None,
+            composition=None,
+            source_doi="10.1000/nfm-3919-reject",
+        )
+
+        result = await map_and_persist(db_session, [bad_item])
+
+        # No Material row was created — the DB stays clean of "Unknown Material".
+        materials = (await db_session.execute(select(Material))).scalars().all()
+        assert materials == [], (
+            "Mapper must NOT create a Material when both material_name and "
+            "composition are None — was: "
+            f"{[(m.name, m.formula) for m in materials]}"
+        )
+        # Counter is incremented.
+        assert result.skipped_unknown_materials == 1
+        # And NO downstream measurement was persisted either.
+        assert result.created_measurements == 0
+
+    async def test_second_call_reuses_material_not_create_new(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Two consecutive map_and_persist calls with the same input must
+        reuse the existing Material row — second call's reused_entities
+        increases and no second Material is created.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="thermal-conductivity",
+        )
+
+        item = _make_extracted_property(
+            material_name="UO2",
+            composition="UO2",
+            source_doi="10.1000/nfm-3919-reuse",
+        )
+
+        first = await map_and_persist(db_session, [item])
+        assert first.created_materials == 1
+        assert first.reused_entities == 0
+
+        # Second pass with identical input.
+        item2 = _make_extracted_property(
+            material_name="UO2",
+            composition="UO2",
+            source_doi="10.1000/nfm-3919-reuse",
+        )
+        second = await map_and_persist(db_session, [item2])
+
+        # No new Material row.
+        assert second.created_materials == 0, (
+            "Second call must reuse the existing Material, not create a new one. "
+            "Bug: heuristic_extractor used to omit material_name+composition, "
+            "so _find_material_by_formula returned None each run."
+        )
+        # And reuse counter was bumped.
+        assert second.reused_entities >= 1, (
+            "Second call must observe the existing Material via formula lookup "
+            "and bump reused_entities."
+        )
+
+        # Total Material rows in DB is still 1.
+        materials = (await db_session.execute(select(Material))).scalars().all()
+        assert len(materials) == 1
+
+    async def test_find_material_by_formula_handles_duplicates(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-3919: two Material rows with the same formula must not raise
+        MultipleResultsFound when _find_material_by_formula is queried —
+        it must return one of them via .limit(1).scalars().first().
+        """
+        from nfm_db.services.extraction_to_db_mapper import (
+            _find_material_by_formula,
+        )
+
+        # Seed two Material rows with the same formula — represents the
+        # legacy "Unknown Material" pollution that may exist in production.
+        db_session.add(Material(name="UO2", formula="UO2", is_active=True))
+        db_session.add(Material(name="UO2", formula="UO2", is_active=True))
+        await db_session.commit()
+
+        # Must NOT raise — must return one row.
+        result = await _find_material_by_formula(db_session, "UO2")
+        assert result is not None
+        assert result.formula == "UO2"
+
+        # And empty/None formula must still short-circuit to None.
+        assert await _find_material_by_formula(db_session, None) is None
+        assert await _find_material_by_formula(db_session, "") is None
+
+    # --- CR-1 fix verification (E2E QA 2026-09-01) --------------------------
+    #
+    # The previous ``not (A and B)`` guard dropped items where EITHER
+    # ``material_name`` or ``composition`` was None. Ticket NFM-3919 says
+    # only BOTH-None should trigger the guard — see ticket body and the
+    # LLM contract in ``extraction_prompt.py:305-306`` which explicitly
+    # permits ``composition=None`` for materials where the name itself
+    # carries the chemistry (SS316, Zr-2.5Nb, Inconel 718, …).
+    #
+    # 78/131 prod ``materials`` rows currently have ``name = formula``
+    # from the legacy ``or material_name`` fallback — the exact pattern
+    # these tests now defend.
+
+    async def test_only_composition_none_is_not_rejected(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-3919 CR-1: an LLM-permitted item with material_name='Inconel 718'
+        and composition=None must reach the Material-write path, NOT the
+        schema-drift guard. (QA probe Inconel 718 / null composition).
+
+        ``extraction_prompt.py:305-306`` explicitly permits
+        ``composition=None`` for materials where the name carries the
+        chemistry (SS316, Zr-2.5Nb, Inconel 718). The CR-1 bug rejected
+        these. 78/131 prod ``materials`` rows currently have
+        ``name = formula`` from the legacy ``or material_name`` fallback
+        — the exact pattern this test defends.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="tc-c1-only-comp-none",
+        )
+
+        item = _make_extracted_property(
+            material_name="Inconel 718",
+            composition=None,
+            source_doi="10.1000/nfm-3919-c1-only-comp-none",
+        )
+
+        result = await map_and_persist(db_session, [item])
+
+        # CR-1 fix: NOT skipped. Item reaches Material creation.
+        assert result.skipped_unknown_materials == 0, (
+            "Item with material_name='Inconel 718', composition=None must NOT "
+            "be treated as schema-drift — name alone is a valid material "
+            "identity per LLM contract (extraction_prompt.py:305-306)."
+        )
+        # And a Material row was created with the supplied name.
+        materials = (await db_session.execute(select(Material))).scalars().all()
+        assert len(materials) == 1, (
+            f"Expected 1 Material row, got {len(materials)}: "
+            f"{[(m.name, m.formula) for m in materials]}"
+        )
+        assert materials[0].name == "Inconel 718"
+        assert materials[0].formula is None
+
+    async def test_only_material_name_none_propagates_schema_constraint(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-3919 CR-1 — the symmetric case ``material_name=None,
+        composition='Zr-2.5Nb'`` is NOT realistic in practice:
+        ``Material.name`` is ``Mapped[str]`` (NOT NULL) at the schema
+        level, so the DB rejects the row regardless of the mapper
+        guard. This test pins that contract: the mapper does NOT
+        pre-empt the schema by trying to insert ``name=None`` and
+        crashing later — it leaves the schema to enforce the
+        constraint, and the error propagates upward for the caller
+        to handle (consistent with how every other NOT NULL field is
+        enforced).
+
+        The QA reviewer raised this case as symmetric with the
+        ``composition=None`` case, but the schema asymmetry makes it
+        non-analogous. The pragmatic contract is: ``name`` is
+        required, ``composition`` is optional. Documented here so a
+        future reviewer doesn't re-flag the asymmetry.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="tc-c1-only-name-none",
+        )
+
+        item = _make_extracted_property(
+            material_name=None,
+            composition="Zr-2.5Nb",
+            source_doi="10.1000/nfm-3919-c1-only-name-none",
+        )
+
+        # Either: (a) the mapper guard catches it (acceptable),
+        # (b) the schema IntegrityError propagates (also acceptable).
+        # What is NOT acceptable is silent acceptance + NULL insert.
+        try:
+            result = await map_and_persist(db_session, [item])
+            # Path (a): guard caught it — make sure the count is right
+            # and no row was written.
+            assert result.skipped_unknown_materials == 1
+            materials = (await db_session.execute(select(Material))).scalars().all()
+            assert materials == []
+        except IntegrityError:
+            # Path (b): schema constraint rejected. Expected and OK.
+            await db_session.rollback()
+
+    async def test_double_none_is_still_rejected(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-3919 CR-1 — regression guard: BOTH-None must still be
+        rejected. Mirrors the existing CR-1 AC test, repeated here so the
+        either-None positive cases above cannot mask a regression on
+        the original ticket AC.
+        """
+        await _seed_property_type(
+            db_session,
+            property_name="Thermal Conductivity",
+            property_slug="tc-c1-both-none-regression",
+        )
+
+        bad_item = _make_extracted_property(
+            material_name=None,
+            composition=None,
+            source_doi="10.1000/nfm-3919-c1-both-none-regression",
+        )
+
+        result = await map_and_persist(db_session, [bad_item])
+
+        assert result.skipped_unknown_materials == 1
+        materials = (await db_session.execute(select(Material))).scalars().all()
+        assert materials == []
+
+
+# ---------------------------------------------------------------------------
+# NFM-4019: name-only fallback for LLM-side category-context mismatches
+# ---------------------------------------------------------------------------
+# The CPO-adjudicated NFM-4018 split identified 4 names that hit
+# ``_lookup_property_type``'s drop site for a different reason than a catalog
+# gap:
+#
+# - ``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity`` — the LLM
+#   extractor emits no category literal at all (raw_category=None); the seed
+#   places each under ``mechanical`` / ``physical`` / ``thermal`` respectively.
+# - ``melting_point`` — the LLM emits ``category=thermal`` but the seed places
+#   ``melting_point`` under ``physical``. The strict ``(slug, name)`` lookup
+#   misses on the slug side, not the catalog side.
+#
+# NFM-4019 fixes these via a name-only fallback in ``_lookup_property_type``:
+# after the strict lookup misses, look up by ``property_name`` across all
+# categories and return the unique match. The fallback only succeeds when the
+# name is unique across ``property_types``, so the AC-1 v0.5.0 catalog gaps
+# (``elastic_constant``, ``solubility_limit`` — addressed by NFM-4008 /
+# 032_seed) remain absent and continue to drop correctly.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_nfm4019_canonical_catalog(
+    db: AsyncSession,
+) -> dict[str, PropertyType]:
+    """Seed the four canonical ``property_types`` rows the NFM-4019 fallback
+    must resolve, mirroring ``031_seed_property_types.py``.
+
+    Returns a name → PropertyType map so tests can assert resolution.
+    """
+    seed_rows: tuple[tuple[str, str, str, str, str], ...] = (
+        # (category_name, category_slug, property_name, property_slug, value_type)
+        ("Physical properties", "physical", "lattice_constant", "lattice-constant", "scalar"),
+        ("Physical properties", "physical", "melting_point", "melting-point", "scalar"),
+        ("Mechanical properties", "mechanical", "bulk_modulus", "bulk-modulus", "scalar"),
+        ("Thermal properties", "thermal", "thermal_conductivity", "thermal-conductivity", "scalar"),
+    )
+
+    category_cache: dict[str, PropertyCategory] = {}
+    property_map: dict[str, PropertyType] = {}
+    for category_name, category_slug, property_name, property_slug, value_type in seed_rows:
+        category = category_cache.get(category_slug)
+        if category is None:
+            category = PropertyCategory(
+                name=category_name,
+                slug=category_slug,
+                description=f"{category_name} (NFM-4019 canonical seed)",
+            )
+            db.add(category)
+            await db.flush()
+            category_cache[category_slug] = category
+        pt = PropertyType(
+            category_id=category.id,
+            name=property_name,
+            slug=property_slug,
+            value_type=value_type,
+        )
+        db.add(pt)
+        await db.flush()
+        property_map[property_name] = pt
+    await db.commit()
+    return property_map
+
+
+@pytest.mark.unit
+class TestNfm4019CategoryContextFallback:
+    """NFM-4019: name-only fallback for 4 LLM-side category-context mismatches.
+
+    Each test seeds the canonical catalog (mirroring
+    ``031_seed_property_types.py``) and asserts that the mapper resolves the
+    property end-to-end via the fallback path, without ever populating
+    ``skipped_unknown_details``.
+    """
+
+    async def test_no_category_literal_bulk_modulus(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``bulk_modulus`` with no category literal → fallback resolves under mechanical.
+
+        NFM-4019 row 1: the LLM emits ``raw_category=None`` for ``bulk_modulus``
+        even though the seed places it under ``mechanical``. The strict
+        ``(slug, name)`` lookup has no slug to use, so the fallback must
+        scan by name and find the unique ``bulk_modulus`` row.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="bulk_modulus",
+                    value="207.5",
+                    unit="GPa",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_no_category_literal_lattice_constant(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``lattice_constant`` with no category literal → fallback resolves under physical."""
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="lattice_constant",
+                    value="5.47",
+                    unit="Angstrom",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_no_category_literal_thermal_conductivity(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``thermal_conductivity`` with no category literal → fallback resolves under thermal."""
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="thermal_conductivity",
+                    value="7.5",
+                    unit="W/(m·K)",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_wrong_slug_for_thermal_melting_point(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """``melting_point`` with ``category=thermal`` → fallback resolves under physical.
+
+        NFM-4019 row 6: the LLM emits ``category=thermal`` for ``melting_point``
+        but the seed places it under ``physical``. The strict
+        ``(slug=thermal, name=melting_point)`` lookup misses because the
+        ``thermal`` category has no ``melting_point`` row. The fallback must
+        scan by name and find the unique ``melting_point`` row under
+        ``physical``.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category="thermal",
+                    property_name="melting_point",
+                    value="2098",
+                    unit="K",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 1
+        assert result.skipped_unknown_properties == 0
+        assert result.skipped_unknown_details == []
+
+    async def test_catalog_gap_still_drops(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-4019 AC-NDE-2: catalog gaps remain in ``skipped_unknown_details``.
+
+        ``elastic_constant`` (singular, NFM-4008 / 032_seed) and
+        ``solubility_limit`` (NFM-4008 / 032_seed) are NOT seeded in
+        ``property_types``. The fallback must not invent a row — these
+        names must continue to drop and be captured in
+        ``skipped_unknown_details`` so the harness can still enumerate them
+        on the staging sample.
+
+        Seed only the four canonical NFM-4019 names; the two catalog-gap
+        names are intentionally absent.
+        """
+        await _seed_nfm4019_canonical_catalog(db_session)
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category="mechanical",
+                    property_name="elastic_constant",
+                    value="272.0",
+                    unit="GPa",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+                _make_extracted_property(
+                    property_category="physical",
+                    property_name="solubility_limit",
+                    value="7800.0",
+                    unit="ppm",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 2
+        assert len(result.skipped_unknown_details) == 2
+        names = {d["property_name"] for d in result.skipped_unknown_details}
+        assert names == {"elastic_constant", "solubility_limit"}
+
+    async def test_fallback_ambiguous_does_not_resolve(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Ambiguous names (same property_name in 2+ categories) skip the fallback.
+
+        If two ``property_types`` rows share the same ``name`` across
+        different categories, the fallback cannot pick one and the
+        measurement drops. This protects against silent mis-classification
+        after a future ontology expansion seeds duplicate names.
+        """
+        # Seed `density` under both `physical` and (hypothetically) `thermal`.
+        # This is not the seed canonical; it simulates a future ontology
+        # expansion that double-catalogues a name.
+        for category_slug, category_name in (
+            ("physical", "Physical properties"),
+            ("thermal", "Thermal properties"),
+        ):
+            category = PropertyCategory(
+                name=category_name,
+                slug=category_slug,
+                description=f"{category_name} (ambiguous seed)",
+            )
+            db_session.add(category)
+            await db_session.flush()
+            pt = PropertyType(
+                category_id=category.id,
+                name="density",
+                slug=f"density-{category_slug}",
+                value_type="scalar",
+            )
+            db_session.add(pt)
+            await db_session.flush()
+        await db_session.commit()
+
+        result = await map_and_persist(
+            db_session,
+            [
+                _make_extracted_property(
+                    property_category=None,
+                    property_name="density",
+                    value="10.97",
+                    unit="g/cm3",
+                    material_name="UO2",
+                    composition="UO2",
+                ),
+            ],
+        )
+
+        # Strict lookup skipped (no category), fallback found 2 ambiguous
+        # rows, mapper drops the measurement.
+        assert result.created_measurements == 0
+        assert result.skipped_unknown_properties == 1
+        assert len(result.skipped_unknown_details) == 1
+        assert result.skipped_unknown_details[0]["property_name"] == "density"

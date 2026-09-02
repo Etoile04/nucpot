@@ -95,7 +95,9 @@ def fetch_all_issues(
 
         logger.debug(
             "fetch_all_issues: page %d (offset=%d, limit=%d)",
-            page_num, offset, _DEFAULT_LIMIT,
+            page_num,
+            offset,
+            _DEFAULT_LIMIT,
         )
 
         request = urllib.request.Request(
@@ -107,19 +109,18 @@ def fetch_all_issues(
                 body = json.loads(resp.read().decode())
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PaperclipFetchError(
-                f"fetch_all_issues: HTTP error on page {page_num} "
-                f"(offset={offset}): {exc}"
+                f"fetch_all_issues: HTTP error on page {page_num} (offset={offset}): {exc}"
             ) from exc
         except (json.JSONDecodeError, KeyError) as exc:
             raise PaperclipFetchError(
-                f"fetch_all_issues: malformed response on page "
-                f"{page_num}: {exc}"
+                f"fetch_all_issues: malformed response on page {page_num}: {exc}"
             ) from exc
 
         if not body:
             logger.debug(
                 "fetch_all_issues: empty page %d (offset=%d) — done",
-                page_num, offset,
+                page_num,
+                offset,
             )
             break
 
@@ -128,7 +129,9 @@ def fetch_all_issues(
 
         logger.info(
             "fetch_all_issues: page %d fetched %d issues (total: %d)",
-            page_num, len(body), len(accumulated),
+            page_num,
+            len(body),
+            len(accumulated),
         )
 
         if len(body) < _DEFAULT_LIMIT:
@@ -140,6 +143,7 @@ def fetch_all_issues(
 
     logger.info(
         "fetch_all_issues: complete — %d issues across %d page(s)",
-        len(accumulated), page_num,
+        len(accumulated),
+        page_num,
     )
     return accumulated
