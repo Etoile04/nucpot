@@ -43,8 +43,45 @@ Strategy
    (would only trigger if a current ``datasets`` row had the same
    ``(source_id, material_id)`` pair — confirmed against prod 2026-09-02
    to be impossible).
-3. Verification queries print before/after counts and the 10 restored
-   ``(dataset_id, source_id)`` pairs for AC-3 self-attestation.
+3. Pre/post counts are captured into **Python scalars** via plain
+   ``SELECT count(*)`` queries — no temp tables.  The AC-3 summary
+   ``SELECT`` is rendered with the captured counts as integer
+   literals so a single ``bind.execute`` carries the whole summary
+   row in one statement.
+
+NFM-4171 — temp-table lifetime fix (this revision)
+--------------------------------------------------
+
+An earlier draft (NFM-4139 PR #1109, merged 2026-09-02 as ``3ef25ade7``)
+kept the pre/post counts in ``_restore_075_pre_counts`` /
+``_restore_075_post_counts`` temp tables (``ON COMMIT DROP``) and joined
+them in a follow-up ``SELECT``.  That pattern aborts mid-migration with::
+
+    psycopg2.errors.UndefinedTable:
+        relation "_restore_075_pre_counts" does not exist
+
+because the temp tables span multiple ``op.execute`` calls.  When
+alembic runs through ``env.py::run_async_migrations`` with the async
+engine, the autobegun-transaction model (documented in the NFM-2782
+comment block) does not preserve ``ON COMMIT DROP`` temp tables
+across those call boundaries; the AC-3 summary ``SELECT`` raises
+the UndefinedTable error before the migration can complete.
+
+A session-level-temp-tables variant (no ``ON COMMIT DROP``) was tried
+first (NFM-4173 proposal) but is brittle: it depends on every
+``bind.execute`` reusing the same connection (true under NullPool but
+fragile against future env changes), and the implicit
+``DROP TABLE IF EXISTS`` cleanup at the end of the migration is a
+leaky abstraction — temp tables persisting on the connection until
+session end have been the source of past migration regressions.
+
+The fix in this revision captures the counts into Python scalars via
+plain ``SELECT count(*)`` queries, which eliminates the temp-table
+dependency entirely.  Each count is a single ``.one()`` round-trip
+that returns an integer; the AC-3 summary is a single
+``bind.execute`` whose SQL is rendered with the captured counts as
+Python integer literals (safe — the values originate from
+``count(*).int`` results, not user input).
 
 Idempotency
 -----------
@@ -85,6 +122,10 @@ Cross-references
   A+B decision).
 * [NFM-4130](/NFM/issues/NFM-4130) — migration 070 re-scope
   prevention fix (PR #1107, done).
+* [NFM-4171](/NFM/issues/NFM-4171) — this migration's temp-table
+  lifetime fix (CI Schema-drift Guard Postgres job blocker).
+* [NFM-4169](/NFM/issues/NFM-4169) — migration 073 preview-role fix
+  (sibling, PR #1114 in CR).
 * [NFM-4105](/NFM/issues/NFM-4105) — placeholder-title class product
   decision (out of scope here; this migration only restores rows).
 * [NFM-4136](/NFM/issues/NFM-4136) — parent epic (recast Option B).
@@ -104,6 +145,9 @@ Acceptance criteria
 * SRE canary confirms no query-plan regression.
 * Result posted on NFM-4133 as a ``[RECAS] RESTORED`` comment with
   before/after counts and SHA.
+* (NFM-4171) ``alembic upgrade head`` succeeds from a fresh CI
+  Postgres clone through the 073→075 chain without
+  ``UndefinedTableError`` on the restore temp tables.
 """
 
 from collections.abc import Sequence
@@ -133,8 +177,8 @@ _PLACEHOLDER_TITLES: tuple[str, ...] = (
 )
 
 # Expected delta (for verification logging only — the migration does
-# not assert these counts; the verification queries below print
-# actual deltas).
+# not assert these counts; the verification query below prints actual
+# deltas).
 _EXPECTED_DATA_SOURCES_DELTA: int = 18
 _EXPECTED_DATASETS_DELTA: int = 10
 
@@ -151,6 +195,10 @@ def upgrade() -> None:
     safe no-op — the backup tables never existed so there is nothing to
     restore.  This allows ``alembic upgrade head`` from an empty schema
     to succeed without errors (schema-drift guard requirement).
+
+    NFM-4171 — pre/post counts are captured in Python scalars (no temp
+    tables) so the migration is robust against asyncpg's
+    prepared-statement protocol / autobegun-transaction semantics.
     """
     bind = op.get_bind()
 
@@ -158,7 +206,7 @@ def upgrade() -> None:
     # Fresh-DB guard: skip when backup tables are absent.
     # ------------------------------------------------------------------
     # ``to_regclass()`` returns NULL when the relation does not exist,
-    # so the COALESCE yields FALSE — and the whole upgrade becomes a
+    # so the AND yields FALSE — and the whole upgrade becomes a
     # no-op.  This is the correct behaviour: a fresh DB never ran
     # migration 070, so there is nothing to restore.
     row = bind.execute(
@@ -176,17 +224,18 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # Pre-state: capture before counts for AC-3 self-attestation.
     # ------------------------------------------------------------------
-    bind.execute(
+    # NFM-4171 — capture counts in Python scalars (single-statement
+    # ``SELECT count(*)`` round-trip) instead of temp tables.  This
+    # eliminates the ``ON COMMIT DROP`` temp-table-lifetime hazard
+    # that surfaced on fresh Postgres 16 during NFM-4169 verification
+    # (the temp tables vanished between ``op.execute`` calls under
+    # asyncpg's prepared-statement protocol, causing
+    # ``UndefinedTable: relation "_restore_075_pre_counts"`` mid-
+    # migration).  The integers are SQL-safe literals — no
+    # interpolation of user input.
+    pre_row = bind.execute(
         sa.text(
             """
-            DROP TABLE IF EXISTS _restore_075_pre_counts
-            """
-        )
-    )
-    bind.execute(
-        sa.text(
-            """
-            CREATE TEMP TABLE _restore_075_pre_counts ON COMMIT DROP AS
             SELECT
                 (SELECT count(*) FROM data_sources)              AS data_sources_pre,
                 (SELECT count(*) FROM datasets)                  AS datasets_pre,
@@ -195,6 +244,11 @@ def upgrade() -> None:
                 )                                                AS placeholder_in_backup
             """
         )
+    ).one()
+    data_sources_pre, datasets_pre, placeholder_in_backup = (
+        int(pre_row[0]),
+        int(pre_row[1]),
+        int(pre_row[2]),
     )
 
     # ------------------------------------------------------------------
@@ -265,47 +319,47 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Post-state: AC-3 self-attestation (before/after + 10 UUID pairs).
+    # Post-state: capture post counts in Python scalars.
     # ------------------------------------------------------------------
-    bind.execute(
+    post_row = bind.execute(
         sa.text(
             """
-            DROP TABLE IF EXISTS _restore_075_post_counts
+            SELECT
+                (SELECT count(*) FROM data_sources) AS data_sources_post,
+                (SELECT count(*) FROM datasets)     AS datasets_post
             """
         )
-    )
+    ).one()
+    data_sources_post, datasets_post = int(post_row[0]), int(post_row[1])
+
+    # ------------------------------------------------------------------
+    # AC-3 self-attestation: single ``bind.execute`` with the captured
+    # counts inlined as integer literals.
+    # ------------------------------------------------------------------
+    # The integer values originate from ``SELECT count(*)`` round-trips
+    # (never user input), so literal inlining is SQL-safe.  No bind
+    # params are needed (NFM-4099) and the whole summary row fits one
+    # asyncpg prepared statement.
     bind.execute(
         sa.text(
-            """
-            CREATE TEMP TABLE _restore_075_post_counts ON COMMIT DROP AS
+            f"""
             SELECT
-                (SELECT count(*) FROM data_sources)              AS data_sources_post,
-                (SELECT count(*) FROM datasets)                  AS datasets_post
+                'restore_075_summary'                               AS check_name,
+                {data_sources_pre}                                 AS data_sources_pre,
+                {data_sources_post}                                AS data_sources_post,
+                {data_sources_post - data_sources_pre}             AS data_sources_delta,
+                {datasets_pre}                                     AS datasets_pre,
+                {datasets_post}                                    AS datasets_post,
+                {datasets_post - datasets_pre}                     AS datasets_delta,
+                {placeholder_in_backup}                             AS placeholder_in_backup
             """
         )
     )
 
-    bind.execute(
-        sa.text(
-            """
-            SELECT
-                'restore_075_summary'                 AS check_name,
-                pre.data_sources_pre                  AS data_sources_pre,
-                post.data_sources_post                AS data_sources_post,
-                post.data_sources_post - pre.data_sources_pre
-                                                    AS data_sources_delta,
-                pre.datasets_pre                      AS datasets_pre,
-                post.datasets_post                    AS datasets_post,
-                post.datasets_post - pre.datasets_pre
-                                                    AS datasets_delta,
-                pre.placeholder_in_backup             AS placeholder_in_backup
-            FROM _restore_075_pre_counts pre, _restore_075_post_counts post
-            """
-        )
-    )
-
+    # ------------------------------------------------------------------
     # Per-dataset UUID table — AC-3 evidence that each of the 10
     # dataset_ids exists with its original source_id.
+    # ------------------------------------------------------------------
     bind.execute(
         sa.text(
             """
