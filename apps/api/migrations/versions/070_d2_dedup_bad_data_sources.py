@@ -357,6 +357,81 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 CREATE INDEX ON _dataset_redirect(bad_dataset_id);
                 CREATE INDEX ON _dataset_redirect(canonical_dataset_id);
 
+                -- 3-prep. Dedup passthrough datasets that map to the
+                --     same (candidate_id, material_id).  Multiple bad
+                --     sources can each carry a passthrough dataset for
+                --     the same material; when step 3a tries to UPDATE
+                --     all of them to (candidate, material), the second
+                --     UPDATE collides on uq_datasets_source_material.
+                --     Keep the lowest-id dataset per (candidate,
+                --     material); migrate the losers' PMs to the keeper
+                --     first so no measurement data is lost.
+                WITH ranked_passthrough AS (
+                    SELECT d.id            AS dataset_id,
+                           cm.candidate_id AS candidate_id,
+                           d.material_id   AS material_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cm.candidate_id, d.material_id
+                               ORDER BY d.id
+                           ) AS rn
+                    FROM datasets d
+                    JOIN _canonical_map cm ON cm.bad_id = d.source_id
+                    WHERE cm.candidate_id IS NOT NULL
+                      AND cm.candidate_id <> d.source_id
+                      AND NOT EXISTS (
+                          SELECT 1 FROM datasets canonical_d
+                          WHERE canonical_d.source_id = cm.candidate_id
+                            AND canonical_d.material_id = d.material_id
+                      )
+                ),
+                passthrough_keepers AS (
+                    SELECT dataset_id, candidate_id, material_id
+                    FROM ranked_passthrough WHERE rn = 1
+                ),
+                passthrough_losers AS (
+                    SELECT dataset_id, candidate_id, material_id
+                    FROM ranked_passthrough WHERE rn > 1
+                ),
+                loser_pm_migrated AS (
+                    INSERT INTO property_measurements (
+                        dataset_id, property_type_id, value_scalar, value_min, value_max,
+                        value_expression, value_list, value_text, uncertainty, unit_id,
+                        notes, review_status, reviewer_note, reviewed_at,
+                        conditions_hash, method, created_at, updated_at
+                    )
+                    SELECT
+                        k.dataset_id,
+                        pm.property_type_id,
+                        pm.value_scalar, pm.value_min, pm.value_max,
+                        pm.value_expression, pm.value_list, pm.value_text,
+                        pm.uncertainty, pm.unit_id,
+                        pm.notes, pm.review_status, pm.reviewer_note, pm.reviewed_at,
+                        pm.conditions_hash, pm.method,
+                        NOW(), NOW()
+                    FROM property_measurements pm
+                    JOIN passthrough_losers l ON l.dataset_id = pm.dataset_id
+                    JOIN passthrough_keepers k
+                        ON k.candidate_id = l.candidate_id
+                       AND k.material_id  = l.material_id
+                    ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING
+                    RETURNING 1
+                ),
+                loser_pms_dropped AS (
+                    DELETE FROM property_measurements pm
+                    USING passthrough_losers l
+                    WHERE pm.dataset_id = l.dataset_id
+                    RETURNING 1
+                ),
+                loser_datasets_dropped AS (
+                    DELETE FROM datasets d
+                    USING passthrough_losers l
+                    WHERE d.id = l.dataset_id
+                    RETURNING 1
+                )
+                SELECT
+                    (SELECT COUNT(*) FROM passthrough_keepers)  AS kept_dedup_count,
+                    (SELECT COUNT(*) FROM passthrough_losers)   AS lost_dedup_count;
+
                 -- 3a. Repoint bad datasets whose canonical dataset does
                 --     NOT already exist (their id stays the same but
                 --     source_id becomes the canonical source's id).
