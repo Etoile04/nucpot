@@ -92,6 +92,7 @@ Edit `docker/.env.staging`:
 ```bash
 openssl rand -hex 32  # → STAGING_API_SECRET_KEY
 openssl rand -hex 24  # → STAGING_POSTGRES_PASSWORD
+openssl rand -hex 24  # → NFMD_PREVIEW_DB_PASSWORD
 ```
 
 Then set, at minimum:
@@ -102,6 +103,10 @@ Then set, at minimum:
   automatically; no separate password edit is needed
 - `STAGING_CLOUDFLARE_TUNNEL_TOKEN` — Cloudflare Zero Trust tunnel token (see §3.2)
 - `STAGING_CORS_ORIGINS=["https://staging.nucpot.dpdns.org"]`
+- `NFMD_PREVIEW_DB_PASSWORD` — preview-role password for migration 073
+  (`create_nfm_preview_role`), which the api container runs on boot; set it
+  even if the current DB is already past 073 so the next volume rebuild
+  never fails to boot. Independent from prod (rotate separately).
 
 ### 3.2 Cloudflare staging tunnel
 
@@ -281,6 +286,8 @@ template.
 | `STAGING_CORS_ORIGINS`          | staging origin                                         | JSON array; maps to `NFM_CORS_ORIGINS`         |
 | `STAGING_CLOUDFLARE_TUNNEL_TOKEN` | — (required)                                         | Drives the `cloudflared` ingress service       |
 | `STAGING_CLOUDFLARED_METRICS_HOST_PORT` | `36500`                                         | Localhost-only metrics port (tunnel readiness) |
+| `STAGING_NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS` | canonical UUID list (NFM-4170)         | Forwarded verbatim to the api env; consumed by `attribution_flag.py` |
+| `NFMD_PREVIEW_DB_PASSWORD`        | — (required for fresh DBs)                             | Forwarded verbatim to the api env; consumed by migration 073 |
 | `STAGING_HEALTH_TIMEOUT`        | `120`                                                  | Seconds the health gate will wait              |
 | `STAGING_ROLLBACK_TAG`          | `prev`                                                 | Tag used as the auto-rollback target           |
 

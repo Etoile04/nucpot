@@ -248,6 +248,24 @@ write_api_env_file() {
   else
     canonicals="${canonicals_raw#STAGING_NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=}"
   fi
+  # NFM-4197: forward the preview-role password verbatim so a fresh staging
+  # DB (volume rebuild) can run migration 073 (create_nfm_preview_role) on
+  # boot — the migration hard-fails when the var is unset/empty, and the api
+  # container receives env ONLY via this generated file. Before this, wiring
+  # existed only for CI (ci.yml fixture) and prod (docker/.env.prod), so
+  # NFM-4190 had to pre-run the migration via a manual docker run. The key
+  # keeps its unprefixed name in docker/.env.staging (matching
+  # docker/.env.prod.example). Empty default is deliberate: staging DBs
+  # already past 073 never need the password, and migration 073 itself is
+  # the loud enforcement point. Same grep-raw pattern as CORS above —
+  # sourcing the env file would strip quotes from the value.
+  local preview_pw_raw preview_pw
+  preview_pw_raw="$(grep -E '^NFMD_PREVIEW_DB_PASSWORD=' "$ENV_FILE" 2>/dev/null || true)"
+  if [ -z "$preview_pw_raw" ]; then
+    preview_pw=""
+  else
+    preview_pw="${preview_pw_raw#NFMD_PREVIEW_DB_PASSWORD=}"
+  fi
 
   if [ -z "$database_url" ]; then
     die "STAGING_DATABASE_URL is unset — set it in docker/.env.staging."
@@ -265,6 +283,7 @@ NFM_CORS_ORIGINS=${cors}
 NFM_DEBUG=${debug}
 NFM_ACCESS_TOKEN_EXPIRE_MINUTES=${access_minutes}
 NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=${canonicals}
+NFMD_PREVIEW_DB_PASSWORD=${preview_pw}
 EOF
   log "Wrote $api_env (NFM_CORS_ORIGINS preserved verbatim via grep)."
 }
