@@ -379,3 +379,187 @@ class TestBootstrapSqlStructure:
             "Script does not check rolsuper — non-superuser callers "
             "will get a confusing permission error mid-script."
         )
+
+
+class TestBootstrapSqlSplitting:
+    """NFM-4169 — asyncpg prepared-statement guard.
+
+    asyncpg uses server-side prepared statements, which carry ONE
+    statement per round-trip. The canonical bootstrap SQL is a sequence
+    of psql-style multi-statement script (``\\set``, ``DO $$`` blocks,
+    ``GRANT`` statements) that asyncpg rejects with::
+
+        asyncpg.exceptions.PostgresSyntaxError:
+            cannot insert multiple commands into a prepared statement
+
+    The fix splits the rendered SQL into single statements before
+    handing each to ``op.execute(sa.text(...))``. The splitter MUST
+    handle:
+
+    * ``$$ ... $$`` dollar-quoted blocks (used by the superuser guard,
+      the ``CREATE ROLE`` idempotent check, and the final self-check)
+      — a naive ``str.split(';')`` would shred the body of these blocks.
+    * Single-quoted string literals with embedded ``''`` escapes (the
+      password substitution would emit a literal containing a single
+      quote if the password itself contained one).
+    * Comments (``--`` line comments and ``/* ... */`` block comments).
+
+    The structural identity of every individual statement is unchanged
+    from the manual-psql path; we only rewrap so each fits a single
+    asyncpg prepared statement.
+    """
+
+    def test_split_simple_statements(self) -> None:
+        """A sequence of GRANT statements splits on top-level semicolons."""
+        module = _load_migration_module()
+
+        sql = (
+            "GRANT CONNECT ON DATABASE nfm_db TO nfm_preview;\n"
+            "GRANT USAGE ON SCHEMA public TO nfm_preview;\n"
+            "GRANT SELECT ON TABLE alembic_version TO nfm_preview;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 3
+        assert stmts[0].strip() == "GRANT CONNECT ON DATABASE nfm_db TO nfm_preview"
+        assert stmts[1].strip() == "GRANT USAGE ON SCHEMA public TO nfm_preview"
+        assert stmts[2].strip() == "GRANT SELECT ON TABLE alembic_version TO nfm_preview"
+
+    def test_split_does_not_split_inside_dollar_quote(self) -> None:
+        """``DO $$ ... ; ... ; END $$ ;`` — the internal ``;`` in the
+        body must NOT split the statement. The closing ``$$;`` is the
+        actual statement boundary.
+        """
+        module = _load_migration_module()
+
+        sql = (
+            "DO $$\n"
+            "BEGIN\n"
+            "  RAISE NOTICE 'a';\n"
+            "  RAISE NOTICE 'b';\n"
+            "END\n"
+            "$$;\n"
+            "GRANT SELECT ON TABLE t TO r;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 2, (
+            f"Dollar-quoted body must stay intact; got {len(stmts)} statements:\n"
+            + "\n---\n".join(s[:80] for s in stmts)
+        )
+        assert stmts[0].lstrip().startswith("DO $$")
+        assert stmts[0].rstrip().endswith("$$")
+        assert "RAISE NOTICE 'a'" in stmts[0]
+        assert "RAISE NOTICE 'b'" in stmts[0]
+        assert stmts[1].strip() == "GRANT SELECT ON TABLE t TO r"
+
+    def test_split_does_not_split_inside_single_quoted_strings(self) -> None:
+        """A ``;`` inside a single-quoted string (with ``''`` escape)
+        is data, not a statement boundary.
+        """
+        module = _load_migration_module()
+
+        sql = (
+            "DO $$\n"
+            "BEGIN\n"
+            "  RAISE NOTICE 'NFM: ;skip';\n"
+            "END\n"
+            "$$;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 1
+
+    def test_split_does_not_split_inside_double_quoted_identifiers(self) -> None:
+        """``"column;name"`` is a quoted identifier, not a statement."""
+        module = _load_migration_module()
+
+        sql = 'SELECT "weird;name" FROM t;\nSELECT 1;\n'
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 2
+        assert '"weird;name"' in stmts[0]
+
+    def test_split_handles_block_comments(self) -> None:
+        """``/* ... */`` comments may contain ``;``. Skip over them."""
+        module = _load_migration_module()
+
+        sql = (
+            "/* block ; with semicolon */\n"
+            "GRANT SELECT ON TABLE t TO r;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 1
+        assert "GRANT SELECT" in stmts[0]
+
+    def test_split_handles_line_comments(self) -> None:
+        """``-- ;comment`` is a comment line, not a statement separator."""
+        module = _load_migration_module()
+
+        sql = (
+            "-- this is a comment with ; in it\n"
+            "GRANT SELECT ON TABLE t TO r;\n"
+            "-- another ; comment\n"
+            "GRANT INSERT ON TABLE t TO r;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 2
+
+    def test_split_handles_dollar_quote_tagged(self) -> None:
+        """``$tag$ ... $tag$`` form (not just bare ``$$``)."""
+        module = _load_migration_module()
+
+        sql = (
+            "DO $body$\n"
+            "BEGIN\n"
+            "  RAISE NOTICE 'a';\n"
+            "END\n"
+            "$body$;\n"
+            "SELECT 1;\n"
+        )
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert len(stmts) == 2
+        assert "$body$" in stmts[0]
+
+    def test_split_real_073_sql_produces_expected_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The actual bootstrap SQL file should split into the expected
+        number of single-statement strings — confirms the parser handles
+        every statement form in create_nfm_preview_role.sql.
+        """
+        monkeypatch.setenv("NFMD_PREVIEW_DB_PASSWORD", "ci-fixture")
+        module = _load_migration_module()
+        full = module._load_bootstrap_sql_for_alembic()
+        stmts = module.split_bootstrap_sql_statements(full)
+
+        # 11 statements expected by inspection of create_nfm_preview_role.sql:
+        #   1. superuser guard DO block
+        #   2. CREATE ROLE idempotent DO block
+        #   3. GRANT CONNECT ON DATABASE
+        #   4. GRANT USAGE ON SCHEMA
+        #   5. GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES
+        #   6. GRANT USAGE,SELECT ON ALL SEQUENCES
+        #   7. ALTER DEFAULT PRIVILEGES (tables)
+        #   8. ALTER DEFAULT PRIVILEGES (sequences)
+        #   9. REVOKE writes ON TABLE alembic_version
+        #  10. GRANT SELECT ON TABLE alembic_version
+        #  11. final self-check DO block
+        assert len(stmts) == 11, (
+            f"Expected 11 split statements, got {len(stmts)}:\n"
+            + "\n---\n".join(f"#{i}: {s[:60]!r}..." for i, s in enumerate(stmts))
+        )
+
+        # Spot-check the load-bearing statements round-trip correctly:
+        joined = "\n".join(stmts)
+        assert "CREATE ROLE nfm_preview" in joined
+        assert "REVOKE" in joined and "alembic_version" in joined
+        assert "GRANT SELECT" in joined
+        assert "nfm_preview" in joined
+
+    def test_split_skips_blank_statements(self) -> None:
+        """Trailing whitespace / extra semicolons / blank lines should
+        not emit empty statements — they would land in asyncpg as a
+        syntax error.
+        """
+        module = _load_migration_module()
+
+        sql = "\n\nGRANT SELECT ON t TO r;\n\n\n;\n\n"
+        stmts = module.split_bootstrap_sql_statements(sql)
+        assert stmts == ["GRANT SELECT ON t TO r"]

@@ -121,6 +121,15 @@ services:
       # NFM-MINERU-1: MinerU PDF parsing (literature pipeline primary parser)
       MINERU_ENABLED: ${MINERU_ENABLED:-true}
       MINERU_API_KEY: ${MINERU_API_KEY:-}
+      # NFM-4170 / NFM-4162 — comma-separated canonical data_sources.id
+      # UUIDs that absorbed the migration 070 collapse.  Consumed by
+      # ``attribution_flag.py`` (NFM-4159, PR #1113) at module load.
+      # Empty default = safe no-op (§5.1 filter returns all rows intact);
+      # the value lives in ``docker/.env.prod`` (templated by
+      # ``docker/.env.prod.example``).  Re-verify on staging by querying
+      # ``v_property_measurement_attribution`` (migration 076) with
+      # ``pm.source_id IS NULL`` after applying NFM-4159.
+      NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS: ${NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS:-}
       # NFM-3727: ADR-009 §4.3-b wake credentials.
       # PAPERCLIP_BOARD_API_KEY is the board-actor key (name=lobster-coo)
       # required for cross-agent wakeup. Falls back to PAPERCLIP_API_KEY
