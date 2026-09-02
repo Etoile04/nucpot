@@ -413,7 +413,7 @@ _DO_BLOCK_SQL_TEMPLATE = """
                     JOIN passthrough_keepers k
                         ON k.candidate_id = l.candidate_id
                        AND k.material_id  = l.material_id
-                    ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING
+                    ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING
                     RETURNING 1
                 ),
                 loser_pms_dropped AS (
@@ -469,7 +469,7 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 JOIN _dataset_redirect dr
                     ON dr.bad_dataset_id = pm.dataset_id
                 WHERE dr.bad_dataset_id <> dr.canonical_dataset_id
-                ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING;
+                ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING;
 
                 GET DIAGNOSTICS migrated_pm_count = ROW_COUNT;
                 RAISE NOTICE 'NFM-4088: migrated % property_measurements rows (conflicts skipped)',
