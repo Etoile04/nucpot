@@ -14,6 +14,7 @@ import type {
   GraphNode,
   GraphNodeType,
 } from "@/components/graph/types";
+import type { DataLossAttribution } from "@/components/data-loss-notice";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -76,6 +77,21 @@ export interface MaterialProperty {
    * "+N conditions" expander.
    */
   readonly conditions: ReadonlyArray<MeasurementCondition>;
+  /**
+   * NFM-4146 — per-row attribution envelope (spec §5.2 LOCKED).
+   * When `attribution.status === "lost"` the source was NULLed during
+   * migration 070's 18→4 placeholder collapse and the frontend renders
+   * a `<DataLossNotice>` next to the source column. Absent on rows
+   * outside the 4-canonical cohort. Type imported from the
+   * `data-loss-notice` surface; the API contract is the source of truth.
+   */
+  readonly attribution?: DataLossAttribution;
+  /**
+   * NFM-4146 — measurement `created_at` (ISO-8601). Surfaced inside
+   * the inline `<DataLossNotice>` label. Optional because the legacy
+   * schema pre-dates the column.
+   */
+  readonly createdAt?: string;
 }
 
 export interface MaterialPropertyMeta {
