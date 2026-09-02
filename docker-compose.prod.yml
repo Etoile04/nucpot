@@ -76,6 +76,14 @@ services:
     environment:
       NFM_DATABASE_URL: postgresql+asyncpg://${PROD_POSTGRES_USER:-nfm}:${PROD_POSTGRES_PASSWORD:?Set PROD_POSTGRES_PASSWORD}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
       NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      # NFM-4122: the password for the least-privilege `nfm_preview` role
+      # (see apps/api/migrations/sql/create_nfm_preview_role.sql).
+      # Inherited by the ephemeral migration container via
+      # `docker compose run api`, so the 073_create_nfm_preview_role
+      # migration can `CREATE ROLE nfm_preview LOGIN PASSWORD ...` without
+      # the literal ever living in a committed file. Not used by the
+      # running api container itself.
+      NFMD_PREVIEW_DB_PASSWORD: ${NFMD_PREVIEW_DB_PASSWORD:?Set NFMD_PREVIEW_DB_PASSWORD in docker/.env.prod}
       NFM_CORS_ORIGINS: '["https://nucpot.dpdns.org","http://localhost:3000"]'
       NFM_DEBUG: "false"
       NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROD_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
