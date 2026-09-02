@@ -291,6 +291,13 @@ class EnergyPredictResponse(BaseModel):
               * ``"v10_or_v11_unevaluated"`` — v1.0/v1.1 paths that
                 haven't been re-evaluated under grouped-CV (out of
                 NFM-3956 scope)
+
+    NFM-4054 / AC-OC-4:
+        - ``rd2_label`` and ``rd2_label_status`` propagate the raw
+          ``rd2_label`` value pair from the loaded model artifact so
+          downstream consumers (RDEs, UIs, the F8 scorecard bridge)
+          can render the EXPLORATORY pin status directly from this
+          response without fetching the model card separately.
     """
 
     predicted_energy: float = Field(
@@ -324,4 +331,21 @@ class EnergyPredictResponse(BaseModel):
     model_version: str = Field(
         ...,
         description="Model artifact version identifier",
+    )
+    rd2_label: str | None = Field(
+        default=None,
+        description=(
+            "Raw rd2_label from the model artifact (e.g. \"[EXPLORATORY]\"). "
+            "Lets downstream UIs render the label directly without "
+            "fetching the model card (NFM-4054 / AC-OC-4)."
+        ),
+    )
+    rd2_label_status: str | None = Field(
+        default=None,
+        description=(
+            "Pin status for rd2_label (e.g. \"permanent\"). When set, the "
+            "label survives subsequent rebuilds; downstream consumers may "
+            "use this to suppress re-evaluation prompts "
+            "(NFM-4054 / AC-OC-4)."
+        ),
     )

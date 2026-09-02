@@ -2,3 +2,10 @@
 2026-08-14T16:44:05Z msg=build_failed armed=true first_poll= rollback=false signaled=false build_ok=false
 2026-08-14T16:44:05Z msg=exit_trap_fired rc=1 armed=true first_poll= rollback=false signaled=false build_ok=false
 2026-08-14T16:44:05Z msg=skip_c2_build_failed_no_signal armed=false first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:51:32Z msg=armed_at_entry armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:51:33Z msg=build_failed armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:51:33Z msg=exit_trap_fired rc=1 armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:51:33Z msg=skip_c2_build_failed_no_signal armed=false first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:51:39Z msg=armed_at_entry armed=true first_poll= rollback=false signaled=false build_ok=false
+2026-09-01T23:53:11Z msg=build_ok armed=true first_poll= rollback=false signaled=false build_ok=true
+2026-09-01T23:53:19Z msg=exit_trap_fired rc=1 armed=true first_poll= rollback=false signaled=false build_ok=true

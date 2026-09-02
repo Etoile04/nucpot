@@ -573,6 +573,105 @@ def _env_path(filename: str) -> Path:
     return MODELS_DIR / filename
 
 
+# ---------------------------------------------------------------------------
+# EnergyPredictor model-card surface (NFM-4059)
+# ---------------------------------------------------------------------------
+#
+# The v3.0 joblib ships without ``rd2_label`` / ``rd2_label_status`` /
+# ``grouped_cv_summary`` keys in its metrics dict — those honesty tokens
+# live in the sidecar JSON ``models/energy_predictor_v3.0_metrics.json``
+# (populated by NFM-4053 / AC-OC-1). The prediction endpoint merges the
+# sidecar into the runtime ``metrics`` so the /predict/energy response
+# surfaces the EXPLORATORY pin status and the honest grouped-CV figure
+# without a follow-up model-card fetch (NFM-4054 / AC-OC-4).
+#
+# Precedence: artifact-embedded keys always win; the card fills only the
+# keys the artifact is missing. This lets a future rebuild re-pickle the
+# card into the joblib and override the sidecar without code change.
+#
+# Graceful degradation: a missing or malformed card degrades to ``None``
+# (the loader never raises). The merge is then a no-op and the legacy
+# honesty path takes over — no 5xx for the operator.
+
+# Cardinal honesty keys the merge step is allowed to fill from the card.
+# Centralising the list keeps the merge contract auditable in one place
+# and prevents accidental drift between the loader and the merge.
+_ENERGY_CARD_MERGE_KEYS: tuple[str, ...] = (
+    "rd2_label",
+    "rd2_label_status",
+    "grouped_cv_summary",
+)
+
+_ENERGY_CARD_PATH: Path = MODELS_DIR / "energy_predictor_v3.0_metrics.json"
+_ENERGY_CARD_CACHE: dict | None = None
+
+
+def _load_energy_card_metrics() -> dict | None:
+    """Read the v3.0 model-card sidecar JSON once per process.
+
+    Returns the parsed dict on success, ``None`` if the card is missing
+    or malformed. The result is cached module-locally so repeated
+    inference calls don't re-open the file (mirrors the pattern used
+    by ``_load_phase_metrics``).
+
+    NFM-4059: this is the loader the AC-OC-4 fix relies on. A missing
+    card must NEVER propagate as a 5xx — callers fall back to legacy
+    behaviour (``confidence=None`` + ``energy_model_pre_grouped_cv``
+    warning) when this returns ``None``.
+    """
+    global _ENERGY_CARD_CACHE
+    if _ENERGY_CARD_CACHE is not None:
+        return _ENERGY_CARD_CACHE
+    if not _ENERGY_CARD_PATH.is_file():
+        logger.warning(
+            "EnergyPredictor model card not found at %s; "
+            "rd2_label / rd2_label_status / grouped_cv_summary will "
+            "fall back to artifact-embedded values",
+            _ENERGY_CARD_PATH,
+        )
+        _ENERGY_CARD_CACHE = {}
+        return None
+    try:
+        with _ENERGY_CARD_PATH.open("r", encoding="utf-8") as source:
+            _ENERGY_CARD_CACHE = json.load(source)
+    except (OSError, ValueError):
+        logger.exception(
+            "Failed to read EnergyPredictor model card at %s; "
+            "falling back to artifact-embedded metrics",
+            _ENERGY_CARD_PATH,
+        )
+        _ENERGY_CARD_CACHE = {}
+        return None
+    return _ENERGY_CARD_CACHE
+
+
+def _merge_energy_card_metrics(
+    artifact_metrics: dict,
+    card_metrics: dict | None,
+) -> dict:
+    """Merge the sidecar card into the artifact metrics.
+
+    Cardinal honesty keys (``rd2_label``, ``rd2_label_status``,
+    ``grouped_cv_summary``) from the card fill any key the artifact is
+    missing. Artifact values always win — the card is the fallback, not
+    the override. Pure function: neither input is mutated.
+
+    NFM-4059: this is the precedence rule the AC-OC-4 fix relies on.
+    A future v3.0 rebuild that re-pickles the card into the joblib
+    keeps the same behaviour (artifact wins, card fills gaps) without
+    any code change.
+    """
+    merged = dict(artifact_metrics)
+    if not card_metrics:
+        return merged
+    for key in _ENERGY_CARD_MERGE_KEYS:
+        if key in merged:
+            continue  # artifact wins
+        if key in card_metrics:
+            merged[key] = card_metrics[key]
+    return merged
+
+
 def _predict_energy_v11(features: dict[str, float]) -> dict | None:
     """Run the v1.1 20D EnergyPredictor (lazy-loaded).
 
@@ -862,7 +961,15 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
             return None
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
-        metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        artifact_metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        # NFM-4059: merge the v3.0 model-card sidecar JSON into the runtime
+        # metrics so the response surfaces rd2_label / rd2_label_status /
+        # grouped_cv_summary without a follow-up model-card fetch. The
+        # artifact-embedded keys win (card fills only what is absent). A
+        # missing or malformed card degrades gracefully (no 5xx; legacy
+        # honesty path takes over).
+        card_metrics = _load_energy_card_metrics()
+        metrics = _merge_energy_card_metrics(artifact_metrics, card_metrics)
     except Exception:
         logger.exception("v3.0 energy prediction failed")
         return None
@@ -878,6 +985,11 @@ def _predict_energy_v30(features: dict[str, float]) -> dict | None:
         "confidence_source": confidence_source,
         "model_version": raw.get("version", "v3.0") if isinstance(raw, dict) else "v3.0",
         "warnings": warnings,
+        # NFM-4054 / AC-OC-4: surface the model's rd2 label pair so the
+        # /predict/energy response can render the EXPLORATORY pin status
+        # directly to downstream UIs without a follow-up model-card fetch.
+        "rd2_label": metrics.get("rd2_label"),
+        "rd2_label_status": metrics.get("rd2_label_status"),
     }
 
 

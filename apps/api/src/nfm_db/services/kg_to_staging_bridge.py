@@ -70,6 +70,63 @@ _PROPERTY_SLUGS: dict[str, str] = {
     "熔点": "melting_point",
     "Clausius-Clapeyron斜率": "phase_boundary_slope",
     "弹性常数": "elastic_constants",
+    # --- NFM-4036: F8 (Owen2023 amorphous UO2 / Cr-doped) labels ----------
+    # These are the labels the extractor actually emits for source
+    # 9320cb50-… .  Before this block every one of them hit the
+    # ``_slugify`` CJK fallback: each CJK codepoint becomes "_", the result
+    # strips to "" and returns the literal "unknown", which the caller then
+    # skips outright (see the ``== "unknown"`` guard in the kg_nodes loop).
+    # Five near-misses were worse than a clean drop — they survived as
+    # corrupt ASCII fragments ("RDF峰"→"RDF", "晶格常数a"→"a") and the two
+    # Cr-doped labels *collided* on "Cr", silently merging the Cr-doped
+    # activation energy with the Cr-doped pre-exponential factor.
+    #
+    # Slug targets are the names ``audit/f8_scorecard_v050.sql`` predicates
+    # on, so the staging surface and the scorecard agree.  Aliases
+    # intentionally collapse onto one slug: the scorecard separates undoped
+    # from Cr-doped by ``element_system`` and value band, never by name.
+    #
+    # Activation energy (F8 checkpoints 1 and 3)
+    "扩散激活能": "activation_energy",
+    "扩散活化能": "activation_energy",
+    "活化能": "activation_energy",
+    "激活能": "activation_energy",
+    "氧扩散激活能": "activation_energy",
+    "Cr掺杂扩散激活能": "activation_energy",
+    # Arrhenius pre-exponential factor D0 (F8 checkpoints 2 and 4).  The
+    # scorecard accepts pre_exponential_factor OR diffusion_coefficient for
+    # D0; the prose varies, the quantity is D0.
+    "扩散前指数因子": "pre_exponential_factor",
+    "扩散指前因子": "pre_exponential_factor",
+    "扩散系数指前因子": "pre_exponential_factor",
+    "扩散预指数因子": "pre_exponential_factor",
+    "预指数因子": "pre_exponential_factor",
+    "氧扩散前指数因子": "pre_exponential_factor",
+    "氧扩散指前因子": "pre_exponential_factor",
+    "Cr掺杂扩散前指数因子": "pre_exponential_factor",
+    # Diffusivity itself is a distinct quantity from D0 — keep them apart.
+    "扩散系数": "diffusion_coefficient",
+    "热扩散率": "thermal_diffusivity",
+    # Density (F8 checkpoints 5 and 6)
+    "密度": "density",
+    # Short-range structure (F8 checkpoints 7 and 8)
+    "RDF峰": "rdf_peak",
+    "键长": "bond_length",
+    "配位数": "coordination_number",
+    # Individual elastic tensor components.  Bare "弹性常数" already maps to
+    # the plural aggregate above; the indexed forms are separate quantities
+    # and must not collapse onto it.
+    "弹性常数C11": "elastic_constant_c11",
+    "弹性常数C12": "elastic_constant_c12",
+    "弹性常数C13": "elastic_constant_c13",
+    "弹性常数C14": "elastic_constant_c14",
+    "弹性常数C33": "elastic_constant_c33",
+    "弹性常数C44": "elastic_constant_c44",
+    # 常数 ("constant") is the variant this corpus uses; 参数 ("parameter")
+    # above is the variant already mapped.  Both mean the lattice constant.
+    "晶格常数a": "lattice_constant_a",
+    "晶格常数b": "lattice_constant_b",
+    "晶格常数c": "lattice_constant_c",
 }
 
 _UNIT_ALIASES: dict[str, str] = {
@@ -86,13 +143,47 @@ _UNIT_ALIASES: dict[str, str] = {
 # Element-system canonicalization: unicode subscripts → plain formula.
 _SUBSCRIPTS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 
+# Morphology adjectives the corpus attaches before the chemistry on a
+# Material KGNode label.  Order matters: compound prefixes ("undoped and
+# Cr-doped …") must come BEFORE their single-word counterparts so the
+# strip-loop matches the longer string first.
+#
+# These are the prefixes the Owen2023 (source 9320cb50) corpus emits;
+# add new ones here as the corpus grows.  Anything the loop doesn't
+# recognise falls through unchanged (existing pass-through behaviour),
+# so the table is intentionally additive.
+_ADJECTIVE_PREFIXES: tuple[str, ...] = (
+    "undoped and Cr-doped ",
+    "Cr-doped ",
+    "amorphous ",
+    "crystalline ",
+    "polycrystalline ",
+    "nano-",
+)
+
 _CONDITION_TEMP_RE = re.compile(r"^(temp_C|temp_K|temperature)$")
 _CONDITION_PRESSURE_RE = re.compile(r"^(pressure_MPa|pressure_GPa|pressure)$")
 _CELSIUS_TO_K = 273.15
 
 
 def _canonical_element_system(label: str) -> str:
-    """``U₂Mo`` → ``U-Mo``; ``UO2``/``U3Si2`` pass through as formulas."""
+    """Normalize a Material KGNode label to its canonical element_system.
+
+    Subscript-bearing alloy notation ``U₂Mo`` → ``U-Mo`` (alloy, not
+    stoichiometry).  Plain formulas ``UO2``/``U3Si2`` pass through.  The
+    corpus also attaches morphology adjectives ("amorphous UO2",
+    "Cr-doped UO2", "polycrystalline U-10Mo", …) which the F8 scorecard
+    (``audit/f8_scorecard_v050.sql``) cannot match — its predicates
+    accept only ``'UO2'``, ``'UO2+Cr'``, or ``'U-Cr-O'``.  We strip the
+    adjectives the corpus emits and collapse onto the bare chemistry.
+
+    Cr-bearing UO2 labels all map to ``'UO2+Cr'``: the Owen2023 corpus
+    describes a UO2 matrix + Cr dopant, never the bare U-Cr-O ternary,
+    so the matrix+dopant form is the unambiguous pick.  Add a new
+    ``elif`` branch if a future corpus introduces a Cr label without
+    UO2 in it (e.g. ``"Cr-U-O"`` from a chromium-uranium oxide paper)
+    and pin it to ``'U-Cr-O'``.
+    """
     # Subscript digits (₂) are alloy notation, not stoichiometry: hyphenate.
     # ASCII digits mean a real formula (UO2, U3Si2) — keep intact.
     has_subscript = any(ch in "₀₁₂₃₄₅₆₇₈₉" for ch in label)
@@ -102,7 +193,30 @@ def _canonical_element_system(label: str) -> str:
         if len(parts) > 1:
             return "-".join(parts)
         return plain
-    return plain
+    # ASCII label: check for Cr-bearing UO2 BEFORE stripping adjectives
+    # — "Cr-doped" is itself an adjective and would be removed by the
+    # loop below, hiding the dopant from the predicate.
+    has_cr = "Cr" in plain
+    stripped = plain
+    while True:
+        matched = False
+        for prefix in _ADJECTIVE_PREFIXES:
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix) :]
+                matched = True
+                break
+        if not matched:
+            break
+    if has_cr and "UO2" in stripped:
+        return "UO2+Cr"
+    if "UO2" in stripped:
+        return "UO2"
+    # Non-UO2 ASCII label: return ``stripped`` (== ``plain`` when the
+    # strip-loop matched nothing, otherwise the post-strip form).
+    # Preserves the pre-NFM-4037 behaviour for ``"U"``/``"Cr"``/
+    # ``"U3Si2"`` (no prefix matches → ``stripped == plain``) while
+    # letting ``"polycrystalline U-10Mo"`` collapse to ``"U-10Mo"``.
+    return stripped
 
 
 def _material_label(material: Any) -> str:

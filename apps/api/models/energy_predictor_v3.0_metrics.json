@@ -122,6 +122,8 @@
   ],
   "rd2_label": "[EXPLORATORY]",
   "rd2_label_status": "permanent",
+  "rd2_label_decided_by": "NDE + CTO 2026-09-01 (NFM-3997 arch-verify, NFM-4034 NDE adjudication cc73938b/3a2e7eb7)",
+  "rd2_label_decision_rule": "GroupKFold R^2 < 0.80 on >=3/10 element systems => permanent EXPLORATORY (no re-evaluation on v3.x cycle)",
   "rd3_triggered": true,
   "rd2_reasons": [
     "GroupKFold(n_splits=5) by element system returns R^2 = 0.3111 +/- 0.4777 (see energy_predictor_v3.0_groupedcv_metrics.json). The 0.9858 random 80/20 headline and 0.9678 random-KFold CV R^2 were materially optimistic; per-fold spread includes a negative-R^2 fold (fold 4: R^2 = -0.5652). Re-labeled [EXPLORATORY] per NFM-3953 LOW-bucket decision rule. Confidence claims on the production prediction path need revision."
