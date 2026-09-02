@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { MaterialSubgraphView } from "../MaterialSubgraphView"
+import { ApiError } from "@/lib/api-client"
 
 /* ------------------------------------------------------------------ */
 /*  d3-force mock — keeps simulation synchronous (matches sibling     */
@@ -321,5 +322,107 @@ describe.skip("MaterialSubgraphView click routing", () => {
     fireEvent.click(screen.getByRole("button", { name: /Node: Journal/i }))
 
     expect(pushMock).not.toHaveBeenCalled()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  NFM-4096 — coverage-gap empty-state banner (NFM-4093 link)        */
+/*                                                                     */
+/*  When /kg/graph/subgraph returns 404 for a material without a       */
+/*  Material kg_node bridge, the component must surface the new        */
+/*  empty-state banner (mentioning NFM-4093 + linking to it) instead  */
+/*  of the generic error Alert. The 5xx path must keep the Alert.     */
+/* ------------------------------------------------------------------ */
+
+describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("renders the NFM-4093 banner copy and link on a 404 from the API", async () => {
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ApiError("Not Found", 404),
+    )
+
+    render(<MaterialSubgraphView materialId="U-10Mo" />)
+
+    // The banner copy explicitly references NFM-4093
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No knowledge-graph data yet for this material/i),
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
+
+    // And links to the parent issue using the project's deep-link convention
+    const link = screen.getByRole("link", { name: /NFM-4093/i })
+    expect(link).toHaveAttribute("href", "/NFM/issues/NFM-4093")
+  })
+
+  it("does NOT show the generic error Alert on 404 — coverage gap is not an error", async () => {
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ApiError("Not Found", 404),
+    )
+
+    render(<MaterialSubgraphView materialId="U-10Mo" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
+    })
+
+    // The generic-error Alert must not be visible on 404.
+    expect(
+      screen.queryByText(/加载知识图谱失败/i),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument()
+  })
+
+  it("still shows the generic error Alert on 5xx — NFM-4096 must not mask real errors", async () => {
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ApiError("Internal Server Error", 500),
+    )
+
+    render(<MaterialSubgraphView materialId="ZrO2" />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Internal Server Error/i),
+      ).toBeInTheDocument()
+    })
+
+    expect(
+      screen.getByRole("button", { name: /retry/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/NFM-4093/)).not.toBeInTheDocument()
+  })
+
+  it("still shows the generic error Alert on network failure (non-ApiError)", async () => {
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Network down"),
+    )
+
+    render(<MaterialSubgraphView materialId="ZrO2" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/network down/i)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/NFM-4093/)).not.toBeInTheDocument()
+  })
+
+  it("renders the NFM-4093 banner when the API returns an empty graph (zero nodes)", async () => {
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue({
+      nodes: [],
+      edges: [],
+    })
+
+    render(<MaterialSubgraphView materialId="ZrO2" />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
+    })
+
+    const link = screen.getByRole("link", { name: /NFM-4093/i })
+    expect(link).toHaveAttribute("href", "/NFM/issues/NFM-4093")
   })
 })

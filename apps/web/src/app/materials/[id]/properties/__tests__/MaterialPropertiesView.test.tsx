@@ -40,16 +40,38 @@ const MOCK_PROPERTIES = {
       name: "密度",
       value: "5.68",
       unit: "g/cm³",
-      source: "J. Nucl. Mater.",
+      // NFM-4086 — D1 upgraded `source` from a bare title string to a
+      // structured SourceRef (id / title / doi / journal / year / authors /
+      // url). NFM-4087 added `conditions` so the frontend expander can list
+      // T/P/environment per measurement without a lazy load.
+      source: {
+        id: "src-1",
+        title: "ZrO2 density revisited",
+        doi: null,
+        journal: "J. Nucl. Mater.",
+        year: 2023,
+        authors: ["Owen, L."],
+        url: null,
+      },
       confidence: 0.92,
+      conditions: [],
     },
     {
       id: "prop-2",
       name: "熔点",
       value: "2700",
       unit: "°C",
-      source: "ASM Handbook",
+      source: {
+        id: "src-2",
+        title: "ASM Handbook chapter 5",
+        doi: null,
+        journal: "ASM Handbook",
+        year: null,
+        authors: [],
+        url: null,
+      },
       confidence: 0.85,
+      conditions: [],
     },
   ],
   meta: { total: 2, page: 1, limit: 50 },
