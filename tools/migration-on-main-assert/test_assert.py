@@ -529,3 +529,146 @@ def test_head_revision_with_shell_metacharacters_is_rejected(tmp_path):
     )
     assert not canary.exists(), "shell metacharacter in revision id was executed"
     assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# NFM-4125 (round 2): shallow-repo guard (exit 76) + divergence diagnostics
+#
+# Deploy run 33652998346 (2026-09-02) exposed the residual failure mode: the
+# runner workspace is a PERSISTENT clone that every job re-shallows via
+# actions/checkout's default fetch-depth: 1. In a shallow repo:
+#   * `git log -1 -- <path>` grafts the last-touched commit to the checkout
+#     tip — 079_restore_070_measurement_casualties.py was attributed to
+#     b3c6c643c, a commit that never touched the file;
+#   * `git merge-base --is-ancestor` cannot walk past the fetch boundary —
+#     the gate reported b3c6c643c NOT on origin/main although it IS an
+#     ancestor (GitHub compare: behind_by 2).
+# And when the trigger commit HAPPENS to equal origin/main, the same graft
+# makes the check vacuously pass (run 33656526092). Wrong in both directions
+# — the gate must refuse instead of guess, and say where each side stands
+# when it does fail.
+# ---------------------------------------------------------------------------
+
+
+def _make_shallow(repo: Path) -> None:
+    """Mark a synthetic repo as shallow the way a fetch-depth:1 clone is."""
+    git_dir = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--git-dir"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    marker = Path(git_dir) if git_dir.startswith("/") else repo / git_dir
+    (marker / "shallow").write_text("")
+
+
+def test_shallow_repo_refuses_with_exit_76(tmp_path):
+    """A shallow --repo-root must trip exit 76 BEFORE any docker call.
+
+    The gate cannot produce a trustworthy verdict from cut history, so it
+    must refuse loudly (SHALLOW_REPO) rather than emit a false pass or a
+    false block. Failing fast also keeps the docker image read out of the
+    path entirely.
+    """
+    rev = "071_f4_uuid_titled_source_guard"
+    repo = _init_repo(tmp_path)
+    _commit_migration(repo, f"{rev}.py")
+    _make_shallow(repo)
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-shallow", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 76, (
+        f"expected exit 76 (SHALLOW_REPO); got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "SHALLOW_REPO" in result.stderr
+    assert "Reading 'alembic heads'" not in result.stdout, (
+        "guard must fire before the first docker invocation"
+    )
+
+
+def test_exit_70_reports_working_tree_vs_base_ref_divergence(tmp_path):
+    """The exit-70 diagnostic must say where each side stands (NFM-4125 AC #2).
+
+    Trigger-behind-main divergence was previously invisible: the log named
+    the file commit and the base ref but never said the working tree was N
+    commits behind, which is what made deploy 33570937619 read as a
+    numbering/race problem instead of a tree divergence.
+    """
+    rev = "035_branch_only_slug"
+    repo = _init_repo(tmp_path)
+    _commit_migration(repo, "031_on_main_slug.py")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "NFM-4125-feature"],
+        check=True,
+    )
+    _commit_migration(repo, f"{rev}.py")
+    # Advance main past the branch point: HEAD is 1 ahead / 2 behind main.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
+    _commit_migration(repo, "032_on_main_slug.py")
+    _commit_migration(repo, "033_on_main_slug.py")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "NFM-4125-feature"],
+        check=True,
+    )
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-divergence", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "main", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 70, (
+        f"expected exit 70 (HEAD_NOT_ON_REF); got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "working-tree HEAD:" in result.stderr
+    assert "divergence: working tree is 1 ahead / 2 behind main" in result.stderr, (
+        "diagnostic must carry the ahead/behind counts that identify "
+        f"trigger-behind-main divergence.\nstderr={result.stderr}"
+    )
+
+
+def test_exit_73_reports_divergence_context(tmp_path):
+    """HEAD_FILE_NOT_FOUND must carry the same divergence context (AC #2)."""
+    rev = "071_f4_uuid_titled_source_guard"
+    repo = _init_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "NFM-4125-feature"],
+        check=True,
+    )
+    # Main advances twice while the feature branch (HEAD) stays put; the
+    # head's file is absent from the working tree entirely.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
+    _commit_migration(repo, "032_on_main_slug.py")
+    _commit_migration(repo, "033_on_main_slug.py")
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-q", "NFM-4125-feature"],
+        check=True,
+    )
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-divergence-73", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "main", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 73, (
+        f"expected exit 73; got {result.returncode}\nstderr={result.stderr}"
+    )
+    assert "working-tree HEAD:" in result.stderr
+    assert "divergence: working tree is 0 ahead / 2 behind main" in result.stderr
