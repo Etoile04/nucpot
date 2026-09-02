@@ -286,13 +286,21 @@ The two authorised paths:
 
 ### 6.5. How a QA agent gets a mutable database instead
 
-**Do not point your preview container at `nucpot-prod-db`.** That is
-the entire class of problem NFM-4106 closes, and the guard will
-refuse you with exit 3 + an audit row.
+**Do not point your preview container at `nucpot-prod-db` with the
+`nfm` superuser role.** That is the entire class of problem NFM-4106
+and NFM-4122 close, and the guard + role separation together will
+refuse you with exit 3 + an audit row + a permission error at the
+INSERT into `alembic_version`.
 
-For QA / preview work that needs to mutate the schema (e.g. running
-`alembic upgrade head` against a candidate migration), the supported
-path is:
+NFM-4122 introduces the **`nfm_preview`** login role: DML on the
+`public` schema (so QA agents can exercise the app), `SELECT`-only
+on `alembic_version` (so `alembic upgrade head` cannot stamp), no
+DDL. Preview / QA containers that need to talk to prod data MUST
+connect as `nfm_preview`, never as `nfm`.
+
+For QA / preview work that needs to mutate the **schema** (e.g.
+running `alembic upgrade head` against a candidate migration), the
+supported path is:
 
 1. Restore a prod snapshot into a scratch database
    (`nucpot-prod-db-scratch-<ticket>`). The SRE runbook
@@ -302,6 +310,120 @@ path is:
    the scratch DB, NOT at `nucpot-prod-db`. The guard will accept
    that call (the flag is still required, but the blast radius is
    a throwaway snapshot, not the live prod data).
+
+#### 6.5.1. `nfm_preview` role (NFM-4122)
+
+| Property              | Value                                            |
+| --------------------- | ------------------------------------------------ |
+| Login role            | `nfm_preview`                                    |
+| Database              | `nfm_db` (production)                            |
+| Existing-table DML    | `SELECT, INSERT, UPDATE, DELETE` on `public.*`   |
+| Existing-sequence     | `USAGE, SELECT` on `public.*`                    |
+| Default privileges    | DML on future objects created by `nfm` in `public` |
+| `alembic_version`     | `SELECT` only                                    |
+| DDL rights            | **None** — no `CREATE` on database or schema     |
+
+A bare `docker exec nucpot-prod-api-preview alembic upgrade head`
+against `nucpot-prod-db` fails at the INSERT into `alembic_version`
+with `ERROR: permission denied for table alembic_version`, closing
+NFM-4106 acceptance criterion 1.
+
+##### Creating the role
+
+The role is created by the alembic migration
+`apps/api/migrations/versions/073_create_nfm_preview_role.py`,
+which runs after the 070 embargo lifts (the chain head is
+`072_material_kg_bridge_coverage` as of 2026-09-02; 073 depends on
+072). The canonical DDL — including all GRANTs, the
+`ALTER DEFAULT PRIVILEGES` set, and the `alembic_version` read-only
+revocation — lives at
+`apps/api/migrations/sql/create_nfm_preview_role.sql`. Both the
+alembic path and the manual psql path read from that one file, so
+the two cannot drift.
+
+##### Bootstrapping the role BEFORE the 070 embargo lifts
+
+The 070 embargo keeps prod at alembic head `069_add_v050_f8_property_types`
+until NFM-4104 lifts it. During that window, the 073 migration
+cannot apply (the chain would attempt to apply 070/071/072 first,
+which the embargo blocks). To unblock the NFM-4106 acceptance
+criterion 1 verification NOW, an authorised operator can bootstrap
+the role manually via psql — the SQL is idempotent, so the eventual
+alembic migration will be a no-op when it lands:
+
+```bash
+docker exec -i nucpot-prod-db psql -U nfm -d nfm_db \
+  -v NFMD_PREVIEW_DB_PASSWORD="$NFMD_PREVIEW_DB_PASSWORD" \
+  -v ON_ERROR_STOP=1 \
+  -f - < apps/api/migrations/sql/create_nfm_preview_role.sql
+```
+
+`NFMD_PREVIEW_DB_PASSWORD` MUST be sourced from
+`docker/.env.prod` (added by the NFM-4122 PR); the
+`${NFMD_PREVIEW_DB_PASSWORD:?...}` reference in `docker-compose.prod.yml`
+will fail the deploy if the variable is unset, which is the
+load-bearing guard rail.
+
+##### Starting a preview container with `nfm_preview`
+
+The supported overlay is `docker-compose.preview.yml`. It declares
+the `nucpot-prod-api-preview` and `nucpot-prod-web-preview` services
+pointed at `nfm_preview`:
+
+```bash
+docker compose \
+  -f docker-compose.prod.yml \
+  -f docker-compose.preview.yml \
+  --env-file docker/.env.prod \
+  up -d --no-deps \
+    --force-recreate nucpot-prod-api-preview nucpot-prod-web-preview
+```
+
+`--no-deps` prevents compose from starting the prod-only LightRAG
+sidecar if it is not already running. The overlay does NOT define
+the `db` / `redis` / `lightrag` services — it inherits those from
+`docker-compose.prod.yml`.
+
+##### Rotating the password
+
+```bash
+docker exec nucpot-prod-db psql -U nfm -d nfm_db -v ON_ERROR_STOP=1 <<SQL
+ALTER ROLE nfm_preview WITH PASSWORD :'NFMD_PREVIEW_DB_PASSWORD';
+SQL
+```
+
+…then update `NFMD_PREVIEW_DB_PASSWORD` in `docker/.env.prod` and
+restart any running preview containers (compose does not pick up
+DSN env changes on a `docker restart` alone — the new container
+needs `docker compose ... up -d --force-recreate`).
+
+##### Verification (NFM-4106 acceptance criterion 1, run end-to-end)
+
+```bash
+# 1. Confirm role exists and has the right grants.
+docker exec nucpot-prod-db psql -U nfm -d nfm_db -c \
+  "SELECT rolname, rolsuper, rolcreatedb FROM pg_roles WHERE rolname='nfm_preview';"
+# Expect: rolname=nfm_preview, rolsuper=f, rolcreatedb=f
+
+# 2. Confirm nfm_preview can read but not write alembic_version.
+docker exec nucpot-prod-db psql -U nfm_preview -d nfm_db -c \
+  "SELECT version_num FROM alembic_version;"
+# Expect: 069_add_v050_f8_property_types (current prod head)
+
+docker exec nucpot-prod-db psql -U nfm_preview -d nfm_db -c \
+  "INSERT INTO alembic_version (version_num) VALUES ('070_d2_dedup_bad_data_sources');"
+# Expect: ERROR: permission denied for table alembic_version
+
+# 3. The actual bypass test. From the preview container, alembic
+#    upgrade head must fail, and prod's alembic_version must be
+#    unchanged afterwards.
+docker exec nucpot-prod-api-preview alembic upgrade head
+# Expect: permission-denied error (no stamp)
+
+docker exec nucpot-prod-db psql -U nfm -d nfm_db -c \
+  "SELECT version_num FROM alembic_version;"
+# Expect: still 069_add_v050_f8_property_types
+```
 
 For read-only smoke tests against prod, use the staging API image
 (`nucpot-prod-api-staging:<tag>`) which is wired to a separate
