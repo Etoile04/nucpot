@@ -6,6 +6,7 @@ import Footer from "@/components/Footer"
 import Nav from "@/components/Nav"
 import AuthProvider from "@/components/AuthProvider"
 import { SessionProvider } from "@/components/session"
+import { DataLossNoticeProvider } from "@/components/data-loss-notice"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
@@ -41,10 +42,12 @@ export default function RootLayout({
           <QueryProvider>
             <AuthProvider>
             <SessionProvider>
-              <Nav />
-              <main className="flex-1 overflow-y-auto">{children}</main>
-              <Footer />
-              <FeedbackFloatButton />
+              <DataLossNoticeProvider>
+                <Nav />
+                <main className="flex-1 overflow-y-auto">{children}</main>
+                <Footer />
+                <FeedbackFloatButton />
+              </DataLossNoticeProvider>
             </SessionProvider>
             </AuthProvider>
           </QueryProvider>
