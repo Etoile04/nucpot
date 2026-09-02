@@ -3,9 +3,19 @@
 Input: 8 physical features computed from composition.
 Output: Phase classification, temperature prediction, or energy prediction
 with confidence scoring.
+
+NFM-3956 honesty contract (energy endpoint only):
+    ``EnergyPredictResponse.confidence`` may be ``None`` when the underlying
+    metric is not yet trustworthy (legacy pre-grouped-CV artifacts). The
+    ``confidence_source`` field exposes the provenance so UIs can render
+    source-aware disclaimers without parsing warning text. See
+    ``nfm_db.ml.prediction_service._compute_energy_confidence`` for the
+    full rule (NFM-3953 grouped-CV LOW bucket disclosure).
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -127,8 +137,7 @@ class CompositionPredictRequest(BaseModel):
     composition: dict[str, float] = Field(
         ...,
         description=(
-            "Element name to atomic fraction mapping. "
-            'Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
+            'Element name to atomic fraction mapping. Example: {"U": 0.8, "Mo": 0.1, "Nb": 0.1}'
         ),
     )
 
@@ -262,17 +271,58 @@ class EnergyPredictRequest(PredictionFeatures):
 
 
 class EnergyPredictResponse(BaseModel):
-    """Response body for formation energy prediction."""
+    """Response body for formation energy prediction.
+
+    NFM-3956 honesty contract:
+        - ``confidence`` is the protocol-correct generalization estimate.
+          For an [EXPLORATORY] EnergyPredictor v3.0 artifact (NFM-3953
+          grouped-CV LOW bucket), this is the grouped-CV mean R^2 (not the
+          inflated random-split headline).
+        - ``confidence`` is ``None`` when the artifact predates NFM-3953
+          and has no grouped-CV re-evaluation. The raw random-split R^2 is
+          surfaced in the ``warnings`` array (code
+          ``energy_model_pre_grouped_cv``) so UIs can render the at-risk
+          figure with a clear disclaimer instead of as a primary claim.
+        - ``confidence_source`` exposes the provenance so downstream UIs
+          can render source-aware disclaimers without parsing warning
+          text. Values:
+              * ``"grouped_cv_r2_mean"`` — NFM-3953 honest figure
+              * ``"random_split_r2"`` — pre-NFM-3953 figure (legacy)
+              * ``"v10_or_v11_unevaluated"`` — v1.0/v1.1 paths that
+                haven't been re-evaluated under grouped-CV (out of
+                NFM-3956 scope)
+
+    NFM-4054 / AC-OC-4:
+        - ``rd2_label`` and ``rd2_label_status`` propagate the raw
+          ``rd2_label`` value pair from the loaded model artifact so
+          downstream consumers (RDEs, UIs, the F8 scorecard bridge)
+          can render the EXPLORATORY pin status directly from this
+          response without fetching the model card separately.
+    """
 
     predicted_energy: float = Field(
         ...,
         description="Predicted formation energy (eV/atom)",
     )
-    confidence: float = Field(
-        ...,
+    confidence: float | None = Field(
+        default=None,
         ge=0,
         le=1,
-        description="Prediction confidence score",
+        description=(
+            "Prediction confidence score in [0, 1]. Null when the underlying "
+            "metric is not yet trustworthy (legacy pre-grouped-CV artifacts); "
+            "see warnings + confidence_source. NFM-3956."
+        ),
+    )
+    confidence_source: Literal[
+        "grouped_cv_r2_mean", "random_split_r2", "v10_or_v11_unevaluated"
+    ] = Field(
+        ...,
+        description=(
+            "Provenance of the confidence figure. Lets UIs render "
+            "source-aware disclaimers without parsing warning text. "
+            "NFM-3956."
+        ),
     )
     warnings: list[PredictionWarningItem] = Field(
         default_factory=list,
@@ -281,4 +331,21 @@ class EnergyPredictResponse(BaseModel):
     model_version: str = Field(
         ...,
         description="Model artifact version identifier",
+    )
+    rd2_label: str | None = Field(
+        default=None,
+        description=(
+            "Raw rd2_label from the model artifact (e.g. \"[EXPLORATORY]\"). "
+            "Lets downstream UIs render the label directly without "
+            "fetching the model card (NFM-4054 / AC-OC-4)."
+        ),
+    )
+    rd2_label_status: str | None = Field(
+        default=None,
+        description=(
+            "Pin status for rd2_label (e.g. \"permanent\"). When set, the "
+            "label survives subsequent rebuilds; downstream consumers may "
+            "use this to suppress re-evaluation prompts "
+            "(NFM-4054 / AC-OC-4)."
+        ),
     )

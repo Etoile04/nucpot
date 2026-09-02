@@ -45,9 +45,7 @@ def load_ground_truth(fixture_dir: Path) -> dict[str, Any]:
     """Load ground truth JSON from the entity linking fixture directory."""
     ground_truth_path = fixture_dir / "ground_truth.json"
     if not ground_truth_path.exists():
-        raise FileNotFoundError(
-            f"Missing ground_truth.json in {fixture_dir}"
-        )
+        raise FileNotFoundError(f"Missing ground_truth.json in {fixture_dir}")
     with open(ground_truth_path, encoding="utf-8") as f:
         return json.load(f)
 
@@ -66,9 +64,7 @@ def validate_fixture_structure(ground_truth: dict[str, Any]) -> list[str]:
             required_entry = ["raw_text", "canonical_name", "entity_type", "aliases"]
             for field in required_entry:
                 if field not in entry:
-                    errors.append(
-                        f"entry[{i}]: missing required field '{field}'"
-                    )
+                    errors.append(f"entry[{i}]: missing required field '{field}'")
             if "entity_type" in entry and not isinstance(entry["entity_type"], str):
                 errors.append(f"entry[{i}]: entity_type must be a string")
 
@@ -88,9 +84,7 @@ def simulate_entity_linking(entries: list[dict[str, Any]]) -> dict[str, Any]:
     canonical_entities: dict[str, set[str]] = {}
     linked_count = 0
     new_canonical_count = 0
-    per_type: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"total": 0, "linked": 0}
-    )
+    per_type: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "linked": 0})
 
     for entry in entries:
         raw_text = entry["raw_text"].strip()
@@ -155,9 +149,7 @@ def print_report(results: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Evaluate entity linking deduplication accuracy"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate entity linking deduplication accuracy")
     parser.add_argument(
         "--fixtures-dir",
         type=Path,
@@ -190,8 +182,7 @@ def main() -> int:
 
     if results["dedup_rate"] < args.min_dedup_rate:
         print(
-            f"\nFAIL: Dedup rate {results['dedup_rate']}% "
-            f"is below minimum {args.min_dedup_rate}%",
+            f"\nFAIL: Dedup rate {results['dedup_rate']}% is below minimum {args.min_dedup_rate}%",
             file=sys.stderr,
         )
         return 1

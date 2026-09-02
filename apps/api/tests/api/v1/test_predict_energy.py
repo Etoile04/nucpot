@@ -28,6 +28,7 @@ SAMPLE_FEATURES = {
 MOCK_V30_RESULT = {
     "predicted_energy": -0.35,
     "confidence": 0.98,
+    "confidence_source": "random_split_r2",
     "model_version": "v3.0",
     "warnings": [],
 }
@@ -53,10 +54,16 @@ class TestPredictEnergyService:
         assert result is not None
         assert "predicted_energy" in result
         assert "confidence" in result
+        assert "confidence_source" in result  # NFM-3956 honesty contract
         assert "warnings" in result
         assert "model_version" in result
         assert isinstance(result["predicted_energy"], float)
         assert 0 <= result["confidence"] <= 1
+        assert result["confidence_source"] in {
+            "grouped_cv_r2_mean",
+            "random_split_r2",
+            "v10_or_v11_unevaluated",
+        }
 
     @patch("nfm_db.ml.prediction_service._predict_energy_v30")
     def test_predict_energy_rounds_energy_value(self, mock_predict: MagicMock) -> None:
@@ -65,6 +72,7 @@ class TestPredictEnergyService:
         mock_predict.return_value = {
             "predicted_energy": -0.345679,
             "confidence": 0.82,
+            "confidence_source": "random_split_r2",
             "model_version": "v3.0",
             "warnings": [],
         }
@@ -133,6 +141,10 @@ class TestPredictEnergyEndpoint:
         assert response.data is not None
         assert response.data.predicted_energy == -0.35
         assert response.data.model_version == "v3.0"
+        # NFM-3956 honesty contract: confidence_source is required and
+        # carries the provenance label (random_split_r2 / grouped_cv_r2_mean
+        # / v10_or_v11_unevaluated).
+        assert response.data.confidence_source == "random_split_r2"
 
     @patch("nfm_db.api.v1.prediction.predict_energy")
     async def test_endpoint_raises_503_when_model_unavailable(
@@ -179,6 +191,13 @@ class TestPredictEnergyEndpoint:
         assert 0 <= response.data.confidence <= 1
         assert isinstance(response.data.warnings, list)
         assert isinstance(response.data.model_version, str)
+        # NFM-3956 honesty contract: confidence_source is wired through
+        # the API boundary and validated against the Literal type.
+        assert response.data.confidence_source in {
+            "grouped_cv_r2_mean",
+            "random_split_r2",
+            "v10_or_v11_unevaluated",
+        }
 
     @patch("nfm_db.api.v1.prediction.predict_energy")
     async def test_endpoint_includes_warnings_in_response(
@@ -188,6 +207,7 @@ class TestPredictEnergyEndpoint:
         mock_predict.return_value = {
             "predicted_energy": -0.1,
             "confidence": 0.5,
+            "confidence_source": "random_split_r2",
             "model_version": "v3.0",
             "warnings": [{"code": "low_confidence", "message": "low"}],
         }
@@ -232,21 +252,43 @@ class TestEnergyPredictSchemas:
             EnergyPredictRequest(**bad_features)
 
     def test_energy_predict_response_validation(self) -> None:
-        """EnergyPredictResponse validates confidence range."""
+        """EnergyPredictResponse validates confidence range and confidence_source."""
         import pydantic
 
         from nfm_db.schemas.prediction import EnergyPredictResponse
 
         # Valid
         resp = EnergyPredictResponse(
-            predicted_energy=-0.5, confidence=0.8, model_version="v1.1",
+            predicted_energy=-0.5,
+            confidence=0.8,
+            confidence_source="v10_or_v11_unevaluated",
+            model_version="v1.1",
         )
         assert resp.confidence == 0.8
+        assert resp.confidence_source == "v10_or_v11_unevaluated"
 
         # Invalid confidence > 1
         with pytest.raises(pydantic.ValidationError):
             EnergyPredictResponse(
-                predicted_energy=-0.5, confidence=1.5, model_version="v1.1",
+                predicted_energy=-0.5,
+                confidence=1.5,
+                confidence_source="v10_or_v11_unevaluated",
+                model_version="v1.1",
+            )
+
+        # Missing required confidence_source is a schema-level regression guard
+        with pytest.raises(pydantic.ValidationError):
+            EnergyPredictResponse(
+                predicted_energy=-0.5, confidence=0.8, model_version="v1.1",
+            )
+
+        # Invalid confidence_source value (not in Literal) is rejected
+        with pytest.raises(pydantic.ValidationError):
+            EnergyPredictResponse(
+                predicted_energy=-0.5,
+                confidence=0.8,
+                confidence_source="bogus_source",
+                model_version="v1.1",
             )
 
     def test_energy_predict_request_to_feature_dict(self) -> None:
@@ -263,4 +305,74 @@ class TestEnergyPredictSchemas:
         }
         assert features["mo_equivalent"] == 2.0
         assert features["mixing_enthalpy"] == -5.0
+
+    def test_energy_predict_response_exposes_rd2_label_fields(self) -> None:
+        """NFM-4054: EnergyPredictResponse has Optional rd2_label + rd2_label_status
+        fields. Both default to None for back-compat with pre-NFM-4054 callers.
+        """
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        # Backward-compat: callers that don't supply the new fields still work.
+        resp = EnergyPredictResponse(
+            predicted_energy=-0.5,
+            confidence=0.8,
+            confidence_source="v10_or_v11_unevaluated",
+            model_version="v1.1",
+        )
+        assert resp.rd2_label is None
+        assert resp.rd2_label_status is None
+
+        # New fields are populated when provided (NFM-4054 / AC-OC-4).
+        resp_with_labels = EnergyPredictResponse(
+            predicted_energy=-0.5,
+            confidence=0.3111,
+            confidence_source="grouped_cv_r2_mean",
+            model_version="v3.0",
+            rd2_label="[EXPLORATORY]",
+            rd2_label_status="permanent",
+        )
+        assert resp_with_labels.rd2_label == "[EXPLORATORY]"
+        assert resp_with_labels.rd2_label_status == "permanent"
+
+
+class TestPredictEnergyRouteExposesRd2Label:
+    """NFM-4054 / AC-OC-4: the /predict/energy route surfaces the
+    rd2_label + rd2_label_status fields read from the loaded model artifact.
+    """
+
+    @patch("nfm_db.api.v1.prediction.predict_energy")
+    async def test_route_propagates_rd2_label_from_predict_service(
+        self, mock_predict: MagicMock,
+    ) -> None:
+        mock_predict.return_value = {
+            **MOCK_V30_RESULT,
+            "rd2_label": "[EXPLORATORY]",
+            "rd2_label_status": "permanent",
+        }
+
+        from nfm_db.api.v1.prediction import predict_energy_endpoint
+        from nfm_db.schemas.prediction import EnergyPredictRequest
+
+        request = EnergyPredictRequest(**SAMPLE_FEATURES)
+        response = await predict_energy_endpoint(request)
+
+        assert response.data is not None
+        assert response.data.rd2_label == "[EXPLORATORY]"
+        assert response.data.rd2_label_status == "permanent"
+
+    @patch("nfm_db.api.v1.prediction.predict_energy")
+    async def test_route_omits_rd2_label_when_artifact_lacks_it(
+        self, mock_predict: MagicMock,
+    ) -> None:
+        mock_predict.return_value = MOCK_V30_RESULT  # no rd2_* keys
+
+        from nfm_db.api.v1.prediction import predict_energy_endpoint
+        from nfm_db.schemas.prediction import EnergyPredictRequest
+
+        request = EnergyPredictRequest(**SAMPLE_FEATURES)
+        response = await predict_energy_endpoint(request)
+
+        assert response.data is not None
+        assert response.data.rd2_label is None
+        assert response.data.rd2_label_status is None
 

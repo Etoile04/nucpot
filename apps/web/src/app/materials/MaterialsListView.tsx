@@ -1,43 +1,61 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useState } from "react"
-import Link from "next/link"
-import { Input, Pagination, Spin, Empty, Table, Tag, Typography, Space } from "antd"
-import type { ColumnsType } from "antd/es/table"
-import { request } from "@/lib/api-client"
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import {
+  Alert,
+  App,
+  Empty,
+  Input,
+  Pagination,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { request } from "@/lib/api-client";
+import {
+  getUncategorizedMaterialCount,
+  listMaterialCategories,
+  type MaterialCategory,
+} from "@/lib/materials-api";
 
-const { Title, Text } = Typography
+const { Title, Text } = Typography;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface MaterialItem {
-  readonly id: string
-  readonly name: string
-  readonly formula: string | null
-  readonly crystal_structure: string | null
-  readonly description: string | null
-  readonly is_active: boolean
-  readonly created_at: string
-  readonly updated_at: string
+  readonly id: string;
+  readonly name: string;
+  readonly formula: string | null;
+  readonly crystal_structure: string | null;
+  readonly description: string | null;
+  readonly is_active: boolean;
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 interface PaginatedData {
-  readonly items: ReadonlyArray<MaterialItem>
-  readonly total: number
-  readonly page: number
-  readonly per_page: number
+  readonly items: ReadonlyArray<MaterialItem>;
+  readonly total: number;
+  readonly page: number;
+  readonly per_page: number;
 }
 
 interface ApiResponse<T> {
-  readonly success: boolean
-  readonly data: T
+  readonly success: boolean;
+  readonly data: T;
 }
 
 interface ViewState {
-  readonly materials: ReadonlyArray<MaterialItem>
-  readonly total: number
-  readonly loading: boolean
-  readonly error: string | null
+  readonly materials: ReadonlyArray<MaterialItem>;
+  readonly total: number;
+  readonly loading: boolean;
+  readonly error: string | null;
 }
 
 const INITIAL_STATE: ViewState = {
@@ -45,9 +63,67 @@ const INITIAL_STATE: ViewState = {
   total: 0,
   loading: true,
   error: null,
+};
+
+const PAGE_SIZE = 20;
+
+// ── URL ↔ state helpers (NFM-3917 / Tier 1D) ──────────────────────────
+//
+// The category filter selection is the only piece of view state that
+// needs to be shareable / back-button-correct, so we put it in the URL
+// via `?category_id=<uuid>` and round-trip it through `useSearchParams`.
+// `searchQuery` stays local — it is debounced into the API call and
+// clearing it is a one-action thing users rarely need to share.
+
+function parseCategoryParam(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Defend against junk in the URL: a UUID-shaped string only.
+  // Otherwise leave the dropdown cleared (better than silently
+  // filtering everything to zero rows).
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    trimmed,
+  )
+    ? trimmed
+    : null;
 }
 
-const PAGE_SIZE = 20
+function parsePageParam(raw: string | null): number {
+  if (!raw) return 1;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+// ── Touch swipe pagination (NFM-4085 C) ────────────────────────────────
+//
+// Mobile / touch devices frequently want to flip a paginated list by
+// swiping the page sideways. We bind `touchstart`/`touchend` on the
+// list container, classify the gesture as horizontal-dominant, and
+// translate it into a page change with a small toast.
+//
+// Rules:
+//   - `|deltaX| >= 50px` AND `|deltaY| <= 30px` → horizontal swipe
+//   - deltaX < 0 → next page; deltaX > 0 → previous page
+//   - Boundary pages (first/last) are silent no-ops
+//   - The handlers are no-ops on devices without touch input — desktop
+//     mouse interactions are unaffected.
+//
+// The gesture classifier is exported as a pure helper for unit tests.
+
+const SWIPE_MIN_HORIZONTAL_PX = 50;
+const SWIPE_MAX_VERTICAL_PX = 30;
+
+type SwipeDirection = "left" | "right" | null;
+
+export function classifySwipe(
+  deltaX: number,
+  deltaY: number,
+): SwipeDirection {
+  if (Math.abs(deltaX) < SWIPE_MIN_HORIZONTAL_PX) return null;
+  if (Math.abs(deltaY) > SWIPE_MAX_VERTICAL_PX) return null;
+  return deltaX < 0 ? "left" : "right";
+}
 
 // ── Table columns ──────────────────────────────────────────────────────
 
@@ -60,7 +136,7 @@ function buildColumns(searchQuery: string): ColumnsType<MaterialItem> {
       render: (name: string, record: MaterialItem) => (
         <Link href={`/materials/${record.id}`}>{name}</Link>
       ),
-      filteredValue: searchQuery ? [searchQuery] as [string] : undefined,
+      filteredValue: searchQuery ? ([searchQuery] as [string]) : undefined,
       onFilter: (value, record) =>
         record.name.toLowerCase().includes((value as string).toLowerCase()),
     },
@@ -102,58 +178,218 @@ function buildColumns(searchQuery: string): ColumnsType<MaterialItem> {
         </Space>
       ),
     },
-  ]
+  ];
 }
 
 // ── Component ──────────────────────────────────────────────────────────
 
 export function MaterialsListView() {
-  const [state, setState] = useState<ViewState>(INITIAL_STATE)
-  const [page, setPage] = useState(1)
-  const [searchQuery, setSearchQuery] = useState("")
+  const searchParams = useSearchParams();
 
-  const fetchMaterials = useCallback(async (pageNum: number): Promise<void> => {
-    setState((prev) => ({ ...prev, loading: true, error: null }))
-    try {
-      let endpoint = `/api/v1/materials?page=${pageNum}&per_page=${PAGE_SIZE}`
-      if (searchQuery.trim()) {
-        endpoint = `/api/v1/materials/search?q=${encodeURIComponent(searchQuery.trim())}&page=${pageNum}&per_page=${PAGE_SIZE}`
+  // NFM-4085 (C-side UXDesigner REJECT feedback): the static `message`
+  // import from antd v5 + React 19 emits a "Static function can not
+  // consume context like dynamic theme" warning and the toast silently
+  // no-ops in the browser (verified by MutationObserver on document.body:
+  // zero `.ant-message` notice nodes ever appear). Routing through
+  // `App.useApp()` returns the App-scoped message instance, whose
+  // container is the one mounted by `<App>` in `components/antd-provider.tsx`
+  // — so the toast actually renders. Mirrors the existing pattern in
+  // `LiteratureManager.tsx` (NFM-3765 follow-up).
+  const { message } = App.useApp();
+
+  // URL state — category_id is shareable; page is the in-URL pagination.
+  //
+  // State is the source of truth for the data fetch; the URL is kept in
+  // sync as a side-effect (see the URL-sync effect below). Reading the
+  // URL only happens once via the lazy initial state — we do NOT derive
+  // `categoryId`/`page` from `useSearchParams()` on every render, because
+  // Next.js 16's App Router `router.replace` does not always propagate
+  // back to `useSearchParams` when the initial render already had
+  // non-empty search params (NFM-3917 AC-4 bug: clicking a category on a
+  // deep-linked `/materials?page=2` did not filter the table or update
+  // the URL). Driving the data fetch from local React state avoids that
+  // round-trip entirely.
+  const [categoryId, setCategoryId] = useState<string | null>(() =>
+    parseCategoryParam(searchParams.get("category_id")),
+  );
+  const [page, setPage] = useState<number>(() =>
+    parsePageParam(searchParams.get("page")),
+  );
+
+  // Local UI state
+  const [state, setState] = useState<ViewState>(INITIAL_STATE);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categories, setCategories] = useState<ReadonlyArray<MaterialCategory>>(
+    [],
+  );
+  // NFM-4030 / Tier 1D follow-up: count of materials with NULL
+  // ``category_id``. Surfaced as a notice below the filter bar so users
+  // are not silently surprised by rows that no dropdown option can
+  // reach. Always fetched on mount; failure is non-critical (degrades
+  // to "no notice" rather than blocking the page).
+  const [uncategorizedCount, setUncategorizedCount] = useState<number>(0);
+
+  // Load the taxonomy once. The endpoint is public and the page is
+  // usually long-lived; a single fetch on mount is correct here.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [cats, uncategorized] = await Promise.all([
+        listMaterialCategories(),
+        getUncategorizedMaterialCount(),
+      ]);
+      if (!cancelled) {
+        setCategories(cats);
+        setUncategorizedCount(uncategorized);
       }
-      const resp = await request<ApiResponse<PaginatedData>>(endpoint)
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync state → URL (NFM-3917 / Tier 1D, AC-4 fix).
+  //
+  // Build the canonical URL from current state and push it via
+  // `window.history.replaceState`. We deliberately bypass
+  // `router.replace` here because (a) it does not always propagate back
+  // to `useSearchParams` in Next.js 16, leaving downstream `useMemo`s
+  // stale, and (b) it triggers a server round-trip for App Router pages
+  // we know only need a client-side filter update. The browser back
+  // button will still walk the canonical URL stack since we only ever
+  // `replaceState` (no `pushState`).
+  //
+  // A ref tracks the last URL we wrote so we don't replaceState on every
+  // re-render — only when state actually changed.
+  const lastUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const sp = new URLSearchParams();
+    if (categoryId) sp.set("category_id", categoryId);
+    if (page > 1) sp.set("page", String(page));
+    const qs = sp.toString();
+    const target = qs ? `/materials?${qs}` : "/materials";
+    if (typeof window === "undefined") return;
+    if (lastUrlRef.current === target) return;
+    lastUrlRef.current = target;
+    const currentSearch =
+      window.location.pathname + (window.location.search || "");
+    if (currentSearch === target) return;
+    window.history.replaceState(null, "", target);
+  }, [categoryId, page]);
+
+  const fetchMaterials = async (): Promise<void> => {
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("per_page", String(PAGE_SIZE));
+      if (categoryId) params.set("category_id", categoryId);
+      const trimmedQuery = searchQuery.trim();
+      let endpoint: string;
+      if (trimmedQuery) {
+        // /materials/search composes with category_id — see NFM-3917 CPO
+        // decision. Search and category filter are NOT mutually exclusive.
+        endpoint = `/api/v1/materials/search?q=${encodeURIComponent(trimmedQuery)}`;
+      } else {
+        endpoint = `/api/v1/materials?sort=name&order=asc`;
+      }
+      endpoint = `${endpoint}${endpoint.includes("?") ? "&" : "?"}${params.toString()}`;
+      const resp = await request<ApiResponse<PaginatedData>>(endpoint);
       setState({
         materials: resp.data.items,
         total: resp.data.total,
         loading: false,
         error: null,
-      })
+      });
     } catch (err) {
       setState({
         materials: [],
         total: 0,
         loading: false,
         error: err instanceof Error ? err.message : "加载失败",
-      })
+      });
     }
-  }, [searchQuery])
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => { void fetchMaterials(page) }, 300)
-    return () => clearTimeout(timer)
-  }, [page, fetchMaterials])
+    const timer = setTimeout(() => {
+      void fetchMaterials();
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId, page, searchQuery]);
+
+  // ── Handlers (NFM-3917 / Tier 1D) ─────────────────────────────────────
 
   const handleSearch = (value: string) => {
-    setSearchQuery(value)
-    setPage(1)
-  }
+    setSearchQuery(value);
+    setPage(1);
+  };
+
+  const handleCategoryChange = (next: string | undefined) => {
+    // Changing category resets to page 1 (CPO decision) so users do not
+    // land on a page that no longer exists for the narrowed result set.
+    setCategoryId(next ?? null);
+    setPage(1);
+  };
+
+  const handlePageChange = (next: number) => {
+    setPage(next);
+  };
+
+  // ── Touch swipe (NFM-4085 C) ─────────────────────────────────────────
+  //
+  // We track the start of a touch and compute the delta when the user
+  // lifts. The handlers are no-ops if `e.touches[0]` / `changedTouches[0]`
+  // are missing (some browsers/synthetic events omit them) — desktop
+  // mouse events never fire these, so impact is zero.
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const direction = classifySwipe(t.clientX - start.x, t.clientY - start.y);
+    if (!direction) return;
+    const totalPages = Math.max(
+      1,
+      Math.ceil(state.total / PAGE_SIZE) || 1,
+    );
+    let nextPage: number | null = null;
+    if (direction === "left" && page < totalPages) nextPage = page + 1;
+    if (direction === "right" && page > 1) nextPage = page - 1;
+    if (nextPage == null) return; // boundary: silent no-op
+    setPage(nextPage);
+    // App-scoped `message.info` (via `App.useApp()` above) is the same
+    // toast used elsewhere in the app; it surfaces the new page index
+    // without taking focus from the table.
+    message.info(`第 ${nextPage} 页`);
+  };
 
   return (
-    <div className="max-w-[1200px] mx-auto px-6 py-8">
+    <div
+      className="max-w-[1200px] mx-auto px-6 py-8"
+      data-testid="materials-list-swipe-area"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <Title level={2}>材料列表</Title>
       <Text type="secondary">
         浏览数据库中全部核燃料与结构材料，共 {state.total} 条记录
       </Text>
 
-      <div className="mt-4 mb-4">
+      <div
+        className="mt-4 mb-4 flex flex-wrap items-center gap-3"
+        data-testid="materials-filter-bar"
+      >
         <Input.Search
           placeholder="搜索材料名称、化学式或别名"
           allowClear
@@ -161,7 +397,44 @@ export function MaterialsListView() {
           onSearch={handleSearch}
           style={{ maxWidth: 400 }}
         />
+        <Select
+          aria-label="category-filter"
+          data-testid="materials-category-select"
+          placeholder="全部类别"
+          allowClear
+          size="large"
+          value={categoryId ?? undefined}
+          onChange={handleCategoryChange}
+          style={{ minWidth: 220 }}
+          loading={categories.length === 0}
+          options={categories.map((c) => ({
+            value: c.id,
+            label: c.name,
+          }))}
+          notFoundContent={
+            <Text type="secondary" className="px-2">
+              暂无类别数据
+            </Text>
+          }
+        />
       </div>
+
+      {/*
+        NFM-4030 / Tier 1D follow-up: disclose the silent gap between
+        "all materials" (allowClear) and "any category filter". The
+        count comes from a real API query (``category_id IS NULL``) so
+        it tracks the data, not a hardcoded literal. Hidden entirely
+        when zero — the notice would be noise on a clean database.
+      */}
+      {uncategorizedCount > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          className="mb-4"
+          data-testid="materials-uncategorized-notice"
+          message={`${uncategorizedCount} 条材料尚未分类，不会出现在任何类别筛选结果中`}
+        />
+      )}
 
       {state.error && (
         <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300">
@@ -187,7 +460,7 @@ export function MaterialsListView() {
                 current={page}
                 total={state.total}
                 pageSize={PAGE_SIZE}
-                onChange={(p) => setPage(p)}
+                onChange={handlePageChange}
                 showSizeChanger={false}
                 showTotal={(total) => `共 ${total} 条`}
               />
@@ -196,5 +469,5 @@ export function MaterialsListView() {
         )}
       </Spin>
     </div>
-  )
+  );
 }

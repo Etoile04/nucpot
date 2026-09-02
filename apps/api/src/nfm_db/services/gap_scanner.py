@@ -53,6 +53,8 @@ __all__ = [
     "RecallMetrics",
     "compute_recall",
     "extract_entity_types",
+    "extract_expected_pairs",
+    "iter_datatype_property_names",
     "iter_property_names",
 ]
 
@@ -152,6 +154,78 @@ def extract_entity_types(ov: OntologyVersion) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     return [e for e in raw if isinstance(e, dict)]
+
+
+def iter_datatype_property_names(ov: OntologyVersion) -> Iterable[str]:
+    """Yield property names from ``ontology_data['datatype_properties']``.
+
+    Used as a Path A fallback for BUG-22 (NFM-3874 / C-S3).  In v0.4.0
+    and later the authoritative property list lives under the
+    ``datatype_properties`` dict (279 entries keyed by property name)
+    while ``entity_types[]`` carries only ``name``/``description`` —
+    the legacy scan path that read ``entity_types[].properties`` thus
+    reported ``total_expected=0`` and a vacuous ``coverage_rate=1.0``.
+
+    Empty / non-string keys are silently dropped (mirrors
+    :func:`iter_property_names`'s defensive behaviour).
+    """
+    data = ov.ontology_data
+    if not isinstance(data, dict):
+        return
+    dtp = data.get("datatype_properties")
+    if not isinstance(dtp, dict):
+        return
+    for prop_name in dtp:
+        if isinstance(prop_name, str) and prop_name.strip():
+            yield prop_name.strip()
+
+
+def extract_expected_pairs(ov: OntologyVersion) -> list[tuple[str, str]]:
+    """Return expected ``(entity_type, property_name)`` pairs for *ov*.
+
+    Reads declared ``entity_types[].properties`` first (the legacy /
+    canonical path).  When no entity_type carries declared properties,
+    falls back to ``datatype_properties`` keys (Path A of BUG-22
+    NFM-3874) and emits each property name under the first declared
+    entity_type — a deliberate heuristic stop-gap that recovers
+    non-vacuous coverage numbers for v0.4.0+ ontologies until
+    :func:`nfm_db.services.ontology_import.materialize_entity_type_properties`
+    (Path B) ships as the canonical fix.
+
+    Edge cases:
+
+    * Empty entity_types AND empty datatype_properties → ``[]``
+      (coverage scan returns 1.0 by the existing empty-corpus rule).
+    * Empty entity_types but populated datatype_properties → emit under
+      ``"_untyped"`` so the count is not silently dropped.
+    """
+    entity_types = extract_entity_types(ov)
+
+    declared_pairs: list[tuple[str, str]] = []
+    for entity_type_dict in entity_types:
+        name = entity_type_dict.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        for prop_name in iter_property_names(
+            entity_type_dict.get("properties"),
+        ):
+            declared_pairs.append((name.strip(), prop_name))
+
+    if declared_pairs:
+        return declared_pairs
+
+    dtp_names = list(iter_datatype_property_names(ov))
+    if not dtp_names:
+        return []
+
+    bucket = "_untyped"
+    for entity_type_dict in entity_types:
+        name = entity_type_dict.get("name")
+        if isinstance(name, str) and name.strip():
+            bucket = name.strip()
+            break
+
+    return [(bucket, prop_name) for prop_name in dtp_names]
 
 
 def _count_expected_properties(entity_types: list[dict[str, Any]]) -> int:

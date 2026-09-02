@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import DataCollectionRequest, OntologyVersion
 from nfm_db.services.gap_scanner import (
-    extract_entity_types,
+    extract_expected_pairs,
     iter_property_names,
 )
 
@@ -209,8 +209,10 @@ class CoverageScanService:
             ValueError: If the ontology_version_id does not exist.
         """
         ov = await self._load_ontology_version(ontology_version_id)
-        entity_types = extract_entity_types(ov)
-        expected_pairs = _collect_expected_pairs(entity_types)
+        # BUG-22 (NFM-3874 / C-S3 Path A): prefer the new fallback that
+        # reads ``datatype_properties`` when ``entity_types[].properties``
+        # is empty, so coverage scan no longer reports a vacuous 1.0.
+        expected_pairs = extract_expected_pairs(ov)
 
         total_expected = len(expected_pairs)
         db_props = await self._get_db_property_names()
@@ -255,8 +257,10 @@ class CoverageScanService:
         """
         t0 = time.monotonic()
         ov = await self._load_ontology_version(ontology_version_id)
-        entity_types = extract_entity_types(ov)
-        expected_pairs = _collect_expected_pairs(entity_types)
+        # BUG-22 (NFM-3874 / C-S3 Path A): prefer the new fallback that
+        # reads ``datatype_properties`` when ``entity_types[].properties``
+        # is empty (see ``compute_metrics`` for the matching call).
+        expected_pairs = extract_expected_pairs(ov)
 
         total_expected = len(expected_pairs)
         db_props = await self._get_db_property_names()

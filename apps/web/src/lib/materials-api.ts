@@ -6,49 +6,170 @@
  * Spec: NFM-1066 §1
  */
 
-import { request } from "@/lib/api-client"
-import type { ApiResponse } from "@/lib/api-client"
+import { request } from "@/lib/api-client";
+import type { ApiResponse } from "@/lib/api-client";
 import type {
   GraphData,
   GraphEdge,
   GraphNode,
   GraphNodeType,
-} from "@/components/graph/types"
+} from "@/components/graph/types";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+/**
+ * Structured citation for a property measurement's data source.
+ *
+ * NFM-4086 — D1 来源可读化. The backend (apps/api/src/nfm_db/schemas/
+ * property.py::SourceRef) returns this shape so the citation column can
+ * render an interactive "Authors (Year). Journal." cell with a DOI link
+ * instead of the legacy bare-title string.
+ *
+ *   - `authors`  Collapsed to ≤3 names + "et al." (see backend
+ *                `_format_authors`).
+ *   - `url`      Resolved by the backend: DOI resolver first, then the
+ *                source's external_url. May still be null when neither
+ *                identifier exists.
+ */
+export interface SourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly doi: string | null;
+  readonly journal: string | null;
+  readonly year: number | null;
+  readonly authors: ReadonlyArray<string>;
+  readonly url: string | null;
+}
+
+/**
+ * Experimental conditions captured alongside a single measurement.
+ *
+ * NFM-4087 — D2 duplicate-row disposition. Mirrors the backend
+ * `MeasurementConditionResponse` schema (apps/api/src/nfm_db/schemas/
+ * property.py). Every numeric field is nullable because the upstream
+ * extraction chain does not always supply every dimension; the
+ * MaterialPropertyTable "+N conditions" expander renders the supplied
+ * dimensions and leaves the rest blank.
+ */
+export interface MeasurementCondition {
+  readonly id: string;
+  readonly measurement_id: string;
+  readonly temperature: number | null;
+  readonly pressure: number | null;
+  readonly environment: string | null;
+  readonly irradiation_dose: number | null;
+  readonly notes: string | null;
+}
+
 export interface MaterialProperty {
-  readonly id: string
-  readonly name: string
-  readonly value: string
-  readonly unit: string | null
-  readonly source: string
-  readonly confidence: number
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+  readonly unit: string | null;
+  readonly source: SourceRef | null;
+  readonly confidence: number;
+  /**
+   * NFM-4087 — conditions captured alongside this measurement. The
+   * MaterialPropertyTable groups rows by (name, value, source.id); when
+   * more than one measurement folds into a single display row the
+   * frontend exposes each underlying ``conditions`` list via the
+   * "+N conditions" expander.
+   */
+  readonly conditions: ReadonlyArray<MeasurementCondition>;
 }
 
 export interface MaterialPropertyMeta {
-  readonly total: number
-  readonly page: number
-  readonly limit: number
+  readonly total: number;
+  readonly page: number;
+  readonly limit: number;
 }
 
 export interface MaterialPropertyListResponse {
-  readonly data: ReadonlyArray<MaterialProperty>
-  readonly meta: MaterialPropertyMeta
+  readonly data: ReadonlyArray<MaterialProperty>;
+  readonly meta: MaterialPropertyMeta;
 }
 
 export interface MaterialPropertyListParams {
-  readonly page?: number
-  readonly limit?: number
-  readonly sort?: string
-  readonly order?: "asc" | "desc"
-  readonly filter?: string
+  readonly page?: number;
+  readonly limit?: number;
+  readonly sort?: string;
+  readonly order?: "asc" | "desc";
+  readonly filter?: string;
 }
 
 export interface MaterialSummary {
-  readonly id: string
-  readonly name: string
-  readonly formula: string | null
+  readonly id: string;
+  readonly name: string;
+  readonly formula: string | null;
+}
+
+// ── Material categories (NFM-3917 / Tier 1D) ───────────────────────────
+
+export interface MaterialCategory {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly parent_id: string | null;
+  readonly sort_order: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface MaterialCategoryListEnvelope {
+  readonly items: ReadonlyArray<MaterialCategory>;
+}
+
+/**
+ * Fetch the full material-category taxonomy for the /materials filter
+ * dropdown (NFM-3917 / Tier 1D).
+ *
+ * Returns the array directly (the ``ApiResponse`` envelope is unwrapped
+ * here, mirroring `getMaterialProperties` / `getMaterial`). Returns an
+ * empty array on a network error so the UI degrades to "no categories
+ * available" instead of an error page; the caller surfaces a friendly
+ * notice via the Select's ``notFoundContent``.
+ */
+export async function listMaterialCategories(): Promise<
+  ReadonlyArray<MaterialCategory>
+> {
+  try {
+    const envelope = await request<ApiResponse<MaterialCategoryListEnvelope>>(
+      "/api/v1/material-categories",
+    );
+    return envelope.data.items;
+  } catch {
+    return [];
+  }
+}
+
+// ── Uncategorized count (NFM-4030 / Tier 1D follow-up) ────────────────
+//
+// Materials whose `category_id` is NULL are invisible under any category
+// filter on /materials (NFM-3917 Tier 1D silent gap). The backend exposes
+// the count so the page can render a notice; the count comes from a real
+// `COUNT(*)` query and the UI never hardcodes the number.
+
+export interface UncategorizedCountEnvelope {
+  readonly count: number;
+}
+
+/**
+ * Fetch the number of materials with `category_id IS NULL`.
+ *
+ * Returns 0 on a network error so the UI degrades to "no notice" rather
+ * than blocking page render — this is a non-critical disclosure, not a
+ * functional dependency of the list view.
+ */
+export async function getUncategorizedMaterialCount(): Promise<number> {
+  try {
+    const envelope = await request<ApiResponse<UncategorizedCountEnvelope>>(
+      "/api/v1/material-categories/uncategorized-count",
+    );
+    return envelope.data.count;
+  } catch {
+    return 0;
+  }
 }
 
 // ── API functions ─────────────────────────────────────────────────────
@@ -66,18 +187,18 @@ export async function getMaterialProperties(
   materialId: string,
   params: MaterialPropertyListParams = {},
 ): Promise<MaterialPropertyListResponse> {
-  const sp = new URLSearchParams()
+  const sp = new URLSearchParams();
 
-  sp.set("page", String(params.page ?? 1))
-  sp.set("limit", String(params.limit ?? 50))
-  if (params.sort) sp.set("sort", params.sort)
-  if (params.order) sp.set("order", params.order)
-  if (params.filter) sp.set("filter", params.filter)
+  sp.set("page", String(params.page ?? 1));
+  sp.set("limit", String(params.limit ?? 50));
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.order) sp.set("order", params.order);
+  if (params.filter) sp.set("filter", params.filter);
 
   const envelope = await request<ApiResponse<MaterialPropertyListResponse>>(
     `/api/v1/materials/${materialId}/properties?${sp.toString()}`,
-  )
-  return envelope.data
+  );
+  return envelope.data;
 }
 
 /**
@@ -92,31 +213,31 @@ export async function getMaterial(
 ): Promise<MaterialSummary> {
   const envelope = await request<ApiResponse<MaterialSummary>>(
     `/api/v1/materials/${materialId}`,
-  )
-  return envelope.data
+  );
+  return envelope.data;
 }
 
 // ── Subgraph (NFM-1258) ───────────────────────────────────────────────
 
-/** Raw API node shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API node shape returned by the KG graph endpoints. */
 export interface KgGraphApiNode {
-  readonly id: string
-  readonly label: string
-  readonly type: string
-  readonly properties?: Readonly<Record<string, unknown>>
+  readonly id: string;
+  readonly label: string;
+  readonly type: string;
+  readonly properties?: Readonly<Record<string, unknown>>;
 }
 
-/** Raw API edge shape returned by `GET /api/v1/kg/graph`. */
+/** Raw API edge shape returned by the KG graph endpoints. */
 export interface KgGraphApiEdge {
-  readonly source: string
-  readonly target: string
-  readonly type: string
+  readonly source: string;
+  readonly target: string;
+  readonly type: string;
 }
 
-/** Raw API response from `GET /api/v1/kg/graph`. */
+/** Raw API response from the KG graph endpoints. */
 export interface KgGraphApiResponse {
-  readonly nodes: ReadonlyArray<KgGraphApiNode>
-  readonly edges: ReadonlyArray<KgGraphApiEdge>
+  readonly nodes: ReadonlyArray<KgGraphApiNode>;
+  readonly edges: ReadonlyArray<KgGraphApiEdge>;
 }
 
 /**
@@ -131,11 +252,11 @@ export interface KgGraphApiResponse {
  *   Condition / Publication / Source / other → "default"
  */
 export function toGraphNodeType(apiType: string): GraphNodeType {
-  const normalized = apiType.toLowerCase()
-  if (normalized === "material") return "material"
-  if (normalized === "property") return "property"
-  if (normalized === "experiment" || normalized === "ontology") return "entity"
-  return "default"
+  const normalized = apiType.toLowerCase();
+  if (normalized === "material") return "material";
+  if (normalized === "property") return "property";
+  if (normalized === "experiment" || normalized === "ontology") return "entity";
+  return "default";
 }
 
 /**
@@ -149,24 +270,27 @@ export function mapSubgraphResponse(
   // The API wraps the payload in a { success, data, error } envelope.
   // request() returns the raw envelope without unwrapping .data,
   // so handle both shapes defensively.
-  const payload = "data" in response && "nodes" in (response as any).data
-    ? (response as any).data
-    : response
+  const payload =
+    "data" in response && "nodes" in (response as any).data
+      ? (response as any).data
+      : response;
 
   const nodes: GraphNode[] = payload.nodes.map((node: KgGraphApiNode) => ({
     id: node.id,
     label: node.label,
     type: toGraphNodeType(node.type),
-  }))
+  }));
 
-  const edges: GraphEdge[] = payload.edges.map((edge: KgGraphApiEdge, index: number) => ({
-    id: `e-${index}-${edge.source}->${edge.target}`,
-    source: edge.source,
-    target: edge.target,
-    type: edge.type,
-  }))
+  const edges: GraphEdge[] = payload.edges.map(
+    (edge: KgGraphApiEdge, index: number) => ({
+      id: `e-${index}-${edge.source}->${edge.target}`,
+      source: edge.source,
+      target: edge.target,
+      type: edge.type,
+    }),
+  );
 
-  return { nodes, edges }
+  return { nodes, edges };
 }
 
 /**
@@ -177,18 +301,23 @@ export function mapSubgraphResponse(
  * `"material:<id>"`; these pass through verbatim and are stripped only
  * at navigation time.
  *
- * Endpoint contract (NFM-1258.3):
- *   GET /api/v1/kg/graph?nodeId=<id>&depth=<n>
+ * Endpoint contract (NFM-1258.3, NFM-4083):
+ *   GET /api/v1/kg/graph/subgraph?nodeId=<id>&depth=<n>
+ *
+ * NFM-4083 moved this from ``/api/v1/kg/graph`` to ``/kg/graph/subgraph``
+ * because the global-pool ``/kg/graph`` endpoint registered first was
+ * shadowing it. ``nodeId`` may be either a ``materials.id`` (resolved via
+ * the materials→KG bridge on the server) or a ``KGNode`` UUID.
  */
 export async function getMaterialSubgraph(
   materialId: string,
   depth = 2,
 ): Promise<GraphData> {
-  const sp = new URLSearchParams()
-  sp.set("nodeId", materialId)
-  sp.set("depth", String(depth))
+  const sp = new URLSearchParams();
+  sp.set("nodeId", materialId);
+  sp.set("depth", String(depth));
   const response = await request<KgGraphApiResponse>(
-    `/api/v1/kg/graph?${sp.toString()}`,
-  )
-  return mapSubgraphResponse(response)
+    `/api/v1/kg/graph/subgraph?${sp.toString()}`,
+  );
+  return mapSubgraphResponse(response);
 }

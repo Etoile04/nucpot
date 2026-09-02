@@ -56,16 +56,19 @@ def parse_git_log(git_output: str) -> list[dict[str, str]]:
         if not stripped:
             continue
         parts = stripped.split(maxsplit=1)
-        commits.append({
-            "hash": parts[0],
-            "message": parts[1] if len(parts) > 1 else "",
-        })
+        commits.append(
+            {
+                "hash": parts[0],
+                "message": parts[1] if len(parts) > 1 else "",
+            }
+        )
     return commits
 
 
 # ---------------------------------------------------------------------------
 # Issue reference extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_issue_refs(commit_message: str) -> list[str]:
     """Extract unique ``NFM-XXX`` references from a commit message."""
@@ -83,6 +86,7 @@ def extract_issue_refs(commit_message: str) -> list[str]:
 # Enrich commits with issue refs
 # ---------------------------------------------------------------------------
 
+
 def enrich_commits_with_refs(commits: list[dict[str, str]]) -> list[dict[str, Any]]:
     """Return new commit dicts with an ``issue_refs`` field added.
 
@@ -91,16 +95,19 @@ def enrich_commits_with_refs(commits: list[dict[str, str]]) -> list[dict[str, An
     enriched: list[dict[str, Any]] = []
     for commit in commits:
         refs = extract_issue_refs(commit["message"])
-        enriched.append({
-            **commit,
-            "issue_refs": refs,
-        })
+        enriched.append(
+            {
+                **commit,
+                "issue_refs": refs,
+            }
+        )
     return enriched
 
 
 # ---------------------------------------------------------------------------
 # Paperclip API integration
 # ---------------------------------------------------------------------------
+
 
 def fetch_issue_statuses(
     issue_refs: list[str],
@@ -257,6 +264,7 @@ def calculate_metrics(
 # Report assembly
 # ---------------------------------------------------------------------------
 
+
 def build_report(
     period_start: str,
     period_end: str,
@@ -304,7 +312,9 @@ def run_git_log(since: str, until: str, *, rev: str) -> str:
     """
     result = subprocess.run(
         [
-            "git", "log", "--oneline",
+            "git",
+            "log",
+            "--oneline",
             _NON_MERGE_FILTER,
             f"--since={since}",
             f"--until={until}",
@@ -360,8 +370,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--company-id",
         default=None,
         help=(
-            "Company UUID for scoped issue endpoint. Falls back to "
-            "PAPERCLIP_COMPANY_ID env var."
+            "Company UUID for scoped issue endpoint. Falls back to PAPERCLIP_COMPANY_ID env var."
         ),
     )
     return parser
@@ -373,9 +382,7 @@ def main() -> None:
     company_id = args.company_id or os.environ.get("PAPERCLIP_COMPANY_ID", "")
     if not company_id:
         parser = build_arg_parser()
-        parser.error(
-            "--company-id is required (or set PAPERCLIP_COMPANY_ID env var)"
-        )
+        parser.error("--company-id is required (or set PAPERCLIP_COMPANY_ID env var)")
 
     api_url = args.api_url or os.environ.get("PAPERCLIP_API_URL")
     if not api_url:
@@ -390,12 +397,13 @@ def main() -> None:
     commits = parse_git_log(raw_log)
     enriched = enrich_commits_with_refs(commits)
 
-    all_refs = list({
-        ref for c in enriched for ref in c["issue_refs"]
-    })
+    all_refs = list({ref for c in enriched for ref in c["issue_refs"]})
     api_key = os.environ.get("PAPERCLIP_API_KEY", "")
     statuses = fetch_issue_statuses(
-        all_refs, api_url, company_id, api_key=api_key,
+        all_refs,
+        api_url,
+        company_id,
+        api_key=api_key,
     )
 
     report = build_report(args.since, args.until, enriched, statuses)

@@ -364,11 +364,7 @@ async def get_kg_graph(
 
     # Fetch nodes — apply offset for pagination (NFM-3825 fix).
     node_stmt = (
-        select(KGNode)
-        .where(*node_filter)
-        .order_by(KGNode.label.asc())
-        .offset(offset)
-        .limit(limit)
+        select(KGNode).where(*node_filter).order_by(KGNode.label.asc()).offset(offset).limit(limit)
     )
     node_rows = (await session.execute(node_stmt)).scalars().all()
 
