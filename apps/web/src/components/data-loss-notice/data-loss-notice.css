@@ -1,0 +1,155 @@
+/* ─────────────────────────────────────────────────────────────────────
+ * DataLossNotice — disclosure surface (NFM-4146, spec §1–§3)
+ *
+ * Tokens used here are declared globally on :root in globals.css:
+ *   --warning-border, --color-surface-elevated, --color-text,
+ *   --color-text-secondary, --color-accent, --fs-xs, --fs-sm,
+ *   --lh-default, --lh-loose, --tracking-cjk, --dur-fast,
+ *   --dur-base, --ease-out.
+ *
+ * Visual signature:
+ *   • 4px left border in --warning-border (warning, not error).
+ *   • dark surface elevated one level above the page (table row).
+ *   • icon-leading label; popover expands on click/focus.
+ *   • CJK locale uses --lh-loose / --tracking-cjk for breathing
+ *     room around Han characters (spec §1.3).
+ * ─────────────────────────────────────────────────────────────────── */
+
+.data-loss-notice {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif);
+  font-size: var(--fs-xs, 0.6875rem);
+  line-height: var(--lh-default, 1.55);
+  color: var(--color-text-secondary, #d1d5db);
+  vertical-align: middle;
+}
+
+.data-loss-notice__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem 0.125rem 0.375rem;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  transition:
+    background-color var(--dur-fast, 120ms) var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)),
+    color var(--dur-fast, 120ms) var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+
+.data-loss-notice__trigger:hover,
+.data-loss-notice__trigger:focus-visible {
+  background-color: var(--color-surface-elevated, #374151);
+  color: var(--color-text, #f9fafb);
+  outline: none;
+}
+
+.data-loss-notice__trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--warning-border, #b45309);
+}
+
+.data-loss-notice__label {
+  letter-spacing: var(--tracking-cjk, 0.02em);
+}
+
+/* Popover surface — only the `inline` variant exists post re-scope
+ * but the class is namespaced to keep future variants isolated. */
+.data-loss-notice__popover {
+  position: absolute;
+  z-index: 10;
+  min-width: 280px;
+  max-width: 360px;
+  padding: 0.875rem 1rem 0.75rem;
+  background: var(--color-surface-elevated, #374151);
+  border-left: 4px solid var(--warning-border, #b45309);
+  border-radius: 4px;
+  color: var(--color-text, #f9fafb);
+  font-size: var(--fs-sm, 0.8125rem);
+  line-height: var(--lh-loose, 1.75);
+  letter-spacing: var(--tracking-cjk, 0.02em);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.45),
+    0 0 0 1px var(--color-border, #374151);
+  animation: data-loss-notice-fade var(--dur-base, 200ms) var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+
+.data-loss-notice__popover--top    { bottom: calc(100% + 8px); left: 0; }
+.data-loss-notice__popover--right  { left: calc(100% + 8px); top: 50%; transform: translateY(-50%); }
+.data-loss-notice__popover--bottom { top: calc(100% + 8px); left: 0; }
+
+.data-loss-notice__headline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-display, inherit);
+  font-weight: 600;
+  font-size: var(--fs-sm, 0.8125rem);
+  color: var(--color-text, #f9fafb);
+}
+
+.data-loss-notice__body,
+.data-loss-notice__forward-look,
+.data-loss-notice__previously {
+  margin: 0 0 0.5rem;
+  line-height: var(--lh-loose, 1.75);
+  color: var(--color-text, #f9fafb);
+}
+
+.data-loss-notice__forward-look {
+  color: var(--color-text-secondary, #d1d5db);
+}
+
+.data-loss-notice__previously {
+  color: var(--color-text-secondary, #d1d5db);
+  font-style: italic;
+}
+
+.data-loss-notice__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.data-loss-notice__learn-more,
+.data-loss-notice__dismiss {
+  font-family: inherit;
+  font-size: var(--fs-xs, 0.6875rem);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  color: var(--color-accent, #93c5fd);
+}
+
+.data-loss-notice__learn-more:hover,
+.data-loss-notice__learn-more:focus-visible,
+.data-loss-notice__dismiss:hover,
+.data-loss-notice__dismiss:focus-visible {
+  background: rgba(147, 197, 253, 0.12);
+  text-decoration: underline;
+  outline: none;
+}
+
+@keyframes data-loss-notice-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+/* Honor prefers-reduced-motion (spec §6.3). */
+@media (prefers-reduced-motion: reduce) {
+  .data-loss-notice__trigger,
+  .data-loss-notice__popover {
+    transition: none;
+    animation: none;
+  }
+}

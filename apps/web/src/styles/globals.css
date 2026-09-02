@@ -41,6 +41,22 @@
   --confidence-medium: #f59e0b;
   --confidence-low: #ef4444;
 
+  /* Typography (NFM-4146 §1.2 — app-wide, distinct from --onto-*) */
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --font-display: "Inter", "Source Han Serif SC", "Songti SC", serif;
+  --fs-body: 0.9375rem;
+  --fs-sm: 0.8125rem;
+  --fs-xs: 0.6875rem;
+  --lh-default: 1.55;
+  --lh-loose: 1.75;
+  --tracking-cjk: 0.02em;
+
+  /* Motion (NFM-4146 §1.3 — app-wide, distinct from --onto-*) */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
   /* Graph Canvas (NFM-848 §1) */
   --graph-node-default: #60a5fa;
   --graph-node-material: #34d399;
