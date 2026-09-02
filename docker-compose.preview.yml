@@ -27,8 +27,11 @@
 #     -f docker-compose.prod.yml \
 #     -f docker-compose.preview.yml \
 #     --env-file docker/.env.prod \
-#     up -d --no-deps \
-#       --force-recreate nucpot-prod-api-preview nucpot-prod-web-preview
+#     up -d --no-deps --force-recreate api web
+#
+# NOTE: `up` takes SERVICE names (`api`, `web`), not container_name
+# values. The resulting containers are nucpot-prod-api-preview /
+# nucpot-prod-web-preview.
 #
 # The `--no-deps` flag prevents compose from starting the prod-only
 # LightRAG sidecar if it is not already running (preview QA sessions
@@ -61,6 +64,9 @@
 #   2. `NFMD_PREVIEW_DB_PASSWORD` is set in docker/.env.prod.
 #   3. No other preview container is using this image tag (avoid port
 #      collisions on 8008 / 3030).
+#   4. The prod stack's network `nucpot-prod_prod` exists (the overlay
+#      attaches to it as an EXTERNAL network — see `networks:` at the
+#      bottom). Easiest check: `docker network ls | grep nucpot-prod_prod`.
 #
 # If any of those fails, see docs/runbooks/prod-deploy.md §6.5 instead of
 # improvising.
@@ -73,7 +79,12 @@ services:
     container_name: nucpot-prod-api-preview
     image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
     restart: "no"
-    ports:
+    # NFM-4202: `!override` REPLACES the base `ports` instead of merging.
+    # Compose unions `ports` by published-port key, so without the tag the
+    # merged preview api would also try to bind prod's
+    # ${PROD_API_HOST_PORT:-8001} → "port is already allocated" whenever
+    # the prod stack is up.
+    ports: !override
       # QA agents typically run on a non-default host port to avoid
       # colliding with prod on 8001.
       - "${PREVIEW_API_HOST_PORT:-8008}:8000"
@@ -115,7 +126,9 @@ services:
     container_name: nucpot-prod-web-preview
     image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
     restart: "no"
-    ports:
+    # Same NFM-4202 `!override` as the api service — otherwise the merged
+    # preview web also tries to bind prod's ${PROD_WEB_HOST_PORT:-3000}.
+    ports: !override
       - "${PREVIEW_WEB_HOST_PORT:-3030}:3000"
     environment:
       # Match the api's least-privilege DSN — but the web container does
@@ -127,3 +140,22 @@ services:
     depends_on:
       api: { condition: service_healthy }
     networks: [prod]
+
+# NFM-4202: attach to the RUNNING prod stack's bridge network instead of
+# creating a project-local `nucpot-prod-preview_prod` bridge (this file's
+# top-level `name:` re-projects everything, so the base file's
+# non-external `networks.prod` would otherwise materialise a fresh, empty
+# network on which `nucpot-prod-db` / `nucpot-prod-redis` are NOT
+# resolvable → alembic socket.gaierror + failing api healthcheck).
+# `!override` replaces the base `{driver: bridge}` declaration wholesale;
+# `external: true` means compose will never create or remove the network —
+# the prod stack must be up before starting a preview stack.
+#
+# Shared-network note: the preview containers also claim the `api` / `web`
+# service-name aliases on nucpot-prod_prod. That is dormant today because
+# every prod service pins the explicit `nucpot-prod-*` container names in
+# its env (API_SERVER_URL, REDIS_HOST, ...), never the bare aliases.
+networks:
+  prod: !override
+    external: true
+    name: nucpot-prod_prod
