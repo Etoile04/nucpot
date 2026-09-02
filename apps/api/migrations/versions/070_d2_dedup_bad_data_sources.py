@@ -481,11 +481,31 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 --     to the canonical dataset so their measurement
                 --     conditions (CASCADE) follow correctly when the
                 --     bad dataset is deleted.
+                --
+                --     NFM-4095 follow-up: step 4's INSERT runs with
+                --     ``ON CONFLICT DO NOTHING`` keyed on
+                --     ``uq_pm_dedup``.  For tuples that did NOT conflict
+                --     (canonical was empty for that property_type +
+                --     conditions_hash + method), step 4 created a brand
+                --     new PM at the canonical dataset.  A blind UPDATE
+                --     here would then move the original bad-dataset PM
+                --     to the same canonical dataset, colliding on
+                --     ``uq_pm_dedup``.  Skip the move if the target tuple
+                --     already exists at the canonical dataset; step 4c
+                --     will clean up the now-empty bad dataset via
+                --     CASCADE on the orphan PM.
                 UPDATE property_measurements pm
                 SET dataset_id = dr.canonical_dataset_id
                 FROM _dataset_redirect dr
                 WHERE pm.dataset_id = dr.bad_dataset_id
-                  AND dr.bad_dataset_id <> dr.canonical_dataset_id;
+                  AND dr.bad_dataset_id <> dr.canonical_dataset_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM property_measurements pm2
+                      WHERE pm2.dataset_id        = dr.canonical_dataset_id
+                        AND pm2.property_type_id  = pm.property_type_id
+                        AND pm2.conditions_hash   = pm.conditions_hash
+                        AND pm2.method IS NOT DISTINCT FROM pm.method
+                  );
 
                 -- 4b. Clean orphan measurement_conditions: rows whose
                 --     measurement moved datasets may keep duplicate
