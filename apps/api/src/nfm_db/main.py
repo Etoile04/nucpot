@@ -56,6 +56,7 @@ from nfm_db.api.v1.batch import (
 from nfm_db.api.v1.batch import (
     reference_values_router as batch_reference_values_router,
 )
+from nfm_db.api.v1.datasets import router as datasets_router
 from nfm_db.api.v1.hub_nodes import router as hub_nodes_router
 from nfm_db.api.v1.profile import (
     contributions_router,
@@ -324,6 +325,8 @@ app.include_router(batch_properties_router, prefix="/api/v1", tags=["批量物�
 app.include_router(materials.router, prefix="/api/v1", tags=["材料管理"])
 app.include_router(properties.router, prefix="/api/v1", tags=["物性数据"])
 app.include_router(sources.router, prefix="/api/v1", tags=["数据源"])
+# NFM-4159 — attribution-aware dataset read endpoint (read-only, no UI affordance).
+app.include_router(datasets_router, prefix="/api/v1", tags=["数据集管理"])
 app.include_router(seed.router, prefix="/api/v1", tags=["种子数据"])
 app.include_router(kg.router, prefix="/api/v1", tags=["知识图谱"])
 app.include_router(kg_graph.router, prefix="/api/v1", tags=["知识图谱"])

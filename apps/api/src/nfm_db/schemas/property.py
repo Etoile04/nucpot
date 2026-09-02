@@ -6,6 +6,7 @@ property_measurements, measurement_conditions.
 
 import re
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -125,7 +126,7 @@ class DatasetResponse(BaseModel):
 
     id: UUID
     material_id: UUID
-    source_id: UUID
+    source_id: UUID | None
     title: str
     description: str | None
     measurement_date: date | None
@@ -134,6 +135,41 @@ class DatasetResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# NFM-4159 — §5.2 attribution blocks (LOCKED contract).
+# Block definitions live ABOVE the response subclasses that embed them.
+# ---------------------------------------------------------------------------
+
+
+class MeasurementAttributionBlock(BaseModel):
+    """Per-measurement ``attribution`` block — LOCKED field names (§5.2).
+
+    ``status`` is the only always-present field.  ``lostAt`` and
+    ``siblingPlaceholderCount`` are emitted only when ``status == "lost"``
+    so clients don't have to distinguish ``None`` from "key absent".
+    """
+
+    status: Literal["lost", "intact"]
+    lostAt: date | None = None  # noqa: N815 — locked casing per §5.2
+    siblingPlaceholderCount: int | None = None  # noqa: N815
+
+
+class DatasetAttributionBlock(BaseModel):
+    """Per-dataset ``attribution`` block — LOCKED field names (§5.2)."""
+
+    status: Literal["placeholder", "intact"]
+
+
+class DatasetWithAttributionResponse(DatasetResponse):
+    """Dataset response shape for ``GET /api/v1/datasets/{id}``.
+
+    Adds the §5.2 attribution block.  No UI affordance is attached —
+    the placeholder title itself is the disclosure on the recast cohort.
+    """
+
+    attribution: DatasetAttributionBlock
 
 
 class PropertyMeasurementCreate(BaseModel):
@@ -212,6 +248,16 @@ class PropertyMeasurementResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PropertyMeasurementWithAttributionResponse(PropertyMeasurementResponse):
+    """Property-measurement response shape for ``/properties/{id}/measurements``.
+
+    Adds the §5.2 attribution block.  Carries all standard
+    ``PropertyMeasurementResponse`` fields plus the per-row attribution.
+    """
+
+    attribution: MeasurementAttributionBlock
 
 
 class MeasurementConditionCreate(BaseModel):
