@@ -30,8 +30,14 @@ const OUT_ROOT = path.resolve(
   'qa-artifacts/lighthouse',
   new Date().toISOString().replace(/[:.]/g, '-'),
 )
+// NFM-1039: only default to the macOS app-bundle path on darwin. On Linux CI
+// (and any platform without it) fall through to chrome-launcher's own
+// discovery, or an explicit CHROME_PATH env when provided.
 const CHROME_PATH =
-  process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  process.env.CHROME_PATH ??
+  (process.platform === 'darwin'
+    ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    : undefined)
 
 function summarizeAudits(lhr) {
   const failing = []
@@ -61,7 +67,11 @@ async function auditRoute(url) {
   // surface chrome-error://chromewebdata/ interstitials when navigation
   // races with prior-page teardown (observed in NFM-3794).
   const chrome = await chromeLauncher.launch({
-    chromePath: CHROME_PATH,
+    // NFM-1039: pass chromePath only when we actually resolved one — an
+    // explicit CHROME_PATH env or the darwin default. Otherwise let
+    // chrome-launcher discover Chrome/Chromium itself (Linux CI uses the
+    // Playwright-installed chromium exported by the workflow).
+    ...(CHROME_PATH ? { chromePath: CHROME_PATH } : {}),
     chromeFlags: [
       '--headless=new',
       '--no-sandbox',
@@ -176,7 +186,19 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err)
+  // NFM-1039: even on a top-level crash, write a summary.md so the artifact
+  // upload step (if-no-files-found: error) never turns a script crash into
+  // a cascade of unrelated red steps.
+  try {
+    await fs.mkdir(OUT_ROOT, { recursive: true })
+    await fs.writeFile(
+      path.join(OUT_ROOT, 'summary.md'),
+      `# Lighthouse a11y audit — crashed\n\n\`\`\`\n${String(err?.stack ?? err)}\n\`\`\`\n`,
+    )
+  } catch {
+    /* nothing more we can do */
+  }
   process.exit(2)
 })

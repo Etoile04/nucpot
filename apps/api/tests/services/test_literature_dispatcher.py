@@ -29,6 +29,7 @@ import pytest
 
 from nfm_db.services.literature_dispatcher import (
     LITERATURE_TASK_NAME,
+    prewarm_ollama_model,
     schedule_literature_processing,
 )
 
@@ -123,3 +124,120 @@ async def test_schedule_does_not_silently_swallow_broker_errors() -> None:
     ):
         with pytest.raises(RuntimeError, match="redis broker down"):
             schedule_literature_processing(datasource_id)
+
+
+# ---------------------------------------------------------------------------
+# prewarm_ollama_model — NFM-3902 cold-load guard
+# ---------------------------------------------------------------------------
+
+
+def test_prewarm_skipped_when_provider_not_ollama() -> None:
+    """Non-Ollama providers are already warm; pre-warm must short-circuit."""
+    with patch.dict(
+        "os.environ",
+        {
+            "LLM_PROVIDER": "openai",
+            "LLM_BASE_URL": "https://api.example.com/v1",
+            "LLM_MODEL": "gpt-4o-mini",
+        },
+        clear=False,
+    ):
+        result = prewarm_ollama_model()
+    assert result == {"status": "skipped", "reason": "non-ollama-provider"}
+
+
+def test_prewarm_skipped_when_ollama_env_missing() -> None:
+    """If LLM_BASE_URL or LLM_MODEL is empty, pre-warm must skip cleanly."""
+    with patch.dict(
+        "os.environ",
+        {"LLM_PROVIDER": "ollama", "LLM_BASE_URL": "", "LLM_MODEL": ""},
+        clear=False,
+    ):
+        result = prewarm_ollama_model()
+    assert result == {"status": "skipped", "reason": "non-ollama-provider"}
+
+
+def test_prewarm_returns_ok_on_2xx() -> None:
+    """A successful 200 response is recorded as ``status=ok`` with elapsed."""
+    fake_response = MagicMock(status_code=200, text="")
+    with patch.dict(
+        "os.environ",
+        {
+            "LLM_PROVIDER": "ollama",
+            "LLM_BASE_URL": "http://localhost:11434/v1",
+            "LLM_MODEL": "qwen3.8:27b-mlx",
+            "LLM_API_KEY": "ollama",
+        },
+        clear=False,
+    ):
+        with patch(
+            "nfm_db.services.literature_dispatcher.httpx.Client"
+        ) as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value.post.return_value = fake_response
+            mock_client_cls.return_value = mock_client
+            result = prewarm_ollama_model()
+
+    assert result["status"] == "ok"
+    assert result["model"] == "qwen3.8:27b-mlx"
+    assert result["status_code"] == 200
+    assert isinstance(result["elapsed_s"], float)
+    # Payload pins model + max_tokens=1 — that's what actually triggers the
+    # load without spending meaningful tokens.
+    sent = mock_client.__enter__.return_value.post.call_args
+    assert sent.args[0].endswith("/chat/completions")
+    assert sent.kwargs["json"]["model"] == "qwen3.8:27b-mlx"
+    assert sent.kwargs["json"]["max_tokens"] == 1
+
+
+def test_prewarm_returns_http_error_on_5xx() -> None:
+    """A 503 from Ollama must NOT raise — extraction proceeds without pre-warm."""
+    fake_response = MagicMock(status_code=503, text="model not loaded")
+    with patch.dict(
+        "os.environ",
+        {
+            "LLM_PROVIDER": "ollama",
+            "LLM_BASE_URL": "http://localhost:11434/v1",
+            "LLM_MODEL": "qwen3.8:27b-mlx",
+            "LLM_API_KEY": "ollama",
+        },
+        clear=False,
+    ):
+        with patch(
+            "nfm_db.services.literature_dispatcher.httpx.Client"
+        ) as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value.post.return_value = fake_response
+            mock_client_cls.return_value = mock_client
+            result = prewarm_ollama_model()
+
+    assert result["status"] == "http_error"
+    assert result["status_code"] == 503
+
+
+def test_prewarm_returns_transport_error_on_connection_failure() -> None:
+    """A network failure (Ollama down) must NOT raise — extraction proceeds."""
+    import httpx
+
+    with patch.dict(
+        "os.environ",
+        {
+            "LLM_PROVIDER": "ollama",
+            "LLM_BASE_URL": "http://localhost:11434/v1",
+            "LLM_MODEL": "qwen3.8:27b-mlx",
+            "LLM_API_KEY": "ollama",
+        },
+        clear=False,
+    ):
+        with patch(
+            "nfm_db.services.literature_dispatcher.httpx.Client"
+        ) as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value.post.side_effect = httpx.ConnectError(
+                "connection refused"
+            )
+            mock_client_cls.return_value = mock_client
+            result = prewarm_ollama_model()
+
+    assert result["status"] == "transport_error"
+    assert "connection refused" in result["error"]

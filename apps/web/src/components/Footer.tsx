@@ -25,10 +25,10 @@ export default function Footer() {
             bang prefix (`!text-`) is Tailwind v4's syntax for `!important`,
             which guarantees the local color wins the cascade. */}
         <a
-          href="mailto:feedback@nucpot.org"
+          href="mailto:nucpot@agentmail.to"
           className="!text-blue-300 hover:!text-blue-200"
         >
-          feedback@nucpot.org
+          nucpot@agentmail.to
         </a>
       </p>
       <p>&copy; {new Date().getFullYear()} 核燃料与材料物性数据库</p>

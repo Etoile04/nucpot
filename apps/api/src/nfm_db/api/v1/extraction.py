@@ -101,18 +101,40 @@ class ExtractionIngestAck(BaseModel):
     corpus_id: str = Field(description="Corpus the batch was tagged with.")
     ingested: int = Field(description="Number of property records ingested (new).")
     created_measurements: int = Field(default=0, description="Property measurements persisted.")
-    reused_entities: int = Field(default=0, description="Existing DB entities reused (DataSource/Material already in DB).")
-    skipped_duplicate_measurements: int = Field(default=0, description="Duplicate measurements skipped (5-tuple dedup).")
-    skipped_unknown_properties: int = Field(default=0, description="Records skipped because the property is not in property_types.")
-    skipped_duplicates: int = Field(default=0, description="[Deprecated] Total skipped. Equals reused_entities + skipped_duplicate_measurements + skipped_unknown_properties.")
+    reused_entities: int = Field(
+        default=0, description="Existing DB entities reused (DataSource/Material already in DB)."
+    )
+    skipped_duplicate_measurements: int = Field(
+        default=0, description="Duplicate measurements skipped (5-tuple dedup)."
+    )
+    skipped_unknown_properties: int = Field(
+        default=0, description="Records skipped because the property is not in property_types."
+    )
+    skipped_unknown_materials: int = Field(
+        default=0,
+        description="[NFM-3919] Records skipped because BOTH material_name and composition are None (extractor schema-drift guard).",
+    )
+    skipped_duplicates: int = Field(
+        default=0,
+        description="[Deprecated] Total skipped. Equals reused_entities + skipped_duplicate_measurements + skipped_unknown_properties.",
+    )
     validation_errors: int = Field(default=0, description="Records that failed validation.")
     total_received: int = Field(default=0, description="Total property records in the request.")
-    processing_time_ms: float = Field(default=0, description="Server-side processing time in milliseconds.")
-    verified: bool = Field(default=False, description="AC-R3: True iff the per-request delta in PropertyMeasurement rows tied to source_reference equals created_measurements. Catches silent D1 dead-mode failures.")
-    db_measurement_count: int = Field(default=0, description="AC-R3: PropertyMeasurement row count tied to source_reference AFTER this request's map_and_persist. Used to derive the per-request delta.")
+    processing_time_ms: float = Field(
+        default=0, description="Server-side processing time in milliseconds."
+    )
+    verified: bool = Field(
+        default=False,
+        description="AC-R3: True iff the per-request delta in PropertyMeasurement rows tied to source_reference equals created_measurements. Catches silent D1 dead-mode failures.",
+    )
+    db_measurement_count: int = Field(
+        default=0,
+        description="AC-R3: PropertyMeasurement row count tied to source_reference AFTER this request's map_and_persist. Used to derive the per-request delta.",
+    )
     errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
     received_at: datetime
     message: str = "Ingest accepted; queued for processing."
+
 
 router = APIRouter(tags=["提取管理"])
 
@@ -207,9 +229,7 @@ async def get_extraction_status(
     timestamps, and error message (if failed).
     """
     try:
-        result = await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
+        result = await session.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
         job = result.scalar_one_or_none()
     except (ValueError, SQLAlchemyError) as exc:
         logger.warning("ORM job lookup failed for %s: %s", job_id, exc)
@@ -286,9 +306,7 @@ async def ingest_extraction_batch(
     ``process_literature_task`` Celery pipeline.
     """
     corpus = (
-        await session.execute(
-            select(Corpus).where(Corpus.corpus_id == payload.corpus_id)
-        )
+        await session.execute(select(Corpus).where(Corpus.corpus_id == payload.corpus_id))
     ).scalar_one_or_none()
 
     if corpus is None:
@@ -310,10 +328,7 @@ async def ingest_extraction_batch(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"corpus '{payload.corpus_id}' not registered; "
-                    "contact admin"
-                ),
+                detail=(f"corpus '{payload.corpus_id}' not registered; contact admin"),
             )
 
     # AC-6 (NFM-1982): batch-size cap.
@@ -340,9 +355,7 @@ async def ingest_extraction_batch(
     # from catching duplicates.
     if payload.source_type == "doi" and payload.source_reference:
         properties_for_mapper = [
-            {**prop, "source_doi": payload.source_reference}
-            if not prop.get("source_doi")
-            else prop
+            {**prop, "source_doi": payload.source_reference} if not prop.get("source_doi") else prop
             for prop in payload.properties
         ]
     else:
@@ -353,6 +366,7 @@ async def ingest_extraction_batch(
     reused_entities = 0
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
+    skipped_unknown_materials = 0  # NFM-3919 — surfaces extractor schema-drift signal
     skipped_duplicates = 0
     validation_errors = 0
     errors: list[str] = []
@@ -391,9 +405,7 @@ async def ingest_extraction_batch(
         # silently if source_reference is empty (cannot match by DOI).
         if source_ref:
             try:
-                count_before = (
-                    await session.execute(_count_q_for_source(source_ref))
-                ).scalar_one()
+                count_before = (await session.execute(_count_q_for_source(source_ref))).scalar_one()
             except Exception:
                 logger.exception(
                     "ingest_extraction_batch: pre-persist count failed job_id=%s",
@@ -406,13 +418,12 @@ async def ingest_extraction_batch(
                 map_and_persist,
             )
 
-            mapping_result = await map_and_persist(
-                session, properties_for_mapper
-            )
+            mapping_result = await map_and_persist(session, properties_for_mapper)
             created_measurements = mapping_result.created_measurements
             reused_entities = mapping_result.reused_entities
             skipped_duplicate_measurements = mapping_result.skipped_duplicate_measurements
             skipped_unknown_properties = mapping_result.skipped_unknown_properties
+            skipped_unknown_materials = mapping_result.skipped_unknown_materials  # NFM-3919
             skipped_duplicates = mapping_result.skipped_duplicates
             validation_errors = mapping_result.validation_errors
         except Exception as exc:
@@ -450,14 +461,11 @@ async def ingest_extraction_batch(
                     f"(count_before={count_before}, count_after="
                     f"{db_measurement_count})"
                 )
-                logger.error(
-                    "ingest_extraction_batch: %s job_id=%s", drift_msg, job_id
-                )
+                logger.error("ingest_extraction_batch: %s job_id=%s", drift_msg, job_id)
                 errors.append(drift_msg)
         except Exception:
             logger.exception(
-                "ingest_extraction_batch: post-persist verification query "
-                "failed job_id=%s",
+                "ingest_extraction_batch: post-persist verification query failed job_id=%s",
                 job_id,
             )
             errors.append("sync-verification query raised an unexpected error")
@@ -500,7 +508,8 @@ async def ingest_extraction_batch(
 
     logger.info(
         "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
-        "service=%s total=%d ingested=%d measurements=%d skipped=%d errors=%d",
+        "service=%s total=%d ingested=%d measurements=%d "
+        "skipped_unknown_materials=%d skipped=%d errors=%d",
         job_id,
         payload.source_reference,
         corpus.corpus_id,
@@ -509,6 +518,7 @@ async def ingest_extraction_batch(
         total_received,
         created_measurements,
         created_measurements,
+        skipped_unknown_materials,  # NFM-3919
         skipped_duplicates,
         len(errors),
     )
@@ -525,6 +535,7 @@ async def ingest_extraction_batch(
             reused_entities=reused_entities,
             skipped_duplicate_measurements=skipped_duplicate_measurements,
             skipped_unknown_properties=skipped_unknown_properties,
+            skipped_unknown_materials=skipped_unknown_materials,  # NFM-3919
             skipped_duplicates=skipped_duplicates,
             validation_errors=validation_errors,
             total_received=total_received,
@@ -581,9 +592,7 @@ async def get_ingest_job_status(
 
     try:
         row = (
-            await session.execute(
-                select(ExtractionJob).where(ExtractionJob.id == job_uuid)
-            )
+            await session.execute(select(ExtractionJob).where(ExtractionJob.id == job_uuid))
         ).scalar_one_or_none()
     except SQLAlchemyError:
         # DB-level failure (connection refused, bind quirk, etc.).  Surface
@@ -796,9 +805,7 @@ async def get_job_step(
 
     # Fetch the parent job.
     job_row = (
-        await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
+        await session.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
     ).scalar_one_or_none()
 
     if job_row is None:
@@ -839,12 +846,8 @@ async def get_job_step(
         "status": public_status,
         "track_id": track_id,
         "artifacts": artifacts,
-        "started_at": (
-            step_row.started_at.isoformat() if step_row.started_at else None
-        ),
-        "finished_at": (
-            finished_at.isoformat() if finished_at else None
-        ),
+        "started_at": (step_row.started_at.isoformat() if step_row.started_at else None),
+        "finished_at": (finished_at.isoformat() if finished_at else None),
         "error": step_row.error_message,
     }
 
@@ -908,9 +911,7 @@ async def get_extraction_step_status(
 
     # Fetch the parent job.
     job_row = (
-        await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
+        await session.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
     ).scalar_one_or_none()
 
     if job_row is None:
@@ -1002,9 +1003,7 @@ async def rerun_extraction_step(
 
     # Fetch the parent job (404 if missing).
     job_row = (
-        await session.execute(
-            select(ExtractionJob).where(ExtractionJob.id == job_id)
-        )
+        await session.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
     ).scalar_one_or_none()
 
     if job_row is None:
@@ -1034,8 +1033,7 @@ async def rerun_extraction_step(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Step '{step_name}' is currently running; "
-                "wait for completion before rerunning."
+                f"Step '{step_name}' is currently running; wait for completion before rerunning."
             ),
         )
 

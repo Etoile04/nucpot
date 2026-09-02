@@ -15,8 +15,7 @@ import argparse
 import json
 import logging
 import os
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -218,7 +217,7 @@ def build_kr_report(
 
     return {
         "period": {"start": period_start, "end": period_end},
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "krs": krs,
     }
 
@@ -360,9 +359,7 @@ def main() -> None:
 
     company_id = args.company_id or os.environ.get("PAPERCLIP_COMPANY_ID", "")
     if not company_id:
-        build_arg_parser().error(
-            "--company-id is required (or set PAPERCLIP_COMPANY_ID env var)"
-        )
+        build_arg_parser().error("--company-id is required (or set PAPERCLIP_COMPANY_ID env var)")
 
     api_url = args.api_url or os.environ.get("PAPERCLIP_API_URL")
     if not api_url:
@@ -387,15 +384,16 @@ def main() -> None:
     commits = parse_git_log(raw_log)
     enriched = enrich_commits_with_refs(commits)
 
-    all_refs = sorted({
-        ref for c in enriched for ref in c["issue_refs"]
-    })
+    all_refs = sorted({ref for c in enriched for ref in c["issue_refs"]})
 
     kr1_value: float | None
     kr2_value: float | None
     try:
         statuses = fetch_issue_statuses(
-            all_refs, api_url, company_id, api_key=api_key,
+            all_refs,
+            api_url,
+            company_id,
+            api_key=api_key,
         )
         metrics = calculate_metrics(enriched, statuses)
         kr1_value = metrics["metrics"]["commitEfficiency"]
@@ -415,7 +413,10 @@ def main() -> None:
     kr4_value: float | None
     try:
         done_issues = fetch_all_issues(
-            api_url, company_id, {"status": "done"}, api_key=api_key,
+            api_url,
+            company_id,
+            {"status": "done"},
+            api_key=api_key,
         )
         kr4_value = compute_lead_time(done_issues, args.since, args.until)
     except PaperclipFetchError as exc:

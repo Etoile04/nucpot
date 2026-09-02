@@ -29,6 +29,7 @@ Prerequisites:
   - For NFM API mode: valid editor-role JWT token
 """
 
+# ruff: noqa: E402, RUF001, RUF003
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,6 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
-
 
 # =============================================================================
 # Immutable result types
@@ -84,6 +84,7 @@ class QueryResult:
 #
 
 import os
+
 import pypdf
 
 PAPER_METADATA: list[dict[str, str]] = [
@@ -152,7 +153,7 @@ PAPER_METADATA: list[dict[str, str]] = [
 
 def _extract_paper_text(path: str, max_chars: int = 8000) -> str:
     """Extract text from a PDF paper using pypdf.
-    
+
     Extracts up to max_chars characters from the first pages (title area,
     abstract, and early body sections). Falls back gracefully on error.
     """
@@ -181,10 +182,12 @@ def _extract_paper_text(path: str, max_chars: int = 8000) -> str:
 PAPERS: list[dict[str, str]] = []
 for meta in PAPER_METADATA:
     text = _extract_paper_text(meta["path"])
-    PAPERS.append({
-        "source": meta["source"],
-        "text": text,
-    })
+    PAPERS.append(
+        {
+            "source": meta["source"],
+            "text": text,
+        }
+    )
 
 # Expected ontology entity types and relationship types
 # =============================================================================
@@ -218,22 +221,22 @@ EXPECTED_RELATION_TYPES = [
 # papers on those topics. Thorium fuel is also not present.
 EXPECTED_MATERIAL_TERMS = [
     # English
-    "UO2",          # UO2 fission-gas phase field + MD simulation
-    "U-Zr",         # U-Zr metallic fuel
-    "ZrO2",         # Zr-alloy corrosion oxidation product
-    "zirconium",    # Zr-alloy cladding (Hu, Motta, Sabol)
-    "Zircaloy",     # Zircaloy-4 (Sabol)
-    "SiC",          # SiC/SiC composite cladding (Terrani ATF)
-    "ATF",          # Accident tolerant fuel (Li FCM, Terrani)
-    "LBE",          # Lead-bismuth eutectic cladding (QianBi)
+    "UO2",  # UO2 fission-gas phase field + MD simulation
+    "U-Zr",  # U-Zr metallic fuel
+    "ZrO2",  # Zr-alloy corrosion oxidation product
+    "zirconium",  # Zr-alloy cladding (Hu, Motta, Sabol)
+    "Zircaloy",  # Zircaloy-4 (Sabol)
+    "SiC",  # SiC/SiC composite cladding (Terrani ATF)
+    "ATF",  # Accident tolerant fuel (Li FCM, Terrani)
+    "LBE",  # Lead-bismuth eutectic cladding (QianBi)
     "metallic fuel",  # U-Zr metallic fuel
     # Chinese
-    "锆",           # zirconium — Hu_2024 corrosion review
-    "铅铋",         # lead-bismuth — QianBi LBE cladding
-    "碳化硅",       # silicon carbide — Li_2018 FCM ATF
-    "热导率",       # thermal conductivity
-    "辐照",         # irradiation
-    "腐蚀",         # corrosion (very frequent in Chinese papers)
+    "锆",  # zirconium — Hu_2024 corrosion review
+    "铅铋",  # lead-bismuth — QianBi LBE cladding
+    "碳化硅",  # silicon carbide — Li_2018 FCM ATF
+    "热导率",  # thermal conductivity
+    "辐照",  # irradiation
+    "腐蚀",  # corrosion (very frequent in Chinese papers)
 ]
 
 # =============================================================================
@@ -510,12 +513,14 @@ def ingest_papers_direct(
         else:
             detail_parts.append(f"FAILED (status={status}, body={str(body)[:300]})")
 
-        results.append(CheckResult(
-            f"AC-2.{i + 1}: Ingest {paper['source']}",
-            passed,
-            " | ".join(detail_parts),
-            elapsed,
-        ))
+        results.append(
+            CheckResult(
+                f"AC-2.{i + 1}: Ingest {paper['source']}",
+                passed,
+                " | ".join(detail_parts),
+                elapsed,
+            )
+        )
 
     return results, times
 
@@ -555,12 +560,14 @@ def ingest_papers_via_api(
         else:
             detail_parts.append(f"FAILED (status={status}, body={str(body)[:300]})")
 
-        results.append(CheckResult(
-            f"AC-2.{i + 1}: Ingest {paper['source']}",
-            passed,
-            " | ".join(detail_parts),
-            elapsed,
-        ))
+        results.append(
+            CheckResult(
+                f"AC-2.{i + 1}: Ingest {paper['source']}",
+                passed,
+                " | ".join(detail_parts),
+                elapsed,
+            )
+        )
 
     return results, times
 
@@ -608,10 +615,7 @@ def run_queries_direct(
 
         # Validate: check for expected keywords (case-insensitive)
         response_lower = response_text.lower()
-        found_keywords = [
-            kw for kw in tc.expected_keywords
-            if kw.lower() in response_lower
-        ]
+        found_keywords = [kw for kw in tc.expected_keywords if kw.lower() in response_lower]
         keyword_quality = len(found_keywords) / len(tc.expected_keywords)
 
         passed = status == 200 and has_response
@@ -631,12 +635,14 @@ def run_queries_direct(
         if not has_response and status == 200:
             detail_parts.append("WARN: empty or near-empty response")
 
-        results.append(CheckResult(
-            f"AC-3: Query [{tc.mode}] {tc.query[:50]}",
-            passed,
-            " | ".join(detail_parts),
-            elapsed,
-        ))
+        results.append(
+            CheckResult(
+                f"AC-3: Query [{tc.mode}] {tc.query[:50]}",
+                passed,
+                " | ".join(detail_parts),
+                elapsed,
+            )
+        )
 
     return results, query_results
 
@@ -684,10 +690,7 @@ def run_queries_via_api(
 
         has_response = len(response_text.strip()) > 20
         response_lower = response_text.lower()
-        found_keywords = [
-            kw for kw in tc.expected_keywords
-            if kw.lower() in response_lower
-        ]
+        found_keywords = [kw for kw in tc.expected_keywords if kw.lower() in response_lower]
         keyword_quality = len(found_keywords) / len(tc.expected_keywords)
 
         passed = status == 200 and data.get("success", False) and has_response
@@ -704,12 +707,14 @@ def run_queries_via_api(
         else:
             detail_parts.append(f"quality=LOW ({keyword_quality:.0%})")
 
-        results.append(CheckResult(
-            f"AC-3: Query [{tc.mode}] {tc.query[:50]}",
-            passed,
-            " | ".join(detail_parts),
-            elapsed,
-        ))
+        results.append(
+            CheckResult(
+                f"AC-3: Query [{tc.mode}] {tc.query[:50]}",
+                passed,
+                " | ".join(detail_parts),
+                elapsed,
+            )
+        )
 
     return results, query_results
 
@@ -726,10 +731,7 @@ def check_ontology_extraction(query_results: list[QueryResult]) -> CheckResult:
     response_lower = all_response_text.lower()
 
     # Check material terms
-    found_materials = [
-        term for term in EXPECTED_MATERIAL_TERMS
-        if term.lower() in response_lower
-    ]
+    found_materials = [term for term in EXPECTED_MATERIAL_TERMS if term.lower() in response_lower]
     material_quality = len(found_materials) / len(EXPECTED_MATERIAL_TERMS)
 
     # Check for domain concepts (broader ontology validation).
@@ -761,10 +763,7 @@ def check_ontology_extraction(query_results: list[QueryResult]) -> CheckResult:
         "锆",
         "铅铋",
     ]
-    found_concepts = [
-        c for c in domain_concepts
-        if c.lower() in response_lower
-    ]
+    found_concepts = [c for c in domain_concepts if c.lower() in response_lower]
     concept_quality = len(found_concepts) / len(domain_concepts)
 
     elapsed = time.monotonic() - t0
@@ -810,7 +809,19 @@ def check_ontology_relationships(query_results: list[QueryResult]) -> CheckResul
     # Relational indicators in the response text
     relation_indicators = [
         # Property relationships
-        ("has property", ["has", "property", "thermal conductivity", "density", "melting point", "热导率", "密度", "熔点"]),
+        (
+            "has property",
+            [
+                "has",
+                "property",
+                "thermal conductivity",
+                "density",
+                "melting point",
+                "热导率",
+                "密度",
+                "熔点",
+            ],
+        ),
         # Measurement relationships
         ("measured in", ["measured", "experiment", "measurement", "测量", "实验"]),
         # Composition relationships
@@ -953,10 +964,7 @@ def render_report(
             )
         if query_results:
             q_times = [qr.response_time_s for qr in query_results]
-            lines.append(
-                f"  Total: {sum(q_times):.1f}s | "
-                f"Avg: {sum(q_times) / len(q_times):.1f}s"
-            )
+            lines.append(f"  Total: {sum(q_times):.1f}s | Avg: {sum(q_times) / len(q_times):.1f}s")
         lines.append("")
 
     lines.append("=" * 72)
@@ -1013,8 +1021,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--token",
         default=None,
         help=(
-            "JWT auth token for NFM API (editor role required). "
-            "Can also set NFM_E2E_TOKEN env var."
+            "JWT auth token for NFM API (editor role required). Can also set NFM_E2E_TOKEN env var."
         ),
     )
     p.add_argument(
@@ -1039,9 +1046,6 @@ def _get_auth_headers(args: argparse.Namespace) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-import os  # noqa: E402 (needed for os.environ in _get_auth_headers)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -1055,7 +1059,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"LightRAG URL: {args.lightrag_url}")
         if not args.direct:
             print(f"NFM API URL: {args.api_url}")
-            print(f"Auth token: {'set' if args.token or os.environ.get('NFM_E2E_TOKEN') else 'NOT SET'}")
+            print(
+                f"Auth token: {'set' if args.token or os.environ.get('NFM_E2E_TOKEN') else 'NOT SET'}"
+            )
         print("")
         print(f"Papers to ingest: {len(PAPERS)}")
         for i, paper in enumerate(PAPERS):
@@ -1076,7 +1082,9 @@ def main(argv: list[str] | None = None) -> int:
         print("  AC-5:  Graceful degradation when LightRAG is unreachable")
         print("")
         print("Prerequisites:")
-        print("  - LightRAG sidecar: docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml ...")
+        print(
+            "  - LightRAG sidecar: docker compose -f docker-compose.prod.yml -f docker-compose.lightrag.yml ..."
+        )
         print("  - LLM config: LIGHTRAG_LLM_MODEL, LIGHTRAG_LLM_API_KEY")
         print("  - Embedding config: LIGHTRAG_EMBEDDING_MODEL=BAAI/bge-m3")
         print("  - For API mode: NFM_E2E_TOKEN env var or --token flag")
@@ -1099,8 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if not r.passed:
             print("", file=sys.stderr)
-            print("LightRAG sidecar is not healthy. Skipping ingestion and queries.",
-                  file=sys.stderr)
+            print(
+                "LightRAG sidecar is not healthy. Skipping ingestion and queries.", file=sys.stderr
+            )
             print("Run the degradation check, then print report.", file=sys.stderr)
 
             # Still check degradation
@@ -1127,8 +1136,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if not r1.passed:
             print("", file=sys.stderr)
-            print("LightRAG sidecar is not reachable. Running degradation check only.",
-                  file=sys.stderr)
+            print(
+                "LightRAG sidecar is not reachable. Running degradation check only.",
+                file=sys.stderr,
+            )
             deg = check_degradation(args.api_url, headers)
             all_results.append(deg)
             _print_result(deg)
@@ -1143,11 +1154,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if is_direct:
         ingest_results, ingestion_times = ingest_papers_direct(
-            args.lightrag_url, PAPERS,
+            args.lightrag_url,
+            PAPERS,
         )
     else:
         ingest_results, ingestion_times = ingest_papers_via_api(
-            args.api_url, headers, PAPERS,
+            args.api_url,
+            headers,
+            PAPERS,
         )
 
     all_results.extend(ingest_results)
@@ -1158,13 +1172,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if any_ingest_failed:
         print("", file=sys.stderr)
-        print("Some papers failed to ingest. Attempting queries anyway.",
-              file=sys.stderr)
+        print("Some papers failed to ingest. Attempting queries anyway.", file=sys.stderr)
 
     # Wait for LightRAG to process ingested documents
     print("", file=sys.stderr)
-    print(f"Waiting {args.ingest_delay:.0f}s for LightRAG to index documents...",
-          file=sys.stderr)
+    print(f"Waiting {args.ingest_delay:.0f}s for LightRAG to index documents...", file=sys.stderr)
     time.sleep(args.ingest_delay)
 
     # ---- Phase 3: Execute queries ----
@@ -1173,11 +1185,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if is_direct:
         query_checks, query_results = run_queries_direct(
-            args.lightrag_url, QUERY_TEST_CASES,
+            args.lightrag_url,
+            QUERY_TEST_CASES,
         )
     else:
         query_checks, query_results = run_queries_via_api(
-            args.api_url, headers, QUERY_TEST_CASES,
+            args.api_url,
+            headers,
+            QUERY_TEST_CASES,
         )
 
     all_results.extend(query_checks)

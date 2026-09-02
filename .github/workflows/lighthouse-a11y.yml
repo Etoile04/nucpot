@@ -109,7 +109,19 @@ jobs:
         # Continue-on-error so the artifact upload step still runs when
         # a route regresses — the failure is what the workflow surfaces.
         continue-on-error: true
-        run: pnpm exec node scripts/lighthouse-a11y.mjs
+        # NFM-1039: the runner has no /Applications Chrome; point Lighthouse
+        # at the Playwright-installed chromium (see step above). Resolve the
+        # versioned dir with a glob in-shell — env values are not globbed.
+        run: |
+          CHROME_PATH="$(ls -d "$HOME/.cache/ms-playwright"/chromium-*/chrome-linux*/chrome 2>/dev/null | head -1)"
+          if [ -z "$CHROME_PATH" ] || [ ! -x "$CHROME_PATH" ]; then
+            echo "::error::Playwright chromium not found under ~/.cache/ms-playwright (looked for chromium-*/chrome-linux*/chrome)"
+            ls -R "$HOME/.cache/ms-playwright" | head -40
+            exit 1
+          fi
+          export CHROME_PATH
+          echo "CHROME_PATH=$CHROME_PATH"
+          pnpm exec node scripts/lighthouse-a11y.mjs
 
       - name: Upload audit reports
         if: always()
@@ -124,7 +136,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          latest=$(ls -1dt apps/web/qa-artifacts/lighthouse/*/ | head -1)
+          latest=$(ls -1dt qa-artifacts/lighthouse/*/ | head -1)
           if [ -z "${latest}" ] || [ ! -f "${latest}summary.md" ]; then
             echo "::warning::No lighthouse summary found"
             exit 0

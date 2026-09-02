@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from httpx import AsyncClient
 
 from nfm_db.monitoring.worker_health import ALERT_THRESHOLD, WorkerHealthTracker
 
@@ -86,9 +87,7 @@ class TestCriticalAlertAtThreshold:
             assert "5 consecutive" in event["message"]
             assert event["tags"]["component"] == "ingest-worker"
 
-    def test_no_duplicate_alert_at_same_count(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_no_duplicate_alert_at_same_count(self, tracker: WorkerHealthTracker) -> None:
         """After alerting at count 5, a 6th failure alerts again but 5th doesn't re-alert."""
         with patch("nfm_db.monitoring.worker_health.logger") as mock_logger:
             for i in range(5):
@@ -104,16 +103,12 @@ class TestCriticalAlertAtThreshold:
             tracker.record_failure("fail")
             # No exception raised
 
-    def test_status_degraded_at_threshold(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_status_degraded_at_threshold(self, tracker: WorkerHealthTracker) -> None:
         for _ in range(5):
             tracker.record_failure("fail")
         assert tracker.status == "degraded"
 
-    def test_status_ok_below_threshold(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_status_ok_below_threshold(self, tracker: WorkerHealthTracker) -> None:
         for _ in range(4):
             tracker.record_failure("fail")
         assert tracker.status == "ok"
@@ -134,24 +129,18 @@ class TestCounterResetsOnSuccess:
         assert tracker.consecutive_failures == 0
         assert tracker.status == "ok"
 
-    def test_success_records_timestamp(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_success_records_timestamp(self, tracker: WorkerHealthTracker) -> None:
         tracker.record_success()
         assert tracker.last_success_at is not None
         assert "T" in tracker.last_success_at  # ISO-8601
 
-    def test_failure_after_success_starts_at_one(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_failure_after_success_starts_at_one(self, tracker: WorkerHealthTracker) -> None:
         tracker.record_failure("fail")
         tracker.record_success()
         tracker.record_failure("new fail")
         assert tracker.consecutive_failures == 1
 
-    def test_alert_resets_after_success(
-        self, tracker: WorkerHealthTracker
-    ) -> None:
+    def test_alert_resets_after_success(self, tracker: WorkerHealthTracker) -> None:
         """After success + 5 more failures, alert fires again."""
         with patch("nfm_db.monitoring.worker_health.logger") as mock_logger:
             # First batch — alert at 5
@@ -174,21 +163,39 @@ class TestCounterResetsOnSuccess:
 
 
 class TestHealthEndpoint:
-    """AC-4: /health endpoint reports failure state."""
+    """AC-4: /health endpoint reports failure state.
 
-    @pytest.mark.asyncio
-    async def test_health_includes_worker_fields(self) -> None:
-        """Health endpoint returns worker health fields."""
+    NFM-4097 — the endpoint also reads
+    ``health_events.event_type = 'uuid_titled_source_blocked'``
+    to flip ``status`` to ``degraded``.  We override ``get_db``
+    with the SQLite test session so the endpoint can run without
+    a live PostgreSQL.
+    """
+
+    @pytest.fixture
+    async def client(self, db_session) -> AsyncClient:
         from httpx import ASGITransport, AsyncClient
 
+        from nfm_db.database import get_db
         from nfm_db.main import app
+
+        async def override_get_db():
+            yield db_session
+
+        app.dependency_overrides[get_db] = override_get_db
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
+        app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_health_includes_worker_fields(self, client: AsyncClient) -> None:
+        """Health endpoint returns worker health fields."""
         from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
 
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         assert response.status_code == 200
         data = response.json()
         assert "status" in data
@@ -199,20 +206,15 @@ class TestHealthEndpoint:
         worker_health.reset()
 
     @pytest.mark.asyncio
-    async def test_health_shows_degraded_after_failures(self) -> None:
+    async def test_health_shows_degraded_after_failures(self, client: AsyncClient) -> None:
         """Health endpoint shows 'degraded' after >= 5 failures."""
-        from httpx import ASGITransport, AsyncClient
-
-        from nfm_db.main import app
         from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
         for _ in range(5):
             worker_health.record_failure("LLM 502")
 
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         assert data["status"] == "degraded"
         assert data["consecutive_failures"] == 5
@@ -221,18 +223,13 @@ class TestHealthEndpoint:
         worker_health.reset()
 
     @pytest.mark.asyncio
-    async def test_health_shows_ok_initially(self) -> None:
+    async def test_health_shows_ok_initially(self, client: AsyncClient) -> None:
         """Health endpoint shows 'ok' with zero failures by default."""
-        from httpx import ASGITransport, AsyncClient
-
-        from nfm_db.main import app
         from nfm_db.monitoring.worker_health import worker_health
 
         worker_health.reset()
 
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         assert data["status"] == "ok"
         assert data["consecutive_failures"] == 0

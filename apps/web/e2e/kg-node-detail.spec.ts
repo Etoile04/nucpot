@@ -83,13 +83,18 @@ test.describe("KG Node Detail — interaction tests", { tag: "@integration" }, (
 
     await page.goto(NODE_URL, { waitUntil: "domcontentloaded" })
 
-    // The page has a "Back to search" button
+    // Wait for hydration — the back button is rendered by React after
+    // hydration, not present at DOMContentLoaded time on Next.js pages.
     const backLink = page.getByRole("link", { name: /返回|back|搜索/i })
     const backBtn = page.getByRole("button", { name: /返回|back|搜索/i })
-    const hasBack = await backLink.count() + await backBtn.count()
-
-    // At least one back navigation element should exist
-    expect(hasBack).toBeGreaterThan(0)
+    // Wait for either element to appear (up to 15s for slow hydration
+    // against the live site).
+    await expect
+      .poll(async () => (await backLink.count()) + (await backBtn.count()), {
+        timeout: 15_000,
+        intervals: [500, 1000, 2000],
+      })
+      .toBeGreaterThan(0)
 
     expect(filterRealErrors(consoleErrors)).toEqual([])
   })

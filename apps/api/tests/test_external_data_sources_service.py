@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from httpx import Request, Response
 
@@ -224,32 +225,82 @@ class TestExternalDataSourceClient:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_query_openkim_returns_placeholder(
+    async def test_query_openkim_returns_real_api_results(
         self, clean_cache, clean_rate_limiters
     ) -> None:
-        """OpenKIM query returns placeholder structure."""
-        client = ExternalDataSourceClient(timeout=5.0)
+        """OpenKIM query hits query.openkim.org (anonymous) and maps to 'potentials'.
+
+        BUG-24 / NFM-3875: the previous implementation was a placeholder.
+        """
+        from httpx import Response
+
+        class _OkTransport:
+            async def handle_async_request(self, request: Request) -> Response:
+                return Response(
+                    200,
+                    json=[
+                        "EAM_Dynamo_ErcolessiAdams_1994_Al__MO_123629422045_006",
+                    ],
+                )
+
+        client = ExternalDataSourceClient(
+            timeout=5.0,
+            client=httpx.AsyncClient(timeout=5.0, transport=_OkTransport()),
+        )
         try:
             result = await client.query_openkim("U", "lattice_constant")
             assert result is not None
             assert result["source"] == "openkim"
             assert result["species"] == "U"
-            assert "potentials" in result
+            assert result["property"] == "lattice_constant"
+            assert isinstance(result["potentials"], list)
+            assert len(result["potentials"]) == 1
+            # OpenKIM returns long-names; the canonical KIM ID is the
+            # trailing ``__MO_<digits>_<version>`` segment.
+            assert "MO_123629422045_006" in result["potentials"][0]["kim_id"]
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_query_materials_project_returns_placeholder(
+    async def test_query_materials_project_returns_real_api_results(
         self, clean_cache, clean_rate_limiters
     ) -> None:
-        """Materials Project query returns placeholder structure."""
-        client = ExternalDataSourceClient(timeout=5.0)
+        """Materials Project query hits api.materialsproject.org with X-API-KEY.
+
+        BUG-24 / NFM-3875: the previous implementation was a placeholder.
+        """
+        from httpx import Response
+
+        class _OkTransport:
+            async def handle_async_request(self, request: Request) -> Response:
+                return Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "material_id": "mp-aaabxgaz",
+                                "formula": "UO2",
+                                "elements": ["O", "U"],
+                            }
+                        ],
+                        "meta": {"total_doc": 1},
+                    },
+                )
+
+        client = ExternalDataSourceClient(
+            timeout=5.0,
+            api_key="test-mp-key-32chars-abcdefghijkl",
+            client=httpx.AsyncClient(timeout=5.0, transport=_OkTransport()),
+        )
         try:
             result = await client.query_materials_project("UO2", "band_gap")
             assert result is not None
             assert result["source"] == "materials_project"
             assert result["formula"] == "UO2"
-            assert "materials" in result
+            assert result["property"] == "band_gap"
+            assert isinstance(result["materials"], list)
+            assert len(result["materials"]) == 1
+            assert result["materials"][0]["material_id"] == "mp-aaabxgaz"
         finally:
             await client.close()
 

@@ -1,4 +1,17 @@
-"""Leakage-safe PhaseClassifier v2.0 training utilities."""
+"""Leakage-safe PhaseClassifier v2.0 training utilities.
+
+Every training run logs a ``dummy_baseline`` block (NFM-3957, NDE ruling on
+NFM-3954 item 4). The block scores ``DummyClassifier(strategy='most_frequent')``
+on the *same* locked GroupKFold splits used for the model, so the comparison is
+paired per fold rather than against a remembered constant.
+
+``lift_over_dummy_pp < 0`` is a fail-closed trigger: the model scored below a
+constant predictor, so the run is re-labelled ``[EXPLORATORY]`` and
+``rd3_triggered`` is set. This exists because the original accuracy-based
+acceptance bar (>75% / >80%) was passable by predicting ``H`` for every
+composition on the 2951:784 H/M split — see
+``apps/api/src/nfm_db/ml/README.md``.
+"""
 
 from __future__ import annotations
 
@@ -43,6 +56,12 @@ MAX_CV_ACCURACY = 0.85
 RD3_ACCURACY_TRIGGER = 0.95
 RD3_STD_TRIGGER = 0.08
 REQUIRED_CV_SPLITS = 5
+DUMMY_BASELINE_STRATEGY = "most_frequent"
+DUMMY_BASELINE_FAIL_CLOSED_NOTE = (
+    "lift_over_dummy_pp < 0 means the model scored below a constant predictor on "
+    "the same GroupKFold splits; the run is re-labelled [EXPLORATORY] and "
+    "rd3_triggered is set."
+)
 
 
 @dataclass(frozen=True)
@@ -322,6 +341,85 @@ def _aggregate_confusion_matrix(cv_result: Any) -> list[list[int]]:
     return np.sum(np.stack(matrices), axis=0).tolist()
 
 
+def locked_group_kfold_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: list[str],
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Materialize the locked GroupKFold splits used by the v2.0 protocol.
+
+    Returned as explicit index pairs so any baseline scored against them is
+    paired fold-for-fold with the model instead of merely using an equivalently
+    configured splitter.
+    """
+    from sklearn.model_selection import GroupKFold
+
+    splitter = GroupKFold(n_splits=REQUIRED_CV_SPLITS)
+    return [(train_idx, test_idx) for train_idx, test_idx in splitter.split(X, y, groups=groups)]
+
+
+def compute_dummy_baseline(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: list[str],
+    *,
+    model_macro_f1: float,
+) -> dict[str, Any]:
+    """Score a constant predictor on the locked splits and report the model's lift.
+
+    Args:
+        X: Feature matrix handed to the model.
+        y: Label array handed to the model.
+        groups: Element-system label per sample (same ordering as ``X``).
+        model_macro_f1: The model's mean macro-F1 over the same splits.
+
+    Returns:
+        The ``dummy_baseline`` metrics block. ``lift_over_dummy_pp`` is the
+        model's macro-F1 advantage in percentage points; negative values are a
+        fail-closed trigger (see ``DUMMY_BASELINE_FAIL_CLOSED_NOTE``).
+    """
+    from sklearn.dummy import DummyClassifier
+    from sklearn.model_selection import cross_val_score
+
+    splits = locked_group_kfold_splits(X, y, groups)
+    fold_scores = cross_val_score(
+        DummyClassifier(strategy=DUMMY_BASELINE_STRATEGY),
+        X,
+        y,
+        cv=splits,
+        scoring="f1_macro",
+    )
+    macro_f1_mean = float(np.mean(fold_scores))
+    return {
+        "strategy": DUMMY_BASELINE_STRATEGY,
+        "macro_f1_mean": round(macro_f1_mean, 6),
+        "macro_f1_std": round(float(np.std(fold_scores)), 6),
+        "macro_f1_per_fold": [round(float(score), 6) for score in fold_scores],
+        "n_splits": len(splits),
+        "lift_over_dummy_pp": round((float(model_macro_f1) - macro_f1_mean) * 100, 2),
+        "cv_strategy": "groupkf",
+        "paired_with_model_splits": True,
+        "fail_closed_rule": DUMMY_BASELINE_FAIL_CLOSED_NOTE,
+    }
+
+
+def _apply_dummy_baseline_gate(
+    assessment: RD2Assessment,
+    dummy_baseline: Mapping[str, Any],
+) -> RD2Assessment:
+    """Fail closed when the model does not beat the constant predictor."""
+    if float(dummy_baseline["lift_over_dummy_pp"]) >= 0.0:
+        return assessment
+    return RD2Assessment(
+        rd2_label="[EXPLORATORY]",
+        rd3_triggered=True,
+        reasons=(
+            *assessment.reasons,
+            "macro-F1 fell below the DummyClassifier(most_frequent) baseline",
+        ),
+    )
+
+
 def _build_metrics(
     prepared: PreparedPhaseData,
     cv_result: Any,
@@ -334,13 +432,22 @@ def _build_metrics(
     groups = build_group_labels(list(prepared.compositions))
     group_counts = Counter(groups)
     importance = _feature_importance(estimator)
-    assessment = _apply_importance_gate(
-        assess_v20_cv(
-            mean_accuracy=cv_result.mean_accuracy,
-            std_accuracy=cv_result.std_accuracy,
-            max_fold_accuracy=cv_result.max_accuracy,
+    dummy_baseline = compute_dummy_baseline(
+        prepared.X,
+        prepared.y,
+        groups,
+        model_macro_f1=cv_result.macro_avg_f1,
+    )
+    assessment = _apply_dummy_baseline_gate(
+        _apply_importance_gate(
+            assess_v20_cv(
+                mean_accuracy=cv_result.mean_accuracy,
+                std_accuracy=cv_result.std_accuracy,
+                max_fold_accuracy=cv_result.max_accuracy,
+            ),
+            importance,
         ),
-        importance,
+        dummy_baseline,
     )
     cv_dict = cv_result.to_dict()
     api_root = Path(__file__).resolve().parents[3]
@@ -367,6 +474,7 @@ def _build_metrics(
         "cv_macro_avg_precision": cv_result.macro_avg_precision,
         "cv_macro_avg_recall": cv_result.macro_avg_recall,
         "cv_per_fold_details": cv_dict["per_fold_details"],
+        "dummy_baseline": dummy_baseline,
         "confusion_matrix": _aggregate_confusion_matrix(cv_result),
         "group_labels": sorted(group_counts),
         "group_sizes": dict(sorted(group_counts.items())),

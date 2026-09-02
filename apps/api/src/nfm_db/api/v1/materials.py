@@ -1,12 +1,14 @@
 """Materials REST API endpoints (NFM-696).
 
-- GET  /materials                       — paginated, filtered list
-- GET  /materials/search                — full-text search by name/alias/formula
-- GET  /materials/{id}                  — detail with aliases + composition
-- GET  /materials/{id}/properties       — property table (NFM-1067)
-- POST /materials                       — create (admin)
-- POST /materials/batch-import          — bulk CSV/JSON import (NFM-1141)
-- PATCH /materials/{id}                 — update (admin)
+- GET  /materials                                    — paginated, filtered list
+- GET  /materials/search                             — full-text search by name/alias/formula
+- GET  /materials/{id}                               — detail with aliases + composition
+- GET  /materials/{id}/properties                    — property table (NFM-1067)
+- POST /materials                                    — create (admin)
+- POST /materials/batch-import                       — bulk CSV/JSON import (NFM-1141)
+- PATCH /materials/{id}                              — update (admin)
+- GET  /material-categories                          — taxonomy list (NFM-3917 / Tier 1D)
+- GET  /material-categories/uncategorized-count      — count of NULL category_id (NFM-4030)
 """
 
 from __future__ import annotations
@@ -26,10 +28,12 @@ from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse, PaginationParams
 from nfm_db.schemas.material import (
     BatchImportResult,
+    MaterialCategoryListResponse,
     MaterialCreate,
     MaterialDetailResponse,
     MaterialResponse,
     MaterialUpdate,
+    UncategorizedMaterialCountResponse,
 )
 from nfm_db.schemas.property import MaterialPropertyListResponse
 from nfm_db.services.batch_import_service import (
@@ -38,8 +42,10 @@ from nfm_db.services.batch_import_service import (
     get_import_lock,
 )
 from nfm_db.services.material_service import (
+    count_uncategorized_materials,
     create_material,
     get_material,
+    list_material_categories,
     list_materials,
     search_materials,
     update_material,
@@ -51,7 +57,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["材料管理"])
 
 
-@router.get("/materials", response_model=ApiResponse[PaginatedResponse[MaterialResponse]], summary="分页查询材料列表", description="返回分页的材料列表，支持按类别筛选和排序。\n\nReturn a paginated list of materials, optionally filtered by category.")
+@router.get(
+    "/materials",
+    response_model=ApiResponse[PaginatedResponse[MaterialResponse]],
+    summary="分页查询材料列表",
+    description="返回分页的材料列表，支持按类别筛选和排序。\n\nReturn a paginated list of materials, optionally filtered by category.",
+)
 async def list_materials_endpoint(
     pagination: PaginationParams = Depends(PaginationParams),
     category_id: UUID | None = Query(None, description="Filter by category"),
@@ -74,13 +85,27 @@ async def list_materials_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/materials/search", response_model=ApiResponse[PaginatedResponse[MaterialResponse]], summary="搜索材料", description="按材料名称、化学式或别名进行模糊搜索。\n\nSearch materials by name, formula, or alias (ILIKE).")
+@router.get(
+    "/materials/search",
+    response_model=ApiResponse[PaginatedResponse[MaterialResponse]],
+    summary="搜索材料",
+    description="按材料名称、化学式或别名进行模糊搜索。\n\nSearch materials by name, formula, or alias (ILIKE). Optionally filter by category (NFM-3917 / Tier 1D).",
+)
 async def search_materials_endpoint(
     q: str = Query("", description="Search query"),
     pagination: PaginationParams = Depends(PaginationParams),
+    category_id: UUID | None = Query(
+        None,
+        description="Optional category filter (NFM-3917 / Tier 1D). Composes with the search query.",
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
     """Search materials by name, formula, or alias (ILIKE).
+
+    Optional ``category_id`` composes with the search query — search and
+    category filter are NOT mutually exclusive (NFM-3917 / Tier 1D CPO
+    decision; mutual exclusion would silently drop the user's category
+    selection when they type a query).
 
     分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
     """
@@ -89,11 +114,57 @@ async def search_materials_endpoint(
         query=q,
         page=pagination.page,
         limit=pagination.per_page,
+        category_id=category_id,
     )
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/materials/{material_id}", response_model=ApiResponse[MaterialDetailResponse], summary="获取材料详情", description="获取单个材料的详细信息，包含别名和成分数据。\n\nReturn a single material with aliases and composition.")
+@router.get(
+    "/material-categories",
+    response_model=ApiResponse[MaterialCategoryListResponse],
+    summary="材料类别列表",
+    description="返回所有材料类别（用于 /materials 页面的类别下拉筛选，NFM-3917 / Tier 1D）。\n\nList every material category (ordered for the /materials category dropdown).",
+)
+async def list_material_categories_endpoint(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[MaterialCategoryListResponse]:
+    """List every material category for the /materials filter dropdown.
+
+    NFM-3917 / Tier 1D: read-only, public, no auth. Sorted by
+    ``(sort_order ASC, name ASC)`` so the seeded taxonomy renders in
+    curator-chosen order.
+    """
+    result = await list_material_categories(db)
+    return ApiResponse(success=True, data=result)
+
+
+@router.get(
+    "/material-categories/uncategorized-count",
+    response_model=ApiResponse[UncategorizedMaterialCountResponse],
+    summary="未分类材料计数",
+    description="返回 category_id IS NULL 的材料数量 — 这些材料不会出现在任何类别筛选结果中（NFM-4030 / Tier 1D 静默缺口修复）。\n\nReturn the count of materials whose ``category_id IS NULL``. These rows are invisible under any category filter on /materials.",
+)
+async def uncategorized_material_count_endpoint(
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[UncategorizedMaterialCountResponse]:
+    """Return the count of materials with no category (NFM-4030).
+
+    Read-only, public, no auth — mirrors ``GET /material-categories``.
+    The ``/materials`` page uses this to render a notice when the
+    count is positive so users can see that some materials are not
+    surfaced by any category filter. The count comes from a real
+    ``COUNT(*)`` aggregation; the UI never hardcodes a number.
+    """
+    result = await count_uncategorized_materials(db)
+    return ApiResponse(success=True, data=result)
+
+
+@router.get(
+    "/materials/{material_id}",
+    response_model=ApiResponse[MaterialDetailResponse],
+    summary="获取材料详情",
+    description="获取单个材料的详细信息，包含别名和成分数据。\n\nReturn a single material with aliases and composition.",
+)
 async def get_material_endpoint(
     material_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -107,7 +178,13 @@ async def get_material_endpoint(
     return ApiResponse(success=True, data=detail)
 
 
-@router.post("/materials", response_model=ApiResponse[MaterialResponse], status_code=201, summary="创建材料", description="创建一条新的材料记录。\n\nCreate a new material.")
+@router.post(
+    "/materials",
+    response_model=ApiResponse[MaterialResponse],
+    status_code=201,
+    summary="创建材料",
+    description="创建一条新的材料记录。\n\nCreate a new material.",
+)
 async def create_material_endpoint(
     payload: MaterialCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -120,7 +197,12 @@ async def create_material_endpoint(
     return ApiResponse(success=True, data=result)
 
 
-@router.patch("/materials/{material_id}", response_model=ApiResponse[MaterialResponse], summary="更新材料", description="更新已有材料的信息字段。\n\nUpdate an existing material.")
+@router.patch(
+    "/materials/{material_id}",
+    response_model=ApiResponse[MaterialResponse],
+    summary="更新材料",
+    description="更新已有材料的信息字段。\n\nUpdate an existing material.",
+)
 async def update_material_endpoint(
     material_id: UUID,
     payload: MaterialUpdate,

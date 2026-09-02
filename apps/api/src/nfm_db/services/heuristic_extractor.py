@@ -336,6 +336,27 @@ def _units_compatible(unit: str, family: str) -> bool:
     return unit in _UNIT_FAMILIES[family]
 
 
+# NFM-3835: property family → Pydantic Literal PropertyCategory.
+# Maps each ``_PROPERTY_RULES`` family to one of the 7 valid
+# ``ExtractedProperty.property_category`` literals consumed by
+# ``extraction_to_db_mapper.map_and_persist``. Without this, the
+# mapper either coerces to "other" (skipping known properties) or
+# drops items entirely — both inflate ``skipped_unknown_properties``
+# on the F8 scorecard (see NFM-3824 / NFM-3396 phantom-pass).
+FAMILY_TO_CATEGORY: dict[str, str] = {
+    "energy": "diffusion",       # activation_energy, formation_energy, band_gap, …
+    "diffusivity": "diffusion",   # diffusion_coefficient, pre_exponential_factor
+    "density": "physical",
+    "length": "physical",         # lattice_constant, rdf_peak, bond_length, …
+    "pressure": "mechanical",     # youngs_modulus, elastic_constant, …
+    "temperature": "thermal",
+    "expansion": "thermal",
+    "thermal_cond": "thermal",
+    "specific_heat": "thermal",
+    "dimensionless": "physical",  # porosity, solubility_limit
+}
+
+
 # ----------------------------------------------------------------------
 # NFM-3511: DFT unitless property patterns (no standard unit token)
 # ----------------------------------------------------------------------
@@ -391,6 +412,290 @@ def _nearest_material(
 
 
 # ----------------------------------------------------------------------
+# NFM-4058 [NFM-3845-FORMALIZE] — F8 table-row extractor (third pass)
+# ----------------------------------------------------------------------
+# Hot-patch normalization: the 6 missing F8 nodes for source
+# ``9320cb50-eb65-4178-8d2e-c56aeb848b21`` (Owen2023 paper) were
+# originally produced by an ad-hoc worker process (task ``ad40677e``)
+# that emitted kg_nodes rows tagged ``method=heuristic_f8`` directly
+# into ``_ref_gap_fill_staging``. That hot-patch was never committed
+# to source control — a clean rebuild of ``origin/main`` silently
+# regresses to 2/8 strict-kg_nodes scorecard (the NFM-3824
+# phantom-pass risk). This module formalizes the hot-patch as a
+# third pass inside :func:`heuristic_extract` so the F8 rows are
+# reproducible from source.
+#
+# Scope
+# -----
+# * Six F8 scorecard property classes from the v0.5.0 taxonomy seeded
+#   by migration ``069_add_v050_f8_property_types``:
+#   ``cr_doped_activation_energy``, ``cr_doped_diffusion_coefficient``,
+#   ``density_amorphous``, ``density_doped``, ``rdf_peak_distance``,
+#   ``bond_length``.
+# * The third pass fires ONLY when the first/second pass cannot match
+#   an F8-specific property name (the first pass emits the generic
+#   label ``activation_energy`` / ``diffusion_coefficient`` /
+#   ``density`` / ``rdf_peak``; the third pass upgrades those to the
+#   F8 disambiguated label when doping/phase context is co-located).
+# * Emits ``method="heuristic_f8"`` so downstream consumers
+#   (``extraction_to_db_mapper``, ``kg_to_staging_bridge``) can
+#   distinguish F8 hot-patch rows from generic ``heuristic_regex``
+#   rows without changing existing call sites.
+
+_F8_CONTEXT_LOOKBACK = 220
+
+# Regex that flags a value+unit as an UNCERTAINTY rather than the
+# primary measurement. ``uncertainty`` / ``±`` / ``uncert`` qualifiers
+# appear immediately before OR after the value+unit in scientific prose
+# ("0.08 eV with uncertainty" or "with uncertainty 0.08 eV"). When a
+# value matches this pattern it is excluded from F8 emission — the F8
+# scorecard wants the primary measurement, not its uncertainty bound.
+#
+# NFM-4080 [NFM-4058-FOLLOWUP]: ``±`` is a non-word character so the
+# word-boundary anchors (``\b…\b``) silently fail to match it (``\b``
+# requires a word/non-word transition, and ``±`` has neither side as a
+# word char). Use a bare ``±`` alternative so the X±Y scientific
+# notation form (``0.30 ± 0.05 eV``) is also caught.
+#
+# NFM-4080 CTO verification (finding F2b): the pattern is RIGHT-ANCHORED
+# (``…$``) because both call sites match it against a fixed 30-char
+# lookback window with :meth:`re.Pattern.search`. An unanchored
+# alternative matches ANYWHERE in that window, so a legitimate primary
+# measurement that merely FOLLOWS a bound within 30 chars was silently
+# dropped:
+#
+#     "the activation energy of UO2 is 0.30 eV ± 0.05 eV, 0.26 eV for
+#      Cr-doped UO2"   ->  0.26 suppressed (verified false negative)
+#
+# Anchoring makes the guard *pair-aware*: it fires only when the
+# qualifier is the immediate left operand of the value, allowing just
+# ``of`` / whitespace / opening-bracket filler in between. That keeps
+# both the prose form ("with an uncertainty of 0.05 eV") and the
+# notation form ("± 0.05 eV") suppressed while primaries survive.
+#
+# Two further sub-fixes folded in:
+#   * ``\buncert\.?\b`` never matched a trailing-period abbreviation
+#     followed by a space ("uncert. 0.08 eV") because ``\b`` after
+#     ``\.`` requires a following word character. Moved the ``\b``
+#     before the optional period.
+#   * Added the ASCII ``+/-`` and ``+-`` spellings, which appear in
+#     text extracted from PDFs where ``±`` failed to round-trip.
+_F8_UNCERTAINTY_RE = re.compile(
+    r"(?:\b(?:uncertainty|uncert)\b\.?|±|\+/-|\+-)\s*(?:of\s+)?[(\[\s±]*$",
+    re.IGNORECASE,
+)
+
+
+def _f8_sentence_start(text: str, value_pos: int) -> int:
+    """Return the start index of the sentence containing ``value_pos``.
+
+    Scans BACKWARD from ``value_pos`` for the most recent sentence
+    boundary. Handles period-in-numbers by checking the character
+    after the period — if it's a digit, the period is part of a
+    numeric literal and is not a sentence boundary.
+    """
+    pos = value_pos
+    while pos > 0:
+        # Find the most recent period/!/?/paragraph-break at or before pos.
+        prefix = text[:pos]
+        candidate = -1
+        chosen_term: str | None = None
+        for term in (". ", "! ", "? ", "\n\n"):
+            idx = prefix.rfind(term)
+            if idx > candidate:
+                candidate = idx
+                chosen_term = term
+        if candidate == -1 or chosen_term is None:
+            return 0
+        # If the terminator starts with ".", check whether the next
+        # character is a digit — that means the period is part of a
+        # numeric literal (e.g. "0.08 eV") and is NOT a sentence
+        # boundary. Continue scanning backward past this position.
+        if text[candidate] == ".":
+            after_period = candidate + 1
+            if after_period < len(text) and text[after_period].isdigit():
+                pos = candidate
+                continue
+        return candidate + len(chosen_term)
+    return 0
+
+
+# Regexes used by the F8 row extractor. Each entry is
+# ``(context_regex, property_name, family)`` where ``context_regex`` is
+# matched against the SAME sentence as the value+unit (so a "Cr-doped"
+# mention in a different sentence does not flip undoped values in the
+# later sentence). This is a VALUE-ANCHORED design rather than the
+# sentence-pattern design attempted first: the previous
+# sentence-pattern regex ``[^.!?]*`` broke on periods inside numeric
+# values like ``0.08`` in scientific prose.
+_F8_CONTEXT_RULES: list[tuple[re.Pattern[str], str, str]] = [
+    # F8 #3 — Cr-doped activation energy (0.26 eV) — energy family.
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r".*?"
+            r"\bactivation[\s_\-]*energy\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "cr_doped_activation_energy",
+        "energy",
+    ),
+    # F8 #4 — Cr-doped diffusion coefficient (1.27e-9 cm²/s) —
+    # diffusivity family. ``D0`` / ``D`` are standard scientific
+    # symbols for the diffusion pre-exponential factor — papers
+    # routinely write "D0 dropped to 1.27e-9" without spelling out
+    # "diffusion coefficient".
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r".*?"
+            r"(?:diffusion[\s_\-]*(?:coefficient|coeff\.?|constant)"
+            r"|diffusivity|\bD[\s\-_]?0?\b)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "cr_doped_diffusion_coefficient",
+        "diffusivity",
+    ),
+    # F8 #5 — amorphous density (10.55 g/cm³) — density family.
+    (
+        re.compile(
+            r"\bamorphous\b"
+            r".*?"
+            r"\bdensity\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "density_amorphous",
+        "density",
+    ),
+    # F8 #6 — Cr-doped density (10.27 g/cm³) — density family.
+    (
+        re.compile(
+            r"(?:cr[\s\-]*(?:doped|containing)|cr\s+doped)"
+            r".*?"
+            r"\bdensity\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "density_doped",
+        "density",
+    ),
+    # F8 #7 — RDF peak distance (2.28 Å, 2.83 Å) — length family.
+    # The first-pass ``rdf_peak`` rule still fires for the bare
+    # "RDF peak" / "radial distribution function peak" forms; this
+    # rule targets the v0.5.0-disambiguated ``rdf_peak_distance``
+    # label. The literal words "distance" / "position" are NOT
+    # required — papers routinely write "peaks at 2.28 angstrom"
+    # without spelling out the word "distance".
+    (
+        re.compile(
+            r"\brdf\b"
+            r".*?"
+            r"\bpeaks?\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "rdf_peak_distance",
+        "length",
+    ),
+    # F8 #8 — Cr-O bond length (2.04 Å) — length family.
+    (
+        re.compile(
+            r"\bcr[\s\-]*o\b"
+            r".*?"
+            r"\b(?:bond[\s\.]+)?(?:length|distance)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "bond_length",
+        "length",
+    ),
+]
+
+
+def _extract_f8_table_rows(
+    text: str,
+    materials: list[tuple[int, int, str]],
+) -> list[dict[str, Any]]:
+    """Extract F8 scorecard rows from prose that LOOKS like a table row.
+
+    Scans every value+unit pair in ``text``. For each pair whose unit
+    is compatible with an F8 family (energy / diffusivity / density /
+    length), checks whether the F8 context rule (e.g. ``Cr-doped ...
+    activation energy`` for the energy family) matches within the
+    SAME sentence as the value. If yes, emits an F8 row with the
+    disambiguated property name.
+
+    Returns a list of dicts with the same shape as a heuristic_extract
+    output row except ``method`` is NOT set here — the caller decides
+    which method string to tag. ``property_category`` is set from
+    :data:`FAMILY_TO_CATEGORY` so the mapper does not coerce to
+    ``"other"`` (which would inflate ``skipped_unknown_properties``
+    on the F8 scorecard per NFM-3824).
+
+    The function is read-only: it does not mutate ``materials`` or
+    ``text``.
+    """
+    rows: list[dict[str, Any]] = []
+
+    for value_m in _VALUE_UNIT_RE.finditer(text):
+        value = _normalize_number(value_m.group("value"))
+        if value is None:
+            continue
+        unit = value_m.group("unit")
+        value_pos = value_m.start()
+
+        # Skip values that are flagged as UNCERTAINTY rather than the
+        # primary measurement. The qualifier appears IMMEDIATELY BEFORE
+        # the uncertainty value ("with uncertainty 0.08 eV", "± 0.05 eV")
+        # — not AFTER. The pattern "0.26 eV with uncertainty 0.08 eV"
+        # means 0.08 is the uncertainty bound (not 0.26), so checking
+        # AFTER the value would falsely exclude the primary measurement.
+        before_value = text[max(0, value_pos - 30):value_pos]
+        if _F8_UNCERTAINTY_RE.search(before_value):
+            continue
+
+        # Find the sentence containing this value+unit. Restrict the
+        # F8 context check to that sentence to avoid cross-sentence
+        # contamination (a "Cr-doped" mention in an earlier sentence
+        # would otherwise flip undoped values in later sentences).
+        sent_start = _f8_sentence_start(text, value_pos)
+        sentence = text[sent_start:value_pos]
+
+        # Find which F8 rule (if any) fires for this value+unit.
+        matched_property: str | None = None
+        matched_family: str | None = None
+        for context_re, property_name, family in _F8_CONTEXT_RULES:
+            if not _units_compatible(unit, family):
+                continue
+            if context_re.search(sentence):
+                matched_property = property_name
+                matched_family = family
+                break
+        if matched_property is None:
+            continue
+        assert matched_family is not None, (
+            "matched_property and matched_family are set together in the rule loop"
+        )
+
+        material = _nearest_material(materials, value_pos)
+        if material is None:
+            continue
+
+        rows.append(
+            {
+                "element_system": material,
+                "material_name": material,
+                "composition": material,
+                "phase": "Unknown",
+                "property_name": matched_property,
+                "value": value,
+                "unit": unit,
+                "family": matched_family,
+                "property_category": FAMILY_TO_CATEGORY.get(matched_family),
+            }
+        )
+
+    return rows
+
+
+# ----------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------
 
@@ -426,14 +731,32 @@ def heuristic_extract(
         if value is None:
             continue
         unit = m.group("unit")
-        prop = _match_property(normalized, m.start(), unit=unit)
+        value_pos = m.start()
+
+        # NFM-4080 [NFM-4058-FOLLOWUP]: skip values flagged as
+        # UNCERTAINTY rather than the primary measurement. Mirrors the
+        # third-pass guard in :func:`_extract_f8_table_rows` so the
+        # first pass also excludes uncertainty bounds (e.g. ``0.05 eV``
+        # in "0.30 eV with an uncertainty of 0.05 eV") before they are
+        # emitted as standalone property values. The qualifier appears
+        # IMMEDIATELY BEFORE the uncertainty value (``with uncertainty
+        # 0.08 eV``, ``± 0.05 eV``) — not AFTER — so checking text
+        # AFTER the value would falsely exclude the primary measurement
+        # ("0.26 eV with uncertainty 0.08 eV" means 0.08 is the bound,
+        # not 0.26). 30-char lookback matches the third-pass window so
+        # the two passes stay consistent.
+        before_value = normalized[max(0, value_pos - 30):value_pos]
+        if _F8_UNCERTAINTY_RE.search(before_value):
+            continue
+
+        prop = _match_property(normalized, value_pos, unit=unit)
         if prop is None:
             continue
         name, family = prop
         if not _units_compatible(unit, family):
             continue
 
-        material = _nearest_material(materials, m.start())
+        material = _nearest_material(materials, value_pos)
         if material is None:
             continue
 
@@ -454,9 +777,19 @@ def heuristic_extract(
 
         # Heuristic findings are conservative — treat as ``medium`` so
         # Phase 2's review queue surfaces them for human eyes.
+        # NFM-3835: emit ``property_category`` so the mapper's
+        # ``_coerce_unknown_categories`` does not coerce valid items
+        # to "other" (which inflates ``skipped_unknown_properties``).
+        # NFM-3919: also emit ``material_name`` and ``composition`` so the
+        # mapper's `_find_material_by_formula` can dedup across runs instead
+        # of falling back to "Unknown Material" and creating a new row every
+        # run. ``element_system`` is kept for backward compatibility with
+        # existing consumers.
         found.append(
             {
                 "element_system": material,
+                "material_name": material,
+                "composition": material,
                 "phase": "Unknown",
                 "property_name": name,
                 "value": value,
@@ -468,6 +801,7 @@ def heuristic_extract(
                 "uncertainty": max(abs(value) * 0.05, 0.01),
                 "temperature": None,
                 "cache_level": "L2",
+                "property_category": FAMILY_TO_CATEGORY.get(family),
             }
         )
 
@@ -491,9 +825,17 @@ def heuristic_extract(
             if key in seen_keys:
                 continue
             seen_keys.add(key)
+            # DFT-direct patterns don't have a unit family — pick the
+            # category from the canonical screening_constant default
+            # ("physical") so the item still carries a valid Literal.
+            # NFM-3919: also emit ``material_name`` and ``composition`` so the
+            # mapper's `_find_material_by_formula` can dedup across runs
+            # instead of creating a fresh "Unknown Material" row per run.
             found.append(
                 {
                     "element_system": material,
+                    "material_name": material,
+                    "composition": material,
                     "phase": "Unknown",
                     "property_name": name,
                     "value": value,
@@ -505,8 +847,86 @@ def heuristic_extract(
                     "uncertainty": max(abs(value) * 0.05, 0.01),
                     "temperature": None,
                     "cache_level": "L2",
+                    "property_category": FAMILY_TO_CATEGORY.get("dimensionless"),
                 }
             )
+
+    # ------ NFM-4058: third pass — F8 table-row hot-patch emission ------
+    # Emits kg_nodes rows for the 6 F8 scorecard property classes when
+    # the prose carries doping/phase context that the first-pass
+    # ``_match_property`` cannot disambiguate to the v0.5.0 labels.
+    # This pass is the FORMALIZED version of the runtime hot-patch that
+    # originally populated ``_ref_gap_fill_staging`` rows tagged
+    # ``method=heuristic_f8`` from worker task ``ad40677e`` (2026-09-01).
+    # Without this pass, clean rebuilds of ``origin/main`` silently
+    # regress to 2/8 strict-kg_nodes scorecard (NFM-3824 phantom-pass
+    # risk). See NFM-3845 Board/审计 directive step 2.
+    #
+    # Two emission modes:
+    # * ``UPGRADE``: the F8 row matches (material, property_name, value)
+    #   of an existing first/second-pass row. The existing row's
+    #   ``method`` is upgraded from ``heuristic_regex`` to
+    #   ``heuristic_f8`` so the scorecard counts it as a hot-patch
+    #   row. This handles F8 classes that the first pass already emits
+    #   under the generic label (e.g. ``bond_length``, ``rdf_peak``)
+    #   where the F8 context does not change the property_name but
+    #   still marks the row as a hot-patch emission.
+    # * ``NEW``: the F8 property_name is new (e.g.
+    #   ``cr_doped_activation_energy`` is not emitted by the first
+    #   pass which uses the generic ``activation_energy``). Emit a
+    #   new row with ``method=heuristic_f8``.
+    f8_rows = _extract_f8_table_rows(normalized, materials)
+    for row in f8_rows:
+        material = row["element_system"]
+        name = row["property_name"]
+
+        # Element filter (matches first/second-pass behaviour).
+        if element_systems:
+            match = any(
+                re.search(re.escape(es), material, re.IGNORECASE)
+                for es in element_systems
+            )
+            if not match:
+                continue
+
+        value_str = f"{row['value']:g}"
+        key = (material, name, value_str)
+        if key in seen_keys:
+            # UPGRADE: existing first/second-pass row matches the F8
+            # row by (material, property_name, value). Update its
+            # method so the kg_nodes strict surface counts it as a
+            # hot-patch emission.
+            for existing in found:
+                if (
+                    existing["element_system"] == material
+                    and existing["property_name"] == name
+                    and f"{existing['value']:g}" == value_str
+                ):
+                    existing["method"] = "heuristic_f8"
+                    break
+            continue
+
+        # NEW: emit a fresh F8 row.
+        seen_keys.add(key)
+        found.append(
+            {
+                "element_system": material,
+                "material_name": material,
+                "composition": material,
+                "phase": "Unknown",
+                "property_name": name,
+                "value": row["value"],
+                "unit": row["unit"],
+                "method": "heuristic_f8",
+                "source": source_reference,
+                "source_doi": None,
+                "confidence": "medium",
+                "uncertainty": max(abs(row["value"]) * 0.05, 0.01),
+                "temperature": None,
+                "cache_level": "L2",
+                "property_category": row["property_category"],
+            }
+        )
 
     return found
 

@@ -11,13 +11,14 @@ else). The classes at the bottom of this module pin that taxonomy so a
 future change cannot silently re-promote a WARN category back to FAIL.
 """
 
+# ruff: noqa: UP031
+
 from __future__ import annotations
 
 import sys
 import unittest
 from pathlib import Path
 
-import pytest
 from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_engine
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -58,18 +59,10 @@ class TestNormalizeOp(unittest.TestCase):
 
     def _table(self, name: str, *col_names: str) -> Table:
         metadata = MetaData()
-        cols = [
-            Column(cname, Integer if cname == "id" else String(50))
-            for cname in col_names
-        ]
+        cols = [Column(cname, Integer if cname == "id" else String(50)) for cname in col_names]
         if "id" in col_names:
             # Mark `id` as primary key if present.
-            cols = [
-                Column("id", Integer, primary_key=True)
-                if c == "id"
-                else c
-                for c in cols
-            ]
+            cols = [Column("id", Integer, primary_key=True) if c == "id" else c for c in cols]
         return Table(name, metadata, *cols)
 
     def test_add_table_renders_missing_table(self):
@@ -305,9 +298,7 @@ class TestMainCli:
         finally:
             engine.dispose()
 
-    def test_migration_chain_failure_returns_1_with_drift_line(
-        self, monkeypatch, capsys
-    ):
+    def test_migration_chain_failure_returns_1_with_drift_line(self, monkeypatch, capsys):
         # AC#2: when alembic upgrade head itself fails (the kg_entity_types
         # class of defect — the chain tries to add a column to a table no
         # migration ever created), the script exits 1 with a greppable
@@ -378,18 +369,14 @@ class TestDriftRenderPrefix:
     """
 
     def test_warn_render_uses_warn_prefix(self):
-        d = csd.Drift(
-            kind="modify_comment", table="t", detail="d", severity=csd.WARN
-        )
+        d = csd.Drift(kind="modify_comment", table="t", detail="d", severity=csd.WARN)
         line = d.render()
         assert line.startswith("WARN: ")
         assert "t" in line
         assert "d" in line
 
     def test_fail_render_uses_drift_prefix(self):
-        d = csd.Drift(
-            kind="missing_column", table="t", detail="d", severity=csd.FAIL
-        )
+        d = csd.Drift(kind="missing_column", table="t", detail="d", severity=csd.FAIL)
         line = d.render()
         assert line.startswith("DRIFT: ")
 
@@ -399,17 +386,9 @@ class TestNormalizeOpSeverity:
 
     def _table(self, name: str, *col_names: str) -> Table:
         metadata = MetaData()
-        cols = [
-            Column(cname, Integer if cname == "id" else String(50))
-            for cname in col_names
-        ]
+        cols = [Column(cname, Integer if cname == "id" else String(50)) for cname in col_names]
         if "id" in col_names:
-            cols = [
-                Column("id", Integer, primary_key=True)
-                if c == "id"
-                else c
-                for c in cols
-            ]
+            cols = [Column("id", Integer, primary_key=True) if c == "id" else c for c in cols]
         return Table(name, metadata, *cols)
 
     def _drift(self, kind: str) -> csd.Drift:
@@ -520,14 +499,10 @@ class TestMainExitCodeWithMixedSeverity:
 
         Returns (exit_code, captured_stderr).
         """
-        monkeypatch.setattr(
-            csd, "compute_drift", lambda conn, target_metadata=None: drifts
-        )
+        monkeypatch.setattr(csd, "compute_drift", lambda conn, target_metadata=None: drifts)
         engine = create_engine("sqlite:///:memory:")
         monkeypatch.setattr(csd, "_sync_engine_from_url", lambda url: engine)
-        monkeypatch.setattr(
-            csd, "_load_base_metadata", lambda: MetaData()
-        )
+        monkeypatch.setattr(csd, "_load_base_metadata", lambda: MetaData())
         # Skip alembic upgrade; we only care about the diff-rendering path.
         try:
             rc = csd.main(
@@ -538,7 +513,6 @@ class TestMainExitCodeWithMixedSeverity:
                 ]
             )
             import io
-            from contextlib import redirect_stderr
 
             buf = io.StringIO()
             # The test below uses capsys; this helper is just a building

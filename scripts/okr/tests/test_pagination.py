@@ -22,14 +22,12 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
-import pytest
-
 from scripts.okr import fetch_all_issues
-
 
 # ---------------------------------------------------------------------------
 # Stub HTTP server for real pagination tests
 # ---------------------------------------------------------------------------
+
 
 def _make_issues(count: int, start_id: int = 0) -> list[dict[str, Any]]:
     """Generate synthetic issue objects with sequential IDs."""
@@ -50,7 +48,7 @@ class _PaginatedHandler(BaseHTTPRequestHandler):
     # Class-level store set before server starts
     total_issues: int = 0
 
-    def do_GET(self) -> None:  # noqa: N802 (HTTP verb)
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         offset = int(params.get("offset", ["0"])[0])
@@ -88,6 +86,7 @@ def _start_server(
 # fetch_all_issues — real HTTP tests
 # ---------------------------------------------------------------------------
 
+
 class TestFetchAllIssuesPagination:
     """Verify fetch_all_issues exhausts all pages via real HTTP."""
 
@@ -102,9 +101,7 @@ class TestFetchAllIssuesPagination:
                 params={},
                 api_key="test-key",
             )
-            assert len(result) == 2037, (
-                f"Expected 2037 issues, got {len(result)}"
-            )
+            assert len(result) == 2037, f"Expected 2037 issues, got {len(result)}"
             # Verify all IDs are present (no truncation)
             ids = {issue["id"] for issue in result}
             for i in range(2037):
@@ -182,6 +179,7 @@ class TestFetchAllIssuesPagination:
         captured_requests: list[str] = []
 
         original_do_get = _PaginatedHandler.do_GET
+
         def capturing_do_get(self: _PaginatedHandler) -> None:
             captured_requests.append(self.path)
             original_do_get(self)
@@ -206,6 +204,7 @@ class TestFetchAllIssuesPagination:
 # ---------------------------------------------------------------------------
 # fetch_all_issues — mock-based unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestFetchAllIssuesUnit:
     """Fast unit tests using mocks instead of real HTTP."""

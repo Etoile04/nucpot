@@ -61,6 +61,28 @@ PARSE_STATUS_FAILED = "failed"
 #: Cap for parse_error strings so a runaway stack trace doesn't blow the row.
 MAX_ERROR_LEN = 1000
 
+
+def _safe_g(value: Any) -> str:
+    """Render ``value`` as the dedup-key segment used by the heuristic merge.
+
+    NFM-3901: the LLM path can produce items whose ``value`` field is a
+    string (e.g. a categorical label, a unit-bearing phrase, or an empty
+    span). The previous ``f"{r.get("value", 0):g}"`` raised
+    ``ValueError: Unknown format code 'g' for object of type 'str'`` and
+    the outer ``except Exception`` at line ~705 swallowed the entire
+    heuristic batch — explaining the NFM-3887 silent-zero.
+
+    We coerce safely: numeric inputs use the same ``:g`` formatting as
+    ``heuristic_extractor`` (so dedup matches the extractor); non-numeric
+    inputs fall back to ``repr()`` so the key is still hashable and two
+    string-valued items can dedupe on exact string equality.
+    """
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return repr(value)
+
+
 # ---------------------------------------------------------------------------
 # Storage accessor (lazy so tests can patch the module-level reference)
 # ---------------------------------------------------------------------------
@@ -502,6 +524,14 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         }
 
     try:
+        # NFM-4013 / Path (a): ``mapping`` is conditionally assigned inside
+        # ``if raw_properties:`` below. Initialise to None so the empty-
+        # extraction branch (and any other branch that returns before
+        # ``map_and_persist`` runs) can still reference the structured
+        # unknown-property capture list at the success return without
+        # tripping UnboundLocalError.
+        mapping: Any | None = None
+
         # --- Step 2: ensure content_md --------------------------------
         pdf_bytes_for_meta: bytes | None = None
         if ds.content_md is None:
@@ -628,10 +658,28 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                     source_reference=str(ds.id),
                 )
 
+                # NFM-3888 / NFM-3892: per-stage counter for the heuristic
+                # extract stage so the post-patch re-extraction of source
+                # 9320cb50 (see NFM-3887 root-cause analysis) reveals
+                # whether the silent-zero originated here.
+                logger.info(
+                    "process_literature: datasource_id=%s heuristic_extract returned %d items",
+                    ds.id,
+                    len(heuristic_props),
+                )
+
                 if heuristic_props:
                     # Dedup key matches heuristic_extractor's own dedup.
+                    # NFM-3901: use ``_safe_g`` so a non-numeric ``value``
+                    # (string, None, etc.) on any LLM item does not raise
+                    # ``ValueError: Unknown format code 'g' for object of
+                    # type 'str'`` and drop the entire heuristic batch.
                     existing_keys = {
-                        (r.get("element_system"), r.get("property_name"), f"{r.get("value", 0):g}")
+                        (
+                            r.get("element_system"),
+                            r.get("property_name"),
+                            _safe_g(r.get("value")),
+                        )
                         for r in raw_properties
                     }
                     new_count = 0
@@ -639,19 +687,59 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         key = (
                             item.get("element_system"),
                             item.get("property_name"),
-                            f"{item.get("value", 0):g}",
+                            _safe_g(item.get("value")),
                         )
                         if key not in existing_keys:
                             raw_properties.append(item)
                             existing_keys.add(key)
                             new_count += 1
+                    # NFM-3888 / NFM-3892: ``heuristic added`` is the
+                    # pre-dedup heuristic count (len(heuristic_props)),
+                    # not the dedup-aware new_count — keeps the field
+                    # stable for downstream grep / Prometheus scraping.
                     logger.info(
-                        "process_literature: datasource_id=%s heuristic supplement "
-                        "added %d new properties (total now %d)",
+                        "process_literature: datasource_id=%s raw_properties after merge: %d (heuristic added %d)",
                         ds.id,
-                        new_count,
                         len(raw_properties),
+                        len(heuristic_props),
                     )
+
+                    # NFM-3835: route the merged LLM + heuristic batch
+                    # through ``_post_process_extracted`` so heuristic
+                    # items get the same phase normalization /
+                    # ``source_file`` / confidence defaults as the LLM
+                    # path. The ``property_category`` field set by
+                    # ``heuristic_extract`` is preserved because
+                    # ``_post_process_extracted`` only assigns when the
+                    # field is missing.
+                    try:
+                        from nfm_db.services.extraction_pipeline import (
+                            _post_process_extracted,
+                        )
+
+                        pre_post_process_len = len(raw_properties)
+                        raw_properties = _post_process_extracted(
+                            raw_properties,
+                            source_reference=str(ds.id),
+                        )
+                        # NFM-3888 / NFM-3892: surface the
+                        # post-process delta so a swallowed exception
+                        # (NFM-3887 hypothesis (d)) shows up as
+                        # ``delta=0`` instead of silently dropping
+                        # items downstream.
+                        logger.info(
+                            "process_literature: datasource_id=%s raw_properties after _post_process_extracted: %d (delta=%d)",
+                            ds.id,
+                            len(raw_properties),
+                            len(raw_properties) - pre_post_process_len,
+                        )
+                    except Exception:  # pragma: no cover — defensive
+                        logger.exception(
+                            "process_literature: datasource_id=%s "
+                            "_post_process_extracted failed on the "
+                            "merged batch; leaving items unchanged",
+                            ds.id,
+                        )
             except Exception:  # pragma: no cover — defensive
                 logger.exception(
                     "Heuristic extractor failed for %s; keeping LLM results",
@@ -712,10 +800,15 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             from nfm_db.services.extraction_to_db_mapper import map_and_persist
 
             mapping = await map_and_persist(db, raw_properties)
+            # NFM-3888 / NFM-3892: extend with skipped_unknown and
+            # validation_errors so the post-patch re-extraction of
+            # source 9320cb50 reveals whether the silent-zero came
+            # from the mapper (NFM-3887 hypothesis (c)).
             logger.info(
                 "process_literature: datasource_id=%s mapped "
                 "sources=%d materials=%d datasets=%d measurements=%d "
-                "reused=%d dedup_meas=%d",
+                "reused=%d dedup_meas=%d skipped_unknown=%d "
+                "skipped_unknown_details=%d validation_errors=%d",
                 ds.id,
                 mapping.created_sources,
                 mapping.created_materials,
@@ -723,6 +816,9 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 mapping.created_measurements,
                 mapping.reused_entities,
                 mapping.skipped_duplicate_measurements,
+                mapping.skipped_unknown_properties,
+                len(mapping.skipped_unknown_details),
+                mapping.validation_errors,
             )
 
             # --- Step 5: build KG nodes/edges -------------------------
@@ -730,6 +826,19 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
 
             builder = GraphBuilder(db, sync_to_age=False)
             build_result = await builder.build_from_extraction(raw_properties, source_id=ds.id)
+            # NFM-3888 / NFM-3892: per-stage counter for the
+            # GraphBuilder build so a nodes_created=0 + nodes_matched=0
+            # post-patch reveals whether the drop is here.
+            logger.info(
+                "process_literature: datasource_id=%s graph built: "
+                "nodes_created=%d nodes_matched=%d edges_created=%d "
+                "review_queue=%d",
+                ds.id,
+                build_result.nodes_created,
+                build_result.nodes_matched,
+                build_result.edges_created,
+                build_result.review_queue_items,
+            )
 
             # --- Step 5a: bridge KG → staging (NFM-3478 Layer B) ------
             # The viewer reads _ref_gap_fill_staging, not kg_nodes; without
@@ -754,7 +863,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         source_doi=ds.doi,
                     )
                     logger.info(
-                        "process_literature: datasource_id=%s — bridged %d "
+                        "process_literature: datasource_id=%s bridged %d "
                         "rows to _ref_gap_fill_staging (corpus=%s)",
                         ds.id,
                         bridged,
@@ -850,6 +959,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             "datasource_id": str(ds.id),
             "status": "completed",
             "extracted": len(raw_properties),
+            # NFM-4013 / Path (a): surface the structured capture list from
+            # ``MappingResult.skipped_unknown_details`` so the LE enumeration
+            # harness can aggregate by (category_slug, property_name) without
+            # touching the prod ``property_types`` table.
+            "skipped_unknown_properties": (
+                mapping.skipped_unknown_properties if mapping is not None else 0
+            ),
+            "skipped_unknown_details": (
+                list(mapping.skipped_unknown_details) if mapping is not None else []
+            ),
         }
 
     except Exception as exc:
