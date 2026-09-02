@@ -1292,6 +1292,7 @@ def process_literature_sync(datasource_id: UUID | str) -> dict[str, Any]:
 
 __all__ = [
     "MAX_ERROR_LEN",
+    "async_session_factory",
     "PARSE_STATUS_COMPLETED",
     "PARSE_STATUS_EXTRACTING",
     "PARSE_STATUS_FAILED",
