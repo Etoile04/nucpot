@@ -1,0 +1,129 @@
+# =============================================================================
+# NFM-4122: Preview / QA container compose overlay (nucpot-prod-* services)
+# =============================================================================
+# Start a preview / QA stack that points at the PRODUCTION database
+# (`nucpot-prod-db`) using the LEAST-PRIVILEGE `nfm_preview` role instead of
+# the `nfm` superuser role.
+#
+# Why a separate overlay instead of a service profile in docker-compose.prod.yml
+# -----------------------------------------------------------------------------
+# 1. The QA stack reuses the same api / web images and the same prod-DB
+#    container — only the DSN and a few env vars differ. An overlay
+#    (merged on top of docker-compose.prod.yml via docker compose's `-f`
+#    stacking) lets us declare only the differences and inherit everything
+#    else.
+# 2. The QA stack must NOT live in docker-compose.prod.yml because that file
+#    is what the production deployment workflow runs (`docker compose -f
+#    docker-compose.prod.yml up -d`). Adding a `preview` profile there would
+#    make the prod deploy start QA containers by default.
+#
+# Usage
+# -----
+# This file is loaded explicitly via `-f`. It is NOT auto-merged like
+# docker-compose.override.yml (which is reserved for the NFM-1763 LightRAG
+# override):
+#
+#   docker compose \
+#     -f docker-compose.prod.yml \
+#     -f docker-compose.preview.yml \
+#     --env-file docker/.env.prod \
+#     up -d --no-deps \
+#       --force-recreate nucpot-prod-api-preview nucpot-prod-web-preview
+#
+# The `--no-deps` flag prevents compose from starting the prod-only
+# LightRAG sidecar if it is not already running (preview QA sessions
+# typically run against the prod DB without the prod LightRAG stack).
+#
+# Required env (in docker/.env.prod on the host):
+#   NFMD_PREVIEW_DB_PASSWORD   -- same value used to create the nfm_preview
+#                                 role (see apps/api/migrations/sql/
+#                                 create_nfm_preview_role.sql).
+#   PROD_IMAGE_TAG             -- the SHA-tagged api/web image the preview
+#                                 should run. Often a candidate tag like
+#                                 `preview-nfm4087-<short_sha>`.
+#
+# Authorisation
+# -------------
+# This overlay is for QA / preview WORK against the production DATABASE
+# (read + DML on data tables). It is NOT a deploy artifact and is NOT
+# covered by the production deployment workflow. The RE runbook
+# (docs/runbooks/prod-deploy.md §6.5) is the source of truth for
+# which image tags are sanctioned for preview use.
+#
+# Pre-flight
+# ----------
+# Before starting a preview container with this overlay, verify:
+#   1. The `nfm_preview` role exists on nucpot-prod-db and has the grants
+#      documented in apps/api/migrations/sql/create_nfm_preview_role.sql.
+#      Quick check:
+#        docker exec nucpot-prod-db psql -U nfm -d nfm_db -c \
+#          "SELECT 1 FROM pg_roles WHERE rolname='nfm_preview';"
+#   2. `NFMD_PREVIEW_DB_PASSWORD` is set in docker/.env.prod.
+#   3. No other preview container is using this image tag (avoid port
+#      collisions on 8008 / 3030).
+#
+# If any of those fails, see docs/runbooks/prod-deploy.md §6.5 instead of
+# improvising.
+# =============================================================================
+
+name: nucpot-prod-preview
+
+services:
+  api:
+    container_name: nucpot-prod-api-preview
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    restart: "no"
+    ports:
+      # QA agents typically run on a non-default host port to avoid
+      # colliding with prod on 8001.
+      - "${PREVIEW_API_HOST_PORT:-8008}:8000"
+    environment:
+      # NFM-4122: least-privilege DSN — `nfm_preview` has DML on the
+      # public schema but no DDL and no write on alembic_version. A bare
+      # `docker exec nucpot-prod-api-preview alembic upgrade head` against
+      # nucpot-prod-db fails at the INSERT into alembic_version, closing
+      # NFM-4106 acceptance criterion 1.
+      NFM_DATABASE_URL: postgresql+asyncpg://nfm_preview:${NFMD_PREVIEW_DB_PASSWORD:?Set NFMD_PREVIEW_DB_PASSWORD in docker/.env.prod}@nucpot-prod-db:5432/${PROD_POSTGRES_DB:-nfm_db}
+      NFM_SECRET_KEY: ${PROD_API_SECRET_KEY:?Set PROD_API_SECRET_KEY}
+      NFM_CORS_ORIGINS: '["https://nucpot.dpdns.org","http://localhost:3000"]'
+      NFM_DEBUG: "false"
+      NFM_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROD_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
+      # NFM-4106 guard requires this on the migrate path; the api container's
+      # CMD is uvicorn-only so the guard never fires here. Setting it to 0
+      # on a preview container is documentation (the guard exits 3 on
+      # anything but "1"), not a hardening step.
+      NFMD_PROD_MIGRATION_PERMITTED: "0"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks: [prod]
+
+  web:
+    container_name: nucpot-prod-web-preview
+    image: nucpot-prod-web:${PROD_IMAGE_TAG:-latest}
+    restart: "no"
+    ports:
+      - "${PREVIEW_WEB_HOST_PORT:-3030}:3000"
+    environment:
+      # Match the api's least-privilege DSN — but the web container does
+      # not own a DB connection; it talks to the api over HTTP. Leave
+      # NFM_DATABASE_URL unset here so the web image's default (which
+      # points at nucpot-prod-api) is used.
+      API_SERVER_URL: http://nucpot-prod-api-preview:8000
+      LIGHTRAG_WEBUI_URL: http://nucpot-prod-lightrag:9621
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [prod]
