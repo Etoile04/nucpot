@@ -121,14 +121,11 @@ class TestMigration070BadSourceSelection:
     """SQL identifies bad ``data_sources`` rows correctly."""
 
     def test_filters_by_uuid_regex(self, migration_source: str) -> None:
-        # The migration builds the bad-row set via a CASE-style
-        # OR: title ~ :uuid_re OR title = ANY(:placeholder_titles).
+        # The migration builds the bad-row set via UUID regex match
+        # (NFM-4130 — placeholder titles are OUT of scope; see
+        # ``TestMigration070RescopeNoPlaceholders``).
         assert "title ~ :uuid_re" in migration_source or "title ~" in migration_source
         assert "uuid_re" in migration_source
-
-    def test_filters_by_placeholder_set(self, migration_source: str) -> None:
-        assert "Unknown Source" in migration_source
-        assert "Unattributed source (no DOI)" in migration_source
 
     def test_uuid_regex_constant_is_anchored(self, migration_source: str) -> None:
         # Confirm the regex itself is in the source as a Python string
@@ -185,7 +182,18 @@ class TestMigration070RebindAndMerge:
         assert "_dataset_redirect" in migration_source
 
     def test_pm_migration_uses_uq_pm_dedup(self, migration_source: str) -> None:
-        assert "ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING" in migration_source
+        # NFM-4095: switch from ``ON CONFLICT ON CONSTRAINT uq_pm_dedup``
+        # to column-list ``ON CONFLICT (dataset_id, property_type_id,
+        # conditions_hash, method)`` because asyncpg server-side prepared
+        # statements can't reliably resolve constraint-name bindings
+        # inside ``DO`` blocks.  Both forms target the same constraint;
+        # accept either so the structural check passes against the new
+        # syntax.
+        assert (
+            "ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING" in migration_source
+            or "ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING"
+            in migration_source
+        ), "must ON CONFLICT DO NOTHING on the uq_pm_dedup columns (constraint name or column list)"
 
     def test_pm_migration_source_present(self, migration_source: str) -> None:
         # The INSERT-SELECT pulls from property_measurements joined
@@ -308,6 +316,155 @@ class TestMigration070Documentation:
 
 
 # ---------------------------------------------------------------------------
+# NFM-4130 — Migration 070 re-scope: bad class = UUID-titled rows only
+# ---------------------------------------------------------------------------
+#
+# Per [NFM-4130](/NFM/issues/NFM-4130) (Critical, raised by E2E QA of
+# NFM-4105 AC-4): the placeholder titles ``Unknown Source`` /
+# ``Unattributed source (no DOI)`` are 18 distinct real prod sources
+# (and 58 on staging) with no DOI, ``file_hash`` or ``content_md``. They
+# are NOT dedup candidates — see [NFM-4092](/NFM/issues/NFM-4092) for
+# evidence and the CTO ruling. Migration 070 must restrict its
+# ``_bad_sources`` SELECT to UUID-titled rows only and leave the
+# placeholder class to NFM-4105's separate ingest-path fix.
+#
+# These tests pin the re-scope.  All assertions are intentionally
+# NEGATIVE (``not in``) for the placeholder class to catch any
+# regression that re-introduces the data-destroying collapse.
+
+
+class TestMigration070RescopeNoPlaceholders:
+    """NFM-4130 — ``_bad_sources`` SELECT must not match placeholder titles.
+
+    The placeholder titles (``Unknown Source`` /
+    ``Unattributed source (no DOI)``) are distinct real sources with no
+    DOI/file_hash / content_md.  Selecting them in migration 070's
+    ``_bad_sources`` collapses 18 prod sources onto 4 canonicals and
+    silently destroys attribution for 10 prod datasets.  These tests
+    pin the re-scope so any regression that re-widens the bad class
+    fails loudly.
+    """
+
+    def test_placeholder_titles_constant_removed(self, migration_source: str) -> None:
+        # The NFM-4130 re-scope deletes the ``_PLACEHOLDER_TITLES``
+        # tuple from the migration module.  It may still be referenced
+        # inside a comment / docstring, but never as a live binding
+        # assigned at module scope.
+        assert (
+            "_PLACEHOLDER_TITLES:" not in migration_source
+        ), "_PLACEHOLDER_TITLES module constant must be removed (NFM-4130)"
+
+    def test_placeholder_token_removed(self, migration_source: str) -> None:
+        # The NFM-4099 sentinel token for the placeholder array literal
+        # is no longer needed once the placeholder selection is gone.
+        assert (
+            "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" not in migration_source
+        ), "_PLACEHOLDER_TOKEN sentinel must be removed (NFM-4130)"
+
+    def test_placeholder_array_helper_removed(self, migration_source: str) -> None:
+        # The ``_build_placeholder_array_sql`` helper has no callers
+        # once the placeholder selection is gone; its presence means
+        # someone has re-introduced placeholder matching.
+        assert (
+            "def _build_placeholder_array_sql" not in migration_source
+        ), "_build_placeholder_array_sql helper must be removed (NFM-4130)"
+
+    def test_bad_sources_select_only_matches_uuid_regex(
+        self, migration_source: str
+    ) -> None:
+        # The ``_bad_sources`` SELECT must match ONLY by UUID regex.
+        # Placeholder titles must NOT appear as a selection criterion
+        # anywhere in the bad-row identification.
+        #
+        # Locate the ``_bad_sources`` CTE/temp-table SELECT block.
+        bad_sources_block_match = re.search(
+            r"CREATE\s+TEMP\s+TABLE\s+_bad_sources.*?(?=;)",
+            migration_source,
+            re.DOTALL,
+        )
+        assert bad_sources_block_match is not None, (
+            "_bad_sources temp-table CREATE must be present"
+        )
+        block = bad_sources_block_match.group(0)
+        # The placeholder titles MUST NOT appear as a selection criterion.
+        # The source uses a sentinel token, so we check both the literal
+        # text (if it leaks through somehow) and the sentinel token itself.
+        assert "Unknown Source" not in block, (
+            "placeholder title 'Unknown Source' must not appear in "
+            "_bad_sources SELECT (NFM-4130 re-scope)"
+        )
+        assert "Unattributed source (no DOI)" not in block, (
+            "placeholder title 'Unattributed source (no DOI)' must not "
+            "appear in _bad_sources SELECT (NFM-4130 re-scope)"
+        )
+        assert "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" not in block, (
+            "placeholder sentinel token must not appear in _bad_sources "
+            "SELECT — that means placeholder matching is still wired up "
+            "(NFM-4130 re-scope)"
+        )
+        assert "= ANY(CAST(" not in block, (
+            "= ANY(CAST(...)) must not appear in _bad_sources SELECT — "
+            "the placeholder array match must be gone (NFM-4130 re-scope)"
+        )
+        # The UUID regex MUST still be the only thing.
+        assert re.search(
+            r"title\s*~\s*__NFM_4099_UUID_RE_LITERAL__", block
+        ), "UUID regex match must remain in _bad_sources SELECT"
+
+    def test_build_do_block_sql_takes_only_uuid_re(self) -> None:
+        # The SQL builder's signature must drop the placeholder_titles
+        # parameter; passing it now means the re-scope was undone.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "m070_rescope", str(_MIGRATION_PATH)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        import inspect
+
+        sig = inspect.signature(mod._build_do_block_sql)
+        params = list(sig.parameters.keys())
+        assert params == ["uuid_re"], (
+            f"_build_do_block_sql must take only uuid_re after NFM-4130 "
+            f"re-scope; got {params}"
+        )
+
+    def test_build_do_block_sql_does_not_inject_placeholder_array(self) -> None:
+        # The rendered DO block must not reference the placeholder array at
+        # all — no ``ARRAY['Unknown Source', ...]`` substring, no
+        # sentinel token leak.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "m070_rescope_no_arr", str(_MIGRATION_PATH)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sql = mod._build_do_block_sql(mod._UUID_TITLE_RE)
+        assert "ARRAY[" not in sql, (
+            "rendered DO block must not contain an ARRAY literal — "
+            "placeholder array injection was removed by NFM-4130"
+        )
+        assert "Unknown Source" not in sql, (
+            "rendered DO block must not contain placeholder title text"
+        )
+        assert "Unattributed source" not in sql, (
+            "rendered DO block must not contain placeholder title text"
+        )
+
+    def test_module_docstring_documents_rescope(self, migration_source: str) -> None:
+        # The module docstring must reflect the re-scope so future
+        # readers don't try to "restore" the placeholder matching.
+        assert "UUID-titled" in migration_source, (
+            "module docstring must call out UUID-titled-only bad class"
+        )
+        assert "NFM-4130" in migration_source, (
+            "module docstring must reference NFM-4130 as the re-scope issue"
+        )
+
+
+# ---------------------------------------------------------------------------
 # NFM-4099 — asyncpg DO-block bind-param fix: structural + execution tests
 # ---------------------------------------------------------------------------
 
@@ -347,38 +504,27 @@ class TestMigration070AsyncpgBindParams:
         assert mod._sql_quote_literal("foo") == "'foo'"
         assert mod._sql_quote_literal("foo'bar") == "'foo''bar'"
         assert mod._sql_quote_literal("a''b") == "'a''''b'"
-        # The placeholder titles in this migration do NOT contain single
+        # The UUID regex in this migration does NOT contain single
         # quotes, but the helper must still handle them correctly so a
         # future contributor who adds one does not silently introduce a
         # SQL-injection vector.
 
-    def test_build_placeholder_array_sql_renders_text_array(self) -> None:
+    def test_build_do_block_sql_inlines_uuid_re_as_literal(self) -> None:
+        # NFM-4130 — only the UUID regex is inlined now (placeholder
+        # array helper removed entirely).
         mod = self._import_module()
-        rendered = mod._build_placeholder_array_sql(
-            ("Unknown Source", "Unattributed source (no DOI)")
-        )
-        assert rendered == (
-            "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
-        )
-
-    def test_build_do_block_sql_inlines_values_as_literals(self) -> None:
-        mod = self._import_module()
-        sql = mod._build_do_block_sql(mod._UUID_TITLE_RE, mod._PLACEHOLDER_TITLES)
+        sql = mod._build_do_block_sql(mod._UUID_TITLE_RE)
         # The regex must be inlined as a quoted literal — asyncpg cannot
         # accept it as a bind parameter on DO blocks.
         assert "'" + mod._UUID_TITLE_RE + "'" in sql, (
             "regex must be inlined as a single-quoted SQL literal"
         )
-        # The placeholder titles must be inlined as a PostgreSQL TEXT[]
-        # array literal — again, no bind parameters.
-        assert (
-            "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
-            in sql
-        ), "placeholder titles must be inlined as ARRAY[...]::TEXT[]"
-        # No leftover bind tokens (the WHOLE point of the fix).
+        # No leftover bind tokens (the WHOLE point of NFM-4099).
         assert ":uuid_re" not in sql, "no :uuid_re bind token may remain"
-        assert ":placeholder_titles" not in sql, (
-            "no :placeholder_titles bind token may remain"
+        # NFM-4130 — no placeholder array injection.
+        assert "ARRAY[" not in sql, (
+            "no ARRAY[...]::TEXT[] literal may remain in DO block — "
+            "placeholder matching is out of scope (NFM-4130)"
         )
         # No leftover sentinel tokens.
         assert mod._UUID_TOKEN not in sql, (
@@ -386,16 +532,20 @@ class TestMigration070AsyncpgBindParams:
         )
 
     def test_build_do_block_sql_escapes_single_quotes(self) -> None:
-        """Defence-in-depth: future titles containing ``'`` get escaped."""
+        """Defence-in-depth: regex variants containing ``'`` get escaped.
+
+        The current ``_UUID_TITLE_RE`` contains no apostrophes, but the
+        helper must still escape them correctly so a future contributor
+        who adds one (e.g. an extra-quoted class) does not silently
+        introduce a SQL-injection vector.
+        """
         mod = self._import_module()
-        sql = mod._build_do_block_sql(
-            mod._UUID_TITLE_RE,
-            ("Title with 'apostrophe'", "Normal title"),
-        )
-        # The single quote in the title must be doubled, not raw.
-        assert "'Title with ''apostrophe'''" in sql
-        assert "'Title with 'apostrophe''" not in sql.replace(
-            "'Title with ''apostrophe'''", ""
+        weird_regex = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-'X'-[0-9a-fA-F]{12}$"
+        sql = mod._build_do_block_sql(weird_regex)
+        # The single quote in the regex must be doubled, not raw.
+        assert "''X''" in sql
+        assert not re.search(r"[^']'X'[^']", sql), (
+            "single quotes must be doubled in the inlined literal"
         )
 
     # ------------------------------------------------------------------
@@ -499,9 +649,17 @@ class TestMigration070AsyncpgBindParams:
     ) -> None:
         """Migration 070 must inline its bind values via sentinel
         placeholders + a helper, not via SQLAlchemy bind params.
+
+        NFM-4130 — only the UUID regex is inlined now.  The placeholder
+        array sentinel is gone; we assert its absence to pin the
+        re-scope.
         """
-        assert "__NFM_4099_UUID_RE_LITERAL__" in migration_source
-        assert "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" in migration_source
+        assert "__NFM_4099_UUID_RE_LITERAL__" in migration_source, (
+            "UUID regex sentinel must remain so the regex can be inlined"
+        )
+        assert "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__" not in migration_source, (
+            "placeholder array sentinel must be gone (NFM-4130 re-scope)"
+        )
         # The bind dict that caused the original crash must be gone.
         assert '"uuid_re": _UUID_TITLE_RE' not in migration_source
         assert '"placeholder_titles": list(_PLACEHOLDER_TITLES)' not in migration_source
