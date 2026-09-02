@@ -199,6 +199,9 @@ async def test_list_material_properties_response_shape(async_client, db_session)
     # expander can render per-measurement experimental conditions
     # without a lazy load. The list is empty when the seeded measurement
     # has no MeasurementCondition rows (this test does not seed any).
+    # NFM-4146 — `attribution` was added so the React table (§3.3 primary
+    # surface) can render the §5.2 <DataLossNotice>. The seeded dataset
+    # HAS a source, so the block reads intact.
     assert set(row.keys()) == {
         "id",
         "name",
@@ -207,8 +210,10 @@ async def test_list_material_properties_response_shape(async_client, db_session)
         "source",
         "confidence",
         "conditions",
+        "attribution",
     }
     assert row["conditions"] == []
+    assert row["attribution"]["status"] == "intact"
     assert row["name"] == "密度"
     assert row["value"] == "5.68"
     assert row["unit"] == "W/(m·K)"  # unit symbol
