@@ -92,6 +92,29 @@ WARN_KINDS: frozenset[str] = frozenset(
 )
 
 
+# Migration 070 creates three rollback-only backup tables for
+# ``alembic downgrade``:
+#   * ``data_sources_backup_070``
+#   * ``datasets_backup_070``
+#   * ``property_measurements_backup_070``
+#
+# These tables are not part of the SQLAlchemy metadata — they're
+# transient state produced by the migration itself, dropped by
+# downgrade() after restore.  Without a whitelist they surface as
+# ``remove_table`` FAILs in CI on every fresh DB that has run
+# migration 070 (NFM-4128 schema-drift guard regression).  The
+# demotion is table-specific rather than kind-wide because
+# ``remove_table`` is otherwise a hard FAIL signal (a model
+# declared a table the migration dropped).
+EXPECTED_TRANSIENT_TABLES: frozenset[str] = frozenset(
+    {
+        "data_sources_backup_070",
+        "datasets_backup_070",
+        "property_measurements_backup_070",
+    }
+)
+
+
 def compute_severity(kind: str, strict: bool = False) -> Severity:
     """Map an alembic drift kind to its CI-blocking severity.
 
@@ -301,10 +324,18 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
     # Fallback: surface the action so reverse-direction drift and unknown
     # shapes still appear in CI logs (never silently dropped).  Severity
     # is computed from the action name — unknown ops default to FAIL.
+    #
+    # Exception: ``remove_table`` for transient migration 070 backup
+    # tables is demoted to WARN via ``EXPECTED_TRANSIENT_TABLES``.  See
+    # the comment block above that constant for the rationale.
+    if action == "remove_table" and table_name in EXPECTED_TRANSIENT_TABLES:
+        severity = WARN
+    else:
+        severity = compute_severity(action)
     yield Drift(
         kind=action,
         table=table_name,
-        severity=compute_severity(action),
+        severity=severity,
     )
 
 
