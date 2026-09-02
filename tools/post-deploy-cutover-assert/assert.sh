@@ -198,7 +198,16 @@ fi
 repos=(nucpot-prod-api nucpot-prod-lightrag nucpot-prod-web)
 declared_ids=()
 for repo in "${repos[@]}"; do
-  id="$(docker images --format '{{.ID}}' "${repo}:${EXPECTED_TAG}" 2>/dev/null | head -1 || true)"
+  # MUST use `docker image inspect --format {{.Id}}` (full "sha256:<64hex>",
+  # the same format `docker inspect --format {{.Image}}` writes into the
+  # snapshots) — NOT `docker images --format {{.ID}}` (12-hex short ID,
+  # no prefix). The mismatch made ASSERTION 3 compare "sha256:863f..." against
+  # "863fc5df27d8" and fail EVERY real cutover; it went unnoticed because the
+  # unit tests mock `docker images` returning sha256-prefixed IDs (the format
+  # this loop was originally written against), so the suite stayed green
+  # while production always failed. Found on the first deploy where the
+  # NFM-3777 fix actually let this assertion run (2026-08-31, run 33392259707).
+  id="$(docker image inspect --format '{{.Id}}' "${repo}:${EXPECTED_TAG}" 2>/dev/null | head -1 || true)"
   if [ -z "${id}" ]; then
     err "ASSERT_FAIL (73): expected image ${repo}:${EXPECTED_TAG} not found in local daemon"
     err "ASSERT_FAIL: the build step should have produced this tag — refusing cutover"

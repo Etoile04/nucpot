@@ -8,6 +8,7 @@ Tests cover:
 - Empty/missing fixture root handling
 - Coverage across all four figure types
 """
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,7 @@ import build_ci_candidates as bcc  # noqa: E402
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def fixtures_root(tmp_path: Path) -> Path:
@@ -56,9 +58,7 @@ def fixtures_root(tmp_path: Path) -> Path:
                 {"name": "stress", "values": [1.0, 2.0, 3.0]},
             ],
         }
-        (paper_dir / "ground_truth.json").write_text(
-            json.dumps(gt, indent=2) + "\n"
-        )
+        (paper_dir / "ground_truth.json").write_text(json.dumps(gt, indent=2) + "\n")
     return root
 
 
@@ -70,6 +70,7 @@ def output_dir(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildCandidates:
     """Tests for build_ci_candidates.build_candidates."""
@@ -92,17 +93,13 @@ class TestBuildCandidates:
         """figure_type must never drift - type mismatch zeroes the eval score."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
         for fig_type in ("plot", "table", "microstructure", "diagram"):
-            data = json.loads(
-                (output_dir / f"{fig_type}-000.json").read_text()
-            )
+            data = json.loads((output_dir / f"{fig_type}-000.json").read_text())
             assert data["figure_type"] == fig_type
 
     def test_numeric_fields_perturbed_within_tolerance(self, fixtures_root, output_dir):
         """Numeric jitter must be <= MAX_NUMERIC_JITTER (2%) of original."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
-        plot_cand = json.loads(
-            (output_dir / "plot-000.json").read_text()
-        )
+        plot_cand = json.loads((output_dir / "plot-000.json").read_text())
         orig_value = 1.5
         cand_value = plot_cand["extracted_data"]["numeric_value"]
         assert cand_value != orig_value, "numeric should be perturbed"
@@ -114,12 +111,12 @@ class TestBuildCandidates:
     def test_bbox_perturbed_but_iou_preserved(self, fixtures_root, output_dir):
         """Bounding box must be shifted but maintain IoU > 0.5."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
-        plot_cand = json.loads(
-            (output_dir / "plot-000.json").read_text()
-        )
+        plot_cand = json.loads((output_dir / "plot-000.json").read_text())
         orig_bbox = {
-            "x": 100.0, "y": 200.0,
-            "width": 300.0, "height": 150.0,
+            "x": 100.0,
+            "y": 200.0,
+            "width": 300.0,
+            "height": 150.0,
         }
         cand_bbox = plot_cand["bbox"]
         assert cand_bbox != orig_bbox, "bbox should be perturbed"
@@ -139,26 +136,20 @@ class TestBuildCandidates:
     def test_string_fields_unchanged(self, fixtures_root, output_dir):
         """String match is exact - strings must not be perturbed."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
-        plot_cand = json.loads(
-            (output_dir / "plot-000.json").read_text()
-        )
+        plot_cand = json.loads((output_dir / "plot-000.json").read_text())
         assert plot_cand["figure_label"] == "Test plot"
         assert plot_cand["extracted_data"]["string_value"] == "UO2"
 
     def test_confidence_unchanged(self, fixtures_root, output_dir):
         """Confidence is excluded from scoring - must not be perturbed."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
-        plot_cand = json.loads(
-            (output_dir / "plot-000.json").read_text()
-        )
+        plot_cand = json.loads((output_dir / "plot-000.json").read_text())
         assert plot_cand["confidence"] == 0.92
 
     def test_series_values_perturbed(self, fixtures_root, output_dir):
         """Lists of dicts should have their numeric values perturbed."""
         bcc.build_candidates(fixtures_root, output_dir, seed=42)
-        plot_cand = json.loads(
-            (output_dir / "plot-000.json").read_text()
-        )
+        plot_cand = json.loads((output_dir / "plot-000.json").read_text())
         orig_vals = [100.0, 200.0, 300.0]
         cand_vals = plot_cand["series"][0]["values"]
         assert len(cand_vals) == len(orig_vals)
@@ -173,9 +164,9 @@ class TestBuildCandidates:
         for f in out1.glob("*.json"):
             counterpart = out2 / f.name
             assert counterpart.exists(), f"missing counterpart for {f.name}"
-            assert json.loads(f.read_text()) == json.loads(
-                counterpart.read_text()
-            ), f"output differs for {f.name}"
+            assert json.loads(f.read_text()) == json.loads(counterpart.read_text()), (
+                f"output differs for {f.name}"
+            )
 
     def test_empty_fixtures_root(self, output_dir):
         """Missing fixture root should return empty list."""
@@ -217,9 +208,7 @@ class TestPerturbHelpers:
         assert not bcc._is_bbox_dict({"x": 1, "y": 2, "width": 3})
 
     def test_is_bbox_dict_false_wrong_types(self):
-        assert not bcc._is_bbox_dict(
-            {"x": "1", "y": 2, "width": 3, "height": 4}
-        )
+        assert not bcc._is_bbox_dict({"x": "1", "y": 2, "width": 3, "height": 4})
 
     def test_perturb_preserves_top_level_figure_type(self):
         rng = __import__("random").Random(7)
@@ -232,16 +221,25 @@ class TestCliMain:
     """Test the CLI entry point."""
 
     def test_main_success(self, fixtures_root, output_dir):
-        ret = bcc.main([
-            "--fixtures", str(fixtures_root),
-            "--output", str(output_dir),
-            "--seed", "42",
-        ])
+        ret = bcc.main(
+            [
+                "--fixtures",
+                str(fixtures_root),
+                "--output",
+                str(output_dir),
+                "--seed",
+                "42",
+            ]
+        )
         assert ret == 0
 
     def test_main_missing_fixtures(self, output_dir):
-        ret = bcc.main([
-            "--fixtures", str(output_dir / "nonexistent"),
-            "--output", str(output_dir),
-        ])
+        ret = bcc.main(
+            [
+                "--fixtures",
+                str(output_dir / "nonexistent"),
+                "--output",
+                str(output_dir),
+            ]
+        )
         assert ret == 2

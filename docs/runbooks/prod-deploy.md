@@ -183,3 +183,163 @@ again:
   (`PROD_IMAGE_TAG: ${{ github.sha }}`).
 - ADR-NFM-2139 §5 D1 — design rationale for SHA-pinning + the 10-tag
   retention window.
+- [NFM-4106](../../issues/NFM-4106) — prod-migration pre-flight guard
+  (`apps/api/scripts/check_prod_migration.py`, the subject of §6
+  below).
+
+---
+
+## 6. Prod-migration pre-flight guard (NFM-4106)
+
+### 6.1. Why this exists
+
+Before NFM-4106, a QA / preview container pointed at `nucpot-prod-db`
+(e.g. `nucpot-prod-api:preview-nfm4087-…`) could run `alembic upgrade
+head` and the database would advance — the prod API container's CMD
+is uvicorn-only (NFM-2146), but the image and the `nucpot-prod-db`
+DSN are shared. The CTO embargo on applying migration 070 to prod
+(see [NFM-4092](../../issues/NFM-4092)) was a *social* control: any
+operator with shell access could accidentally bypass it.
+
+The NFM-4106 guard turns the embargo into a *structural* control by
+refusing `alembic upgrade head` unless the caller sets the literal
+flag `NFMD_PROD_MIGRATION_PERMITTED=1`. That flag is **never** present
+in any committed env file — it is set only by `scripts/prod_migrate.sh`
+and by `.github/workflows/production-deployment.yml`, both of which
+are the only authorised invocation paths.
+
+### 6.2. What the guard checks
+
+`apps/api/scripts/check_prod_migration.py` runs inside the ephemeral
+prod-api container, BEFORE `alembic upgrade head`. It returns:
+
+| Exit | Meaning                                                         |
+| ---- | --------------------------------------------------------------- |
+| 0    | Authorised AND image is at or ahead of DB. Safe to migrate.    |
+| 1    | DB revision is not in the image — image is older than DB.       |
+| 2    | Configuration / IO error (missing DB URL, missing migrations). |
+| 3    | `NFMD_PROD_MIGRATION_PERMITTED` unset or not `"1"`. **Refused.** |
+
+The 3-branch is the new structural control. A QA agent who runs
+`docker exec nucpot-prod-api-preview alembic upgrade head` against
+`nucpot-prod-db` now gets exit 3 with a self-diagnosing block
+explaining (a) which env flag they would have needed to set,
+(b) that they should ask SRE for a scratch DB instead, and
+(c) where the audit row landed.
+
+### 6.3. Audit log
+
+Every invocation writes a single JSONL row to:
+
+```
+/var/log/nfmd/prod-migrations.log
+```
+
+(the path the runbook greps; bind-mounted by the RE in
+`docker-compose.prod.yml`). If that path is unwritable (e.g. local
+dev, QA preview), the row falls back to `/tmp/prod-migration-audit.log`
+and a `WARNING` line is written to stderr. The runbook grep target is
+the preferred path — a fallback row will NOT be visible there.
+
+Row schema (every field except `ts` and `outcome` is optional in
+runbook queries):
+
+```json
+{
+  "ts": "2026-09-02T15:30:00+00:00",
+  "outcome": "ok" | "permission_denied" | "image_older_than_db"
+           | "config_error" | "db_connectivity_error" | "ok_fresh_db",
+  "image_tag": "abc1234",
+  "image_revision_count": 71,
+  "image_head_revisions": ["070_d2_dedup_bad_data_sources"],
+  "db_revision": "069_add_v050_f8_property_types",
+  "permission_granted": true,
+  "operator": "ci-9876543210",
+  "container_hostname": "nucpot-prod-api",
+  "refusal_reason": null,
+  "script": "check_prod_migration.py",
+  "issue": "NFM-4106"
+}
+```
+
+### 6.4. Who may set the flag
+
+**Only the two authorised invocation paths.** No committed env file
+(`docker/.env.prod`, `docker/.env.prod.example`, `apps/api/.env`,
+etc.) carries `NFMD_PROD_MIGRATION_PERMITTED=1`. If you find it in a
+committed env file, that is a regression — file a follow-up issue
+and roll it back.
+
+The two authorised paths:
+
+1. **`scripts/prod_migrate.sh`** — invoked by
+   `scripts/deploy_prod.sh`, called from the CI workflow's
+   `deploy-prod` job and from a local hot-fix runbook follow (see
+   §2 above). The script passes `-e NFMD_PROD_MIGRATION_PERMITTED=1`
+   to the `docker compose run` invocation and wires
+   `NFMD_OPERATOR=$NFMD_OPERATOR` (defaults to
+   `local-$(whoami)` for ad-hoc runs).
+2. **`.github/workflows/production-deployment.yml`** — the `deploy-prod`
+   job calls `scripts/deploy_prod.sh`, which calls `prod_migrate.sh`,
+   which carries the flag through. The CI operator identifier is
+   `ci-${GITHUB_RUN_ID}`.
+
+### 6.5. How a QA agent gets a mutable database instead
+
+**Do not point your preview container at `nucpot-prod-db`.** That is
+the entire class of problem NFM-4106 closes, and the guard will
+refuse you with exit 3 + an audit row.
+
+For QA / preview work that needs to mutate the schema (e.g. running
+`alembic upgrade head` against a candidate migration), the supported
+path is:
+
+1. Restore a prod snapshot into a scratch database
+   (`nucpot-prod-db-scratch-<ticket>`). The SRE runbook
+   `docs/runbooks/scratch-db-restore.md` (when present) describes
+   the restore procedure.
+2. Start the preview container with `NFM_DATABASE_URL` pointed at
+   the scratch DB, NOT at `nucpot-prod-db`. The guard will accept
+   that call (the flag is still required, but the blast radius is
+   a throwaway snapshot, not the live prod data).
+
+For read-only smoke tests against prod, use the staging API image
+(`nucpot-prod-api-staging:<tag>`) which is wired to a separate
+staging DB and has its own `check_staging_revision.py` guard
+(NFM-4066).
+
+### 6.6. Bypassing the guard (intentional emergency)
+
+A determined operator with shell access can still set the flag —
+the audit row makes that visible, but does not prevent it. If you
+must invoke `alembic upgrade head` against prod outside the deploy
+workflow (e.g. midnight hotfix when CI is unreachable):
+
+```bash
+# Document your handle in the audit row.
+export NFMD_OPERATOR="oncall-$(whoami)"
+
+# Invoke the guard. The flag must equal the literal string "1".
+docker compose -f docker-compose.prod.yml run --rm -T --no-deps \
+  -e NFMD_PROD_MIGRATION_PERMITTED=1 \
+  -e NFMD_OPERATOR="$NFMD_OPERATOR" \
+  -e PROD_IMAGE_TAG="$PROD_IMAGE_TAG" \
+  -e NFMD_DEPLOY_LOCK_KEY="$NFMD_DEPLOY_LOCK_KEY" \
+  --entrypoint "sh" api \
+  -c "python /usr/local/bin/check_prod_migration.py && alembic upgrade head"
+```
+
+Every such invocation is audit-logged with your operator identifier
+and the image tag. The on-call SRE can grep
+`/var/log/nfmd/prod-migrations.log` for any operator handle and
+reconstruct the migration timeline.
+
+### 6.7. Companion: see also
+
+- `apps/api/scripts/check_prod_migration.py` — the guard script.
+- `apps/api/scripts/tests/test_check_prod_migration.py` — 19 unit tests
+  covering all five exit-code branches, DSN normalization, audit row
+  schema, and the `prod_migrate.sh` / `prod-api.Dockerfile` wiring.
+- `apps/api/scripts/check_staging_revision.py` — the staging analog
+  (NFM-4066). The prod guard follows the same shape but adds the
+  permission gate.

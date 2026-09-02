@@ -16,6 +16,8 @@ Environment variables:
     PAPERCLIP_COMPANY_ID — Company ID for multi-tenant queries
 """
 
+# ruff: noqa: B007
+
 from __future__ import annotations
 
 import argparse
@@ -24,12 +26,11 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-
 
 # ---------------------------------------------------------------------------
 # Data Models
@@ -148,13 +149,9 @@ def check_code_review_approved(
     )
 
 
-def check_tests_passing(
-    comments: list[dict], issue: dict, children: list[dict]
-) -> ComplianceCheck:
+def check_tests_passing(comments: list[dict], issue: dict, children: list[dict]) -> ComplianceCheck:
     """Check for evidence that tests are passing."""
-    passed_pos = _any_comment_matches(
-        comments, r"\b\d+\s*tests?\s*(pass\w*|green)\b"
-    )
+    passed_pos = _any_comment_matches(comments, r"\b\d+\s*tests?\s*(pass\w*|green)\b")
     passed_all = _any_comment_matches(comments, r"\ball\s+tests?\s+pass\w*\b")
     passed = passed_pos or passed_all
     return ComplianceCheck(
@@ -188,9 +185,7 @@ def check_coverage_ge_80(
     )
 
 
-def check_ci_green(
-    comments: list[dict], issue: dict, children: list[dict]
-) -> ComplianceCheck:
+def check_ci_green(comments: list[dict], issue: dict, children: list[dict]) -> ComplianceCheck:
     """Check for CI pipeline green status."""
     patterns = [
         r"\bci[:\s]*(all\s+)?green\b",
@@ -263,21 +258,15 @@ def check_children_complete(
     return ComplianceCheck(name="children_complete", passed=True)
 
 
-def check_cpo_accepted(
-    comments: list[dict], issue: dict, children: list[dict]
-) -> ComplianceCheck:
+def check_cpo_accepted(comments: list[dict], issue: dict, children: list[dict]) -> ComplianceCheck:
     """Check for CPO acceptance comment."""
-    accept_pattern = re.compile(
-        r"\b(accept\w*|approved|looks?\s+good|LGTM)\b", re.IGNORECASE
-    )
+    accept_pattern = re.compile(r"\b(accept\w*|approved|looks?\s+good|LGTM)\b", re.IGNORECASE)
     for comment in comments:
         body = comment.get("body", "")
         author = comment.get("authorAgent", {})
         author_name = author.get("name", "").lower() if author else ""
         author_key = author.get("urlKey", "").lower() if author else ""
-        if ("cpo" in author_name or "cpo" in author_key) and accept_pattern.search(
-            body
-        ):
+        if ("cpo" in author_name or "cpo" in author_key) and accept_pattern.search(body):
             return ComplianceCheck(name="cpo_accepted", passed=True)
     return ComplianceCheck(
         name="cpo_accepted",
@@ -363,9 +352,7 @@ def _api_get(base_url: str, api_key: str, path: str) -> dict | list | None:
         return None
 
 
-def fetch_issue(
-    base_url: str, api_key: str, issue_identifier: str
-) -> dict | None:
+def fetch_issue(base_url: str, api_key: str, issue_identifier: str) -> dict | None:
     """Fetch an issue by its identifier (e.g. NFM-439)."""
     company_id = os.environ.get("PAPERCLIP_COMPANY_ID", "")
     if company_id:
@@ -381,9 +368,7 @@ def fetch_issue(
     return None
 
 
-def fetch_issue_comments(
-    base_url: str, api_key: str, issue_id: str
-) -> list[dict]:
+def fetch_issue_comments(base_url: str, api_key: str, issue_id: str) -> list[dict]:
     """Fetch all comments for an issue."""
     safe_id = quote(issue_id, safe="")
     result = _api_get(base_url, api_key, f"/api/issues/{safe_id}/comments")
@@ -392,9 +377,7 @@ def fetch_issue_comments(
     return []
 
 
-def fetch_child_issues(
-    base_url: str, api_key: str, company_id: str, issue_id: str
-) -> list[dict]:
+def fetch_child_issues(base_url: str, api_key: str, company_id: str, issue_id: str) -> list[dict]:
     """Fetch child issues of a given issue."""
     safe_company = quote(company_id, safe="")
     safe_id = quote(issue_id, safe="")
@@ -436,13 +419,11 @@ def build_report(
             issue_id=issue_identifier,
             role="unknown",
             compliant=False,
-            checked_at=datetime.now(timezone.utc).isoformat(),
+            checked_at=datetime.now(UTC).isoformat(),
         )
 
     comments = fetch_issue_comments(base_url, api_key, issue.get("id", ""))
-    child_issues = fetch_child_issues(
-        base_url, api_key, company_id, issue.get("id", "")
-    )
+    child_issues = fetch_child_issues(base_url, api_key, company_id, issue.get("id", ""))
 
     checks: list[ComplianceCheck] = []
     check_entries = _get_role_checks(role)
@@ -456,7 +437,7 @@ def build_report(
         issue_id=issue_identifier,
         role=role,
         compliant=all_passed,
-        checked_at=datetime.now(timezone.utc).isoformat(),
+        checked_at=datetime.now(UTC).isoformat(),
         checks=tuple(checks),
     )
 

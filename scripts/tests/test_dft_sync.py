@@ -20,8 +20,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-import pytest
-
 SCRIPT = Path(__file__).resolve().parents[1] / "dft_sync.sh"
 
 
@@ -58,18 +56,18 @@ def _make_mocks(
         "scp",
         f'#!/bin/sh\nif [ "$#" -ge 3 ]; then\n'
         f'  echo \'{{"calculation": "test"}}\' > "$3"\n'
-        f'fi\nexit {scp_exit}\n',
+        f"fi\nexit {scp_exit}\n",
     )
 
     # python3: creates a .sql file next to the input
     _make_stub(
         bin_dir,
         "python3",
-        f'#!/bin/sh\n'
+        f"#!/bin/sh\n"
         f'INPUT="$2"\n'
         f'SQL="${{INPUT%.json}}.sql"\n'
         f'echo "INSERT INTO dft_results (source) VALUES (\'NFM-1540-PathB-Star-xingyi\');" > "$SQL"\n'
-        f'exit {python_exit}\n',
+        f"exit {python_exit}\n",
     )
 
     # docker: mock inspect and exec
@@ -77,12 +75,12 @@ def _make_mocks(
     _make_stub(
         bin_dir,
         "docker",
-        f'#!/bin/sh\n'
+        f"#!/bin/sh\n"
         f'if [ "$1" = "inspect" ]; then\n'
-        f'  exit {inspect_exit}\n'
+        f"  exit {inspect_exit}\n"
         f'elif [ "$1" = "exec" ]; then\n'
-        f'  exit {docker_exit}\n'
-        f'fi\n',
+        f"  exit {docker_exit}\n"
+        f"fi\n",
     )
 
     # flock: always succeeds in single-process tests
@@ -93,7 +91,6 @@ def _make_mocks(
 
     # Prepend mock bin to real PATH so bash/shell builtins still work
     return {"PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
-
 
 
 def run_script(
@@ -221,10 +218,7 @@ def test_preflight_fails_when_docker_down(tmp_path: Path) -> None:
     result = run_script(env_overrides=env)
 
     assert result.returncode != 0
-    assert (
-        "prerequisite" in result.stderr.lower()
-        or "not running" in result.stderr.lower()
-    )
+    assert "prerequisite" in result.stderr.lower() or "not running" in result.stderr.lower()
 
 
 # ---------------------------------------------------------------------------

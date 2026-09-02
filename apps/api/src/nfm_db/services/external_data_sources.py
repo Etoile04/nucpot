@@ -14,7 +14,9 @@ Features:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -70,6 +72,59 @@ DATASOURCE_CONFIGS: dict[ExternalDataSource, DataSourceConfig] = {
         timeout=30.0,
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# BUG-24 / NFM-3875 — real-API endpoints
+# ---------------------------------------------------------------------------
+
+
+# Materials Project — see https://docs.materialsproject.org/downloading-data/
+MATERIALS_PROJECT_API_KEY_ENV = "MATERIALS_PROJECT_API_KEY"
+MATERIALS_PROJECT_API_BASE = os.getenv(
+    "MATERIALS_PROJECT_API_BASE",
+    "https://api.materialsproject.org",
+)
+MATERIALS_PROJECT_DEFAULT_FIELDS = (
+    "material_id,formula,elements,energy_per_atom,formation_energy_per_atom,"
+    "band_gap,density,material_type,crystal_system,spacegroup"
+)
+MATERIALS_PROJECT_DEFAULT_LIMIT = 20
+
+# OpenKIM — see https://openkim.org/doc/usage/kim-query/ and OPENKIM_API.md
+OPENKIM_API_BASE = os.getenv("OPENKIM_API_BASE", "https://query.openkim.org/api")
+OPENKIM_DEFAULT_LIMIT = 50
+
+
+def _map_openkim_kim_id(kim_id: str) -> dict[str, Any]:
+    """Map a single KIM ID (long name) → dict for the dispatcher's ``potentials``.
+
+    The dispatcher only needs a list-shaped payload with enough metadata for
+    downstream consumers to look up the model; deeper parsing happens in
+    ``providers/openkim.py`` on the detail path.
+    """
+    return {
+        "kim_id": kim_id,
+        "source": "openkim",
+        "raw": kim_id,
+    }
+
+
+def _map_mp_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Map a Materials Project summary record → dict for ``materials``."""
+    return {
+        "material_id": record.get("material_id"),
+        "formula": record.get("formula"),
+        "elements": record.get("elements", []),
+        "material_type": record.get("material_type"),
+        "crystal_system": record.get("crystal_system"),
+        "spacegroup": record.get("spacegroup"),
+        "band_gap": record.get("band_gap"),
+        "energy_per_atom": record.get("energy_per_atom"),
+        "formation_energy_per_atom": record.get("formation_energy_per_atom"),
+        "density": record.get("density"),
+        "source": "materials_project",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -219,14 +274,30 @@ class ExternalDataSourceClient:
     - Timeout handling
     """
 
-    def __init__(self, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        *,
+        api_key: str | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         """Initialize HTTP client.
 
         Args:
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds.
+            api_key: Optional Materials Project API key override. When ``None``
+                the key is read from the ``MATERIALS_PROJECT_API_KEY`` env
+                var at query time (BUG-24 / NFM-3875).
+            client: Optional pre-built ``httpx.AsyncClient`` for testability.
+                When ``None``, the client constructs its own. Injecting a
+                client with a ``httpx.MockTransport`` lets unit tests run
+                without real network calls.
         """
-        self._client = httpx.AsyncClient(timeout=timeout)
         self._timeout = timeout
+        self._client = client if client is not None else httpx.AsyncClient(timeout=timeout)
+        self._owns_client = client is None
+        # Resolve MP key lazily — env may change between construction and query.
+        self._api_key = api_key
 
     async def query_nist_ipr(
         self,
@@ -377,37 +448,85 @@ class ExternalDataSourceClient:
         species: str,
         property_name: str | None,
     ) -> dict[str, Any] | None:
-        """Perform OpenKIM query.
+        """Perform real OpenKIM query.
 
-        NOTE: This is a placeholder implementation.
-        In production, this will call the actual OpenKIM API.
+        Posts to ``https://query.openkim.org/api/get_available_models``
+        (anonymous; no API key required). Returns a dispatcher-shaped dict
+        with ``potentials`` populated from the live response. Any failure
+        degrades to an empty ``potentials`` list — never raises.
 
         Args:
-            species: Chemical species
-            property_name: Property name
+            species: Chemical species filter (e.g. "U", "O", "Zr").
+            property_name: Optional property filter (currently unused;
+                OpenKIM does not filter by property on this endpoint).
 
         Returns:
-            Query results or None
+            Dispatcher-shaped result dict, or ``None`` if the request could
+            not be attempted at all (e.g. base URL misconfigured).
         """
         _ = DATASOURCE_CONFIGS[ExternalDataSource.OPENKIM]
 
-        # TODO: Implement actual API call
-        # Example implementation:
-        # response = await self._client.get(
-        #     f"{config.base_url}/query",
-        #     params={"species": species, "property": property_name},
-        # )
-        # response.raise_for_status()
-        # return response.json()
+        # OpenKIM requires species to be a JSON-encoded list per the API
+        # spec (see providers/OPENKIM_API.md). ``species_logic`` defaults to
+        # "and" upstream; we omit it to use the server default.
+        try:
+            form_data = {
+                "model_interface": json.dumps(["mo"]),
+                "species": json.dumps([species]),
+            }
+        except (TypeError, ValueError) as exc:
+            logger.error("OpenKIM species %r could not be encoded: %s", species, exc)
+            return self._empty_openkim_result(species, property_name)
 
-        # Placeholder response structure
-        logger.info(f"OpenKIM query for {species} - placeholder implementation")
+        try:
+            response = await self._client.post(
+                f"{OPENKIM_API_BASE}/get_available_models",
+                data=form_data,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "OpenKIM HTTP %d for species=%s: %s",
+                exc.response.status_code,
+                species,
+                exc,
+            )
+            return self._empty_openkim_result(species, property_name)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("OpenKIM request failed for species=%s: %s", species, exc)
+            return self._empty_openkim_result(species, property_name)
+
+        if not isinstance(payload, list):
+            # OpenKIM returns ``{"error": "..."}`` on bad input; treat as empty
+            # so callers never have to special-case the error shape.
+            logger.info(
+                "OpenKIM returned non-list payload for species=%s: %r",
+                species,
+                payload if isinstance(payload, (dict, str)) else type(payload).__name__,
+            )
+            return self._empty_openkim_result(species, property_name)
+
+        potentials = [_map_openkim_kim_id(kim) for kim in payload if isinstance(kim, str) and kim]
+
+        result: dict[str, Any] = {
+            "source": "openkim",
+            "species": species,
+            "property": property_name,
+            "potentials": potentials,
+        }
+        if not potentials:
+            result["note"] = "no matching OpenKIM models"
+        return result
+
+    def _empty_openkim_result(self, species: str, property_name: str | None) -> dict[str, Any]:
+        """Build the structured-empty OpenKIM result used for graceful degradation."""
         return {
             "source": "openkim",
             "species": species,
             "property": property_name,
             "potentials": [],
-            "note": "Placeholder - API integration pending",
+            "note": "OpenKIM query did not return results",
         }
 
     async def _materials_project_query(
@@ -415,47 +534,132 @@ class ExternalDataSourceClient:
         formula: str,
         property_name: str | None,
     ) -> dict[str, Any] | None:
-        """Perform Materials Project query.
+        """Perform real Materials Project query.
 
-        NOTE: This is a placeholder implementation.
-        In production, this will call the actual Materials Project API
-        and will require an API key.
+        GETs ``https://api.materialsproject.org/materials/summary/`` with
+        ``X-API-KEY`` from the ``MATERIALS_PROJECT_API_KEY`` env var (or the
+        override passed to ``__init__``). 401/403 trigger a clear log hint
+        to regenerate the key at materialsproject.org.
 
         Args:
-            formula: Chemical formula
-            property_name: Property name
+            formula: Chemical formula (e.g. "UO2").
+            property_name: Optional property filter — used as a hint to
+                narrow the requested ``_fields`` set when provided.
 
         Returns:
-            Query results or None
+            Dispatcher-shaped result dict, or ``None`` when the API key is
+            missing or the request was rejected as unauthorized.
         """
         _ = DATASOURCE_CONFIGS[ExternalDataSource.MATERIALS_PROJECT]
 
-        # TODO: Implement actual API call
-        # Example implementation:
-        # response = await self._client.get(
-        #     f"{config.base_url}/materials",
-        #     params={
-        #         "formula": formula,
-        #         "property": property_name,
-        #         "API_KEY": os.environ["MATERIALS_PROJECT_API_KEY"],
-        #     },
-        # )
-        # response.raise_for_status()
-        # return response.json()
+        api_key = self._api_key or os.getenv(MATERIALS_PROJECT_API_KEY_ENV)
+        if not api_key:
+            logger.error(
+                "Materials Project query skipped: %s env var is not set.",
+                MATERIALS_PROJECT_API_KEY_ENV,
+            )
+            return None
 
-        # Placeholder response structure
-        logger.info(f"Materials Project query for {formula} - placeholder implementation")
+        fields = MATERIALS_PROJECT_DEFAULT_FIELDS
+        if property_name:
+            # When the caller asks for a specific property, ask MP only for
+            # the columns that include it (and the always-needed identifiers)
+            # to keep payload size sane.
+            field_list = [f.strip() for f in fields.split(",") if f.strip()]
+            if property_name in field_list:
+                narrowed = ["material_id", "formula", "elements", property_name]
+                fields = ",".join(narrowed)
+
+        params: dict[str, str] = {
+            "formula": formula,
+            "_limit": str(MATERIALS_PROJECT_DEFAULT_LIMIT),
+            "_fields": fields,
+        }
+
+        headers = {"X-API-KEY": api_key}
+
+        try:
+            response = await self._client.get(
+                f"{MATERIALS_PROJECT_API_BASE}/materials/summary/",
+                params=params,
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Materials Project request failed for %s: %s", formula, exc)
+            return self._empty_mp_result(formula, property_name)
+
+        if response.status_code in (401, 403):
+            logger.error(
+                "Materials Project rejected API key (HTTP %d). "
+                "Regenerate the key at https://materialsproject.org/api "
+                "(free) and update %s in ~/Projects/nucpot/.env.",
+                response.status_code,
+                MATERIALS_PROJECT_API_KEY_ENV,
+            )
+            return None
+
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Materials Project HTTP %d for %s: %s",
+                exc.response.status_code,
+                formula,
+                exc,
+            )
+            return self._empty_mp_result(formula, property_name)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Materials Project parse failed for %s: %s", formula, exc)
+            return self._empty_mp_result(formula, property_name)
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            logger.info(
+                "Materials Project returned no 'data' array for %s: %r",
+                formula,
+                payload if isinstance(payload, (dict, str)) else type(payload).__name__,
+            )
+            return self._empty_mp_result(formula, property_name)
+
+        materials = [_map_mp_record(record) for record in data if isinstance(record, dict)]
+
+        result: dict[str, Any] = {
+            "source": "materials_project",
+            "formula": formula,
+            "property": property_name,
+            "materials": materials,
+        }
+        if isinstance(payload, dict) and "meta" in payload:
+            result["meta"] = payload["meta"]
+        if not materials:
+            result["note"] = "no matching Materials Project records"
+        return result
+
+    def _empty_mp_result(self, formula: str, property_name: str | None) -> dict[str, Any]:
+        """Build the structured-empty MP result used for graceful degradation."""
         return {
             "source": "materials_project",
             "formula": formula,
             "property": property_name,
             "materials": [],
-            "note": "Placeholder - API integration pending",
+            "note": "Materials Project query did not return results",
         }
 
     async def close(self) -> None:
-        """Close HTTP client."""
-        await self._client.aclose()
+        """Close HTTP client.
+
+        Only closes the underlying client when this ``ExternalDataSourceClient``
+        constructed it. When the client was injected via the ``client=``
+        parameter (e.g. by tests), the caller owns the underlying
+        ``httpx.AsyncClient`` and is responsible for closing it.
+        """
+        if self._owns_client and not self._client.is_closed:
+            await self._client.aclose()
+
+    async def aclose(self) -> None:
+        """Async alias for :meth:`close`, matching ``providers/openkim.py``."""
+        await self.close()
 
     def get_cache_stats(self) -> dict[str, int]:
         """Get cache statistics.

@@ -221,6 +221,7 @@ from nfm_db.models.ref_gap_fill import (  # noqa: E402
     RefGapFillStaging,
     StagingStatus,
 )
+from nfm_db.models.reference_value import ReferenceValue  # noqa: E402
 from nfm_db.models.rerun_idempotency_key import RerunIdempotencyKey  # noqa: E402
 from nfm_db.models.resource_node import ResourceNode  # noqa: E402
 from nfm_db.models.review import (  # noqa: E402
@@ -330,6 +331,7 @@ __all__ = [
     "PropertyType",
     "ReExtractionQueue",
     "RefGapFillStaging",
+    "ReferenceValue",
     "RerunIdempotencyKey",
     "ResolutionStrategy",
     "ResourceNode",

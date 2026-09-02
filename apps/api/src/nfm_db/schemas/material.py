@@ -63,6 +63,34 @@ class MaterialCategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MaterialCategoryListResponse(BaseModel):
+    """Schema for a list of material categories (NFM-3917 Tier 1D).
+
+    Wraps the array so the standard ``ApiResponse[T]`` envelope
+    ``{ success, data, error? }`` keeps its homogeneous shape across
+    endpoints. Returning a bare list is also fine for FastAPI, but the
+    explicit envelope keeps the frontend's discriminated-union parsing
+    (see ``apps/web/src/lib/api-client.ts``) consistent.
+    """
+
+    items: list[MaterialCategoryResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UncategorizedMaterialCountResponse(BaseModel):
+    """Schema for ``GET /material-categories/uncategorized-count`` (NFM-4030).
+
+    Returns the number of materials whose ``category_id IS NULL`` — the
+    rows that are invisible under any category filter on ``/materials``
+    (NFM-3917 Tier 1D silent-gap follow-up). Single-int payload keeps
+    the wire format trivial; the count comes from a real SQL aggregation
+    so the UI never hardcodes a number.
+    """
+
+    count: int
+
+
 class MaterialCreate(BaseModel):
     """Schema for creating a material."""
 

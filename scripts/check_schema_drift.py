@@ -42,6 +42,7 @@ every soft-fail line starts with ``WARN:``, each followed by
 ``kind table (detail)``.
 """
 
+# ruff: noqa: N818, SIM102
 from __future__ import annotations
 
 import argparse
@@ -56,7 +57,6 @@ from typing import Any
 from alembic import command as alembic_command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
-from alembic.operations import ops as alembic_ops
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import MetaData
 from sqlalchemy.engine import Engine
@@ -88,6 +88,29 @@ WARN_KINDS: frozenset[str] = frozenset(
         "modify_comment",  # docstring diff — never blocks
         "remove_index",  # model dropped an index — intentional
         "missing_index",  # model has an index migration never added
+    }
+)
+
+
+# Migration 070 creates three rollback-only backup tables for
+# ``alembic downgrade``:
+#   * ``data_sources_backup_070``
+#   * ``datasets_backup_070``
+#   * ``property_measurements_backup_070``
+#
+# These tables are not part of the SQLAlchemy metadata — they're
+# transient state produced by the migration itself, dropped by
+# downgrade() after restore.  Without a whitelist they surface as
+# ``remove_table`` FAILs in CI on every fresh DB that has run
+# migration 070 (NFM-4128 schema-drift guard regression).  The
+# demotion is table-specific rather than kind-wide because
+# ``remove_table`` is otherwise a hard FAIL signal (a model
+# declared a table the migration dropped).
+EXPECTED_TRANSIENT_TABLES: frozenset[str] = frozenset(
+    {
+        "data_sources_backup_070",
+        "datasets_backup_070",
+        "property_measurements_backup_070",
     }
 )
 
@@ -126,7 +149,7 @@ def _load_base_metadata() -> MetaData:
     src = str(API_DIR / "src")
     if src not in sys.path:
         sys.path.insert(0, src)
-    from nfm_db.models import Base  # type: ignore[import-not-found]  # noqa: E402
+    from nfm_db.models import Base  # type: ignore[import-not-found]
 
     return Base.metadata
 
@@ -301,10 +324,18 @@ def _normalize_op(op: Any) -> Iterable[Drift]:
     # Fallback: surface the action so reverse-direction drift and unknown
     # shapes still appear in CI logs (never silently dropped).  Severity
     # is computed from the action name — unknown ops default to FAIL.
+    #
+    # Exception: ``remove_table`` for transient migration 070 backup
+    # tables is demoted to WARN via ``EXPECTED_TRANSIENT_TABLES``.  See
+    # the comment block above that constant for the rationale.
+    if action == "remove_table" and table_name in EXPECTED_TRANSIENT_TABLES:
+        severity = WARN
+    else:
+        severity = compute_severity(action)
     yield Drift(
         kind=action,
         table=table_name,
-        severity=compute_severity(action),
+        severity=severity,
     )
 
 
@@ -361,7 +392,7 @@ def run_migrations(database_url: str) -> None:
     cfg.set_main_option("sqlalchemy.url", database_url)
     try:
         alembic_command.upgrade(cfg, "head")
-    except Exception as exc:  # noqa: BLE001 — surface as MigrationFailure
+    except Exception as exc:
         raise MigrationFailure(str(exc)) from exc
 
 
@@ -376,9 +407,7 @@ class MigrationFailure(RuntimeError):
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="CI guard against model/migration schema drift."
-    )
+    parser = argparse.ArgumentParser(description="CI guard against model/migration schema drift.")
     parser.add_argument(
         "--database-url",
         default=os.environ.get("NFM_DATABASE_URL") or os.environ.get("DATABASE_URL"),
@@ -430,8 +459,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             print(
-                "DRIFT: migration_chain <alembic upgrade head> "
-                "(see traceback below)",
+                "DRIFT: migration_chain <alembic upgrade head> (see traceback below)",
                 file=sys.stderr,
             )
             print(str(exc), file=sys.stderr)
@@ -447,7 +475,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Apply --strict: re-promote every WARN to FAIL so the script exits 1
     # even on the harmless backlog. Useful for one-off investigations.
     drifts: list[Drift] = [
-        d if not args.strict else Drift(
+        d
+        if not args.strict
+        else Drift(
             kind=d.kind,
             table=d.table,
             detail=d.detail,

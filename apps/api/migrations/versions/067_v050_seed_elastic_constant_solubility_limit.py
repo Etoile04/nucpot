@@ -1,0 +1,182 @@
+"""v0.5.0 seed migration — close the 2 remaining catalog gaps.
+
+Revision ID: 067_v050_seed_elastic_constant_solubility_limit
+Revises: 066_seed_material_categories
+Create Date: 2026-09-01
+
+NFM-4024 (NFM-4008 AC-2): seed the **2 TRUE catalog gaps** discovered by
+`scripts/nfm-4012-unknown-property-enumeration.py` against the prod dataset:
+
+  1. ``elastic_constant`` (singular) — emitted by ``heuristic_extractor.py``
+     for individual C11/C12/C44 tokens (pressure family → mechanical).
+     031 already seeds ``elastic_constants`` (plural) for the tensor;
+     this migration adds the singular form as a **new** row so existing
+     measurement rows citing ``elastic_constants`` (plural) are NOT
+     orphaned (NDE constraint — see ticket).
+
+  2. ``solubility_limit`` — emitted by ``heuristic_extractor.py`` for the
+     ``solubility limit`` literal (dimensionless family → physical).
+     Not seeded at all in 031.
+
+Why these are the only v0.5.0 catalog gaps
+-----------------------------------------
+The other 4 names surfaced by the harness
+(``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity``,
+``melting_point``) are already seeded by 031; the harness dropped them
+because the OntoFuel LLM emits the wrong category, not because the
+catalog is incomplete. Those are tracked separately under NFM-4015
+(Dr. Petrov research workstream) and are NOT this migration's scope.
+
+AC mapping
+----------
+* AC-1 — chain point is the current head ``066_seed_material_categories``
+  (NFM-3918 renumbered 065→066; this is NOT a chain off
+  ``065_widen_property_measurements_numeric``). Migration is idempotent
+  via ``INSERT ... ON CONFLICT (category_id, slug) DO NOTHING`` keyed
+  on ``uq_property_types_category_slug``.
+* AC-2 — re-running the migration does not raise; running on a fresh DB
+  inserts exactly 2 rows.
+* AC-3 — covered by ``tests/test_seed_property_types_migration.py``
+  (TestV050MigrationChain / TestV050Idempotent / TestV050Coverage /
+  TestV050Downgrade).
+* AC-4 — category mapping matches ``FAMILY_TO_CATEGORY`` in
+  ``heuristic_extractor.py`` (elastic_constant → mechanical via pressure
+  family; solubility_limit → physical via dimensionless family).
+* AC-5 — prod re-verify via
+  ``scripts/nfm-4012-unknown-property-enumeration.py`` is owned by RE
+  per NFM-3845/3884 cascade; runs post-deploy.
+
+Operational notes
+-----------------
+* Uses ``op.get_bind().execute(sa.text(sql), params)`` per NFM-1995
+  defect C1 — Alembic 1.14+ made the second positional argument to
+  ``Operations.execute`` keyword-only.
+* ``downgrade()`` deletes ONLY the 2 rows this migration seeded,
+  identified by slug, so any future operator-added rows survive.
+* No schema change; ``property_types`` and ``property_categories`` are
+  unchanged from migration 009 / 010 / 031.
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "067_v050_seed_elastic_constant_solubility_limit"
+down_revision: str | Sequence[str] | None = "066_seed_material_categories"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Seed payload
+# ---------------------------------------------------------------------------
+# Format: (category_slug, name, slug, value_type, description)
+#
+# value_type must be one of ('scalar', 'range', 'expression', 'list',
+# 'text') per the check constraint ``ck_property_types_value_type``
+# declared in ``src/nfm_db/models/property.py``.
+#
+# Both new rows are scalar — ``elastic_constant`` for an individual
+# C11/C12/C44 component (not the full tensor) and ``solubility_limit``
+# for a single concentration value.
+
+_PROPERTY_TYPE_V050_SEED: tuple[tuple[str, str, str, str, str | None], ...] = (
+    # ---- mechanical (pressure family per FAMILY_TO_CATEGORY) ----
+    # New row, NOT an alias or rename of the existing ``elastic_constants``
+    # plural. Per NDE constraint (NFM-4008 ticket body) renaming the
+    # plural would orphan measurement rows already citing that name.
+    (
+        "mechanical",
+        "elastic_constant",
+        "elastic_constant",
+        "scalar",
+        "Individual elastic constant component (C11, C12, C44, ...) in GPa. "
+        "Distinct from the 'elastic_constants' (plural) row which represents "
+        "the full tensor (value_type=list).",
+    ),
+    # ---- physical (dimensionless family per FAMILY_TO_CATEGORY) ----
+    (
+        "physical",
+        "solubility_limit",
+        "solubility_limit",
+        "scalar",
+        "Solubility limit (at%, wt%, mol%) — maximum concentration of a "
+        "solute in a solvent at a given temperature.",
+    ),
+)
+
+
+def upgrade() -> None:
+    """Insert the 2 v0.5.0 catalog-gap rows idempotently.
+
+    Resolves ``category_id`` via a subquery against
+    ``property_categories.slug`` so the seed is portable across
+    environments (UUIDs are randomly generated by the model default).
+
+    NOTE: must use ``op.get_bind().execute(sa.text(sql), params)`` and
+    NOT ``op.execute(sql, params)``.  In Alembic 1.14+ the second
+    positional argument of ``Operations.execute`` is the
+    ``execution_options`` keyword (kw-only).  Passing a ``params_dict``
+    positionally raises ``TypeError: execute() takes 2 positional
+    arguments but 3 were given`` and the migration silently aborts.
+    See NFM-1995 review defect C1.
+    """
+    for category_slug, name, slug, value_type, description in _PROPERTY_TYPE_V050_SEED:
+        op.get_bind().execute(
+            sa.text(
+                """
+                INSERT INTO property_types
+                    (category_id, name, slug, value_type, description, created_at, updated_at)
+                SELECT
+                    pc.id,
+                    ins.name,
+                    ins.slug,
+                    ins.value_type,
+                    ins.description,
+                    NOW(),
+                    NOW()
+                FROM (SELECT CAST(:name AS VARCHAR) AS name,
+                             CAST(:slug AS VARCHAR) AS slug,
+                             CAST(:value_type AS VARCHAR) AS value_type,
+                             CAST(:description AS TEXT) AS description) AS ins
+                CROSS JOIN (
+                    SELECT id FROM property_categories WHERE slug = :category_slug
+                ) AS pc
+                ON CONFLICT (category_id, slug) DO NOTHING
+                """
+            ),
+            {
+                "name": name,
+                "slug": slug,
+                "value_type": value_type,
+                "description": description,
+                "category_slug": category_slug,
+            },
+        )
+
+
+def downgrade() -> None:
+    """Delete only the rows this migration seeded, by slug.
+
+    The existing 031 ``elastic_constants`` (plural) row is untouched —
+    only the singular ``elastic_constant`` and ``solubility_limit`` rows
+    this migration added are removed.
+
+    NOTE: must use ``op.get_bind().execute(sa.text(sql), params)``
+    (see upgrade() docstring — Alembic 1.14+ keyword-only signature
+    for ``Operations.execute``).  NFM-1995 defect D1.
+    """
+    seeded_slugs = tuple(row[2] for row in _PROPERTY_TYPE_V050_SEED)
+    if not seeded_slugs:
+        return
+
+    op.get_bind().execute(
+        sa.text(
+            """
+            DELETE FROM property_types
+            WHERE slug = ANY(CAST(:slugs AS VARCHAR[]))
+            """
+        ),
+        {"slugs": list(seeded_slugs)},
+    )

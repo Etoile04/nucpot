@@ -322,7 +322,10 @@ class TestEnvironmentFilter:
         ]
         for env, expected_value in [("staging", 0.5), ("production", 0.5)]:
             report = coverage_kr3.build_report(
-                _FakePath(events), None, None, environment=env,
+                _FakePath(events),
+                None,
+                None,
+                environment=env,
             )
             assert report["n"] == 2
             assert report["value"] == expected_value
@@ -350,7 +353,8 @@ class TestEnvironmentFilter:
         prod_events = [_ev("production", success=True), _ev("production", success=False)]
         report = coverage_kr3.build_report(
             _FakePath(staging_events),
-            None, None,
+            None,
+            None,
             environment="all",
             prod_path=_FakePath(prod_events),
         )
@@ -363,7 +367,8 @@ class TestEnvironmentFilter:
         prod_events = [_ev("production", success=False), _ev("production", success=True)]
         report = coverage_kr3.build_report(
             _FakePath(staging_events),
-            None, None,
+            None,
+            None,
             environment="production",
             prod_path=_FakePath(prod_events),
         )
@@ -378,7 +383,8 @@ class TestEnvironmentFilter:
         prod_events = [_ev("production", success=False)]
         report = coverage_kr3.build_report(
             _FakePath(staging_events),
-            None, None,
+            None,
+            None,
             environment="staging",
             prod_path=_FakePath(prod_events),
         )
@@ -405,7 +411,8 @@ class TestEnvironmentFilter:
 
     def test_cli_accepts_prod_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["coverage_kr3.py", "--environment", "production", "--prod-path", "/tmp/x.jsonl"],
         )
         assert coverage_kr3._parse_args().prod_path == "/tmp/x.jsonl"
@@ -465,7 +472,8 @@ class TestResolveSshTarget:
         assert _resolve_ssh_target(None) == "deployer@10.0.0.1"
 
     def test_missing_both_exits_with_error(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """AC2: omitting flag and env var produces actionable error (SystemExit)."""
         monkeypatch.delenv("NFMD_PROD_SSH_TARGET", raising=False)
@@ -521,6 +529,7 @@ class TestGhApiArgContract:
     def test_single_endpoint_argv_for_actions_runs(self, monkeypatch) -> None:
         captured = self._capture(monkeypatch, stdout='{"workflow_runs": []}')
         from prod_event_collector import _gh_api
+
         _gh_api("Etoile04/nucpot", "actions/runs?created=>=2026-08-10T00:00:00Z&per_page=100")
         assert len(captured) == 1
         cmd = captured[0]
@@ -528,19 +537,19 @@ class TestGhApiArgContract:
         assert cmd[1] == "api"
         # Exactly one endpoint positional after the gh/api prefix, and it
         # MUST be a single concatenated path, not two separate args.
-        assert len(cmd) == 3, (
-            f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
+        assert len(cmd) == 3, f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
+        assert (
+            cmd[2]
+            == "repos/Etoile04/nucpot/actions/runs?created=>=2026-08-10T00:00:00Z&per_page=100"
         )
-        assert cmd[2] == "repos/Etoile04/nucpot/actions/runs?created=>=2026-08-10T00:00:00Z&per_page=100"
 
     def test_single_endpoint_argv_for_artifacts(self, monkeypatch) -> None:
         captured = self._capture(monkeypatch, stdout='{"artifacts": []}')
         from prod_event_collector import _gh_api
+
         _gh_api("Etoile04/nucpot", "actions/runs/12345/artifacts")
         assert len(captured) == 1
         cmd = captured[0]
         assert cmd[:2] == ["gh", "api"]
-        assert len(cmd) == 3, (
-            f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
-        )
+        assert len(cmd) == 3, f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
         assert cmd[2] == "repos/Etoile04/nucpot/actions/runs/12345/artifacts"

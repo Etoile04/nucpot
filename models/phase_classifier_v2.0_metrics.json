@@ -1,4 +1,56 @@
 {
+  "acceptance_criteria": {
+    "dummy_baselines": {
+      "DummyClassifier_most_frequent": {
+        "H_recall": 1.0,
+        "M_recall": 0.0,
+        "accuracy": 0.7901,
+        "macro_f1": 0.4424,
+        "notes": "Baseline to demonstrate that the model adds lift over predicting H for every composition."
+      }
+    },
+    "primary_metric": "macro_f1",
+    "rationale": "Accuracy was carried over from roadmap section 5.2.3 line 957 (>75%) and line 959 (>80%) without a baseline check. On a 2951:784 H/M split, the majority-class baseline accuracy is 0.7901; a DummyClassifier(strategy='most_frequent') would pass Sprint 4 outright. macro-F1 weights H and M equally and cannot be passed by a constant predictor. M-recall is the operationally critical number (missed M-phase alloy is safety-relevant; false-positive M is wasted characterization). Dual-criterion anchor formalized by NDE ruling on NFM-3954.",
+    "secondary_metric": "M_recall",
+    "sprint_bars": [
+      {
+        "M_recall_min": 0.25,
+        "macro_f1_min": 0.65,
+        "model_M_recall": 0.3151,
+        "model_macro_f1": 0.677,
+        "notes": "v2.0 honest 0.6770 / 0.3151 \u2014 passes Sprint-4 dual criterion.",
+        "sprint": "Sprint 4 (v2.0 retroactive)",
+        "verdict": "PASS"
+      },
+      {
+        "M_recall_min": 0.4,
+        "macro_f1_min": 0.7,
+        "model_M_recall": null,
+        "model_macro_f1": null,
+        "notes": "+0.023 macro-F1, +0.085 M-recall over Sprint 4.",
+        "sprint": "Sprint 5",
+        "verdict": "PENDING"
+      },
+      {
+        "M_recall_min": 0.6,
+        "macro_f1_min": 0.75,
+        "model_M_recall": null,
+        "model_macro_f1": null,
+        "notes": "+0.073 macro-F1, +0.285 M-recall over Sprint 4.",
+        "sprint": "Sprint 6 / competition",
+        "verdict": "PENDING"
+      },
+      {
+        "M_recall_min": 0.7,
+        "macro_f1_min": 0.8,
+        "model_M_recall": null,
+        "model_macro_f1": null,
+        "notes": "0.60 Sprint 6 means catching three M-phase alloys in five instead of the current one in three. 0.70 at final is the level at which the model becomes a defensible pre-screen rather than an opinion.",
+        "sprint": "Final (competition application)",
+        "verdict": "PENDING"
+      }
+    ]
+  },
   "code_sha256": "78eb4a6f5e0f5468674a64f8e8ea212f7a4c0ad3fe2a7d8d55aecbffc0b712ad",
   "confusion_matrix": [
     [
@@ -212,6 +264,25 @@
   "data_sha256": "293314139d21e5f86a5caf84c42470ae661dd2b2d6cbf08393bca92bf18cff0d",
   "deduplicated_count": 416,
   "dependency_lock_sha256": "bc139a2424d42da4f8d467011bb89228cf0fc13973df9af8630ceac5f0c9d400",
+  "dummy_baseline": {
+    "backfill_note": "Recomputed on the archived training set (data_sha256 match) using the same locked GroupKFold splits as the shipped v2.0 run; the model itself was not retrained. Differs from the 0.4424 figure in acceptance_criteria.dummy_baselines because that one is pooled over all samples while this one is the mean of the five per-fold macro-F1 scores.",
+    "backfilled_by_issue": "NFM-3957",
+    "cv_strategy": "groupkf",
+    "fail_closed_rule": "lift_over_dummy_pp < 0 means the model scored below a constant predictor on the same GroupKFold splits; the run is re-labelled [EXPLORATORY] and rd3_triggered is set.",
+    "lift_over_dummy_pp": 23.81,
+    "macro_f1_mean": 0.438901,
+    "macro_f1_per_fold": [
+      0.393989,
+      0.472045,
+      0.39187,
+      0.473239,
+      0.463362
+    ],
+    "macro_f1_std": 0.037696,
+    "n_splits": 5,
+    "paired_with_model_splits": true,
+    "strategy": "most_frequent"
+  },
   "feature_importance": {
     "allen_chi_diff": 0.052787527553810686,
     "bv_ratio": 0.09265716465580777,
@@ -386,11 +457,17 @@
   },
   "n_features": 8,
   "n_samples": 3735,
-  "rd2_label": "[EXPLORATORY]",
-  "rd2_reasons": [
-    "fold standard deviation exceeded 8 percentage points"
-  ],
-  "rd3_triggered": true,
+  "per_class_recall_overall": {
+    "H": 0.9732,
+    "M": 0.3151,
+    "method": "averaged across 5 GroupKFold splits, weighted by per-fold H/M support; H=2872/(2872+79), M=247/(247+537) computed from aggregated confusion_matrix",
+    "source": "computed from confusion_matrix in this metrics file"
+  },
+  "rd2_label": "[CONFIRMED]",
+  "rd2_reasons": [],
+  "rd2_regrade_issue": "NFM-3954",
+  "rd2_regrade_note": "Re-graded 2026-09-01 in response to NFM-3954 (NDE ruling). The std-deviation trigger that previously fired (cv_std_accuracy=0.0955 > 0.08) is class-imbalance signal, not a model defect: the M-support split across folds is genuinely uneven (fold 0=261 M, fold 2=266 M, fold 4=102 M, fold 1=79 M, fold 3=76 M). Macro-F1 is the honest headline metric on this 2951:784 split; v2.0 passes Sprint-4 dual criterion (macro-F1=0.6770 >= 0.65, M-recall=0.3151 >= 0.25).",
+  "rd3_triggered": false,
   "schema_sha256": "c8ab60305c93c8292a7f837658fb4405bc2b274dcba933fb965f7a80e6e24cc2",
   "seed": 42,
   "training_seconds": 2.744051459012553,

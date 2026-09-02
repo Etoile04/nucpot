@@ -1,4 +1,5 @@
 """Unit tests for scripts/eval_extraction_accuracy.py."""
+
 from __future__ import annotations
 
 import json
@@ -86,12 +87,11 @@ def test_iou_handles_missing_keys() -> None:
 def test_score_fixture_perfect_match(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     [fix] = [
-        f for f in ev.discover_fixtures(root)
+        f
+        for f in ev.discover_fixtures(root)
         if f.figure_type == "plot" and f.paper_id == "plot-001"
     ]
-    candidate = json.loads(
-        (root / "plot" / "plot-001" / "ground_truth.json").read_text()
-    )
+    candidate = json.loads((root / "plot" / "plot-001" / "ground_truth.json").read_text())
     score = ev.score_fixture(fix, candidate, numeric_tol=0.05, iou_thr=0.5)
     assert score >= 0.999
 
@@ -113,9 +113,7 @@ def test_score_fixture_none_candidate(tmp_path: Path) -> None:
 def test_score_fixture_numeric_within_tolerance(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     fix = ev.discover_fixtures(root)[0]
-    candidate = json.loads(
-        (fix.fixture_dir / "ground_truth.json").read_text()
-    )
+    candidate = json.loads((fix.fixture_dir / "ground_truth.json").read_text())
     candidate["bounding_box"]["width"] *= 1.01
     score = ev.score_fixture(fix, candidate, numeric_tol=0.05, iou_thr=0.5)
     assert score >= 0.999
@@ -124,9 +122,7 @@ def test_score_fixture_numeric_within_tolerance(tmp_path: Path) -> None:
 def test_score_fixture_numeric_outside_tolerance(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     fix = ev.discover_fixtures(root)[0]
-    candidate = json.loads(
-        (fix.fixture_dir / "ground_truth.json").read_text()
-    )
+    candidate = json.loads((fix.fixture_dir / "ground_truth.json").read_text())
     # Push the bounding box far enough that IoU drops well below 0.5.
     candidate["bounding_box"]["x"] += 1000
     candidate["bounding_box"]["y"] += 1000
@@ -141,11 +137,16 @@ def test_main_passes_with_identical_candidates(tmp_path: Path) -> None:
     for gt_path in fixtures.rglob("ground_truth.json"):
         paper_id = gt_path.parent.name
         (candidates / f"{paper_id}.json").write_text(gt_path.read_text())
-    rc = ev.main([
-        "--fixtures", str(fixtures),
-        "--candidates", str(candidates),
-        "--threshold", "0.6",
-    ])
+    rc = ev.main(
+        [
+            "--fixtures",
+            str(fixtures),
+            "--candidates",
+            str(candidates),
+            "--threshold",
+            "0.6",
+        ]
+    )
     assert rc == 0
 
 
@@ -156,11 +157,16 @@ def test_main_fails_when_below_threshold(tmp_path: Path) -> None:
     (candidates / "plot-001.json").write_text(
         (fixtures / "plot" / "plot-001" / "ground_truth.json").read_text()
     )
-    rc = ev.main([
-        "--fixtures", str(fixtures),
-        "--candidates", str(candidates),
-        "--threshold", "0.9",
-    ])
+    rc = ev.main(
+        [
+            "--fixtures",
+            str(fixtures),
+            "--candidates",
+            str(candidates),
+            "--threshold",
+            "0.9",
+        ]
+    )
     assert rc == 1
 
 
@@ -169,10 +175,14 @@ def test_main_returns_2_when_no_fixtures(tmp_path: Path) -> None:
     empty.mkdir()
     candidates = tmp_path / "cands"
     candidates.mkdir()
-    rc = ev.main([
-        "--fixtures", str(empty),
-        "--candidates", str(candidates),
-    ])
+    rc = ev.main(
+        [
+            "--fixtures",
+            str(empty),
+            "--candidates",
+            str(candidates),
+        ]
+    )
     assert rc == 2
 
 
@@ -202,11 +212,15 @@ def test_main_strict_coverage_fails_on_under_target(tmp_path: Path) -> None:
     candidates = tmp_path / "cands"
     candidates.mkdir()
     (candidates / "plot-001.json").write_text(json.dumps(gt))
-    rc = ev.main([
-        "--fixtures", str(fixtures),
-        "--candidates", str(candidates),
-        "--strict-coverage",
-    ])
+    rc = ev.main(
+        [
+            "--fixtures",
+            str(fixtures),
+            "--candidates",
+            str(candidates),
+            "--strict-coverage",
+        ]
+    )
     assert rc == 1
 
 
@@ -218,11 +232,16 @@ def test_main_writes_report_json(tmp_path: Path) -> None:
         paper_id = gt_path.parent.name
         (candidates / f"{paper_id}.json").write_text(gt_path.read_text())
     report = tmp_path / "report.json"
-    rc = ev.main([
-        "--fixtures", str(fixtures),
-        "--candidates", str(candidates),
-        "--report-json", str(report),
-    ])
+    rc = ev.main(
+        [
+            "--fixtures",
+            str(fixtures),
+            "--candidates",
+            str(candidates),
+            "--report-json",
+            str(report),
+        ]
+    )
     assert rc == 0
     payload = json.loads(report.read_text())
     assert payload["total_fixtures"] == 5

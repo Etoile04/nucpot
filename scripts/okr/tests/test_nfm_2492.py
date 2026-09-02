@@ -31,7 +31,6 @@ from scripts.okr import PaperclipEmptyResultError, PaperclipFetchError
 from scripts.okr.commit_efficiency import fetch_issue_statuses
 from scripts.okr.report import main as report_main
 
-
 # ---------------------------------------------------------------------------
 # Exception contract — the new error must flow through existing guards
 # ---------------------------------------------------------------------------
@@ -57,17 +56,19 @@ def test_empty_result_error_is_a_fetch_error() -> None:
 @pytest.mark.unit
 def test_empty_issue_list_with_refs_raises() -> None:
     """AC1: HTTP 200 with ``[]`` while refs exist is not a measurement."""
-    with patch(
-        "scripts.okr.commit_efficiency.fetch_all_issues",
-        return_value=[],
+    with (
+        patch(
+            "scripts.okr.commit_efficiency.fetch_all_issues",
+            return_value=[],
+        ),
+        pytest.raises(PaperclipEmptyResultError, match=r"0 issues"),
     ):
-        with pytest.raises(PaperclipEmptyResultError, match=r"0 issues"):
-            fetch_issue_statuses(
-                ["NFM-100", "NFM-200"],
-                "http://localhost:3000",
-                "co-1",
-                api_key="secret-key",
-            )
+        fetch_issue_statuses(
+            ["NFM-100", "NFM-200"],
+            "http://localhost:3000",
+            "co-1",
+            api_key="secret-key",
+        )
 
 
 @pytest.mark.unit
@@ -82,9 +83,15 @@ def test_no_refs_still_returns_empty_map_without_raising() -> None:
         "scripts.okr.commit_efficiency.fetch_all_issues",
         return_value=[],
     ) as mock_fetch:
-        assert fetch_issue_statuses(
-            [], "http://localhost:3000", "co-1", api_key="secret-key",
-        ) == {}
+        assert (
+            fetch_issue_statuses(
+                [],
+                "http://localhost:3000",
+                "co-1",
+                api_key="secret-key",
+            )
+            == {}
+        )
         mock_fetch.assert_not_called()
 
 
@@ -100,20 +107,22 @@ def test_zero_refs_resolved_against_non_empty_list_raises() -> None:
     2438 issues came back and not one ref matched — that is a lookup mismatch,
     not a team that shipped nothing.
     """
-    with patch(
-        "scripts.okr.commit_efficiency.fetch_all_issues",
-        return_value=[
-            {"identifier": None, "key": "NFM-100", "status": "done"},
-            {"identifier": None, "key": "NFM-200", "status": "done"},
-        ],
+    with (
+        patch(
+            "scripts.okr.commit_efficiency.fetch_all_issues",
+            return_value=[
+                {"identifier": None, "key": "NFM-100", "status": "done"},
+                {"identifier": None, "key": "NFM-200", "status": "done"},
+            ],
+        ),
+        pytest.raises(PaperclipEmptyResultError, match=r"none.*resolved"),
     ):
-        with pytest.raises(PaperclipEmptyResultError, match=r"none.*resolved"):
-            fetch_issue_statuses(
-                ["NFM-100", "NFM-200"],
-                "http://localhost:3000",
-                "co-1",
-                api_key="secret-key",
-            )
+        fetch_issue_statuses(
+            ["NFM-100", "NFM-200"],
+            "http://localhost:3000",
+            "co-1",
+            api_key="secret-key",
+        )
 
 
 @pytest.mark.unit
@@ -153,53 +162,62 @@ def test_kr1_is_no_data_when_fetch_returns_empty_200(
     """
     monkeypatch.setenv("PAPERCLIP_COMPANY_ID", "co-1")
     monkeypatch.setenv("PAPERCLIP_API_KEY", "secret-key")
-    monkeypatch.setattr(sys, "argv", [
-        "report", "--since", "2026-07-27", "--until", "2026-08-02",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--since",
+            "2026-07-27",
+            "--until",
+            "2026-08-02",
+        ],
+    )
 
-    mock_git_log = MagicMock(return_value=(
-        "abc1234 fix: x (NFM-100)\n"
-        "def5678 fix: y (NFM-200)\n"
-    ))
+    mock_git_log = MagicMock(return_value=("abc1234 fix: x (NFM-100)\ndef5678 fix: y (NFM-200)\n"))
 
     with (
         patch("scripts.okr.report.run_git_log", mock_git_log),
         # HTTP 200, empty body — no exception raised anywhere.
         patch("scripts.okr.commit_efficiency.fetch_all_issues", return_value=[]),
         patch("scripts.okr.report.fetch_all_issues", return_value=[]),
-        patch("scripts.okr.report.compute_kr3", return_value={
-            "key": "deploy_first_pass_success",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
-        patch("scripts.okr.report.compute_kr5", return_value={
-            "key": "test_coverage",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
+        patch(
+            "scripts.okr.report.compute_kr3",
+            return_value={
+                "key": "deploy_first_pass_success",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
+        patch(
+            "scripts.okr.report.compute_kr5",
+            return_value={
+                "key": "test_coverage",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
     ):
         report_main()
 
     out = capsys.readouterr().out
 
     kr1_line = next(
-        (line for line in out.splitlines() if line.startswith("KR-1")), None,
+        (line for line in out.splitlines() if line.startswith("KR-1")),
+        None,
     )
     assert kr1_line is not None, f"KR-1 line not found in output:\n{out}"
     assert "[no data]" in kr1_line, (
         f"KR-1 must render as [no data] on an empty 200, got: {kr1_line!r}"
     )
-    assert "0.000" not in kr1_line, (
-        f"KR-1 must NEVER render as 0.000 on an empty 200: {kr1_line!r}"
-    )
+    assert "0.000" not in kr1_line, f"KR-1 must NEVER render as 0.000 on an empty 200: {kr1_line!r}"
 
     kr2_line = next(
-        (line for line in out.splitlines() if line.startswith("KR-2")), None,
+        (line for line in out.splitlines() if line.startswith("KR-2")),
+        None,
     )
     assert kr2_line is not None, f"KR-2 line not found in output:\n{out}"
-    assert "[no data]" in kr2_line, (
-        f"KR-2 must degrade with KR-1, got: {kr2_line!r}"
-    )
+    assert "[no data]" in kr2_line, f"KR-2 must degrade with KR-1, got: {kr2_line!r}"
 
 
 @pytest.mark.unit
@@ -215,36 +233,48 @@ def test_kr1_still_numeric_for_commit_range_with_no_refs(
     """
     monkeypatch.setenv("PAPERCLIP_COMPANY_ID", "co-1")
     monkeypatch.setenv("PAPERCLIP_API_KEY", "secret-key")
-    monkeypatch.setattr(sys, "argv", [
-        "report", "--since", "2026-07-27", "--until", "2026-08-02",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report",
+            "--since",
+            "2026-07-27",
+            "--until",
+            "2026-08-02",
+        ],
+    )
 
-    mock_git_log = MagicMock(return_value=(
-        "abc1234 chore: bump deps\n"
-        "def5678 docs: fix typo\n"
-    ))
+    mock_git_log = MagicMock(return_value=("abc1234 chore: bump deps\ndef5678 docs: fix typo\n"))
 
     with (
         patch("scripts.okr.report.run_git_log", mock_git_log),
         patch("scripts.okr.commit_efficiency.fetch_all_issues", return_value=[]),
         patch("scripts.okr.report.fetch_all_issues", return_value=[]),
-        patch("scripts.okr.report.compute_kr3", return_value={
-            "key": "deploy_first_pass_success",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
-        patch("scripts.okr.report.compute_kr5", return_value={
-            "key": "test_coverage",
-            "value": None,
-            "status": "no_data_baseline",
-        }),
+        patch(
+            "scripts.okr.report.compute_kr3",
+            return_value={
+                "key": "deploy_first_pass_success",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
+        patch(
+            "scripts.okr.report.compute_kr5",
+            return_value={
+                "key": "test_coverage",
+                "value": None,
+                "status": "no_data_baseline",
+            },
+        ),
     ):
         report_main()
 
     out = capsys.readouterr().out
 
     kr1_line = next(
-        (line for line in out.splitlines() if line.startswith("KR-1")), None,
+        (line for line in out.splitlines() if line.startswith("KR-1")),
+        None,
     )
     assert kr1_line is not None, f"KR-1 line not found in output:\n{out}"
     assert "0.000" in kr1_line, (
@@ -253,7 +283,8 @@ def test_kr1_still_numeric_for_commit_range_with_no_refs(
     )
 
     kr2_line = next(
-        (line for line in out.splitlines() if line.startswith("KR-2")), None,
+        (line for line in out.splitlines() if line.startswith("KR-2")),
+        None,
     )
     assert kr2_line is not None, f"KR-2 line not found in output:\n{out}"
     assert "1.000" in kr2_line, (

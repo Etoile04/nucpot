@@ -4,6 +4,8 @@ Tests cover CLI argument parsing, Paperclip API interaction, budget
 calculation, JSON report formatting, and alert issue creation.
 """
 
+# ruff: noqa: SIM117
+
 from __future__ import annotations
 
 import json
@@ -30,7 +32,6 @@ from scripts.okr.resource_budget import (
     main,
     parse_args,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -118,23 +119,33 @@ class TestParseArgs:
         assert not result.create_alerts
 
     def test_custom_budgets(self) -> None:
-        result = parse_args([
-            "check",
-            "--sprint-start", "2026-06-23",
-            "--sprint-end", "2026-07-06",
-            "--creation-budget", "10",
-            "--wip-budget", "5",
-        ])
+        result = parse_args(
+            [
+                "check",
+                "--sprint-start",
+                "2026-06-23",
+                "--sprint-end",
+                "2026-07-06",
+                "--creation-budget",
+                "10",
+                "--wip-budget",
+                "5",
+            ]
+        )
         assert result.creation_budget == 10
         assert result.wip_budget == 5
 
     def test_create_alerts_flag(self) -> None:
-        result = parse_args([
-            "check",
-            "--sprint-start", "2026-06-23",
-            "--sprint-end", "2026-07-06",
-            "--create-alerts",
-        ])
+        result = parse_args(
+            [
+                "check",
+                "--sprint-start",
+                "2026-06-23",
+                "--sprint-end",
+                "2026-07-06",
+                "--create-alerts",
+            ]
+        )
         assert result.create_alerts is True
 
     def test_missing_sprint_start_raises(self) -> None:
@@ -162,9 +173,7 @@ class TestCountCreatedThisSprint:
         # all within [2026-06-23, 2026-07-06]; issue-3 (06-20) is before sprint
         assert count == 4
 
-    def test_excludes_issues_before_sprint(
-        self, sample_issues: list[dict]
-    ) -> None:
+    def test_excludes_issues_before_sprint(self, sample_issues: list[dict]) -> None:
         config = BudgetConfig(
             creation_budget=5,
             wip_budget=3,
@@ -178,13 +187,13 @@ class TestCountCreatedThisSprint:
     def test_empty_issues_returns_zero(self, sample_config: BudgetConfig) -> None:
         assert count_created_this_sprint([], sample_config) == 0
 
-    def test_treats_start_date_as_inclusive(
-        self, sample_config: BudgetConfig
-    ) -> None:
-        issue = [{
-            "id": "x",
-            "createdAt": "2026-06-23T00:00:00Z",
-        }]
+    def test_treats_start_date_as_inclusive(self, sample_config: BudgetConfig) -> None:
+        issue = [
+            {
+                "id": "x",
+                "createdAt": "2026-06-23T00:00:00Z",
+            }
+        ]
         count = count_created_this_sprint(issue, sample_config)
         assert count == 1
 
@@ -217,9 +226,7 @@ class TestCountInProgress:
 class TestFetchAgentIssues:
     """Tests for fetching issues from Paperclip API."""
 
-    def test_returns_issues_on_success(
-        self, sample_issues: list[dict]
-    ) -> None:
+    def test_returns_issues_on_success(self, sample_issues: list[dict]) -> None:
         api_response = {"issues": sample_issues}
         mock_open = mock.MagicMock()
         mock_open.read.return_value = json.dumps(api_response).encode()
@@ -381,7 +388,7 @@ class TestCheckBudget:
             {"id": f"i-{i}", "status": "in_progress", "createdAt": "2026-06-24T00:00:00Z"}
             for i in range(3)
         ] + [
-            {"id": f"i-{i+3}", "status": "todo", "createdAt": "2026-06-24T00:00:00Z"}
+            {"id": f"i-{i + 3}", "status": "todo", "createdAt": "2026-06-24T00:00:00Z"}
             for i in range(2)
         ]
         budget = check_budget(issues, "agent-both-boundary", "At-Limit Both Agent", sample_config)
@@ -504,9 +511,7 @@ class TestAlertContent:
 class TestCreateBudgetAlert:
     """Tests for creating budget alert issues via Paperclip API."""
 
-    def test_creates_alert_on_success(
-        self, sample_config: BudgetConfig
-    ) -> None:
+    def test_creates_alert_on_success(self, sample_config: BudgetConfig) -> None:
         budget = AgentBudget(
             agent_id="agent-1",
             agent_name="Lead Engineer",
@@ -541,9 +546,7 @@ class TestCreateBudgetAlert:
         assert result is not None
         assert result["identifier"] == "NFM-999"
 
-    def test_returns_none_on_api_error(
-        self, sample_config: BudgetConfig
-    ) -> None:
+    def test_returns_none_on_api_error(self, sample_config: BudgetConfig) -> None:
         budget = AgentBudget(
             agent_id="agent-1",
             agent_name="Lead Engineer",
@@ -569,9 +572,7 @@ class TestCreateBudgetAlert:
             )
         assert result is None
 
-    def test_includes_parent_id_when_provided(
-        self, sample_config: BudgetConfig
-    ) -> None:
+    def test_includes_parent_id_when_provided(self, sample_config: BudgetConfig) -> None:
         budget = AgentBudget(
             agent_id="agent-1",
             agent_name="Lead Engineer",
@@ -648,11 +649,15 @@ class TestMain:
 
     def test_missing_env_vars_returns_1(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            result = main([
-                "check",
-                "--sprint-start", "2026-06-23",
-                "--sprint-end", "2026-07-06",
-            ])
+            result = main(
+                [
+                    "check",
+                    "--sprint-start",
+                    "2026-06-23",
+                    "--sprint-end",
+                    "2026-07-06",
+                ]
+            )
         assert result == 1
 
     def test_all_within_budget_returns_0(self) -> None:
@@ -663,9 +668,11 @@ class TestMain:
         }
 
         agents_resp = {"agents": [{"id": "a1", "name": "Agent1"}]}
-        issues_resp = {"issues": [
-            {"id": "i1", "status": "in_progress", "createdAt": "2026-06-24T10:00:00Z"},
-        ]}
+        issues_resp = {
+            "issues": [
+                {"id": "i1", "status": "in_progress", "createdAt": "2026-06-24T10:00:00Z"},
+            ]
+        }
 
         mock_agents = mock.MagicMock()
         mock_agents.read.return_value = json.dumps(agents_resp).encode()
@@ -679,11 +686,15 @@ class TestMain:
 
         with mock.patch.dict("os.environ", env, clear=True):
             with mock.patch("urllib.request.urlopen", side_effect=[mock_agents, mock_issues]):
-                result = main([
-                    "check",
-                    "--sprint-start", "2026-06-23",
-                    "--sprint-end", "2026-07-06",
-                ])
+                result = main(
+                    [
+                        "check",
+                        "--sprint-start",
+                        "2026-06-23",
+                        "--sprint-end",
+                        "2026-07-06",
+                    ]
+                )
         assert result == 0
 
     def test_over_budget_returns_2(self) -> None:
@@ -694,10 +705,12 @@ class TestMain:
         }
 
         agents_resp = {"agents": [{"id": "a1", "name": "Agent1"}]}
-        issues_resp = {"issues": [
-            {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
-            for i in range(6)
-        ]}
+        issues_resp = {
+            "issues": [
+                {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
+                for i in range(6)
+            ]
+        }
 
         mock_agents = mock.MagicMock()
         mock_agents.read.return_value = json.dumps(agents_resp).encode()
@@ -711,11 +724,15 @@ class TestMain:
 
         with mock.patch.dict("os.environ", env, clear=True):
             with mock.patch("urllib.request.urlopen", side_effect=[mock_agents, mock_issues]):
-                result = main([
-                    "check",
-                    "--sprint-start", "2026-06-23",
-                    "--sprint-end", "2026-07-06",
-                ])
+                result = main(
+                    [
+                        "check",
+                        "--sprint-start",
+                        "2026-06-23",
+                        "--sprint-end",
+                        "2026-07-06",
+                    ]
+                )
         assert result == 2
 
     def test_create_alerts_flag_creates_issues(self) -> None:
@@ -727,10 +744,12 @@ class TestMain:
         }
 
         agents_resp = {"agents": [{"id": "a1", "name": "Agent1"}]}
-        issues_resp = {"issues": [
-            {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
-            for i in range(6)
-        ]}
+        issues_resp = {
+            "issues": [
+                {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
+                for i in range(6)
+            ]
+        }
         alert_resp = {"id": "alert-1", "identifier": "NFM-ALERT"}
 
         mock_agents = mock.MagicMock()
@@ -748,14 +767,22 @@ class TestMain:
         mock_alert.__enter__ = mock.Mock(return_value=mock_alert)
         mock_alert.__exit__ = mock.Mock(return_value=False)
 
-        with mock.patch.dict("os.environ", env, clear=True):
-            with mock.patch("urllib.request.urlopen", side_effect=[mock_agents, mock_issues, mock_alert]):
-                result = main([
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch(
+                "urllib.request.urlopen", side_effect=[mock_agents, mock_issues, mock_alert]
+            ),
+        ):
+            result = main(
+                [
                     "check",
-                    "--sprint-start", "2026-06-23",
-                    "--sprint-end", "2026-07-06",
+                    "--sprint-start",
+                    "2026-06-23",
+                    "--sprint-end",
+                    "2026-07-06",
                     "--create-alerts",
-                ])
+                ]
+            )
         assert result == 2
 
     def test_empty_agents_returns_0(self) -> None:
@@ -773,11 +800,15 @@ class TestMain:
 
         with mock.patch.dict("os.environ", env, clear=True):
             with mock.patch("urllib.request.urlopen", return_value=mock_agents):
-                result = main([
-                    "check",
-                    "--sprint-start", "2026-06-23",
-                    "--sprint-end", "2026-07-06",
-                ])
+                result = main(
+                    [
+                        "check",
+                        "--sprint-start",
+                        "2026-06-23",
+                        "--sprint-end",
+                        "2026-07-06",
+                    ]
+                )
         assert result == 0
 
     def test_create_alerts_without_cto_id_returns_1(self) -> None:
@@ -789,10 +820,12 @@ class TestMain:
         }
 
         agents_resp = {"agents": [{"id": "a1", "name": "Agent1"}]}
-        issues_resp = {"issues": [
-            {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
-            for i in range(6)
-        ]}
+        issues_resp = {
+            "issues": [
+                {"id": f"i{i}", "status": "todo", "createdAt": "2026-06-24T10:00:00Z"}
+                for i in range(6)
+            ]
+        }
 
         mock_agents = mock.MagicMock()
         mock_agents.read.return_value = json.dumps(agents_resp).encode()
@@ -806,10 +839,14 @@ class TestMain:
 
         with mock.patch.dict("os.environ", env, clear=True):
             with mock.patch("urllib.request.urlopen", side_effect=[mock_agents, mock_issues]):
-                result = main([
-                    "check",
-                    "--sprint-start", "2026-06-23",
-                    "--sprint-end", "2026-07-06",
-                    "--create-alerts",
-                ])
+                result = main(
+                    [
+                        "check",
+                        "--sprint-start",
+                        "2026-06-23",
+                        "--sprint-end",
+                        "2026-07-06",
+                        "--create-alerts",
+                    ]
+                )
         assert result == 1

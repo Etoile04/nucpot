@@ -194,23 +194,27 @@ class PropertyMeasurement(TimestampMixin, Base):
         ForeignKey("property_types.id", ondelete="CASCADE"),
         index=True,
     )
+    # Per ADR-011 D7 (NFM-3920 / NFM-3921): scale raised from 10 → 15 to
+    # preserve values like ``1.27e-9`` (15 fractional digits rendered).
+    # The prior ``NUMERIC(20, 10)`` rounded ``1.27e-9`` to ``1.3e-9``
+    # (~2.4% error) and truncated values below ``5e-11`` to zero.
     value_scalar: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 15),
         nullable=True,
     )
     value_min: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 15),
         nullable=True,
     )
     value_max: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 15),
         nullable=True,
     )
     value_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     value_list: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     value_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(
-        Numeric(16, 6),
+        Numeric(20, 15),
         nullable=True,
     )
     unit_id: Mapped[uuid.UUID | None] = mapped_column(
