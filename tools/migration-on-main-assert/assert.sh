@@ -33,6 +33,19 @@
 # git repo and runs ``git merge-base --is-ancestor <sha> <ref>``. If any
 # head is not on the ref, the gate fails.
 #
+# NFM-4125: the file-existence and file-commit lookups are anchored to the
+# resolved ``--base-ref`` (default ``origin/main`` HEAD), NOT to the host
+# working tree. The deploy's working tree is checked out at the deploy's
+# trigger commit, but the candidate image is built AFTER pushes land on
+# ``origin/main`` — so any migration that merged to main after the trigger
+# commit is present in the image but not in the working tree. Reading
+# migrations from the working tree made the gate fail with HEAD_FILE_NOT_FOUND
+# for every prod deploy once main had advanced past the trigger commit.
+# The fix preserves the NFM-2141 invariant ("revision file is on the base
+# ref") — the file's last-touched commit must still be an ancestor of the
+# base ref — but sources the lookup from the base-ref tree itself so a
+# stale working tree no longer trips the gate.
+#
 # Failure modes — distinct exit codes (ADR §5 D2)
 # -----------------------------------------------
 #   0   pass — every alembic head's file-commit is on the base ref
@@ -123,6 +136,10 @@ if [ -z "${IMAGE}" ]; then
   exit 72
 fi
 
+log() { printf '\033[1;34m[on-main-assert]\033[0m %s\n' "$*"; }
+err() { printf '\033[1;31m[on-main-assert]\033[0m %s\n' "$*" >&2; }
+ok()  { printf '\033[1;32m[on-main-assert]\033[0m %s\n' "$*"; }
+
 # Resolve BASE_REF — accept branch names, full refs, or SHAs.
 # `git merge-base --is-ancestor <sha> <ref>` is the load-bearing primitive.
 # We resolve once so the subsequent --is-ancestor calls compare against the
@@ -138,9 +155,66 @@ if [ -z "${RESOLVED_REF}" ]; then
   exit 72
 fi
 
-log() { printf '\033[1;34m[on-main-assert]\033[0m %s\n' "$*"; }
-err() { printf '\033[1;31m[on-main-assert]\033[0m %s\n' "$*" >&2; }
-ok()  { printf '\033[1;32m[on-main-assert]\033[0m %s\n' "$*"; }
+# ---- 0.5 Fetch latest origin/<branch> so migration lookup is current -------
+# NFM-4125: the deploy's working tree is checked out at the trigger commit,
+# but the candidate image is built AFTER pushes land on origin/main. Reading
+# migrations from the working tree produces HEAD_FILE_NOT_FOUND for any
+# migration that merged to main after the trigger commit. Anchoring the
+# lookup to origin/main HEAD (the commit the image is actually built from)
+# removes the spurious failure while preserving the NFM-2141 invariant
+# ("revision file is on the base ref"). The fetch is mandatory when
+# --base-ref is an origin/<branch> ref so the comparison reflects the
+# tree the image was built from.
+FETCH_TARGET=""
+case "${BASE_REF}" in
+  origin/*)
+    FETCH_TARGET="${BASE_REF#origin/}"
+    ;;
+esac
+
+REMOTE_URL="$(git -C "${REPO_ROOT}" config --get "remote.origin.url" 2>/dev/null || true)"
+
+if [ -n "${FETCH_TARGET}" ] && [ -n "${REMOTE_URL}" ]; then
+  log "Fetching origin/${FETCH_TARGET} for up-to-date migration lookup..."
+  if ! git -C "${REPO_ROOT}" fetch --no-tags --quiet origin "${FETCH_TARGET}" 2>&1; then
+    err "GIT_ERROR: 'git fetch origin ${FETCH_TARGET}' failed; the gate needs"
+    err "GIT_ERROR: an up-to-date origin/${FETCH_TARGET} tree to anchor the"
+    err "GIT_ERROR: migration lookup (NFM-4125). Re-run after the runner's"
+    err "GIT_ERROR: network to github.com is restored."
+    exit 74
+  fi
+  # Re-resolve BASE_REF now that origin has been refreshed. Same OID math
+  # as above; we repeat it so the resolved SHA matches the freshly-fetched
+  # tip rather than the stale local ref.
+  RESOLVED_REF="$(git -C "${REPO_ROOT}" rev-parse --verify "${BASE_REF}" 2>/dev/null || true)"
+  if [ -z "${RESOLVED_REF}" ]; then
+    err "GIT_ERROR: could not resolve --base-ref '${BASE_REF}' after fetch"
+    exit 72
+  fi
+elif [ -n "${FETCH_TARGET}" ]; then
+  log "  --base-ref is '${BASE_REF}' but no 'origin' remote is configured;"
+  log "  migration lookup will use the local ref. NFM-4125 requires origin,"
+  log "  so this run will still trip if origin/main has advanced past the"
+  log "  deploy's trigger commit (this is a degraded mode, not a fix)."
+fi
+
+WORK_TREE_REF="$(git -C "${REPO_ROOT}" rev-parse --verify HEAD 2>/dev/null || true)"
+log "  base-ref (${BASE_REF}) HEAD: ${RESOLVED_REF:0:9}"
+if [ -n "${WORK_TREE_REF}" ]; then
+  if [ "${WORK_TREE_REF}" = "${RESOLVED_REF}" ]; then
+    log "  working-tree HEAD:         ${WORK_TREE_REF:0:9} (matches ${BASE_REF})"
+  else
+    AHEAD_BEHIND="$(git -C "${REPO_ROOT}" rev-list --left-right --count \
+        "${WORK_TREE_REF}...${RESOLVED_REF}" 2>/dev/null \
+      | awk '{printf "%s behind, %s ahead", $1, $2}')"
+    log "  working-tree HEAD:         ${WORK_TREE_REF:0:9} (${AHEAD_BEHIND} relative to ${BASE_REF})"
+    log "  migration lookup will use ${BASE_REF}'s tree, not the working tree,"
+    log "  so a stale working tree no longer trips this gate (NFM-4125)."
+  fi
+else
+  log "  working-tree HEAD:         <unresolved> (script is reading migrations"
+  log "  from ${BASE_REF}'s tree, not from the working tree.)"
+fi
 
 # ---- 1. Run 'alembic heads' inside the candidate image -------------------
 # We need the head revisions exactly as the image would apply them. The
@@ -184,8 +258,19 @@ fi
 # Image layout (docker/prod-api.Dockerfile) puts migrations at
 # /app/migrations/versions/<rev>_<slug>.py (or <rev>.py for hand-merge files).
 # Map back to apps/api/migrations/versions/... in the host repo.
-HEAD_FILE_MAP=""   # "<rev>|<host-relative-path>|<image-relative-path>"
-HEAD_MISSING=""    # collect any heads whose file we can't locate
+#
+# NFM-4125: the file-existence and file-commit lookups prefer the resolved
+# base-ref tree (the commit the candidate image was actually built from).
+# We still fall back to the working tree for the legacy unmerged-branch
+# case (NFM-2136) so the override path (NFM-2141 exit 70 -> 71) keeps
+# working for in-flight hotfix migrations that have not yet landed on
+# main.
+#
+# HEAD_FILE_MAP format: "<rev>|<host-relative-path>|<image-relative-path>|<commit-source>"
+#   commit-source: "base" (use ``git log <RESOLVED_REF> -- <path>``)
+#                  "tree" (fall back to working-tree ``git log -- <path>``)
+HEAD_FILE_MAP=""
+HEAD_MISSING=""
 
 for rev in ${HEAD_REVS}; do
   IMAGE_FILE="$(docker run --rm "${IMAGE}" \
@@ -199,30 +284,75 @@ for rev in ${HEAD_REVS}; do
   # ${var#/app} strips only "app" — the leading slash is treated as a
   # path separator inside the glob pattern. sed is portable.
   HOST_REL="$(printf '%s' "${IMAGE_FILE}" | sed 's|^/app/|apps/api/|')"
-  if [ ! -f "${REPO_ROOT}/${HOST_REL}" ]; then
-    HEAD_MISSING="${HEAD_MISSING} ${rev}"
+  # NFM-4125 primary path: the migration file is on ${BASE_REF}'s tree at
+  # HEAD. ``git cat-file -e <rev>:<path>`` returns 0 iff the blob exists
+  # at that path in the commit's tree; it works without checking anything
+  # out. Reading from the base-ref tree (not the working tree) is the
+  # whole point of NFM-4125: the deploy's working tree is checked out at
+  # the trigger commit, but the candidate image was built from a newer
+  # origin/main tree, so HEAD_FILE_NOT_FOUND against the working tree
+  # would be spurious for any migration that merged to main after the
+  # trigger commit.
+  if git -C "${REPO_ROOT}" cat-file -e "${RESOLVED_REF}:${HOST_REL}" 2>/dev/null; then
+    HEAD_FILE_MAP="${HEAD_FILE_MAP}${rev}|${HOST_REL}|${IMAGE_FILE}|base"$'\n'
     continue
   fi
-  HEAD_FILE_MAP="${HEAD_FILE_MAP}${rev}|${HOST_REL}|${IMAGE_FILE}"$'\n'
+  # NFM-2136 legacy fallback: file not on ${BASE_REF}, but maybe in the
+  # working tree (CI is on the feature branch). We accept this so the
+  # --override-rationale path (exit 70 -> 71) remains usable for hotfix
+  # migrations that are about to merge. If this fallback ever fires, the
+  # merge-base --is-ancestor check below will still flag the migration
+  # as NOT on the base ref — so the gate keeps refusing the deploy
+  # unless the operator supplies --override-rationale.
+  if [ -f "${REPO_ROOT}/${HOST_REL}" ]; then
+    HEAD_FILE_MAP="${HEAD_FILE_MAP}${rev}|${HOST_REL}|${IMAGE_FILE}|tree"$'\n'
+    continue
+  fi
+  HEAD_MISSING="${HEAD_MISSING} ${rev}"
 done
 
 if [ -n "${HEAD_MISSING}" ]; then
   err "HEAD_FILE_NOT_FOUND: could not locate migration file(s) for heads:"
   for r in ${HEAD_MISSING}; do err "  - ${r}"; done
-  err "  (the image contains the revision but the host working tree does not;"
-  err "   the candidate image was likely built from a different tree than"
-  err "   the one this script is checking against. Pass --repo-root or rebuild"
-  err "   the image from ${REPO_ROOT}.)"
+  err "  (the image contains the revision but ${BASE_REF}'s tree at"
+  err "   ${RESOLVED_REF:0:9} does not, and the file is not in the working"
+  err "   tree either. The candidate image was built from a different tree"
+  err "   than the one this script is checking against."
+  err "   ${BASE_REF} HEAD: ${RESOLVED_REF:0:9}"
+  if [ -n "${WORK_TREE_REF}" ]; then
+    err "   working-tree HEAD: ${WORK_TREE_REF:0:9}"
+  fi
+  err "   Either: (a) the migration is genuinely on an unmerged branch — the"
+  err "   NFM-2136 class, override with --override-rationale; or (b) the image"
+  err "   was built from a fork that is not ${BASE_REF}; rebuild it from"
+  err "   ${REPO_ROOT}.)"
   exit 73
 fi
 
 # ---- 3. For each head's file, run merge-base --is-ancestor ---------------
 NOT_ON_REF=""
-while IFS='|' read -r rev host_rel image_rel; do
+while IFS='|' read -r rev host_rel image_rel commit_source; do
   [ -z "${rev}" ] && continue
-  FILE_COMMIT="$(git -C "${REPO_ROOT}" log -1 --format=%H -- "${host_rel}" 2>/dev/null || true)"
+  # NFM-4125: prefer RESOLVED_REF's history. ``git log <rev> -- <path>``
+  # resolves the path against the tree at <rev>, not against the working
+  # tree, so it returns the file's last-touched commit on the base ref —
+  # i.e. the commit the candidate image was actually built from. Fall
+  # back to working-tree history for the legacy NFM-2136 case so the
+  # override path still has a commit to fingerprint against.
+  case "${commit_source}" in
+    base)
+      FILE_COMMIT="$(git -C "${REPO_ROOT}" log -1 --format=%H "${RESOLVED_REF}" -- "${host_rel}" 2>/dev/null || true)"
+      ;;
+    tree)
+      FILE_COMMIT="$(git -C "${REPO_ROOT}" log -1 --format=%H -- "${host_rel}" 2>/dev/null || true)"
+      ;;
+    *)
+      err "GIT_ERROR: unknown commit_source '${commit_source}' for ${rev}"
+      exit 74
+      ;;
+  esac
   if [ -z "${FILE_COMMIT}" ]; then
-    err "GIT_ERROR: git log failed for ${host_rel}"
+    err "GIT_ERROR: git log (${commit_source}) -- ${host_rel} failed"
     exit 74
   fi
   # merge-base --is-ancestor exits 0 when the first commit is an ancestor

@@ -1,4 +1,4 @@
-# migration-on-main-assert (NFM-2141)
+# migration-on-main-assert (NFM-2141, hardened in NFM-4125)
 
 Pre-deploy alembic-on-main assertion. Refuses a deploy when the candidate
 image's alembic HEAD migration file's last-touched commit is not an ancestor
@@ -18,12 +18,44 @@ because alembic could not resolve the DB's current revision.
 See `docs/migrations.md` §"Alembic-on-main release gate" for the full
 rationale and recurrence history.
 
+## Why a second revision (NFM-4125)
+
+The original NFM-2141 implementation read migrations from the host **working
+tree**, but the deploy's working tree is checked out at the trigger commit
+while the candidate image is built *after* additional commits land on
+`origin/main`. Once `origin/main` had advanced past the trigger commit, any
+migration that merged to main in between was present in the candidate image
+but missing from the working tree — and the gate tripped with
+`HEAD_FILE_NOT_FOUND` for every prod deploy (real example: Production
+Deployment `33570937619` with trigger `9d2441428` and image-built migration
+`071_f4_uuid_titled_source_guard` from `7ccc1ac2b`).
+
+NFM-4125 fixes this without weakening the NFM-2141 invariant:
+
+1. The script now `git fetch origin <branch>`es the base-ref remote branch
+   on every invocation (mandatory when `--base-ref` starts with `origin/`).
+2. The file-existence check uses `git cat-file -e <resolved-base-ref>:<path>`
+   — i.e. it consults the *base-ref tree*, not the working tree.
+3. The file-commit lookup uses `git log -1 <resolved-base-ref> -- <path>` —
+   same idea: walk the base-ref's history, not the working tree's.
+4. The user-facing log reports both the working-tree HEAD and the base-ref
+   HEAD so the operator can see the divergence and confirm the gate is
+   reading the right tree.
+
+The NFM-2141 invariant ("revision file is on the base ref") is unchanged:
+`git merge-base --is-ancestor <file-commit> <base-ref>` still has to hold.
+A migration that is genuinely missing from `origin/main` (the unmerged-branch
+class) still fails the gate with exit 73 — that scenario is covered by the
+NFM-4125 regression test `test_migration_truly_missing_on_origin_main_exits_73_nfm_4125`.
+
 ## Files
 
 * `assert.sh` — gate script. Exits non-zero (70, 71, 72, 73, 74) on
   failure; exits 0 when every alembic HEAD's file-commit is on the base ref.
 * `test_assert.py` — pytest unit tests using a fake `docker` shim on PATH.
-  Catches logical regressions without needing Docker.
+  Catches logical regressions without needing Docker. Includes the
+  NFM-4125 regression tests for the working-tree-behind-origin-main
+  scenario.
 * `smoke.sh` — live-Docker integration smoke. Builds a throwaway alpine
   image, runs `assert.sh` against it on an unmerged branch (expects 70),
   exercises the override path (expects 71 + audit row), and cherry-picks
@@ -58,8 +90,8 @@ bash tools/migration-on-main-assert/assert.sh \
 | 70   | `HEAD_NOT_ON_REF` — at least one head's file-commit is not on ref      |
 | 71   | `OVERRIDE_APPLIED` — override rationale supplied AND audit row written |
 | 72   | `USAGE` — bad command-line arguments                                   |
-| 73   | `HEAD_FILE_NOT_FOUND` — image has revision file but host tree does not |
-| 74   | `GIT_ERROR` — `git merge-base` or `git log` failed                      |
+| 73   | `HEAD_FILE_NOT_FOUND` — image has revision file but base-ref tree does not |
+| 74   | `GIT_ERROR` — `git fetch` / `git merge-base` / `git log` failed         |
 
 ## Audit log JSONL schema
 

@@ -7,7 +7,10 @@ its own scenario (heads-on-main, heads-not-on-main, override, missing file,
 bad git ref).
 
 Companion to smoke.sh (Docker integration). Together they form the
-NFM-2141 regression test for ADR-NFM-2139 §5 D4.
+NFM-2141 regression test for ADR-NFM-2139 §5 D4. NFM-4125 added the
+working-tree-behind-origin-main scenario and the file-not-on-base-ref
+regression test, both anchored to ``origin/main`` HEAD rather than the
+working tree.
 """
 
 from __future__ import annotations
@@ -357,3 +360,173 @@ esac
     )
     assert result.returncode == 73
     assert "HEAD_READ_FAIL" in result.stderr or "HEAD_PARSE_FAIL" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# NFM-4125: working tree is behind origin/main HEAD; the candidate image was
+# built from a newer tree that contains a migration the working tree does
+# not. The gate must still pass because origin/main HEAD is the authoritative
+# source for migration lookup.
+# ---------------------------------------------------------------------------
+
+
+def _setup_origin_main_with_two_migrations(tmp_path):
+    """Build a local repo with an ``origin`` remote pointing at a bare mirror,
+    main containing migration 070, then advance main with migration 071.
+
+    Returns (repo, trigger_commit, head_with_071_commit).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    remote = tmp_path / "remote.git"
+    # Bare mirror acts as the ``origin`` remote. Local file:// URLs work in
+    # tests without a network.
+    subprocess.run(
+        ["git", "init", "--bare", "-q", "-b", "main", str(remote)],
+        check=True,
+    )
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(remote)],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", str(remote)], check=True)
+    # Allow pushes to the checked-out branch on the bare remote.
+    subprocess.run(["git", "-C", str(remote), "config", "receive.denyCurrentBranch", "ignore"], check=True)
+    (repo / "README").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    # First migration: 070 on main.
+    (repo / "apps" / "api" / "migrations" / "versions").mkdir(parents=True)
+    mig070 = repo / "apps" / "api" / "migrations" / "versions" / "070_d2_dedup_bad_data_sources.py"
+    mig070.write_text('"""first migration"""' + "\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "apps/api/migrations/versions/070_d2_dedup_bad_data_sources.py"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "NFM-4104 add 070"], check=True)
+    trigger_commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    # Push initial main to origin.
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True)
+    # Capture the image-side heads BEFORE we advance main — the deploy's
+    # working tree is checked out at trigger_commit, but the candidate
+    # image was built from origin/main AFTER 071 landed.
+    # Now advance main with 071.
+    mig071 = repo / "apps" / "api" / "migrations" / "versions" / "071_f4_uuid_titled_source_guard.py"
+    mig071.write_text('"""NFM-4125 second migration on main"""' + "\n")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "apps/api/migrations/versions/071_f4_uuid_titled_source_guard.py"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "NFM-4097 add 071"], check=True)
+    head_with_071 = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True)
+    # Simulate CI: detach HEAD to the trigger commit (no migration 071 here).
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", trigger_commit], check=True)
+    # Sanity: the working tree does NOT contain 071 — this is the divergence.
+    assert not (repo / "apps" / "api" / "migrations" / "versions" / "071_f4_uuid_titled_source_guard.py").exists()
+    return repo, trigger_commit, head_with_071
+
+
+def test_working_tree_behind_origin_main_still_passes_nfm_4125(tmp_path):
+    """NFM-4125 AC #1: a deploy whose trigger commit is behind origin/main
+    HEAD does not fail NFM-2141 solely because of working-tree/image
+    divergence.
+
+    Setup:
+      - main (at trigger_commit) has migration 070.
+      - origin/main advances to head_with_071 (migration 071 added).
+      - The deploy's working tree is checked out at trigger_commit.
+      - The candidate image's ``alembic heads`` reports 070 AND 071
+        (the image was built from origin/main after the push).
+    Expected:
+      - assert.sh fetches origin main and reads migrations from
+        origin/main HEAD.
+      - 070 and 071 are both on origin/main, so the gate passes (exit 0).
+    """
+    repo, _trigger, _head_with_071 = _setup_origin_main_with_two_migrations(tmp_path)
+    heads = [
+        "070aabbccdd0 (head)",
+        "071aabbccdd1 (head)",
+    ]
+    body = _docker_shim_for_heads(
+        heads,
+        file_per_head={
+            "070aabbccdd0": "/app/migrations/versions/070_d2_dedup_bad_data_sources.py",
+            "071aabbccdd1": "/app/migrations/versions/071_f4_uuid_titled_source_guard.py",
+        },
+    )
+    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-nfm-4125-pass"), body)
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "origin/main", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0 (NFM-4125 fix); got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "ASSERT_OK" in result.stdout
+    # The NFM-4125 report should mention the divergence explicitly.
+    assert "working-tree HEAD" in result.stdout or "migration lookup will use" in result.stdout, (
+        f"expected NFM-4125 divergence report in stdout; got:\n{result.stdout}"
+    )
+
+
+def test_migration_truly_missing_on_origin_main_exits_73_nfm_4125(tmp_path):
+    """NFM-4125 AC #3: the fix does not weaken the NFM-2141 invariant.
+    If a migration is genuinely NOT on origin/main HEAD AND not in the
+    working tree either (the image was built from a fork that was never
+    merged to main), the gate must still refuse the deploy with
+    HEAD_FILE_NOT_FOUND (exit 73) — not silently pass.
+
+    The NFM-4125 dual-path fallback (working-tree lookup) only kicks in
+    when the file is in the working tree; if neither origin/main HEAD
+    nor the working tree has the file, the strict HEAD_FILE_NOT_FOUND
+    semantics still apply.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(remote)],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(remote), "config", "receive.denyCurrentBranch", "ignore"], check=True)
+    (repo / "README").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    # origin/main is pushed WITHOUT the migration file — neither origin/main
+    # nor the working tree contains it.
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True)
+    # Image reports a head rev whose file path is not anywhere on the host.
+    heads = ["034abcdef0123 (head)"]
+    body = _docker_shim_for_heads(
+        heads,
+        file_per_head={"034abcdef0123": "/app/migrations/versions/034_unmerged.py"},
+    )
+    bin_dir = _write_fake_docker(Path("/tmp/nfmd-moma-nfm-4125-still-73"), body)
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "origin/main", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 73, (
+        f"expected exit 73 (HEAD_FILE_NOT_FOUND) for migration missing from"
+        f" origin/main AND working tree; got {result.returncode}\n"
+        f"stderr={result.stderr}"
+    )
+    assert "HEAD_FILE_NOT_FOUND" in result.stderr
+    # NFM-4125 also expands the error to name the base-ref HEAD so the
+    # operator can see why the gate fired.
+    assert "origin/main" in result.stderr
