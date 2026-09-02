@@ -91,7 +91,8 @@ class TestRevisionMetadata:
         Originally asserted 073 as the head (NFM-4122). Migration 075
         (NFM-4139) chained after 073, then 076 (NFM-4159 attribution
         view), then 077 (NFM-4159 datasets.source_id nullable) extended
-        it further.  077 is the current head.
+        it further.  078 (NFM-4143, materials.data_origin_state) extends
+        the chain again — 078 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -106,7 +107,7 @@ class TestRevisionMetadata:
         )  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["077_datasets_source_id_nullable"], (
+        assert heads == ["078_data_origin_state"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
