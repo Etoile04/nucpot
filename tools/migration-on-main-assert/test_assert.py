@@ -56,8 +56,12 @@ case "$1" in
           ;;
         */app/migrations/versions/*)
           found_ls=1
-          # Extract revision ID (hex chars before the first non-hex).
-          rev="$(printf '%s' "$arg" | sed -E 's|.*/versions/([0-9a-f]+).*|\1|')"
+          # Echo back the glob PREFIX the caller asked for: everything between
+          # "/versions/" and the "*" wildcard. NFM-4125: this must not assume
+          # the revision id is hex — NFMD revision ids are slug-style
+          # (071_f4_uuid_titled_source_guard), and a hex-only extraction here
+          # silently reproduced the very truncation bug under test.
+          rev="$(printf '%s' "$arg" | sed -E 's|.*/versions/([^*]*)\*.*|\1|')"
           ;;
       esac
     done
@@ -357,3 +361,171 @@ esac
     )
     assert result.returncode == 73
     assert "HEAD_READ_FAIL" in result.stderr or "HEAD_PARSE_FAIL" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# NFM-4125: slug-style revision ids (the format NFMD actually uses)
+# ---------------------------------------------------------------------------
+# Every fixture above uses alembic's DEFAULT 12-char hex revision id
+# (``001abc01dead``). No NFMD migration has ever used that format — all of
+# them are slug-style (``071_f4_uuid_titled_source_guard``). assert.sh parsed
+# heads with ``grep -oE '^[0-9a-f]+'``, truncating at the first non-hex char,
+# so production deploy 33570937619 reported a bare ``071`` and the real
+# revision never appeared in the diagnostic.
+
+
+def _init_repo(tmp_path: Path, name: str = "repo") -> Path:
+    """Create a git repo with one commit and return its path."""
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "README").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True)
+    return repo
+
+
+def _commit_migration(repo: Path, filename: str) -> None:
+    """Add and commit a migration file under apps/api/migrations/versions/."""
+    versions = repo / "apps" / "api" / "migrations" / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    (versions / filename).write_text('"""migration"""\n')
+    rel = f"apps/api/migrations/versions/{filename}"
+    subprocess.run(["git", "-C", str(repo), "add", rel], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", f"add {filename}"], check=True)
+
+
+def test_slug_revision_id_on_main_exits_0(tmp_path):
+    """A slug-style head that IS on the base ref must pass (exit 0).
+
+    Regression for NFM-4125: the hex-only head parser truncated
+    ``071_f4_uuid_titled_source_guard`` to ``071``, so the resolved host path
+    became ``.../071.py`` — a file that does not exist — and the gate tripped
+    HEAD_FILE_NOT_FOUND on a revision that was present and merged.
+    """
+    rev = "071_f4_uuid_titled_source_guard"
+    repo = _init_repo(tmp_path)
+    _commit_migration(repo, f"{rev}.py")
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-slug-pass", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0 for slug revision id; got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "ASSERT_OK" in result.stdout
+
+
+def test_slug_revision_id_reported_untruncated_in_diagnostic(tmp_path):
+    """A genuinely missing slug head must name the FULL revision id.
+
+    The production failure printed ``- 071``, which read as a numbering/race
+    problem and sent triage down the wrong path. The diagnostic must carry
+    the whole revision so the real cause (image built from a different tree)
+    is legible.
+    """
+    rev = "071_f4_uuid_titled_source_guard"
+    repo = _init_repo(tmp_path)  # migration deliberately NOT committed
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-slug-missing", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 73, (
+        f"expected exit 73; got {result.returncode}\nstderr={result.stderr}"
+    )
+    assert rev in result.stderr, (
+        "diagnostic must name the full revision id, not a truncated prefix.\n"
+        f"stderr={result.stderr}"
+    )
+
+
+def test_numeric_prefix_collision_binds_correct_file(tmp_path):
+    """Truncation let ``head -1`` bind the WRONG file on a shared prefix.
+
+    With heads parsed as bare ``071``, the in-image glob ``071*.py`` matches
+    both ``071_...py`` and ``0710_...py``; ``head -1`` then picks whichever
+    sorts first, so the gate can assert ancestry against a migration that is
+    not the head at all. The full revision id makes the glob unambiguous.
+    """
+    rev = "0710_later_migration"
+    repo = _init_repo(tmp_path)
+    # Only the decoy is committed; the real head's file is absent from the
+    # host tree, so a correct gate must FAIL rather than silently bind
+    # the decoy and report success.
+    _commit_migration(repo, "071_f4_uuid_titled_source_guard.py")
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-prefix-collision", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 73, (
+        "gate must not bind a prefix-colliding decoy file and pass; "
+        f"got {result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert rev in result.stderr
+
+
+def test_hex_revision_id_still_supported(tmp_path):
+    """Widening the charset must not regress alembic's default hex ids."""
+    rev = "054b39a26310"
+    repo = _init_repo(tmp_path)
+    _commit_migration(repo, f"{rev}_add_source.py")
+
+    body = _docker_shim_for_heads(
+        [f"{rev} (head)"],
+        file_per_head={rev: f"/app/migrations/versions/{rev}_add_source.py"},
+    )
+    bin_dir = _write_fake_docker(tmp_path / "bin-hex-pass", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0 for hex revision id; got {result.returncode}\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+
+def test_head_revision_with_shell_metacharacters_is_rejected(tmp_path):
+    """``rev`` is interpolated into ``sh -c "ls ..."`` — reject metacharacters.
+
+    The old hex-only charset made injection impossible by construction.
+    Widening it for slugs must keep that property: no shell or glob
+    metacharacter may survive parsing, and a leading ``-`` must never reach
+    ``ls`` as a flag.
+    """
+    repo = _init_repo(tmp_path)
+    canary = repo / "pwned"
+    body = _docker_shim_for_heads([f"x;touch {canary} (head)"])
+    bin_dir = _write_fake_docker(tmp_path / "bin-inject", body)
+
+    result = _run_assert(
+        ["--image", "fake:latest", "--base-ref", "HEAD", "--repo-root", str(repo)],
+        bin_dir=bin_dir,
+    )
+    assert not canary.exists(), "shell metacharacter in revision id was executed"
+    assert result.returncode != 0

@@ -162,16 +162,36 @@ fi
 log "  alembic heads output:"
 printf '%s\n' "${HEAD_OUTPUT}" | sed 's/^/    /'
 
-# Parse one revision per head line. Format examples:
+# Parse one revision per head line. `alembic heads` prints the revision id as
+# the first whitespace-separated token. Format examples:
 #   054b39a26310 (head)
 #   054b39a26310_add_source_to_dft_calculations.py (head)
+#   071_f4_uuid_titled_source_guard (head)
 #   <rev> (head)
 # We use awk to take the first whitespace-separated token on each line that
 # contains "(head)" — robust across BSD/GNU sed, no regex edge cases.
+#
+# NFM-4125: this previously ended in `grep -oE '^[0-9a-f]+'`, which assumed
+# alembic's DEFAULT 12-char hex revision ids. Every NFMD revision id is
+# slug-style (071_f4_uuid_titled_source_guard), so the hex class stopped at
+# the first non-hex char and yielded a bare `071`. Two consequences, both
+# seen in production deploy 33570937619:
+#   1. HEAD_FILE_NOT_FOUND reported `- 071`, hiding the real revision and
+#      making an image/tree mismatch read as a numbering or race problem;
+#   2. `ls /app/migrations/versions/071*.py | head -1` can bind to the WRONG
+#      file whenever two revisions share a numeric prefix (071_ vs 0710_),
+#      asserting ancestry against a migration that is not the head.
+#
+# The charset stays deliberately narrow: ${rev} is interpolated into a
+# `sh -c "ls ..."` that runs inside the container, so no shell or glob
+# metacharacter may pass, and the first character must be alphanumeric so
+# `ls` can never read the revision as a flag. A trailing `.py` is stripped
+# so the documented `<rev>_<slug>.py` form still globs correctly.
 HEAD_REVS="$(printf '%s\n' "${HEAD_OUTPUT}" \
     | grep -E '\(head\)' \
     | awk '{ print $1 }' \
-    | grep -oE '^[0-9a-f]+' \
+    | sed -E 's/\.py$//' \
+    | grep -oE '^[A-Za-z0-9][A-Za-z0-9._-]*' \
     || true)"
 
 if [ -z "${HEAD_REVS}" ]; then
