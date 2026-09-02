@@ -14,6 +14,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { useState } from "react"
+import type { JSX } from "react"
 
 import {
   DataLossNotice,

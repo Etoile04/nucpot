@@ -59,7 +59,6 @@ export function resolveFeatureFlag(): FeatureFlagSnapshot {
 function readBuildTimeEnv(): boolean | null {
   // Next.js exposes only `NEXT_PUBLIC_*` vars to the browser; the
   // absence of a public env var means OFF.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env = (globalThis as any)?.process?.env?.NEXT_PUBLIC_DATA_LOSS_NOTICE
   if (typeof env !== "string") return null
   const normalized = env.trim().toLowerCase()

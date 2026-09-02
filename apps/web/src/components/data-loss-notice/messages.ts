@@ -77,5 +77,5 @@ export function formatCreatedAt(
   // to the caller. dayjs parsing is intentionally not pulled into this
   // module so unit tests stay dependency-free.
   const isoDate = raw.match(/^(\d{4}-\d{2}-\d{2})/)
-  return isoDate ? isoDate[1] : raw
+  return isoDate?.[1] ?? raw
 }

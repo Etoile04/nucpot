@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { JSX } from "react"
 
 import "./data-loss-notice.css"
 
@@ -58,28 +59,16 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
-  // Filter to the lost cohort only — server contract (§5.2) may also
-  // return `intact` rows with no field, in which case `attribution` is
-  // absent and the component MUST not render.
-  if (variant !== "inline") return null
-  if (!attribution || attribution.status !== "lost") return null
-
-  // Spec §6.1: when flag is OFF (or no provider), render nothing.
-  const flag = resolveFeatureFlag()
-  if (!flag.enabled) return null
-
-  const createdAt = formatCreatedAt(attribution.lostAt, DEFAULT_LOST_AT)
-  const siblingPlaceholderCount = attribution.siblingPlaceholderCount ?? 0
-
-  const interpolated = {
-    headline: messages.headline,
-    body: messages.body.replace(
-      "{siblingPlaceholderCount}",
-      String(siblingPlaceholderCount),
-    ),
-    forwardLook: messages.forwardLook,
-    inlineLabel: messages.inlineLabel(createdAt),
-  }
+  // Cohort + copy inputs are computed BEFORE the render guards below:
+  // every hook must run unconditionally (rules-of-hooks). The provider
+  // can flip the feature flag at runtime and an attribution refetch can
+  // flip a row intact → lost, so a mounted component's guard outcome
+  // can change between renders — early-returning above the hooks would
+  // crash React with "Rendered fewer hooks than expected".
+  const isLost = attribution?.status === "lost"
+  const siblingPlaceholderCount = isLost
+    ? attribution.siblingPlaceholderCount ?? 0
+    : 0
 
   // Fire `shown` analytics once when popover first opens.
   useEffect((): (() => void) | void => {
@@ -202,6 +191,29 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
     surface,
     locale,
   ])
+
+  // Render guards — intentionally below every hook (see the comment
+  // above). Filter to the lost cohort only: the server contract (§5.2)
+  // may also return `intact` rows, in which case the component MUST
+  // not render.
+  if (variant !== "inline") return null
+  if (!attribution || attribution.status !== "lost") return null
+
+  // Spec §6.1: when flag is OFF (or no provider), render nothing.
+  const flag = resolveFeatureFlag()
+  if (!flag.enabled) return null
+
+  const createdAt = formatCreatedAt(attribution.lostAt, DEFAULT_LOST_AT)
+
+  const interpolated = {
+    headline: messages.headline,
+    body: messages.body.replace(
+      "{siblingPlaceholderCount}",
+      String(siblingPlaceholderCount),
+    ),
+    forwardLook: messages.forwardLook,
+    inlineLabel: messages.inlineLabel(createdAt),
+  }
 
   return (
     <span

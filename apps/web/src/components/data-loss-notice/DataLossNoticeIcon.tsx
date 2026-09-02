@@ -12,6 +12,8 @@
  * variant respects the surrounding font-size for the surrounding label.
  */
 
+import type { JSX } from "react"
+
 export interface DataLossNoticeIconProps {
   /** Pixel size of the icon. Defaults to 18 per spec §2.5. */
   readonly size?: number
