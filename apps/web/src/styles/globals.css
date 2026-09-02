@@ -336,3 +336,37 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* NFM-4085 (B): sticky table header for long property tables.
+ *
+ * When MaterialPropertyTable engages `scroll.y` (data.length > 20), the
+ * antd `<thead>` already gets `position: sticky` baked in. But once the
+ * page is scrolled, the sticky header can be obscured by the root
+ * Nav/header z-stack and its own backdrop drops behind the table body's
+ * border. Pinning the thead with a slightly higher z-index and an
+ * opaque matching surface keeps the column headers readable while the
+ * body scrolls within its max-height viewport. Scope is intentionally
+ * narrow — `.material-property-table` is the only long-running table
+ * that crosses the sticky-scroll threshold.
+ */
+.material-property-table .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--color-surface-elevated, #374151);
+}
+
+/* ---------------------------------------------------------------------------
+ * NFM-4087 — D2 重复行处置 (folded row highlight)
+ *
+ * `.material-property-row--grouped` tints rows whose underlying
+ * measurement count exceeds 1. Saturation is intentionally below 10% so
+ * the highlight reads as a label, not a brand element; the count badge
+ * (×N) and the disclosure triangle carry the actual signal.
+ * ------------------------------------------------------------------------- */
+.material-property-row--grouped > td {
+  background-color: rgb(59 130 246 / 0.05);
+}
+.material-property-row--grouped:hover > td {
+  background-color: rgb(59 130 246 / 0.09);
+}

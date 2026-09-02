@@ -3,36 +3,38 @@
 Tests use mocked Paperclip API responses to verify each role's check logic.
 """
 
+# ruff: noqa: RUF005
+
 from __future__ import annotations
 
 import json
 import os
 from io import StringIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from scripts.okr.done_compliance import (
+    ROLE_CHECKS,
     ComplianceCheck,
     ComplianceReport,
+    _validate_issue_id,
     build_report,
-    check_children_complete,
-    check_cpo_accepted,
     check_acceptance_criteria_defined,
+    check_children_complete,
     check_ci_green,
     check_code_review_approved,
     check_coverage_ge_80,
+    check_cpo_accepted,
     check_staging_verified,
     check_tech_docs_updated,
     check_tests_passing,
     detect_role,
+    fetch_child_issues,
     fetch_issue,
     fetch_issue_comments,
-    fetch_child_issues,
     main,
     parse_args,
-    ROLE_CHECKS,
-    _validate_issue_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -201,7 +203,9 @@ class TestCheckCodeReviewApproved:
     def test_passes_with_approved_comment(
         self, sample_comments: list[dict], empty_args: dict
     ) -> None:
-        result = check_code_review_approved(sample_comments, empty_args["issue"], empty_args["children"])
+        result = check_code_review_approved(
+            sample_comments, empty_args["issue"], empty_args["children"]
+        )
         assert result.passed is True
 
     def test_fails_without_approved_comment(self, empty_args: dict) -> None:
@@ -221,9 +225,7 @@ class TestCheckCodeReviewApproved:
 
 @pytest.mark.unit
 class TestCheckTestsPassing:
-    def test_passes_with_test_evidence(
-        self, sample_comments: list[dict], empty_args: dict
-    ) -> None:
+    def test_passes_with_test_evidence(self, sample_comments: list[dict], empty_args: dict) -> None:
         comments_with_tests = sample_comments + [
             {
                 "id": "c3",
@@ -231,7 +233,9 @@ class TestCheckTestsPassing:
                 "body": "All 42 tests passing. CI green.",
             },
         ]
-        result = check_tests_passing(comments_with_tests, empty_args["issue"], empty_args["children"])
+        result = check_tests_passing(
+            comments_with_tests, empty_args["issue"], empty_args["children"]
+        )
         assert result.passed is True
 
     def test_fails_without_test_evidence(
@@ -250,18 +254,14 @@ class TestCheckTestsPassing:
 
 @pytest.mark.unit
 class TestCheckCoverageGe80:
-    def test_passes_with_high_coverage(
-        self, sample_comments: list[dict], empty_args: dict
-    ) -> None:
+    def test_passes_with_high_coverage(self, sample_comments: list[dict], empty_args: dict) -> None:
         comments = sample_comments + [
             {"id": "c3", "body": "Coverage: 92%. All green."},
         ]
         result = check_coverage_ge_80(comments, empty_args["issue"], empty_args["children"])
         assert result.passed is True
 
-    def test_fails_with_low_coverage(
-        self, sample_comments: list[dict], empty_args: dict
-    ) -> None:
+    def test_fails_with_low_coverage(self, sample_comments: list[dict], empty_args: dict) -> None:
         comments = sample_comments + [
             {"id": "c3", "body": "Coverage: 65%. Need more tests."},
         ]
@@ -467,9 +467,7 @@ class TestFetchIssueComments:
 
 @pytest.mark.unit
 class TestFetchChildIssues:
-    def test_fetches_children(
-        self, base_url: str, api_key: str, child_issues: list[dict]
-    ) -> None:
+    def test_fetches_children(self, base_url: str, api_key: str, child_issues: list[dict]) -> None:
         with patch("scripts.okr.done_compliance._api_get") as mock_api_get:
             mock_api_get.return_value = child_issues
             result = fetch_child_issues(base_url, api_key, "company-1", "issue-uuid-1")
@@ -478,9 +476,7 @@ class TestFetchChildIssues:
     def test_returns_empty_list_on_error(self, base_url: str, api_key: str) -> None:
         with patch("scripts.okr.done_compliance._api_get") as mock_api_get:
             mock_api_get.return_value = None
-            result = fetch_child_issues(
-                base_url, api_key, "company-1", "issue-uuid-1"
-            )
+            result = fetch_child_issues(base_url, api_key, "company-1", "issue-uuid-1")
             assert result == []
 
 
@@ -622,11 +618,14 @@ class TestMain:
             {"body": "All 42 tests passing. Coverage: 90%. CI: green."},
         ]
         with (
-            patch.dict(os.environ, {
-                "PAPERCLIP_API_URL": "https://example.com",
-                "PAPERCLIP_API_KEY": "test-key",
-                "PAPERCLIP_COMPANY_ID": "company-1",
-            }),
+            patch.dict(
+                os.environ,
+                {
+                    "PAPERCLIP_API_URL": "https://example.com",
+                    "PAPERCLIP_API_KEY": "test-key",
+                    "PAPERCLIP_COMPANY_ID": "company-1",
+                },
+            ),
             patch("scripts.okr.done_compliance._api_get") as mock_api,
         ):
             mock_api.side_effect = [[compliant_issue], good_comments, []]
@@ -641,11 +640,14 @@ class TestMain:
             "description": "## Acceptance Criteria\n- [ ] TODO",
         }
         with (
-            patch.dict(os.environ, {
-                "PAPERCLIP_API_URL": "https://example.com",
-                "PAPERCLIP_API_KEY": "test-key",
-                "PAPERCLIP_COMPANY_ID": "company-1",
-            }),
+            patch.dict(
+                os.environ,
+                {
+                    "PAPERCLIP_API_URL": "https://example.com",
+                    "PAPERCLIP_API_KEY": "test-key",
+                    "PAPERCLIP_COMPANY_ID": "company-1",
+                },
+            ),
             patch("scripts.okr.done_compliance._api_get") as mock_api,
         ):
             mock_api.side_effect = [[issue], [], []]
@@ -659,11 +661,14 @@ class TestMain:
 
     def test_exits_1_when_issue_not_found(self) -> None:
         with (
-            patch.dict(os.environ, {
-                "PAPERCLIP_API_URL": "https://example.com",
-                "PAPERCLIP_API_KEY": "test-key",
-                "PAPERCLIP_COMPANY_ID": "company-1",
-            }),
+            patch.dict(
+                os.environ,
+                {
+                    "PAPERCLIP_API_URL": "https://example.com",
+                    "PAPERCLIP_API_KEY": "test-key",
+                    "PAPERCLIP_COMPANY_ID": "company-1",
+                },
+            ),
             patch("scripts.okr.done_compliance._api_get") as mock_api,
         ):
             mock_api.return_value = None
@@ -671,11 +676,14 @@ class TestMain:
             assert exit_code == 1
 
     def test_exits_1_when_invalid_issue_id(self) -> None:
-        with patch.dict(os.environ, {
-            "PAPERCLIP_API_URL": "https://example.com",
-            "PAPERCLIP_API_KEY": "test-key",
-            "PAPERCLIP_COMPANY_ID": "company-1",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "PAPERCLIP_API_URL": "https://example.com",
+                "PAPERCLIP_API_KEY": "test-key",
+                "PAPERCLIP_COMPANY_ID": "company-1",
+            },
+        ):
             exit_code = main(["--issue-id", "INVALID"])
             assert exit_code == 1
 
@@ -691,11 +699,14 @@ class TestMain:
             {"body": "Updated docs. Staging verified successfully."},
         ]
         with (
-            patch.dict(os.environ, {
-                "PAPERCLIP_API_URL": "https://example.com",
-                "PAPERCLIP_API_KEY": "test-key",
-                "PAPERCLIP_COMPANY_ID": "company-1",
-            }),
+            patch.dict(
+                os.environ,
+                {
+                    "PAPERCLIP_API_URL": "https://example.com",
+                    "PAPERCLIP_API_KEY": "test-key",
+                    "PAPERCLIP_COMPANY_ID": "company-1",
+                },
+            ),
             patch("scripts.okr.done_compliance._api_get") as mock_api,
             patch("scripts.okr.done_compliance.sys.stdout", new_callable=StringIO) as mock_stdout,
         ):

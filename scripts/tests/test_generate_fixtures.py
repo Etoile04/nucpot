@@ -1,4 +1,5 @@
 """Unit tests for scripts/generate_fixtures.py."""
+
 from __future__ import annotations
 
 import json
@@ -49,9 +50,7 @@ def test_generate_creates_expected_counts(tmp_path: Path) -> None:
 
 
 def test_generate_writes_png_images(tmp_path: Path) -> None:
-    fixtures = gf.generate(
-        tmp_path, {"plot": 2}, seed=99, write_images=True
-    )
+    fixtures = gf.generate(tmp_path, {"plot": 2}, seed=99, write_images=True)
     for f in fixtures:
         img = f.fixture_dir / "image.png"
         assert img.exists()
@@ -92,30 +91,46 @@ def test_ground_truth_has_required_keys(tmp_path: Path) -> None:
 
 def test_main_rejects_unknown_count_key(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
-        gf.main([
-            "--output", str(tmp_path),
-            "--counts", "bogus=5",
-        ])
+        gf.main(
+            [
+                "--output",
+                str(tmp_path),
+                "--counts",
+                "bogus=5",
+            ]
+        )
 
 
 def test_main_rejects_non_integer_count(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
-        gf.main([
-            "--output", str(tmp_path),
-            "--counts", "plot=abc",
-        ])
+        gf.main(
+            [
+                "--output",
+                str(tmp_path),
+                "--counts",
+                "plot=abc",
+            ]
+        )
 
 
 def test_main_writes_summary(tmp_path: Path, capsys) -> None:
-    rc = gf.main([
-        "--output", str(tmp_path),
-        "--seed", "5",
-        "--counts", "plot=1",
-        "--counts", "table=1",
-        "--counts", "microstructure=0",
-        "--counts", "diagram=0",
-        "--skip-images",
-    ])
+    rc = gf.main(
+        [
+            "--output",
+            str(tmp_path),
+            "--seed",
+            "5",
+            "--counts",
+            "plot=1",
+            "--counts",
+            "table=1",
+            "--counts",
+            "microstructure=0",
+            "--counts",
+            "diagram=0",
+            "--skip-images",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     summary = json.loads(out)

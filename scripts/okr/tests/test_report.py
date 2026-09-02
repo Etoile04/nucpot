@@ -1,11 +1,10 @@
 """Tests for scripts/okr/report.py — 5-KR weekly report aggregator (NFM-2041 B2)."""
 
+# ruff: noqa: F841
+
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from scripts.okr.report import (
     _NO_DATA_BASELINE,
@@ -16,7 +15,6 @@ from scripts.okr.report import (
     format_baseline,
     format_table,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_lead_time
@@ -126,7 +124,9 @@ class TestComputeKr3:
     @patch("scripts.okr.report.build_kr3_report")
     @patch("scripts.okr.coverage_kr3._resolve_path")
     def test_returns_value_when_data_exists(
-        self, mock_resolve: MagicMock, mock_build: MagicMock,
+        self,
+        mock_resolve: MagicMock,
+        mock_build: MagicMock,
     ) -> None:
         mock_resolve.return_value = "/default/deploy.jsonl"
         mock_build.return_value = {"value": 0.85, "n": 10, "target": 0.90}
@@ -137,13 +137,17 @@ class TestComputeKr3:
             "unit": "ratio",
         }
         mock_build.assert_called_once_with(
-            path="/default/deploy.jsonl", since="2026-07-20", until="2026-07-26",
+            path="/default/deploy.jsonl",
+            since="2026-07-20",
+            until="2026-07-26",
         )
 
     @patch("scripts.okr.report.build_kr3_report")
     @patch("scripts.okr.coverage_kr3._resolve_path")
     def test_returns_no_data_when_no_events(
-        self, mock_resolve: MagicMock, mock_build: MagicMock,
+        self,
+        mock_resolve: MagicMock,
+        mock_build: MagicMock,
     ) -> None:
         mock_resolve.return_value = "/default/deploy.jsonl"
         mock_build.return_value = {"value": None, "n": 0, "target": 0.90}
@@ -154,15 +158,21 @@ class TestComputeKr3:
     @patch("scripts.okr.report.build_kr3_report")
     @patch("scripts.okr.coverage_kr3._resolve_path")
     def test_accepts_custom_deploy_path(
-        self, mock_resolve: MagicMock, mock_build: MagicMock,
+        self,
+        mock_resolve: MagicMock,
+        mock_build: MagicMock,
     ) -> None:
         mock_resolve.return_value = "/tmp/test.jsonl"
         mock_build.return_value = {"value": 0.90, "n": 5, "target": 0.90}
         result = compute_kr3(
-            "2026-07-20", "2026-07-26", deploy_path="/tmp/test.jsonl",
+            "2026-07-20",
+            "2026-07-26",
+            deploy_path="/tmp/test.jsonl",
         )
         mock_build.assert_called_once_with(
-            path="/tmp/test.jsonl", since="2026-07-20", until="2026-07-26",
+            path="/tmp/test.jsonl",
+            since="2026-07-20",
+            until="2026-07-26",
         )
 
 
@@ -185,9 +195,13 @@ class TestComputeKr5:
 
     @patch("scripts.okr.report.build_kr5_report")
     @patch("scripts.okr.report.Path")
-    def test_returns_value_from_coverage(self, mock_path_cls: MagicMock, mock_build: MagicMock) -> None:
+    def test_returns_value_from_coverage(
+        self, mock_path_cls: MagicMock, mock_build: MagicMock
+    ) -> None:
         mock_build.return_value = {
-            "line_rate": 0.82, "covered_lines": 820, "total_lines": 1000,
+            "line_rate": 0.82,
+            "covered_lines": 820,
+            "total_lines": 1000,
         }
         mock_path = MagicMock()
         mock_path.read_text.return_value = "<coverage/>"
@@ -310,8 +324,10 @@ class TestFormatTable:
 
     def test_includes_period_header(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": None, "status": _NO_DATA_BASELINE},
             9.88,
             {"key": "test_coverage", "value": None, "status": _NO_DATA_BASELINE},
@@ -322,8 +338,10 @@ class TestFormatTable:
 
     def test_shows_kr_labels(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": None, "status": _NO_DATA_BASELINE},
             9.88,
             {"key": "test_coverage", "value": None, "status": _NO_DATA_BASELINE},
@@ -336,8 +354,10 @@ class TestFormatTable:
 
     def test_shows_no_data_for_baseline(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": None, "status": _NO_DATA_BASELINE},
             9.88,
             {"key": "test_coverage", "value": None, "status": _NO_DATA_BASELINE},
@@ -347,8 +367,10 @@ class TestFormatTable:
 
     def test_shows_days_suffix_for_kr4(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": 0.90, "unit": "ratio"},
             9.88,
             {"key": "test_coverage", "value": 0.75, "unit": "ratio"},
@@ -367,8 +389,10 @@ class TestFormatBaseline:
 
     def test_wraps_in_goal_envelope(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": None, "status": _NO_DATA_BASELINE},
             9.88,
             {"key": "test_coverage", "value": None, "status": _NO_DATA_BASELINE},
@@ -381,8 +405,10 @@ class TestFormatBaseline:
 
     def test_uses_default_goal_id(self) -> None:
         report = build_kr_report(
-            "2026-07-20", "2026-07-26",
-            0.13, 0.318,
+            "2026-07-20",
+            "2026-07-26",
+            0.13,
+            0.318,
             {"key": "deploy_first_pass_success", "value": None, "status": _NO_DATA_BASELINE},
             9.88,
             {"key": "test_coverage", "value": None, "status": _NO_DATA_BASELINE},

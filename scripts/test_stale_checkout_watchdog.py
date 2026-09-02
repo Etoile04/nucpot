@@ -1,30 +1,30 @@
 """Unit tests for stale_checkout_watchdog.py"""
 
+# ruff: noqa: F841
+
 import logging
 import os
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 from stale_checkout_watchdog import (
-    is_stale,
-    classify_issues,
-    parse_issues_response,
-    build_reap_comment,
-    fetch_all_issues,
-    reap_stale_issue,
-    main,
-    EXIT_SUCCESS,
-    EXIT_ERROR,
     EXIT_DRY_RUN_STALE,
+    EXIT_ERROR,
+    EXIT_SUCCESS,
+    build_reap_comment,
+    classify_issues,
+    fetch_all_issues,
+    is_stale,
+    main,
+    parse_issues_response,
+    reap_stale_issue,
 )
 
 
 def _iso(minutes_ago: int) -> str:
     """Return an ISO-8601 timestamp `minutes_ago` minutes before now."""
-    return (
-        datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
-    ).isoformat()
+    return (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
 
 
 class TestIsStale(unittest.TestCase):
@@ -38,9 +38,7 @@ class TestIsStale(unittest.TestCase):
 
     def test_updated_exactly_at_boundary_minus_epsilon_is_not_stale(self):
         # Use 29.9 min to avoid microsecond race between _iso() and is_stale()
-        ts = (
-            datetime.now(timezone.utc) - timedelta(minutes=29, seconds=54)
-        ).isoformat()
+        ts = (datetime.now(UTC) - timedelta(minutes=29, seconds=54)).isoformat()
         self.assertFalse(is_stale(ts, 30))
 
     def test_updated_31_min_ago_is_stale(self):
@@ -51,9 +49,7 @@ class TestIsStale(unittest.TestCase):
         self.assertTrue(is_stale(_iso(61), 60))
 
     def test_future_updated_at_is_not_stale(self):
-        future = (
-            datetime.now(timezone.utc) + timedelta(minutes=10)
-        ).isoformat()
+        future = (datetime.now(UTC) + timedelta(minutes=10)).isoformat()
         self.assertFalse(is_stale(future, 30))
 
     def test_threshold_zero_is_always_stale(self):
@@ -65,10 +61,20 @@ class TestParseIssuesResponse(unittest.TestCase):
 
     def test_parses_array_of_issues(self):
         data = [
-            {"id": "abc", "identifier": "NFM-100", "status": "in_progress",
-             "updatedAt": _iso(10), "checkoutRunId": "run-1"},
-            {"id": "def", "identifier": "NFM-101", "status": "todo",
-             "updatedAt": _iso(5), "checkoutRunId": None},
+            {
+                "id": "abc",
+                "identifier": "NFM-100",
+                "status": "in_progress",
+                "updatedAt": _iso(10),
+                "checkoutRunId": "run-1",
+            },
+            {
+                "id": "def",
+                "identifier": "NFM-101",
+                "status": "todo",
+                "updatedAt": _iso(5),
+                "checkoutRunId": None,
+            },
         ]
         result = parse_issues_response(data)
         self.assertEqual(len(result), 2)
@@ -168,8 +174,9 @@ class TestFetchAllIssues(unittest.TestCase):
 
     def test_multiple_pages(self):
         mock_api = MagicMock()
-        page1 = [{"id": f"i-{i}", "checkoutRunId": f"r{i}", "updatedAt": _iso(i)}
-                 for i in range(100)]
+        page1 = [
+            {"id": f"i-{i}", "checkoutRunId": f"r{i}", "updatedAt": _iso(i)} for i in range(100)
+        ]
         page2 = [{"id": "last", "checkoutRunId": "r-last", "updatedAt": _iso(5)}]
         mock_api.get.side_effect = [page1, page2]
         result = fetch_all_issues(mock_api, "company-1", page_size=100)
@@ -185,8 +192,9 @@ class TestFetchAllIssues(unittest.TestCase):
 
     def test_passes_offset_correctly(self):
         mock_api = MagicMock()
-        page1 = [{"id": f"i-{i}", "checkoutRunId": f"r{i}", "updatedAt": _iso(i)}
-                 for i in range(10)]
+        page1 = [
+            {"id": f"i-{i}", "checkoutRunId": f"r{i}", "updatedAt": _iso(i)} for i in range(10)
+        ]
         page2 = [{"id": "i-last", "checkoutRunId": "r-last", "updatedAt": _iso(99)}]
         mock_api.get.side_effect = [page1, page2]
         fetch_all_issues(mock_api, "company-1", page_size=10)
@@ -202,8 +210,12 @@ class TestReapStaleIssue(unittest.TestCase):
     def test_release_and_comment_called(self):
         mock_api = MagicMock()
         mock_api.post.return_value = {"status": "ok"}
-        issue = {"id": "issue-1", "identifier": "NFM-100",
-                 "checkoutRunId": "run-1", "updatedAt": _iso(60)}
+        issue = {
+            "id": "issue-1",
+            "identifier": "NFM-100",
+            "checkoutRunId": "run-1",
+            "updatedAt": _iso(60),
+        }
         reap_stale_issue(mock_api, issue)
         self.assertEqual(mock_api.post.call_count, 2)
 
@@ -212,24 +224,36 @@ class TestReapStaleIssue(unittest.TestCase):
         mock_api.post.side_effect = [
             PermissionError("403 - already handled"),
         ]
-        issue = {"id": "issue-1", "identifier": "NFM-100",
-                 "checkoutRunId": "run-1", "updatedAt": _iso(60)}
+        issue = {
+            "id": "issue-1",
+            "identifier": "NFM-100",
+            "checkoutRunId": "run-1",
+            "updatedAt": _iso(60),
+        }
         reap_stale_issue(mock_api, issue)
         self.assertEqual(mock_api.post.call_count, 1)
 
     def test_release_returns_true_on_success(self):
         mock_api = MagicMock()
         mock_api.post.return_value = {"status": "ok"}
-        issue = {"id": "issue-1", "identifier": "NFM-100",
-                 "checkoutRunId": "run-1", "updatedAt": _iso(60)}
+        issue = {
+            "id": "issue-1",
+            "identifier": "NFM-100",
+            "checkoutRunId": "run-1",
+            "updatedAt": _iso(60),
+        }
         result = reap_stale_issue(mock_api, issue)
         self.assertTrue(result)
 
     def test_release_returns_false_on_403(self):
         mock_api = MagicMock()
         mock_api.post.side_effect = [PermissionError("403")]
-        issue = {"id": "issue-1", "identifier": "NFM-100",
-                 "checkoutRunId": "run-1", "updatedAt": _iso(60)}
+        issue = {
+            "id": "issue-1",
+            "identifier": "NFM-100",
+            "checkoutRunId": "run-1",
+            "updatedAt": _iso(60),
+        }
         result = reap_stale_issue(mock_api, issue)
         self.assertFalse(result)
 
@@ -249,8 +273,12 @@ class TestMain(unittest.TestCase):
     def test_dry_run_no_mutations(self):
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-stale",
-             "updatedAt": _iso(60)},
+            {
+                "id": "s1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-stale",
+                "updatedAt": _iso(60),
+            },
         ]
         args = self._make_args(dry_run=True)
         exit_code = main(args, api_client=mock_api, company_id="c1")
@@ -260,8 +288,12 @@ class TestMain(unittest.TestCase):
     def test_dry_run_no_stale_returns_zero(self):
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "a1", "identifier": "NFM-100", "checkoutRunId": "run-fresh",
-             "updatedAt": _iso(5)},
+            {
+                "id": "a1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-fresh",
+                "updatedAt": _iso(5),
+            },
         ]
         args = self._make_args(dry_run=True)
         exit_code = main(args, api_client=mock_api, company_id="c1")
@@ -271,8 +303,12 @@ class TestMain(unittest.TestCase):
     def test_live_mode_reaps_stale(self):
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-stale",
-             "updatedAt": _iso(60)},
+            {
+                "id": "s1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-stale",
+                "updatedAt": _iso(60),
+            },
         ]
         mock_api.post.return_value = {"status": "ok"}
         args = self._make_args(dry_run=False)
@@ -283,8 +319,12 @@ class TestMain(unittest.TestCase):
     def test_live_mode_no_stale_returns_zero(self):
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "a1", "identifier": "NFM-100", "checkoutRunId": "run-fresh",
-             "updatedAt": _iso(5)},
+            {
+                "id": "a1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-fresh",
+                "updatedAt": _iso(5),
+            },
         ]
         args = self._make_args(dry_run=False)
         exit_code = main(args, api_client=mock_api, company_id="c1")
@@ -317,8 +357,12 @@ class TestMain(unittest.TestCase):
         """Running twice with same stale issue: first reaps, second finds no stale."""
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-stale",
-             "updatedAt": _iso(60)},
+            {
+                "id": "s1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-stale",
+                "updatedAt": _iso(60),
+            },
         ]
         mock_api.post.return_value = {"status": "ok"}
         args = self._make_args(dry_run=False)
@@ -330,8 +374,7 @@ class TestMain(unittest.TestCase):
 
         # Second run: issue now has no checkoutRunId (reaped)
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": None,
-             "updatedAt": _iso(60)},
+            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": None, "updatedAt": _iso(60)},
         ]
         exit_code_2 = main(args, api_client=mock_api, company_id="c1")
         self.assertEqual(exit_code_2, EXIT_SUCCESS)
@@ -341,8 +384,12 @@ class TestMain(unittest.TestCase):
     def test_custom_threshold(self):
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-stale",
-             "updatedAt": _iso(45)},
+            {
+                "id": "s1",
+                "identifier": "NFM-100",
+                "checkoutRunId": "run-stale",
+                "updatedAt": _iso(45),
+            },
         ]
         args = self._make_args(dry_run=True, stale_threshold_minutes=60)
         exit_code = main(args, api_client=mock_api, company_id="c1")
@@ -353,14 +400,12 @@ class TestMain(unittest.TestCase):
         """A single reap failure must not prevent reaping other stale issues."""
         mock_api = MagicMock()
         mock_api.get.return_value = [
-            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-1",
-             "updatedAt": _iso(60)},
-            {"id": "s2", "identifier": "NFM-101", "checkoutRunId": "run-2",
-             "updatedAt": _iso(90)},
+            {"id": "s1", "identifier": "NFM-100", "checkoutRunId": "run-1", "updatedAt": _iso(60)},
+            {"id": "s2", "identifier": "NFM-101", "checkoutRunId": "run-2", "updatedAt": _iso(90)},
         ]
         mock_api.post.side_effect = [
-            {"status": "ok"},      # release s1
-            {"status": "ok"},      # comment s1
+            {"status": "ok"},  # release s1
+            {"status": "ok"},  # comment s1
             RuntimeError("boom"),  # release s2 fails
         ]
         args = self._make_args(dry_run=False)
@@ -374,7 +419,9 @@ class TestMissingEnvVars(unittest.TestCase):
 
     def test_missing_api_url_returns_error(self):
         mock_api = MagicMock()
-        args = type("Args", (), {"dry_run": False, "stale_threshold_minutes": 30, "verbose": False})()
+        args = type(
+            "Args", (), {"dry_run": False, "stale_threshold_minutes": 30, "verbose": False}
+        )()
         for var in ("PAPERCLIP_API_URL", "PAPERCLIP_API_KEY", "PAPERCLIP_COMPANY_ID"):
             os.environ.pop(var, None)
         exit_code = main(args, api_client=mock_api, company_id="")
@@ -382,7 +429,9 @@ class TestMissingEnvVars(unittest.TestCase):
 
     def test_missing_api_key_returns_error(self):
         mock_api = MagicMock()
-        args = type("Args", (), {"dry_run": False, "stale_threshold_minutes": 30, "verbose": False})()
+        args = type(
+            "Args", (), {"dry_run": False, "stale_threshold_minutes": 30, "verbose": False}
+        )()
         os.environ["PAPERCLIP_API_URL"] = "http://localhost:1234"
         os.environ.pop("PAPERCLIP_API_KEY", None)
         os.environ.pop("PAPERCLIP_COMPANY_ID", None)
@@ -405,7 +454,7 @@ class TestIsStaleEdgeCases(unittest.TestCase):
 
     def test_naive_datetime_gets_utc_timezone(self):
         # Naive ISO string (no Z suffix) — should be treated as UTC
-        naive = (datetime.now(timezone.utc) - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S")
+        naive = (datetime.now(UTC) - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%S")
         self.assertTrue(is_stale(naive, 30))
 
 
@@ -422,7 +471,11 @@ class TestReapCommentBodyShape(unittest.TestCase):
         reap_stale_issue(mock_api, issue)
         # Second call (comment) should use {"body": ...}
         comment_call = mock_api.post.call_args_list[1]
-        body_arg = comment_call.kwargs.get("body") or comment_call[0][1] if len(comment_call[0]) > 1 else comment_call.kwargs.get("body")
+        body_arg = (
+            comment_call.kwargs.get("body") or comment_call[0][1]
+            if len(comment_call[0]) > 1
+            else comment_call.kwargs.get("body")
+        )
         self.assertIn("body", comment_call.kwargs if comment_call.kwargs else {})
         comment_payload = comment_call.kwargs["body"]
         self.assertIn("[STALE-CHECKOUT-REAPED]", comment_payload["body"])

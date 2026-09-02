@@ -8,8 +8,20 @@ Two sections:
    these routes — they are demonstration-only).
 2. ``derive_ontology_graph`` — the Phase 1 backend NVL derivation. A pure,
    read-only function that derives the versioned NFM-227 contract envelope from
-   ``_ref_gap_fill_staging`` filtered by ``corpus_id`` (= ``source``). No new
+   the formal ``reference_values`` table filtered by ``corpus_id`` (= the
+   ``source`` column, carried through 1:1 from the C-S1 ETL). No new
    persistence (NFM-266 invariant #3).
+
+Read-path history
+-----------------
+
+Pre-NFM-3872 (C-S1) the function read from ``_ref_gap_fill_staging``
+directly. After C-S1 the formal ``reference_values`` table is the
+authoritative read source — the staging table remains as the audit /
+review queue only (rows that did NOT pass the C-I1 admission gate
+(NFM-3871) stay in staging and never enter the graph derivation).
+This is the "fallback read path switches to formal table" contract
+the pilot C-line decided on.
 """
 
 from __future__ import annotations
@@ -27,7 +39,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models.ref_gap_fill import RefGapFillStaging
+from nfm_db.models.reference_value import ReferenceValue
 from nfm_db.schemas.ontology import (
     CONTRACT_SCHEMA_VERSION,
     OntologyGraphResponse,
@@ -236,22 +248,29 @@ def _doi_to_uri(doi: str) -> str:
 
 def _enrich_nodes(
     nodes: dict[str, OntologyNode],
-    rows: Sequence[RefGapFillStaging],
+    rows: Sequence[ReferenceValue],
     corpus_id: str,
 ) -> None:
     """Layer-A enrichment (NFM-3478): propagate measurement detail into nodes.
 
     Mutates the node dicts in place, AFTER the main derivation loop. The loop
-    only carries bare names; the staging rows carry value/unit/uncertainty/
-    temperature/method/DOI. Property nodes aggregate every measurement of that
-    property in this corpus; material nodes summarize their property values;
-    source nodes get the corpus's DOI when any row carries one.
+    only carries bare names; the formal ``reference_values`` rows carry
+    value/unit/uncertainty/temperature/method/DOI. Property nodes aggregate
+    every measurement of that property in this corpus; material nodes
+    summarize their property values; source nodes get the corpus's DOI when
+    any row carries one.
+
+    Read-path note (NFM-3872 / C-S1): the helper now takes
+    ``ReferenceValue`` rows instead of ``RefGapFillStaging`` rows. The
+    column names differ — ``element_system`` → ``element``,
+    ``phase`` → ``crystal_structure`` — so any pre-C-S1 row attribute
+    access has been renamed below.
     """
-    prop_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
-    mat_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
+    prop_rows: dict[str, list[ReferenceValue]] = defaultdict(list)
+    mat_rows: dict[str, list[ReferenceValue]] = defaultdict(list)
     for row in rows:
         prop_rows[row.property_name].append(row)
-        mat_rows[row.element_system].append(row)
+        mat_rows[row.element].append(row)
 
     # Property nodes: one comment line per measurement + DOI + deep link.
     for prop_name, prows in prop_rows.items():
@@ -265,8 +284,8 @@ def _enrich_nodes(
                 uncertainty=r.uncertainty,
                 temperature=r.temperature,
                 method=r.method,
-                element_system=r.element_system,
-                phase=r.phase,
+                element_system=r.element,
+                phase=r.crystal_structure,
             )
             for r in prows
         ]
@@ -274,9 +293,7 @@ def _enrich_nodes(
         doi = next((r.source_doi for r in prows if r.source_doi), None)
         if doi:
             node.uri = _doi_to_uri(doi)
-        node.record_ref = build_record_ref(
-            corpus_id, prows[0].element_system, property_name=prop_name
-        )
+        node.record_ref = build_record_ref(corpus_id, prows[0].element, property_name=prop_name)
 
     # Material nodes: summary comment listing each measured property value.
     for mat_name, mrows in mat_rows.items():
@@ -298,7 +315,7 @@ def _enrich_nodes(
     # The derivation loop creates method class nodes (DFT, ADP, …) but Layer A
     # only enriched prop/mat/src, leaving method comments null (user-visible
     # regression: "DFT 是null"). Aggregate per-method measurements here.
-    method_rows: dict[str, list[RefGapFillStaging]] = defaultdict(list)
+    method_rows: dict[str, list[ReferenceValue]] = defaultdict(list)
     for row in rows:
         if row.method:
             method_rows[row.method].append(row)
@@ -306,7 +323,7 @@ def _enrich_nodes(
         node = nodes.get(_node_id("method", method_name))
         if node is None:
             continue
-        used_for = ", ".join(sorted({f"{r.property_name} ({r.element_system})" for r in mrows}))
+        used_for = ", ".join(sorted({f"{r.property_name} ({r.element})" for r in mrows}))
         node.comment = f"{len(mrows)} measurement(s): {used_for}"
         doi = next((r.source_doi for r in mrows if r.source_doi), None)
         if doi and not node.uri:
@@ -386,27 +403,32 @@ class OntologyCorporaResponse(BaseModel):
 
 
 async def list_queryable_corpora(session: AsyncSession) -> OntologyCorporaResponse:
-    """Enumerate corpora that actually have staging rows (NFM-3303).
+    """Enumerate corpora that actually have formal-table rows (NFM-3303 / NFM-3872).
 
-    A corpus is queryable iff it resolves to >= 1 row in
-    ``_ref_gap_fill_staging`` (the exact predicate ``derive_ontology_graph``
+    A corpus is queryable iff it resolves to >= 1 row in the formal
+    ``reference_values`` table (the exact predicate ``derive_ontology_graph``
     uses to raise ``CorpusNotFoundError``) **and** its ``source`` is a valid
     slug per ``CORPUS_ID_PATTERN`` (the graph path param validator) — so a
-    listed corpus can never 422/404 on its graph request. Legacy rows with a
-    blank ``source`` (written 2026-07-27/28 before the column was de-facto
-    mandatory) and DOI-shaped sources containing ``/`` are excluded for this
+    listed corpus can never 422/404 on its graph request. Rows with a blank
+    ``source`` and DOI-shaped sources containing ``/`` are excluded for this
     reason. Read-only single aggregate query.
+
+    Read-path history (NFM-3872 / C-S1): pre-C-S1 this read from
+    ``_ref_gap_fill_staging``. After C-S1 the formal ``reference_values``
+    table is the authoritative corpus source — staging rows that did NOT
+    pass the C-I1 admission gate (NFM-3871) stay in staging as audit data
+    and do NOT appear in the corpus index.
     """
 
     stmt = (
         select(
-            RefGapFillStaging.source,
+            ReferenceValue.source,
             func.count().label("row_count"),
-            func.max(RefGapFillStaging.updated_at).label("last_updated"),
+            func.max(ReferenceValue.updated_at).label("last_updated"),
         )
-        .where(RefGapFillStaging.source != "")
-        .group_by(RefGapFillStaging.source)
-        .order_by(func.count().desc(), RefGapFillStaging.source.asc())
+        .where(ReferenceValue.source != "")
+        .group_by(ReferenceValue.source)
+        .order_by(func.count().desc(), ReferenceValue.source.asc())
     )
     rows = (await session.execute(stmt)).all()
     return OntologyCorporaResponse(
@@ -523,7 +545,7 @@ async def derive_ontology_graph(
 ) -> OntologyGraphResponse:
     """Derive the versioned NFM-227 NVL graph for a corpus.
 
-    Reads ``_ref_gap_fill_staging`` rows where ``source == corpus_id``
+    Reads the formal ``reference_values`` table where ``source == corpus_id``
     (parameterized — no string interpolation into SQL) and derives:
 
         material-(HAS_PROPERTY)->property-(MEASURED_BY)->method-(CITED_IN)->source
@@ -531,9 +553,17 @@ async def derive_ontology_graph(
     Materials are individuals; property/method/source concepts are classes.
     Raises ``CorpusNotFoundError`` when the corpus resolves to no rows (the
     endpoint maps this to 404).
+
+    Read-path history (NFM-3872 / C-S1): pre-C-S1 this read from
+    ``_ref_gap_fill_staging`` directly. The C-S1 promotion moves the
+    authoritative read source to the ``reference_values`` formal table —
+    rows that did NOT pass the C-I1 admission gate (NFM-3871) stay in
+    staging as audit data and never appear in the graph derivation.
+    This is the "fallback read path switches to formal table" contract
+    the pilot C-line decided on.
     """
-    stmt = select(RefGapFillStaging).where(
-        RefGapFillStaging.source == corpus_id,
+    stmt = select(ReferenceValue).where(
+        ReferenceValue.source == corpus_id,
     )
     rows = (await session.execute(stmt)).scalars().all()
     if not rows:
@@ -575,15 +605,15 @@ async def derive_ontology_graph(
     add_node("src", corpus_id, node_type="class")
 
     for row in rows:
-        material_id = _node_id("mat", row.element_system)
+        material_id = _node_id("mat", row.element)
         property_id = _node_id("prop", row.property_name)
         if material_id not in nodes:
             nodes[material_id] = OntologyNode(
                 id=material_id,
                 type="individual",
-                name=row.element_system,
-                label=row.element_system,
-                record_ref=build_record_ref(corpus_id, row.element_system),
+                name=row.element,
+                label=row.element,
+                record_ref=build_record_ref(corpus_id, row.element),
                 color=_KIND_COLORS["mat"],
                 size=_NODE_BASE_SIZE,
             )
@@ -605,9 +635,10 @@ async def derive_ontology_graph(
     total_nodes = len(full_nodes)
 
     # --- NFM-3478 Layer A: enrich nodes with measured-value detail ----------
-    # The staging rows carry the full measurement record (value/unit/±/T/DOI),
-    # but the loop above only propagates bare names. Aggregate per node kind so
-    # the viewer's property panel shows what materials users actually ask for:
+    # The formal ``reference_values`` rows carry the full measurement record
+    # (value/unit/±/T/DOI), but the loop above only propagates bare names.
+    # Aggregate per node kind so the viewer's property panel shows what
+    # materials users actually ask for:
     #   prop  -> comment: "115 ±5 GPa (DFT, T=0 K) [U]" + uri: DOI + record_ref
     #   mat   -> comment: property list with values, e.g. "bulk_modulus=115 GPa"
     #   src   -> uri: first DOI, comment: provenance summary

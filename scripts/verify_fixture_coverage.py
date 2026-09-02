@@ -8,6 +8,7 @@ Usage:
     python scripts/verify_fixture_coverage.py \\
         --fixtures apps/api/tests/fixtures/extraction
 """
+
 from __future__ import annotations
 
 import argparse
