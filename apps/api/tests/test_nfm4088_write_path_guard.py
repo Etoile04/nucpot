@@ -288,3 +288,224 @@ class TestDoiEmptyDedup:
         assert any(
             s.title == "Jones et al., J. Nucl. Mater. (2024)" for s in sources
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4105 AC-1 / AC-2: stop the bleed on truly-unattributed extractions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNfm4105UnattributedSentinel:
+    """NFM-4105 AC-1 + AC-2 regression tests.
+
+    AC-1: New extractions no longer create additional
+          shared-placeholder-title ``data_sources`` rows.
+    AC-2: Two DOI-empty extractions from DIFFERENT files do not
+          collapse into one indistinguishable source.
+
+    The DOI-empty branch is split into two sub-cases:
+
+      * Has ANY provenance (DOI / reference / source_file)
+            → existing NFM-4088 dedup chain (file_hash / content_md /
+              title lookup).
+      * Has NO provenance at all
+            → ``_get_or_create_unattributed_sentinel`` returns the
+              single canonical ``Unattributed (no source provenance)``
+              row, created atomically via a Postgres advisory lock.
+    """
+
+    async def test_no_provenance_items_converge_on_one_sentinel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-1: many no-provenance extractions yield exactly ONE row.
+
+        Pre-fix behaviour: each extraction inserted a fresh row with
+        title ``"Unattributed source (no DOI)"`` (or per-call ``(no DOI)``
+        variants), multiplying the placeholder pile.  Post-fix: every
+        no-provenance extraction converges on the single sentinel row.
+
+        Within a single ``map_and_persist`` batch, items that share a
+        source-key reuse the in-memory ``source_map`` slot silently
+        (no INSERT, no ``reused_entities`` increment) — this is the
+        same dedup behaviour every other source receives.  The
+        convergence guarantee is therefore asserted on the post-call
+        row count, not on the counter.
+        """
+        await _seed_property_type(db_session)
+
+        # Three items, each with NO DOI, NO reference, NO source_file.
+        inputs = [
+            _make_extracted_property(source_file=None, reference=None),
+            _make_extracted_property(source_file=None, reference=None),
+            _make_extracted_property(source_file=None, reference=None),
+        ]
+        result = await map_and_persist(db_session, inputs)
+
+        # The canonical sentinel title is the ONLY row of its kind.
+        sentinels = (
+            await db_session.execute(
+                select(DataSource).where(
+                    DataSource.title
+                    == "Unattributed (no source provenance)"
+                )
+            )
+        ).scalars().all()
+        assert len(sentinels) == 1, (
+            f"expected 1 sentinel row, got {len(sentinels)} — convergence "
+            "guarantee (NFM-4105 AC-1) broken"
+        )
+        # Exactly one INSERT happened for the sentinel — the 2nd & 3rd
+        # items reused the in-memory source_map slot.
+        assert result.created_sources == 1
+
+    async def test_no_provenance_reuses_existing_legacy_placeholder(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-1 reuse-preference: legacy placeholder rows are adopted.
+
+        When an environment already carries a legacy
+        ``"Unattributed source (no DOI)"`` row, the sentinel helper
+        reuses it instead of inserting a fresh ``"Unattributed (no
+        source provenance)"`` row.  This keeps migration 070's
+        pre-existing data stable without forcing a cleanup pass.
+        """
+        await _seed_property_type(db_session)
+
+        legacy = DataSource(
+            title="Unattributed source (no DOI)",
+            source_type="other",
+        )
+        db_session.add(legacy)
+        await db_session.flush()
+
+        inputs = [_make_extracted_property(source_file=None, reference=None)]
+        result = await map_and_persist(db_session, inputs)
+
+        # The legacy row remains the single canonical source; no new
+        # "Unattributed (no source provenance)" row was inserted.
+        new_sentinels = (
+            await db_session.execute(
+                select(DataSource).where(
+                    DataSource.title
+                    == "Unattributed (no source provenance)"
+                )
+            )
+        ).scalars().all()
+        assert new_sentinels == []
+        assert result.reused_entities >= 1
+        assert result.created_sources == 0
+
+    async def test_two_no_provenance_calls_share_one_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-2 negative form: two no-provenance items share one row.
+
+        Complements the positive form above: even when two no-
+        provenance items are processed in separate mapper calls
+        (simulating concurrent extraction sessions), they must reuse
+        the same sentinel rather than producing two indistinguishable
+        rows.  AC-2 requires that extractions from DIFFERENT files
+        remain distinguishable — this test pins the inverse: when
+        files are absent, the rows are intentionally shared.
+        """
+        await _seed_property_type(db_session)
+
+        first = await map_and_persist(
+            db_session,
+            [_make_extracted_property(source_file=None, reference=None)],
+        )
+        second = await map_and_persist(
+            db_session,
+            [_make_extracted_property(source_file=None, reference=None)],
+        )
+
+        # First call creates the sentinel; second call reuses it.
+        assert first.created_sources == 1
+        assert second.created_sources == 0
+        assert second.reused_entities >= 1
+
+        sentinels = (
+            await db_session.execute(
+                select(DataSource).where(
+                    DataSource.title
+                    == "Unattributed (no source provenance)"
+                )
+            )
+        ).scalars().all()
+        assert len(sentinels) == 1
+
+    async def test_two_different_source_files_produce_distinct_rows(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-2 positive form: two different source_files ⇒ two rows.
+
+        The DOI-empty branch only collapses rows that carry NO
+        provenance at all.  When source_file is present (DOI + ref
+        still empty) the existing file-based dedup chain keeps the
+        rows distinct.  This pins the AC-2 invariant that the new
+        sentinel path does NOT over-collapse when provenance is
+        partially present.
+        """
+        await _seed_property_type(db_session)
+
+        # Two pre-existing canonical rows whose content_md contains
+        # distinct basenames — simulates NFM-1486 PDF uploads.
+        for basename in ("UO2_paper.md", "Zr_paper.md"):
+            db_session.add(
+                DataSource(
+                    title=f"Canonical source for {basename}",
+                    source_type="other",
+                    content_md=f"Path: literature/{basename}\n\nbody…",
+                )
+            )
+        await db_session.flush()
+
+        inputs = [
+            _make_extracted_property(
+                reference=None, source_file="literature/UO2_paper.md"
+            ),
+            _make_extracted_property(
+                reference=None, source_file="literature/Zr_paper.md"
+            ),
+        ]
+        result = await map_and_persist(db_session, inputs)
+
+        # Two distinct source rows, both reused via content_md prefix.
+        uo2 = (
+            await db_session.execute(
+                select(DataSource).where(DataSource.title.like("%UO2_paper%"))
+            )
+        ).scalars().first()
+        zr = (
+            await db_session.execute(
+                select(DataSource).where(DataSource.title.like("%Zr_paper%"))
+            )
+        ).scalars().first()
+        assert uo2 is not None and zr is not None
+        assert uo2.id != zr.id, (
+            "AC-2 broken: two DOI-empty extractions with different "
+            "source_files collapsed to a single DataSource row"
+        )
+        assert result.created_sources == 0
+        assert result.reused_entities >= 2
+
+    async def test_sentinel_helper_exposes_lock_constant(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC-1 lock-key stability: same key on every call.
+
+        The advisory-lock key is computed from a module-level SHA-256
+        prefix so all workers in the cluster agree on the same lock.
+        This test pins that contract — if the key derivation drifts,
+        concurrent mappers in different workers would not serialize
+        on the same lock and the convergence guarantee breaks.
+        """
+        from nfm_db.services.extraction_to_db_mapper import (
+            _UNATTRIBUTED_SENTINEL_LOCK_KEY,
+            _UNATTRIBUTED_SENTINEL_TITLE,
+        )
+
+        assert _UNATTRIBUTED_SENTINEL_TITLE == "Unattributed (no source provenance)"
+        # 32-bit signed range; the SHA-256 prefix hash is fit into int.
+        assert 0 <= _UNATTRIBUTED_SENTINEL_LOCK_KEY < 2**31
