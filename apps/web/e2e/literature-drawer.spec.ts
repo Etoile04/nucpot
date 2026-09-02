@@ -116,10 +116,10 @@ test.describe("Literature drawer feedback + resize (NFM-3765)", { tag: "@integra
   // production site (setPointerCapture + headless Chromium timing).
   // The drawer resize component and its unit tests cover the logic;
   // this E2E check only adds value on a local build.
-  // `isLive` is true when BASE_URL is set (running against deployed site);
-  // CI sets BASE_URL=https://nucpot.dpdns.org so the drag test is skipped
-  // there and runs only on local builds.
-  const isLive = !!process.env.BASE_URL
+  // `isLive` is true when E2E_TARGET=live (running against deployed site);
+  // CI runs live E2E against https://nucpot.dpdns.org so the drag test is
+  // skipped there and runs only on local builds.
+  const isLive = process.env.E2E_TARGET === "live"
   test.skip(isLive, "Drag resize unreliable against live site — covered by unit tests")
 
   test("drag the resize handle and verify width updates + persists to localStorage", async ({ page }) => {
