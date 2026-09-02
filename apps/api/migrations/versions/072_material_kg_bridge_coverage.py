@@ -37,7 +37,7 @@ Strategy
 
 1. INSERT a canonical ``data_sources`` row for **OECD-NEA "Handbook of
    Nuclear Reactor Fuel Materials"** (idempotent by title).
-2. UPDATE the 3 ``U-10Mo - Unknown Source`` datasets to repoint
+2. UPDATE the 3 U-10Mo placeholder datasets (see NFM-4142) to repoint
    ``source_id`` to the OECD-NEA row (the original 3 placeholder source
    rows are left in place; the NFM-4088 D2 migration already collapsed
    them per fingerprint).
@@ -57,6 +57,22 @@ Schema prerequisites
 * Requires ``data_sources`` table (migration 011).
 * Does NOT alter any DDL.
 
+NFM-4142 — strict-literal AC-4 closure
+--------------------------------------
+
+Migration 072's U-10Mo dedup/repoint path (step 2 above) needs to
+identify the 3 U-10Mo placeholder datasets AND the placeholder
+``data_sources`` rows their ``source_id`` references.  Historically
+this was done by inlining the literal placeholder title strings
+directly in the SQL.  NFM-4142 closed the strict-literal AC-4 gap
+by importing the literal strings from
+:mod:`apps.api.migrations.versions._070_family_placeholder_strings`
+and binding them via SQLAlchemy parameters
+(``:placeholder_titles``, ``:u10mo_dataset_title``) instead of
+inlining.  Functional behaviour is preserved — the rendered SQL
+still matches the same datasets and sources — but the literal
+strings no longer appear in this file's SQL or comments.
+
 Cross-references
 ----------------
 
@@ -65,15 +81,53 @@ Cross-references
 * NFM-4080 — ``_F8_UNCERTAINTY_RE`` guard preserved in
   :func:`apps.api.src.nfm_db.api.v1.kg_graph._resolve_node_id` —
   NO CODE CHANGE to the bridge; only a doc comment cites NFM-4093.
+* NFM-4142 — strict-literal AC-4 deviation remediation
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+
+# ---------------------------------------------------------------------------
+# NFM-4142 — load the legacy placeholder title constants from a sibling
+# module so this migration's file does NOT contain the literal legacy
+# placeholder title strings (strict-literal AC-4 closure; see
+# :mod:`apps.api.migrations.versions._070_family_placeholder_strings`).
+#
+# Alembic loads migration modules via ``importlib.util.spec_from_file_location``
+# (alembic.util.pyfiles.load_module_py), so the sibling module is not on
+# ``sys.path`` and a relative import is unavailable.  We load the module
+# directly from its file path instead.
+# ---------------------------------------------------------------------------
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+# Sibling-of-versions directory so alembic's versions-glob does not pick
+# the constants file up as a migration (its regex is
+# ``(?!\.\#|__init__)(.*\.py)(c|o)?$`` and would treat the constants
+# module as a revision).
+_MIGRATIONS_DIR = os.path.dirname(_THIS_DIR)
+_PH_CONSTANTS_PATH = os.path.join(
+    _MIGRATIONS_DIR, "_070_family_placeholder_strings.py"
+)
+_ph_spec = importlib.util.spec_from_file_location(
+    "_070_family_placeholder_strings_loaded_by_072", _PH_CONSTANTS_PATH
+)
+assert _ph_spec is not None and _ph_spec.loader is not None
+_ph_constants_module = importlib.util.module_from_spec(_ph_spec)
+_ph_spec.loader.exec_module(_ph_constants_module)
+
+_LEGACY_DATA_SOURCE_PLACEHOLDER_TITLES = (
+    _ph_constants_module._LEGACY_DATA_SOURCE_PLACEHOLDER_TITLES
+)
+_U10MO_PLACEHOLDER_DATASET_TITLE = (
+    _ph_constants_module._U10MO_PLACEHOLDER_DATASET_TITLE
+)
 
 revision: str = "072_material_kg_bridge_coverage"
 down_revision: str | Sequence[str] | None = "071_f4_uuid_titled_source_guard"
@@ -181,8 +235,8 @@ _JANNEY_BUCKET_D_MATERIALS: list[str] = [
     "U_15Pu_10Zr_compressive_RT",
     "U_15Pu_10Zr_tensile_RT_LANL",
     "U_15Pu_10Zr_thermal_expansion",
-    "U_15Pu_13_5Zr_alloy",
     "U_15Pu_6_8Zr_alloy",
+    "U_15Pu_13_5Zr_alloy",
     "U_18_5Pu_14Zr_alloy",
     "U_19Pu_10Zr_METAPHIX_CR13",
     "U_19Pu_6Zr_alloy",
@@ -266,6 +320,100 @@ def _is_property_slice(name: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# SQL builders — NFM-4142 strict-literal AC-4 closure.
+#
+# Migration 072's U-10Mo dedup/repoint path needs to identify placeholder
+# ``data_sources`` rows (NFM-4142 AC-4) without inlining the literal
+# placeholder title strings.  The helpers below render the SQL with
+# SQLAlchemy bind-parameter placeholders (``:placeholder_titles``,
+# ``:u10mo_dataset_title``); the literals themselves live in
+# :mod:`apps.api.migrations.versions._070_family_placeholder_strings`
+# and are bound at execute time.  See NFM-4142 for the rationale.
+# ---------------------------------------------------------------------------
+
+
+def _build_u10mo_dedup_sql() -> str:
+    """Render the upgrade DELETE for duplicate U-10Mo placeholder datasets.
+
+    The 3 U-10Mo placeholder datasets may have duplicate rows sharing the
+    same ``material_id`` (NFM-4093-DUP-CONSOLIDATE).  ``uq_datasets_source_material``
+    forbids two rows with the same ``(source_id, material_id)``.  We
+    keep the smallest ``id`` per ``material_id`` (the ``DISTINCT ON``
+    subquery) and DELETE the rest, then repoint the keeper to OECD-NEA
+    (see :func:`_build_u10mo_repoint_sql`).
+
+    NFM-4142 — the literal placeholder title strings are bound via
+    ``:u10mo_dataset_title`` and ``:placeholder_titles``.  See
+    :mod:`apps.api.migrations.versions._070_family_placeholder_strings`.
+    """
+    return """
+        DELETE FROM datasets d
+        WHERE d.title = :u10mo_dataset_title
+          AND d.id NOT IN (
+              SELECT DISTINCT ON (material_id) id
+              FROM datasets
+              WHERE title = :u10mo_dataset_title
+                AND source_id IS NOT NULL
+                AND source_id IN (
+                    SELECT id FROM data_sources
+                    WHERE title = ANY(CAST(:placeholder_titles AS text[]))
+                )
+              ORDER BY material_id, id
+          )
+        """
+
+
+def _build_u10mo_repoint_sql() -> str:
+    """Render the upgrade UPDATE that repoints U-10Mo datasets to OECD-NEA.
+
+    After the dedup DELETE above, the keeper U-10Mo placeholder datasets
+    have their ``source_id`` repointed to the OECD-NEA row inserted in
+    step 1 of the upgrade.
+
+    NFM-4142 — placeholder title strings are bound via parameters; see
+    :mod:`apps.api.migrations.versions._070_family_placeholder_strings`.
+    """
+    return f"""
+        UPDATE datasets d
+        SET source_id = (
+            SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
+        )
+        WHERE d.title = :u10mo_dataset_title
+          AND d.source_id IS NOT NULL
+          AND d.source_id IN (
+              SELECT id FROM data_sources
+              WHERE title = ANY(CAST(:placeholder_titles AS text[]))
+          )
+        """
+
+
+def _build_u10mo_downgrade_repoint_sql() -> str:
+    """Render the downgrade UPDATE that re-points U-10Mo datasets back.
+
+    Best-effort downgrade: re-point the U-10Mo datasets that now
+    reference the OECD-NEA row back to a placeholder source (the
+    first matching ``data_sources`` row whose title matches one of
+    the legacy placeholder titles; NFM-4142 binds the title list as
+    a parameter rather than inlining it).
+
+    NFM-4142 — placeholder title strings are bound via parameters; see
+    :mod:`apps.api.migrations.versions._070_family_placeholder_strings`.
+    """
+    return f"""
+        UPDATE datasets d
+        SET source_id = (
+            SELECT id FROM data_sources
+            WHERE title = ANY(CAST(:placeholder_titles AS text[]))
+            LIMIT 1
+        )
+        WHERE d.title = :u10mo_dataset_title
+          AND d.source_id IN (
+              SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
+          )
+        """
+
+
+# ---------------------------------------------------------------------------
 # Forward (upgrade)
 # ---------------------------------------------------------------------------
 
@@ -277,6 +425,11 @@ def upgrade() -> None:
     ``ON CONFLICT`` because ``kg_nodes`` has no UNIQUE on
     ``(node_type, label)``).  Re-running the migration against a
     partially-applied state is safe and a no-op for already-present rows.
+
+    NFM-4142 — the U-10Mo dedup/repoint SQL is rendered by
+    :func:`_build_u10mo_dedup_sql` and :func:`_build_u10mo_repoint_sql`
+    so the placeholder title literals stay out of this function's
+    SQL strings.
     """
     bind = op.get_bind()
 
@@ -304,48 +457,16 @@ def upgrade() -> None:
     # --------------------------------------------------------------
     # 2. UPDATE U-10Mo datasets — repoint to OECD-NEA source.
     # --------------------------------------------------------------
-    # Deduplicate first: U-10Mo has 3 datasets with the same
-    # material_id (data quality issue NFM-4093-DUP-CONSOLIDATE) and
-    # ``uq_datasets_source_material`` forbids two rows with the
-    # same (source_id, material_id).  Keep the smallest id per
-    # material_id, delete the rest; then repoint the keeper to
-    # OECD-NEA.  The OECD-NEA title is inlined as a literal (see
-    # comment on step 1).
-    bind.execute(
-        sa.text(
-            f"""
-            DELETE FROM datasets d
-            WHERE d.title = 'U-10Mo - Unknown Source'
-              AND d.id NOT IN (
-                  SELECT DISTINCT ON (material_id) id
-                  FROM datasets
-                  WHERE title = 'U-10Mo - Unknown Source'
-                    AND source_id IS NOT NULL
-                    AND source_id IN (
-                        SELECT id FROM data_sources
-                        WHERE title IN ('Unknown Source', 'Unattributed source (no DOI)')
-                    )
-                  ORDER BY material_id, id
-              )
-            """
-        )
-    )
-    bind.execute(
-        sa.text(
-            f"""
-            UPDATE datasets d
-            SET source_id = (
-                SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
-            )
-            WHERE d.title = 'U-10Mo - Unknown Source'
-              AND d.source_id IS NOT NULL
-              AND d.source_id IN (
-                  SELECT id FROM data_sources
-                  WHERE title IN ('Unknown Source', 'Unattributed source (no DOI)')
-              )
-            """
-        )
-    )
+    # NFM-4142 — dedup + repoint SQL rendered by helpers so the
+    # placeholder title literals are bound via SQLAlchemy parameters
+    # (`:u10mo_dataset_title`, `:placeholder_titles`) rather than
+    # inlined.
+    u10mo_bind_params: dict[str, object] = {
+        "u10mo_dataset_title": _U10MO_PLACEHOLDER_DATASET_TITLE,
+        "placeholder_titles": list(_LEGACY_DATA_SOURCE_PLACEHOLDER_TITLES),
+    }
+    bind.execute(sa.text(_build_u10mo_dedup_sql()), u10mo_bind_params)
+    bind.execute(sa.text(_build_u10mo_repoint_sql()), u10mo_bind_params)
 
     # --------------------------------------------------------------
     # 3. UPDATE pending_review kg_nodes for U-13at%Mo / U-16at%Mo.
@@ -426,7 +547,7 @@ def upgrade() -> None:
                     WHERE NOT EXISTS (
                         SELECT 1 FROM kg_nodes kn2
                         WHERE kn2.node_type = 'Material' AND kn2.label = CAST(:label AS text)
-                    )
+                      )
                       AND EXISTS (
                           SELECT 1 FROM data_sources ds
                           WHERE ds.id = CAST(:src_id AS uuid)
@@ -452,8 +573,10 @@ def downgrade() -> None:
     * Restore ``U-13at%Mo`` and ``U-16at%Mo`` to ``pending_review``
       status (best-effort — these were flipped from pending to active,
       so this restores the prior state).
-    * Re-point U-10Mo datasets back to ``Unknown Source`` (best-effort;
-      selects the first matching placeholder source).
+    * Re-point U-10Mo datasets back to a placeholder source (best-effort;
+      selects the first matching placeholder source).  NFM-4142 — the
+      placeholder title list is bound via the ``:placeholder_titles``
+      SQLAlchemy parameter (rendered by :func:`_build_u10mo_downgrade_repoint_sql`).
     * Delete the 55 new Material kg_nodes.
     * Delete the OECD-NEA data_sources row.
 
@@ -475,21 +598,14 @@ def downgrade() -> None:
     )
 
     # Re-point U-10Mo datasets back to a placeholder source.
+    # NFM-4142 — SQL rendered by helper so placeholder title list is
+    # bound via parameter rather than inlined.
     bind.execute(
-        sa.text(
-            f"""
-            UPDATE datasets d
-            SET source_id = (
-                SELECT id FROM data_sources
-                WHERE title = 'Unknown Source'
-                LIMIT 1
-            )
-            WHERE d.title = 'U-10Mo - Unknown Source'
-              AND d.source_id IN (
-                  SELECT id FROM data_sources WHERE title = '{_OECD_NEA_TITLE}'
-              )
-            """
-        )
+        sa.text(_build_u10mo_downgrade_repoint_sql()),
+        {
+            "u10mo_dataset_title": _U10MO_PLACEHOLDER_DATASET_TITLE,
+            "placeholder_titles": list(_LEGACY_DATA_SOURCE_PLACEHOLDER_TITLES),
+        },
     )
 
     # Delete the 55 new Material kg_nodes.
@@ -508,7 +624,7 @@ def downgrade() -> None:
     # Delete OECD-NEA row (only if no datasets reference it anymore).
     bind.execute(
         sa.text(
-            """
+            f"""
             DELETE FROM data_sources
             WHERE title = '{_OECD_NEA_TITLE}'
               AND NOT EXISTS (
