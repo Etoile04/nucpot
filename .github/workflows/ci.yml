@@ -199,7 +199,15 @@ jobs:
         env:
           POSTGRES_USER: nfm
           POSTGRES_PASSWORD: nfm
-          POSTGRES_DB: nfm_drift_check
+          # NFM-4169: the test database must match the canonical name
+          # ``nfm_db`` because migration 073's bootstrap SQL hardcodes
+          # it (the SQL is the production manual-psql path reflected
+          # verbatim — see apps/api/migrations/sql/create_nfm_preview_role.sql).
+          # The test DB is throwaway (CI service container, destroyed at
+          # job end) so the name matches prod by convention; renaming
+          # would require also parameterising the SQL against the new
+          # env var, which is out of scope for the CI fix.
+          POSTGRES_DB: nfm_db
         ports:
           - 5432:5432
         options: >-
@@ -208,7 +216,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NFM_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_drift_check
+      NFM_DATABASE_URL: postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_db
+      # NFM-4169 / NFM-4122: migration 073 (create_nfm_preview_role) reads
+      # ``NFMD_PREVIEW_DB_PASSWORD`` at upgrade time and refuses to run
+      # without it. This CI Postgres is throwaway (the
+      # ``nfm_db`` test database is destroyed at job end) so the
+      # placeholder password has zero blast radius — the password is
+      # only used to satisfy the migration's env-var pre-flight, not to
+      # authenticate anyone against prod. Production pulls the real
+      # value from docker/.env.prod via scripts/prod_migrate.sh.
+      NFMD_PREVIEW_DB_PASSWORD: ci-nfm-preview-fixture-password-not-a-secret
     defaults:
       run:
         working-directory: apps/api

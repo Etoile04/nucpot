@@ -23,12 +23,36 @@ INSERT into ``alembic_version``.
 
 The canonical source of truth for the role creation / grants is
 ``apps/api/migrations/sql/create_nfm_preview_role.sql``. The alembic
-path (this file) loads that SQL at upgrade time and substitutes the
+path (this file) loads that SQL at upgrade time, substitutes the
 password from ``NFMD_PREVIEW_DB_PASSWORD`` (sourced from the host's
-``docker/.env.prod`` via the deploy workflow). This keeps the two
-delivery paths (manual psql + alembic upgrade head) bit-identical and
-ensures the role grants cannot drift between the manual bootstrap and
-the eventual automatic application.
+``docker/.env.prod`` via the deploy workflow, or from the CI
+``schema-drift-guard`` job's env block since NFM-4169), and splits
+the resulting multi-statement script into single-statement
+``op.execute()`` calls so asyncpg's prepared-statement protocol can
+carry each one. This keeps the two delivery paths (manual psql +
+alembic upgrade head) bit-identical at the SQL level and ensures the
+role grants cannot drift between the manual bootstrap and the eventual
+automatic application.
+
+NFM-4169 — asyncpg prepared-statement guard
+===========================================
+
+asyncpg uses server-side prepared statements (one SQL statement per
+round-trip). The canonical bootstrap script is a psql-style
+multi-statement file (``\\set``, three ``DO $$`` blocks, several
+``GRANT`` statements, an ``ALTER DEFAULT PRIVILEGES`` block) that
+asyncpg rejects with::
+
+    asyncpg.exceptions.PostgresSyntaxError:
+        cannot insert multiple commands into a prepared statement
+
+Fix: ``split_bootstrap_sql_statements()`` below chunks the rendered
+SQL on top-level semicolons (skipping ``$$ ... $$`` dollar-quoted
+blocks, single-quoted strings with ``''`` escape, ``/* ... */`` block
+comments, and ``--`` line comments) and ``upgrade()`` then issues one
+``op.execute(sa.text(...))`` per statement. The structural identity
+of every individual statement is unchanged from the manual-psql path;
+we only rewrap so each fits one asyncpg prepared statement.
 
 Revises: 072_material_kg_bridge_coverage
 Create Date: 2026-09-02
@@ -60,6 +84,12 @@ _SQL_REL_PATH = Path(__file__).parent.parent / "sql" / "create_nfm_preview_role.
 # when executed via SQLAlchemy ``text()``. Strip them when loading the SQL
 # into the alembic execution path. The manual psql path keeps them.
 _PSQL_META_RE = re.compile(r"^\s*\\[a-zA-Z][^\n]*\n", re.MULTILINE)
+
+# NFM-4169: dollar-quote token (``$tag$`` where ``tag`` is empty or
+# ``[A-Za-z_][A-Za-z0-9_]*``). PostgreSQL's dollar-quoted string literals
+# may begin ``$$``, ``$tag$``, ``$body$``, etc.; the splitter tracks
+# each open tag and treats its closing instance as the body's end.
+_DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
 def _load_bootstrap_sql_for_alembic() -> str:
@@ -101,13 +131,205 @@ def _load_bootstrap_sql_for_alembic() -> str:
     return raw.replace(":'NFMD_PREVIEW_DB_PASSWORD'", f"'{escaped_pw}'")
 
 
+def split_bootstrap_sql_statements(rendered_sql: str) -> list[str]:
+    """Split a multi-statement PostgreSQL script into single statements.
+
+    NFM-4169 — asyncpg prepared-statement guard. asyncpg issues one
+    prepared statement per round-trip and rejects
+    ``cannot insert multiple commands into a prepared statement`` when
+    the server-attached script contains more than one statement. This
+    splitter walks the rendered bootstrap SQL, tracking state to skip
+    over:
+
+    * ``$$ ... $$`` (and ``$tag$ ... $tag$``) dollar-quoted blocks — the
+      canonical 073 bootstrap has three ``DO`` blocks whose bodies are
+      full of ``;`` that are NOT statement terminators.
+    * Single-quoted string literals ``'...'`` with the standard
+      ``''`` escape for embedded apostrophes.
+    * Double-quoted identifiers ``"..."``.
+    * ``/* ... */`` block comments.
+    * ``-- ...`` line comments.
+
+    Each emitted statement has its trailing ``;`` removed; the caller
+    passes each through ``sa.text(...)`` and ``op.execute(...)`` which
+    handle the bare-statement form.
+
+    Empty / whitespace-only chunks are dropped (a trailing ``\\n;\\n``
+    after the last statement would otherwise yield an empty string
+    that asyncpg rejects with a syntax error).
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+
+    i = 0
+    n = len(rendered_sql)
+    # ``None`` means "no dollar-quote open"; a non-None value is the
+    # tag for the currently-open dollar-quote ("" for bare ``$$``).
+    in_dollar: str | None = None
+    in_single = False  # inside '...'
+    in_double = False  # inside "..."
+    in_line_comment = False  # inside -- ... \n
+    in_block_comment = False  # inside /* ... */
+
+    def _flush() -> None:
+        chunk = "".join(buf).strip()
+        if chunk:
+            # Strip trailing semicolon — op.execute(sa.text(...)) does
+            # not require it, and emitting bare statements keeps the
+            # caller symmetric between this loader and the regular
+            # alembic ops (which never end in ``;``).
+            if chunk.endswith(";"):
+                chunk = chunk[:-1].rstrip()
+            if chunk:
+                statements.append(chunk)
+        buf.clear()
+
+    while i < n:
+        ch = rendered_sql[i]
+        nxt = rendered_sql[i + 1] if i + 1 < n else ""
+
+        # Inside a ``$$ ... $$`` block, just buffer until the
+        # matching closer. Skip ALL other lexical checks so the body
+        # of a DO block (full of ``;``) doesn't fragment.
+        if in_dollar is not None:
+            m = _DOLLAR_QUOTE_OPEN_RE.match(rendered_sql, i)
+            if m:
+                expected_close = "$" + in_dollar + "$"
+                if m.group(0) == expected_close:
+                    buf.append(m.group(0))
+                    in_dollar = None
+                    i += len(m.group(0))
+                    continue
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Inside a block comment, look for ``*/``.
+        if in_block_comment:
+            buf.append(ch)
+            if ch == "*" and nxt == "/":
+                buf.append(nxt)
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+
+        # Inside a line comment, look for newline.
+        if in_line_comment:
+            buf.append(ch)
+            if ch == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+
+        # Inside a single-quoted string, look for ``''`` (escape) or
+        # the closing ``'``.
+        if in_single:
+            buf.append(ch)
+            if ch == "'":
+                if nxt == "'":
+                    buf.append(nxt)
+                    i += 2
+                    continue
+                in_single = False
+            i += 1
+            continue
+
+        # Inside a double-quoted identifier, look for the closing ``"``.
+        if in_double:
+            buf.append(ch)
+            if ch == '"':
+                in_double = False
+            i += 1
+            continue
+
+        # --- Outside any lexical region. ---
+
+        # ``--`` line comment opens.
+        if ch == "-" and nxt == "-":
+            in_line_comment = True
+            buf.append(ch)
+            buf.append(nxt)
+            i += 2
+            continue
+
+        # ``/*`` block comment opens.
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            buf.append(ch)
+            buf.append(nxt)
+            i += 2
+            continue
+
+        # Single-quoted string opens.
+        if ch == "'":
+            in_single = True
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Double-quoted identifier opens.
+        if ch == '"':
+            in_double = True
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Dollar-quote opens — ``$$`` or ``$tag$``.
+        if ch == "$":
+            m = _DOLLAR_QUOTE_OPEN_RE.match(rendered_sql, i)
+            if m:
+                tag = m.group(1) or ""
+                buf.append(m.group(0))
+                in_dollar = tag
+                i += len(m.group(0))
+                continue
+            # Bare ``$`` outside dollar-quotes is rare in PostgreSQL
+            # but legal in some operator contexts. Append it as a
+            # plain character and continue.
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Statement boundary: top-level ``;``.
+        if ch == ";":
+            buf.append(ch)
+            _flush()
+            i += 1
+            continue
+
+        buf.append(ch)
+        i += 1
+
+    _flush()
+
+    if in_dollar is not None or in_single or in_double or in_block_comment:
+        raise RuntimeError(
+            f"split_bootstrap_sql_statements: unbalanced lexical region "
+            f"(dollar={in_dollar!r} single={in_single} double={in_double} "
+            f"block_comment={in_block_comment}). The bootstrap SQL is "
+            f"malformed."
+        )
+
+    return statements
+
+
 def upgrade() -> None:
     """Create the nfm_preview role and apply the least-privilege grants.
 
     Idempotent: re-running is a no-op (the SQL guards every step with
     ``IF NOT EXISTS`` or equivalent).
+
+    NFM-4169 — the rendered SQL is split by
+    ``split_bootstrap_sql_statements()`` and each statement issued as
+    a separate ``op.execute(sa.text(...))`` so asyncpg's
+    prepared-statement protocol accepts every chunk as a single
+    command.
     """
-    op.execute(sa.text(_load_bootstrap_sql_for_alembic()))
+    rendered = _load_bootstrap_sql_for_alembic()
+    for stmt in split_bootstrap_sql_statements(rendered):
+        op.execute(sa.text(stmt))
 
 
 def downgrade() -> None:
@@ -122,6 +344,13 @@ def downgrade() -> None:
 
     Reversing the GRANTs explicitly (rather than relying on DROP OWNED)
     documents the intent for anyone reading the downgrade.
+
+    NFM-4169 — downgrade is a single block of DDL with no ``DO``/``IF``
+    regions or dollar-quoted bodies, so it can be issued as one
+    ``op.execute(sa.text(...))`` without the splitter path. (asyncpg
+    only complains when the SQL has more than one top-level
+    statement; the downgrade happens to be one statement + a
+    trailing semicolon.)
     """
     op.execute(
         sa.text(

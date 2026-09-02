@@ -373,6 +373,13 @@ class MaterialPropertyItem(BaseModel):
     captured alongside each measurement. The list is ordered by
     ``MeasurementCondition.id`` to give a stable rendering when the
     frontend folds multiple measurements into one display row.
+
+    NFM-4146 added ``attribution`` (MeasurementAttributionBlock) so the
+    React table — the §3.3 primary surface — can render the §5.2
+    ``<DataLossNotice>`` disclosure. Same block the dedicated
+    ``/properties/{id}/measurements`` endpoint emits per row; the table
+    endpoint must stay field-for-field aligned with it or the frontend
+    wiring never fires.
     """
 
     id: UUID
@@ -382,6 +389,9 @@ class MaterialPropertyItem(BaseModel):
     source: SourceRef | None = None
     confidence: float
     conditions: list[MeasurementConditionResponse] = Field(default_factory=list)
+    attribution: MeasurementAttributionBlock = Field(
+        default_factory=lambda: MeasurementAttributionBlock(status="intact")
+    )
 
 
 class MaterialPropertyListMeta(BaseModel):
