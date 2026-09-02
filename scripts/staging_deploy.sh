@@ -235,6 +235,19 @@ write_api_env_file() {
   fi
   local debug="${STAGING_DEBUG:-false}"
   local access_minutes="${STAGING_ACCESS_TOKEN_EXPIRE_MINUTES:-30}"
+  # NFM-4170: forward the canonical data_sources.id list verbatim so the
+  # generated ``docker/.env.staging.api`` carries the same UUID list the
+  # operator committed to ``docker/.env.staging``.  Same grep-raw pattern
+  # as CORS above — the comma-separated UUID list contains no shell
+  # metacharacters so word-splitting is safe, but grepping the raw line
+  # keeps the heredoc dumb and matches the NFM-4077 invariant.
+  local canonicals_raw canonicals
+  canonicals_raw="$(grep -E '^STAGING_NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=' "$ENV_FILE" 2>/dev/null || true)"
+  if [ -z "$canonicals_raw" ]; then
+    canonicals=""
+  else
+    canonicals="${canonicals_raw#STAGING_NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=}"
+  fi
 
   if [ -z "$database_url" ]; then
     die "STAGING_DATABASE_URL is unset — set it in docker/.env.staging."
@@ -251,6 +264,7 @@ NFM_SECRET_KEY=${secret_key}
 NFM_CORS_ORIGINS=${cors}
 NFM_DEBUG=${debug}
 NFM_ACCESS_TOKEN_EXPIRE_MINUTES=${access_minutes}
+NFM_ATTRIBUTION_LOST_CANONICAL_DATA_SOURCE_IDS=${canonicals}
 EOF
   log "Wrote $api_env (NFM_CORS_ORIGINS preserved verbatim via grep)."
 }
