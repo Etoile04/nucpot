@@ -74,6 +74,8 @@ Fix shipped here: insert the two ``Material`` nodes with
 ``source_id = NULL`` and **no** ``data_sources`` existence guard
 (pinned by ``test_migration_080_kg_orphan_bridge.py::
 TestMigration080StubNodes::test_stub_node_sql_has_no_source_exists_guard``).
+A ``materials``-existence guard (``m.name = :label``) keeps the stub
+nodes tied to real material rows, so an empty database stays node-free.
 
 Each stub then gets one ``relatedTo`` edge to an **orphan** bucket-D
 anchor so the subgraphs return 200 with >=1 edge (NFM-4185 AC2):
@@ -105,6 +107,10 @@ Scope guards
   downgrade deletes exactly this migration's rows and never organic
   ones.
 * Empty-database safe: every INSERT…SELECT simply matches 0 rows.
+  The stub ``relatedTo`` INSERT resolves its endpoints via scalar
+  subqueries and guards both with ``IS NOT NULL`` — on a fresh database
+  (where 072's bucket-D anchors never landed) the edge insert is a
+  clean no-op instead of a ``target_node_id = NULL`` violation.
 
 Cross-references
 ----------------
@@ -252,6 +258,11 @@ def _build_stub_material_nodes_sql() -> str:
     ``AND EXISTS (… ds.id = CAST(:src_id AS uuid))`` was never true for
     the NULL-source stubs, silently skipping every insert;
     ``kg_nodes.source_id`` is nullable by schema.
+
+    A ``materials``-existence guard (``m.name = :label``) keeps the
+    stub nodes tied to real material rows — an empty database (no
+    materials) inserts nothing, matching the "INSERT…SELECT matches 0
+    rows" empty-DB contract the rest of this migration follows.
     """
     return """
         INSERT INTO kg_nodes (
@@ -260,7 +271,11 @@ def _build_stub_material_nodes_sql() -> str:
         )
         SELECT 'Material', CAST(:label AS text), CAST(:props AS jsonb),
                1.0, NULL, 'active', 'manual'
-        WHERE NOT EXISTS (
+        WHERE EXISTS (
+            SELECT 1 FROM materials m
+            WHERE m.name = CAST(:label AS text)
+        )
+          AND NOT EXISTS (
             SELECT 1 FROM kg_nodes kn
             WHERE kn.node_type = 'Material'
               AND kn.label = CAST(:label AS text)
@@ -297,7 +312,17 @@ def _build_stub_related_to_edges_sql() -> str:
             ),
             1.0,
             'manual'
-        WHERE NOT EXISTS (
+        WHERE (SELECT id FROM kg_nodes
+                WHERE node_type = 'Material'
+                  AND label = CAST(:src_label AS text)
+                  AND status = 'active'
+                ORDER BY created_at LIMIT 1) IS NOT NULL
+          AND (SELECT id FROM kg_nodes
+                WHERE node_type = 'Material'
+                  AND label = CAST(:anchor_label AS text)
+                  AND status = 'active'
+                ORDER BY created_at LIMIT 1) IS NOT NULL
+          AND NOT EXISTS (
             SELECT 1 FROM kg_edges e
             WHERE e.source_node_id = (
                     SELECT id FROM kg_nodes
