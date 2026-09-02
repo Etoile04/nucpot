@@ -31,7 +31,6 @@ with by replacing the ``docker`` binary with a recorder, then assert
 the recorded ``--tag`` argument matches the current ``git rev-parse HEAD``.
 """
 
-# ruff: noqa: SIM105, SIM108
 
 from __future__ import annotations
 
@@ -81,12 +80,9 @@ def fake_git_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     (scripts / "staging_deploy.sh").chmod(0o755)
     shutil.copytree(LIB.parent, scripts / "lib", dirs_exist_ok=True)
     # NFM-2509: verify-cloudflared-token.sh is invoked before the health
-    # gate. Provide a no-op so the deploy can proceed to build.
-    if VERIFY_CLOUDFLARED.exists():
-        shutil.copy(VERIFY_CLOUDFLARED, scripts / "verify-cloudflared-token.sh")
-        (scripts / "verify-cloudflared-token.sh").chmod(0o755)
-    else:
-        _make_stub(scripts, "verify-cloudflared-token.sh", "exit 0\n")
+    # gate. Provide a no-op so the deploy can proceed to build. Always stub:
+    # the real script JWT-decodes a live tunnel token, which no fixture has.
+    _make_stub(scripts, "verify-cloudflared-token.sh", "exit 0\n")
 
     # Make the fake repo a real git checkout so ``git rev-parse HEAD``
     # inside scripts/staging_deploy.sh resolves to a deterministic SHA.
@@ -173,10 +169,17 @@ def _run_deploy(
     ``docker/.env.staging`` verbatim.
     """
     env_file = fake / "docker" / ".env.staging"
+    # NFM-4077's write_api_env_file hard-requires DATABASE_URL + SECRET_KEY;
+    # without them the deploy dies before the tag-derivation step these tests
+    # exist to pin (broken on main between NFM-4077 and NFM-4198).
+    required_env = (
+        "STAGING_DATABASE_URL=postgresql+asyncpg://stub:stub@localhost:5432/stub\n"
+        "STAGING_API_SECRET_KEY=stub-secret-for-tests\n"
+    )
     if env_file_image_tag is None:
-        env_file.write_text("# no STAGING_IMAGE_TAG declared\n")
+        env_file.write_text("# no STAGING_IMAGE_TAG declared\n" + required_env)
     else:
-        env_file.write_text(f"STAGING_IMAGE_TAG={env_file_image_tag}\n")
+        env_file.write_text(f"STAGING_IMAGE_TAG={env_file_image_tag}\n" + required_env)
 
     env = {
         **os.environ,

@@ -159,10 +159,14 @@ What it does, in order:
 3. **Bring the stack up** (`docker compose up -d --remove-orphans`). The `api`
    container runs `alembic upgrade head` (migrations) then starts uvicorn.
 4. **Health gate**: poll `http://127.0.0.1:8001/api/v1/health` until it returns
-   `{"status":"ok"}`, for up to `STAGING_HEALTH_TIMEOUT` (default 120s).
+   HTTP 200 with `status` `ok` **or** `degraded`, for up to
+   `STAGING_HEALTH_TIMEOUT` (default 120s). `degraded` passes with a loud WARN
+   and never rolls back (ADR-NFM-4195: degraded is a DB/ops-state fault a
+   rollback cannot remedy).
 5. **On success**: record the last-known-good tag and print status.
-6. **On failure**: automatically roll back to the `:prev` images, re-run the
-   health gate, and exit non-zero.
+6. **On failure** (unreachable / non-200 / timeout / unparseable body /
+   `status:"error"`): automatically roll back to the `:prev` images, re-run
+   the health gate, and exit non-zero.
 
 ### Status
 
@@ -188,17 +192,28 @@ What it does, in order:
 ## 5. Health gate + auto-rollback
 
 The gate is the contract between "containers are up" and "staging is healthy".
-It requires the staging API to answer `/api/v1/health` with
-`{"status":"ok"}` within `STAGING_HEALTH_TIMEOUT` seconds.
+Per [ADR-NFM-4195](../architecture/ADR-NFM-4195-staging-health-gate-degraded.md)
+it is a **boot/liveness gate, not an SLO gate**: PASS = the staging API answers
+`/api/v1/health` with HTTP 200 and `status ∈ {"ok", "degraded"}` within
+`STAGING_HEALTH_TIMEOUT` seconds. FAIL = unreachable / non-200 / timeout /
+unparseable body / `status:"error"`.
 
+- `degraded` **passes with a distinct WARN** and is recorded as
+  `health_status: "degraded"` in the KR-3 deploy event — it never blocks the
+  deploy and never triggers rollback. Both degraded sources (worker failure
+  streaks per NFM-2014, sticky `uuid_titled_source_blocked` events) are
+  DB/ops-state faults: the rolled-back image reads the same rows, so rollback
+  remediates nothing.
 - `/api/v1/health` is **native** to the NFM-DB API (`apps/api/.../api/v1/health.py`,
   mounted at the `/api/v1` prefix) and does not touch the database, so it
   reflects process liveness, not DB connectivity.
 - Migrations run inside the `api` container *before* uvicorn starts; a failed
   migration prevents the API from serving and fails the gate.
-- If the gate fails on a new deploy, the script reverts to the previous images
+- If the gate FAILs on a new deploy, the script reverts to the previous images
   and re-validates. If the rollback also fails, the stack is left in place for
-  inspection and the script exits non-zero.
+  inspection and the script exits non-zero. `degraded` never enters this path.
+- Alerting on a `degraded` staging stack belongs to monitoring, not the gate
+  (ADR-NFM-4195 D5).
 
 ---
 
@@ -207,7 +222,9 @@ It requires the staging API to answer `/api/v1/health` with
 [`scripts/staging_smoke_test.py`](../../scripts/staging_smoke_test.py) runs
 three checks and exits non-zero on any failure:
 
-1. **api-health** — `GET /api/v1/health` returns `{"status":"ok"}`.
+1. **api-health** — `GET /api/v1/health` returns HTTP 200 with
+   `status=ok`, or `status=degraded` as a **pass-with-warning**
+   (ADR-NFM-4195: boot/liveness check; degraded is non-blocking).
 2. **web-reachable** — the web origin returns HTTP < 500.
 3. **container-set** — `nucpot-staging-{db,api,web}` are all running.
 
