@@ -557,6 +557,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          # NFM-4125: the gate's `git log -1 -- <path>` and
+          # `git merge-base --is-ancestor` need full history. The runner
+          # workspace is a persistent clone that every other job keeps
+          # re-shallowing (default fetch-depth: 1), which made the gate
+          # misattribute FILE_COMMIT to the checkout tip and false-negative
+          # true ancestors (deploy run 33652998346: 079 @ b3c6c643c reported
+          # NOT on origin/main although it IS an ancestor). fetch-depth: 0
+          # unshallows once, then increments cheaply.
+          fetch-depth: 0
 
       - name: Run migration-on-main-assert against candidate image
         run: |
