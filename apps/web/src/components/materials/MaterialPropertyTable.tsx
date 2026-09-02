@@ -312,6 +312,40 @@ export function groupRowsByKey(
 }
 
 /**
+ * Resolve a grouped row's attribution status for the DOM contract
+ * (NFM-4204).
+ *
+ * The data-loss-notice e2e backstop and future styling hooks key off
+ * row-level markers: `tr[data-attribution-status]` plus the
+ * `material-property-row--data-loss` class. Until NFM-4204 those
+ * selectors were emitted by no component, so the spec could never pass.
+ *
+ * Semantics (mirror of the notice-cohort decision in the source cell):
+ *   - "lost"   — ANY underlying measurement in the group is lost. Lost
+ *     measurements have their source NULLed by migration 070, so they
+ *     group under the `__unsourced__` sentinel and cannot contaminate a
+ *     sourced group, but the ANY-quantifier keeps this helper total
+ *     regardless of how future migrations fold rows.
+ *   - "intact" — at least one measurement carries an attribution
+ *     envelope and none is lost (the API adjudicated this row).
+ *   - null     — no measurement carries attribution (row outside the
+ *     canonical cohort). The attribute is omitted entirely so
+ *     `[data-attribution-status]` selects exactly the adjudicated rows.
+ *
+ * Exported so the test suite can pin the contract without rendering.
+ */
+export function rowAttributionStatus(
+  row: GroupedMaterialProperty,
+): "lost" | "intact" | null {
+  let hasAttribution = false
+  for (const m of row.allMeasurements) {
+    if (m.attribution?.status === "lost") return "lost"
+    if (m.attribution) hasAttribution = true
+  }
+  return hasAttribution ? "intact" : null
+}
+
+/**
  * CountBadge — small `×N` indicator rendered after the confidence column.
  *
  * Exported for the same reason `renderSourceCell` is exported: the test
@@ -608,12 +642,38 @@ export function MaterialPropertyTable({
   // the count badge. The colour is intentionally subtle (5% blue) so it
   // does not compete with confidence or citation; consult the
   // design-quality checklist before raising saturation.
+  //
+  // NFM-4204 — rows whose group contains a lost measurement additionally
+  // carry `material-property-row--data-loss`. The class is data-driven,
+  // NOT flag-gated: it marks the cohort even while the notice itself is
+  // hidden behind the feature flag, so the e2e backstop can assert cohort
+  // scope without requiring the flag to be on.
   const rowClassName = useCallback((row: GroupedMaterialProperty): string => {
+    const classes = ["material-property-row"]
     if (row.count > 1) {
-      return "material-property-row material-property-row--grouped"
+      classes.push("material-property-row--grouped")
     }
-    return "material-property-row"
+    if (rowAttributionStatus(row) === "lost") {
+      classes.push("material-property-row--data-loss")
+    }
+    return classes.join(" ")
   }, [])
+
+  // NFM-4204 — row-level attribution status attribute. antd's `onRow`
+  // props are spread onto the rendered `<tr>`, which is the only way to
+  // attach data attributes to table rows (rowClassName covers classes
+  // only). The cast is needed because React's HTMLAttributes does not
+  // model custom `data-*` keys; the value is always a plain string.
+  const onRow = useCallback(
+    (row: GroupedMaterialProperty): React.HTMLAttributes<HTMLElement> => {
+      const status = rowAttributionStatus(row)
+      if (status === null) return {}
+      return {
+        "data-attribution-status": status,
+      } as React.HTMLAttributes<HTMLElement>
+    },
+    [],
+  )
 
   // NFM-4087 — only groups of 2+ can be expanded; single-measurement
   // rows have nothing to disclose under the expander. Keeping
@@ -695,6 +755,7 @@ export function MaterialPropertyTable({
           rowKey="key"
           size="middle"
           rowClassName={rowClassName}
+          onRow={onRow}
           expandable={expandable}
           pagination={{
             current: page,
