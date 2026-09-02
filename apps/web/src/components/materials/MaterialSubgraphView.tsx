@@ -19,6 +19,7 @@ import { Alert, Button, Empty, Spin, Typography } from "antd"
 import { ReloadOutlined } from "@ant-design/icons"
 import { GraphCanvas, type GraphData, type GraphNode } from "@/components/graph"
 import { getMaterialSubgraph } from "@/lib/materials-api"
+import { ApiError } from "@/lib/api-client"
 
 const { Title, Text } = Typography
 
@@ -35,6 +36,16 @@ interface ViewState {
   readonly data: GraphData | null
   readonly loading: boolean
   readonly error: string | null
+  /**
+   * True when the backend signalled that the focal material has no
+   * Material kg_node bridge (typically a 404 from /kg/graph/subgraph).
+   *
+   * Per NFM-4093 / NFM-4096: a missing bridge is a *known coverage gap*
+   * (e.g. one of the 11 same-name-duplicate rows that intentionally
+   * lack a bridge), not a transport error. Surface it through the
+   * empty-state branch — not the generic error Alert.
+   */
+  readonly coverageGap: boolean
   readonly tooltip: GraphNode | null
   readonly focalLabel: string | null
 }
@@ -43,6 +54,7 @@ const INITIAL_STATE: ViewState = {
   data: null,
   loading: true,
   error: null,
+  coverageGap: false,
   tooltip: null,
   focalLabel: null,
 }
@@ -56,7 +68,12 @@ export function MaterialSubgraphView({
   const [state, setState] = useState<ViewState>(INITIAL_STATE)
 
   const fetchGraph = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }))
+    setState((prev) => ({
+      ...prev,
+      loading: true,
+      error: null,
+      coverageGap: false,
+    }))
 
     try {
       const data = await getMaterialSubgraph(materialId, DEFAULT_DEPTH)
@@ -75,10 +92,30 @@ export function MaterialSubgraphView({
         data,
         loading: false,
         error: null,
+        coverageGap: false,
         tooltip: null,
         focalLabel: focal?.label ?? null,
       })
     } catch (err: unknown) {
+      // 404 from /kg/graph/subgraph means the focal material has no
+      // Material kg_node bridge — a *known coverage gap* (NFM-4093),
+      // not a transport failure. Route it to the empty-state banner
+      // so users see "this is tracked", not a generic error. 5xx and
+      // network failures keep the generic Alert.
+      const isCoverageGap =
+        err instanceof ApiError && err.status === 404
+
+      if (isCoverageGap) {
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: null,
+          coverageGap: true,
+          data: null,
+        }))
+        return
+      }
+
       const message = err instanceof Error ? err.message : "Failed to load graph"
       setState((prev) => ({
         ...prev,
@@ -123,8 +160,8 @@ export function MaterialSubgraphView({
   const isEmpty =
     !state.loading &&
     !state.error &&
-    state.data !== null &&
-    state.data.nodes.length === 0
+    (state.coverageGap ||
+      (state.data !== null && state.data.nodes.length === 0))
 
   const ariaLabel = state.focalLabel
     ? `Material knowledge graph for ${state.focalLabel}`
@@ -180,14 +217,31 @@ export function MaterialSubgraphView({
         />
       )}
 
-      {/* Empty state */}
+      {/* Empty state — covers both (a) backend returned a 404 for the
+          focal material (no Material kg_node bridge — known coverage
+          gap per NFM-4093) and (b) backend returned 200 with zero
+          nodes. The banner explains the gap and links to the
+          tracking issue so users know it's tracked, not a bug. */}
       {!state.loading && !state.error && isEmpty && (
-        <div className="flex flex-col items-center justify-center py-16 gap-4">
+        <div
+          className="flex flex-col items-center justify-center py-16 gap-4"
+          data-testid="material-subgraph-empty"
+        >
           <Empty
             description={
-              <Text type="secondary">
-                暂无关联节点。查看该材料的属性页可了解已收录数据。
-              </Text>
+              <div className="flex flex-col items-center gap-2 max-w-xl text-center">
+                <Text type="secondary">
+                  No knowledge-graph data yet for this material. See{" "}
+                  <Link
+                    href="/NFM/issues/NFM-4093"
+                    className="text-blue-400 hover:text-blue-300 underline"
+                    data-testid="material-subgraph-empty-issue-link"
+                  >
+                    NFM-4093
+                  </Link>{" "}
+                  for the coverage gap (57/112 materials).
+                </Text>
+              </div>
             }
           />
           <Link

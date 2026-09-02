@@ -84,7 +84,7 @@ describe("getMaterialSubgraph fetch wrapper", () => {
     vi.restoreAllMocks()
   })
 
-  it("hits /api/v1/kg/graph with nodeId + depth", async () => {
+  it("hits /api/v1/kg/graph/subgraph with nodeId + depth (NFM-4083)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ nodes: [], edges: [] }),
@@ -96,7 +96,7 @@ describe("getMaterialSubgraph fetch wrapper", () => {
     await getMaterialSubgraph("ZrO2", 2)
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/kg/graph?nodeId=ZrO2&depth=2",
+      "/api/v1/kg/graph/subgraph?nodeId=ZrO2&depth=2",
       expect.objectContaining({
         headers: expect.objectContaining({
           "Content-Type": "application/json",
@@ -117,7 +117,7 @@ describe("getMaterialSubgraph fetch wrapper", () => {
     await expect(getMaterialSubgraph("ZrO2")).rejects.toThrow(/boom/)
   })
 
-  it("defaults depth to 2", async () => {
+  it("defaults depth to 2 (NFM-4083)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ nodes: [], edges: [] }),
@@ -129,7 +129,7 @@ describe("getMaterialSubgraph fetch wrapper", () => {
     await getMaterialSubgraph("ZrO2")
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/kg/graph?nodeId=ZrO2&depth=2",
+      "/api/v1/kg/graph/subgraph?nodeId=ZrO2&depth=2",
       expect.any(Object),
     )
   })

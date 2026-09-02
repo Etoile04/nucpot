@@ -32,8 +32,6 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_LIB = REPO_ROOT / "scripts" / "lib"
 ORCHESTRATOR = SCRIPTS_LIB / "collect_prod_run.sh"
@@ -228,9 +226,7 @@ def _valid_event() -> dict[str, Any]:
 class TestBashOrchestrator:
     """End-to-end exercise of ``collect_prod_run.sh`` against a fake gh."""
 
-    def test_workflow_id_lookup_failure_exits_nonzero(
-        self, tmp_path: Path
-    ) -> None:
+    def test_workflow_id_lookup_failure_exits_nonzero(self, tmp_path: Path) -> None:
         """Reviewer finding CRITICAL #1 part 2: when the API call fails,
         the orchestrator must propagate the failure (exit != 0), not
         silently ``exit 0`` and report a green run with zero events.
@@ -276,9 +272,7 @@ class TestBashOrchestrator:
         # And no event should have been collected.
         assert not jsonl.exists() or jsonl.read_text() == ""
 
-    def test_artifact_name_run_id_attempt_suffix_accepted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_artifact_name_run_id_attempt_suffix_accepted(self, tmp_path: Path) -> None:
         """Regression: producer uploads artifacts named
         ``nfm-deploy-event-<run_id>-<run_attempt>`` with NO ``.json``
         suffix on the artifact name (the ``.json`` file lives inside
@@ -333,9 +327,7 @@ class TestBashOrchestrator:
             f"stdout={result.stdout}\nstderr={result.stderr}"
         )
         # No "missing" ledger row — the artifact was actually processed.
-        assert "[collect-prod-run] run_id=123456789 no nfm-deploy-event" not in (
-            result.stdout
-        ), (
+        assert "[collect-prod-run] run_id=123456789 no nfm-deploy-event" not in (result.stdout), (
             "orchestrator recorded the real producer artifact as missing; "
             "the jq filter is rejecting artifacts without a '.json' suffix"
         )
@@ -347,15 +339,11 @@ class TestBashOrchestrator:
         )
         # The single JSONL line is the valid event we put in the zip.
         parsed = json.loads(jsonl_lines[0])
-        assert parsed == event, (
-            f"JSONL line does not match the event we processed: {parsed!r}"
-        )
+        assert parsed == event, f"JSONL line does not match the event we processed: {parsed!r}"
         # The processed ledger gains exactly one row matching
         # ``<run_id>\t<sha256>\t<processed>``.
         assert processed.exists(), "ledger should exist after a successful collect"
-        ledger_lines = [
-            ln for ln in processed.read_text().splitlines() if ln.strip()
-        ]
+        ledger_lines = [ln for ln in processed.read_text().splitlines() if ln.strip()]
         assert len(ledger_lines) == 1, (
             f"expected exactly 1 ledger row, got {len(ledger_lines)}: {ledger_lines!r}"
         )
@@ -364,6 +352,6 @@ class TestBashOrchestrator:
         assert row[0] == "123456789", f"first field is run_id, got {row[0]!r}"
         assert row[2] == "processed", f"third field is status, got {row[2]!r}"
         # sha256 field is 64 hex chars (matches the spec).
-        assert len(row[1]) == 64 and all(
-            c in "0123456789abcdef" for c in row[1]
-        ), f"second field is sha256 (64 hex), got {row[1]!r}"
+        assert len(row[1]) == 64 and all(c in "0123456789abcdef" for c in row[1]), (
+            f"second field is sha256 (64 hex), got {row[1]!r}"
+        )
