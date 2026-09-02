@@ -6,6 +6,7 @@ import {
   groupKey,
   groupRowsByKey,
   renderSourceCell,
+  rowAttributionStatus,
 } from "../MaterialPropertyTable"
 import type { MaterialProperty, MeasurementCondition, SourceRef } from "@/lib/materials-api"
 
@@ -1220,5 +1221,104 @@ describe("MaterialPropertyTable — NFM-4117 W1 narrow-viewport ×N badge", () =
 
     // No fold → no ×N indicator anywhere in the row.
     expect(screen.queryByText(/^×/)).not.toBeInTheDocument()
+  })
+})
+
+// ── NFM-4204 — row-level attribution DOM contract ─────────────────────
+//
+// The data-loss-notice e2e backstop (apps/web/e2e/data-loss-notice.spec.ts)
+// asserts on `tr[data-attribution-status="lost"]` and
+// `tr.material-property-row--data-loss`. Until NFM-4204 those selectors were
+// emitted by NO component — the spec could never pass in any environment.
+// These tests pin the contract at the unit level so a future refactor of the
+// antd Table wiring cannot silently drop the attributes again.
+
+describe("MaterialPropertyTable — row attribution DOM contract (NFM-4204)", () => {
+  it("rowAttributionStatus returns lost when any underlying measurement is lost", () => {
+    // Both rows are unsourced so they fold into ONE group (the realistic
+    // mixed case: a lost measurement folds with an unadjudicated
+    // duplicate — sourced rows can never share a group with a lost one
+    // because migration 070 NULLs the lost row's source).
+    const groups = groupRowsByKey([
+      makeProperty({ id: "p1", name: "密度", value: "10.5", source: null }),
+      makeProperty({
+        id: "p0",
+        name: "密度",
+        value: "10.5",
+        source: null,
+        attribution: { status: "lost", lostAt: "2026-08-01", siblingPlaceholderCount: 3 },
+      }),
+    ])
+    const row = groups[0]
+    if (row === undefined) throw new Error("expected exactly one group")
+    expect(rowAttributionStatus(row)).toBe("lost")
+  })
+
+  it("rowAttributionStatus returns intact when attribution is present and none lost", () => {
+    const groups = groupRowsByKey([
+      makeProperty({
+        id: "p1",
+        name: "密度",
+        value: "10.5",
+        attribution: { status: "intact" },
+      }),
+    ])
+    const row = groups[0]
+    if (row === undefined) throw new Error("expected exactly one group")
+    expect(rowAttributionStatus(row)).toBe("intact")
+  })
+
+  it("rowAttributionStatus returns null when no measurement carries attribution", () => {
+    const groups = groupRowsByKey([
+      makeProperty({ id: "p1", name: "密度", value: "10.5" }),
+    ])
+    const row = groups[0]
+    if (row === undefined) throw new Error("expected exactly one group")
+    expect(rowAttributionStatus(row)).toBeNull()
+  })
+
+  it("renders data-attribution-status=lost and the --data-loss row class on lost rows", () => {
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-lost", name: "密度", value: "10.5", source: null, attribution: { status: "lost" } }),
+          makeProperty({ id: "p-intact", name: "熔点", value: "1850", attribution: { status: "intact" } }),
+          makeProperty({ id: "p-plain", name: "热导率", value: "3.0" }),
+        ]}
+        total={3}
+        error={null}
+      />,
+    )
+
+    const lostRow = container.querySelector('tr[data-attribution-status="lost"]')
+    expect(lostRow).not.toBeNull()
+    expect(lostRow?.className).toContain("material-property-row--data-loss")
+
+    // Cohort scope: exactly one lost row, and only that row carries the
+    // --data-loss marker.
+    expect(container.querySelectorAll('tr[data-attribution-status="lost"]')).toHaveLength(1)
+    expect(container.querySelectorAll("tr.material-property-row--data-loss")).toHaveLength(1)
+  })
+
+  it("renders data-attribution-status=intact on adjudicated rows without the --data-loss class", () => {
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-intact", name: "熔点", value: "1850", attribution: { status: "intact" } }),
+          makeProperty({ id: "p-plain", name: "热导率", value: "3.0" }),
+        ]}
+        total={2}
+        error={null}
+      />,
+    )
+
+    const intactRow = container.querySelector('tr[data-attribution-status="intact"]')
+    expect(intactRow).not.toBeNull()
+    expect(intactRow?.className).not.toContain("material-property-row--data-loss")
+
+    // Rows outside the adjudicated cohort carry no status attribute at all.
+    expect(container.querySelectorAll("tr[data-attribution-status]")).toHaveLength(1)
   })
 })
