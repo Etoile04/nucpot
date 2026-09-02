@@ -36,6 +36,12 @@ import uuid
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip(
+    "psycopg2",
+    reason="psycopg2 required for runtime migration tests against Postgres",
+)
+
 from sqlalchemy import create_engine, text
 
 _MIGRATION_PATH = Path(
