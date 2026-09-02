@@ -245,8 +245,8 @@ _DO_BLOCK_SQL_TEMPLATE = """
                                           THEN 0 ELSE 1 END,
                                 CASE WHEN bad.content_md IS NOT NULL
                                           AND candidate.content_md IS NOT NULL
-                                          AND encode(sha256(SUBSTRING(candidate.content_md, 1, 200)), 'hex')
-                                           = encode(sha256(SUBSTRING(bad.content_md, 1, 200)), 'hex')
+                                          AND encode(sha256(convert_to(SUBSTRING(candidate.content_md, 1, 200), 'UTF8')), 'hex')
+                                           = encode(sha256(convert_to(SUBSTRING(bad.content_md, 1, 200), 'UTF8')), 'hex')
                                           THEN 0 ELSE 1 END,
                                 CASE WHEN LENGTH(COALESCE(bad.title, '')) >= 12
                                           AND LOWER(REGEXP_REPLACE(
@@ -276,8 +276,8 @@ _DO_BLOCK_SQL_TEMPLATE = """
                                 AND candidate.file_hash = bad.file_hash)
                          OR (bad.content_md IS NOT NULL
                                 AND candidate.content_md IS NOT NULL
-                                AND encode(sha256(SUBSTRING(candidate.content_md, 1, 200)), 'hex')
-                                 = encode(sha256(SUBSTRING(bad.content_md, 1, 200)), 'hex'))
+                                AND encode(sha256(convert_to(SUBSTRING(candidate.content_md, 1, 200), 'UTF8')), 'hex')
+                                 = encode(sha256(convert_to(SUBSTRING(bad.content_md, 1, 200), 'UTF8')), 'hex'))
                          OR (
                                 LENGTH(COALESCE(bad.title, '')) >= 12
                                 AND LOWER(REGEXP_REPLACE(
