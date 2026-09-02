@@ -22,6 +22,7 @@ guards that belong beside it but not inside an already-large module:
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import pytest
@@ -38,12 +39,15 @@ from tests._helpers.owen2023_corpus import (
 #: Set to a libpq connection string to enable the live-corpus drift check.
 #: Deliberately NOT ``DATABASE_URL``: pointing the drift check at whatever
 #: database happens to be configured would make it fail on an empty dev shard.
+#: Format is the plain ``postgresql://user:pass@host:port/db`` form that
+#: ``asyncpg.connect`` accepts (the SQLAlchemy ``+asyncpg`` suffix is *not*
+#: recognised by ``asyncpg`` itself — pass a libpq URL or the keyword form).
 _LIVE_DSN_ENV = "NFM_OWEN2023_CORPUS_DSN"
 
 _LIVE_CORPUS_SQL = """
 SELECT DISTINCT label
 FROM kg_nodes
-WHERE source_id = %(source_id)s
+WHERE source_id = $1
   AND node_type = 'Material'
 """
 
@@ -51,6 +55,26 @@ WHERE source_id = %(source_id)s
 #: 17th is the ``Cr2O3`` carve-out).  A floor, not an equality: a growing
 #: corpus should raise it, and lowering it must be a deliberate, explained edit.
 _F8_REACHABILITY_FLOOR = 16
+
+#: Hard ceiling on a single drift-check run.  The prod SELECT is bounded by
+#: the size of ``kg_nodes`` for one source_id, but the connection itself
+#: should never block the suite indefinitely when something is wrong.
+_LIVE_CONNECT_TIMEOUT_SECONDS = 10
+
+
+async def _fetch_live_labels(dsn: str) -> list[str]:
+    """Open a short-lived asyncpg connection and return the live Owen2023 labels.
+
+    Parameterised query (``$1``) — never string-interpolate the source_id.
+    """
+    import asyncpg  # lazy: imported after the skipif so absence is a fail, not an ImportError at collect
+
+    conn = await asyncpg.connect(dsn, timeout=_LIVE_CONNECT_TIMEOUT_SECONDS)
+    try:
+        rows = await conn.fetch(_LIVE_CORPUS_SQL, OWEN2023_SOURCE_ID)
+    finally:
+        await conn.close()
+    return sorted(row["label"] for row in rows)
 
 
 def test_snapshot_provenance_is_complete():
@@ -143,15 +167,34 @@ def test_snapshot_matches_live_corpus():
     that does (``NFM_OWEN2023_CORPUS_DSN=postgresql://… pytest -m
     integration -k live_corpus``) to catch a snapshot that has gone stale.
     Read-only: a single SELECT, no writes, no schema access.
+
+    Driver-missing is an **error**, not a skip: if the operator set the
+    DSN they asked for the drift check, and a green "skip" silently
+    neuters the audit pin (the vacuous-guard failure NFM-4048 exists to
+    close).  ``asyncpg`` is the project's declared PG driver
+    (``pyproject.toml``), so its absence is an environment problem the
+    operator needs to see.
     """
-    psycopg = pytest.importorskip("psycopg")
+    import asyncpg  # lazy: see the fail-loud ImportError branch below
 
     dsn = os.environ[_LIVE_DSN_ENV]
     try:
-        with psycopg.connect(dsn, connect_timeout=10) as conn, conn.cursor() as cur:
-            cur.execute(_LIVE_CORPUS_SQL, {"source_id": OWEN2023_SOURCE_ID})
-            live = sorted(row[0] for row in cur.fetchall())
-    except psycopg.Error as exc:
+        live = asyncio.run(_fetch_live_labels(dsn))
+    except ImportError as exc:
+        # Defensive: asyncpg was importable at module import time but the
+        # asyncpg.connect() call pulled in something unavailable.  Treat
+        # the same as a driver-missing at collection time.
+        pytest.fail(
+            f"{_LIVE_DSN_ENV} is set but asyncpg cannot complete its import "
+            f"graph ({exc}). Install the project dependencies (see "
+            "`pyproject.toml` — `asyncpg>=0.30.0` is declared) or unset "
+            f"{_LIVE_DSN_ENV} to skip the drift check."
+        )
+    except (
+        OSError,
+        asyncpg.PostgresError,
+        TimeoutError,
+    ) as exc:
         pytest.fail(f"could not read the live Owen2023 corpus via {_LIVE_DSN_ENV}: {exc}")
 
     assert live, (

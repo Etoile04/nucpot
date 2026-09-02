@@ -306,3 +306,73 @@ class TestEnergyPredictSchemas:
         assert features["mo_equivalent"] == 2.0
         assert features["mixing_enthalpy"] == -5.0
 
+    def test_energy_predict_response_exposes_rd2_label_fields(self) -> None:
+        """NFM-4054: EnergyPredictResponse has Optional rd2_label + rd2_label_status
+        fields. Both default to None for back-compat with pre-NFM-4054 callers.
+        """
+        from nfm_db.schemas.prediction import EnergyPredictResponse
+
+        # Backward-compat: callers that don't supply the new fields still work.
+        resp = EnergyPredictResponse(
+            predicted_energy=-0.5,
+            confidence=0.8,
+            confidence_source="v10_or_v11_unevaluated",
+            model_version="v1.1",
+        )
+        assert resp.rd2_label is None
+        assert resp.rd2_label_status is None
+
+        # New fields are populated when provided (NFM-4054 / AC-OC-4).
+        resp_with_labels = EnergyPredictResponse(
+            predicted_energy=-0.5,
+            confidence=0.3111,
+            confidence_source="grouped_cv_r2_mean",
+            model_version="v3.0",
+            rd2_label="[EXPLORATORY]",
+            rd2_label_status="permanent",
+        )
+        assert resp_with_labels.rd2_label == "[EXPLORATORY]"
+        assert resp_with_labels.rd2_label_status == "permanent"
+
+
+class TestPredictEnergyRouteExposesRd2Label:
+    """NFM-4054 / AC-OC-4: the /predict/energy route surfaces the
+    rd2_label + rd2_label_status fields read from the loaded model artifact.
+    """
+
+    @patch("nfm_db.api.v1.prediction.predict_energy")
+    async def test_route_propagates_rd2_label_from_predict_service(
+        self, mock_predict: MagicMock,
+    ) -> None:
+        mock_predict.return_value = {
+            **MOCK_V30_RESULT,
+            "rd2_label": "[EXPLORATORY]",
+            "rd2_label_status": "permanent",
+        }
+
+        from nfm_db.api.v1.prediction import predict_energy_endpoint
+        from nfm_db.schemas.prediction import EnergyPredictRequest
+
+        request = EnergyPredictRequest(**SAMPLE_FEATURES)
+        response = await predict_energy_endpoint(request)
+
+        assert response.data is not None
+        assert response.data.rd2_label == "[EXPLORATORY]"
+        assert response.data.rd2_label_status == "permanent"
+
+    @patch("nfm_db.api.v1.prediction.predict_energy")
+    async def test_route_omits_rd2_label_when_artifact_lacks_it(
+        self, mock_predict: MagicMock,
+    ) -> None:
+        mock_predict.return_value = MOCK_V30_RESULT  # no rd2_* keys
+
+        from nfm_db.api.v1.prediction import predict_energy_endpoint
+        from nfm_db.schemas.prediction import EnergyPredictRequest
+
+        request = EnergyPredictRequest(**SAMPLE_FEATURES)
+        response = await predict_energy_endpoint(request)
+
+        assert response.data is not None
+        assert response.data.rd2_label is None
+        assert response.data.rd2_label_status is None
+

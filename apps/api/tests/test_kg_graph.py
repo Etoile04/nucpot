@@ -1,7 +1,8 @@
-"""Tests for KG Graph API endpoint (NFM-1280).
+"""Tests for KG Graph API endpoint (NFM-1280, NFM-4083).
 
-Tests for GET /api/v1/kg/graph covering:
+Tests for GET /api/v1/kg/graph/subgraph covering:
 - Focal node resolution (UUID, type:label, bare label, case-insensitive)
+- materials.id → KG focal translation (NFM-4083)
 - Depth boundary enforcement (1..3)
 - Status filtering (active, all)
 - Missing focal (404)
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nfm_db.api.v1.kg_graph import router
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.material import Material
 from nfm_db.services.kg_graph import (
     KGSubgraphNode,
     build_neighborhood_subgraph,
@@ -171,7 +173,7 @@ class TestFocalResolution:
     async def test_uuid_form(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
@@ -179,7 +181,7 @@ class TestFocalResolution:
     async def test_type_label_form(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "Material:ZrO2", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "Material:ZrO2", "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
@@ -187,7 +189,7 @@ class TestFocalResolution:
     async def test_bare_label(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "ZrO2", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "ZrO2", "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
@@ -195,7 +197,7 @@ class TestFocalResolution:
     async def test_case_insensitive_label_fallback(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "zro2", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "zro2", "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
@@ -203,14 +205,14 @@ class TestFocalResolution:
     async def test_whitespace_trim(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "  ZrO2  ", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "  ZrO2  ", "depth": 1})
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
     @pytest.mark.asyncio
     async def test_whitespace_only_returns_422(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "   ", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "   ", "depth": 1})
         assert resp.status_code == 422
         assert "nodeId must not be empty" in resp.json()["detail"]
 
@@ -218,7 +220,7 @@ class TestFocalResolution:
     async def test_malformed_uuid_treated_as_label(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "not-a-valid-uuid", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "not-a-valid-uuid", "depth": 1})
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -227,7 +229,7 @@ class TestFocalResolution:
         db_session.add(_make_node(node_id=_B_UUID, label="DupLabel", node_type="Property"))
         await db_session.flush()
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "DupLabel", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "DupLabel", "depth": 1})
         assert resp.status_code == 404
 
 
@@ -236,7 +238,7 @@ class TestDepthBoundary:
     async def test_depth_1_returns_focal_plus_1hop(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         node_ids = {n["id"] for n in resp.json()["nodes"]}
         assert str(_A_UUID) in node_ids
@@ -247,7 +249,7 @@ class TestDepthBoundary:
     async def test_depth_2_reaches_2hop(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 2})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 2})
         assert resp.status_code == 200
         node_ids = {n["id"] for n in resp.json()["nodes"]}
         assert str(_C_UUID) in node_ids
@@ -257,7 +259,7 @@ class TestDepthBoundary:
     async def test_depth_3_reaches_3hop(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 3})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 3})
         assert resp.status_code == 200
         node_ids = {n["id"] for n in resp.json()["nodes"]}
         assert str(_D_UUID) in node_ids
@@ -265,19 +267,19 @@ class TestDepthBoundary:
     @pytest.mark.asyncio
     async def test_depth_0_returns_422(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 0})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 0})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_depth_4_returns_422(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 4})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 4})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_depth_negative_returns_422(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": -1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": -1})
         assert resp.status_code == 422
 
 
@@ -286,7 +288,7 @@ class TestStatusFilter:
     async def test_default_active_excludes_inactive(self, db_session: AsyncSession) -> None:
         await _seed_inactive_node(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         node_ids = {n["id"] for n in resp.json()["nodes"]}
         assert str(_B_UUID) not in node_ids
@@ -295,7 +297,9 @@ class TestStatusFilter:
     async def test_status_all_returns_inactive(self, db_session: AsyncSession) -> None:
         await _seed_inactive_node(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1, "status": "all"})
+        resp = client.get(
+            "/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1, "status": "all"}
+        )
         assert resp.status_code == 200
         node_ids = {n["id"] for n in resp.json()["nodes"]}
         assert str(_B_UUID) in node_ids
@@ -308,7 +312,7 @@ class TestStatusFilter:
         db_session.add(node)
         await db_session.flush()
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -317,7 +321,9 @@ class TestStatusFilter:
         db_session.add(node)
         await db_session.flush()
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1, "status": "all"})
+        resp = client.get(
+            "/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1, "status": "all"}
+        )
         assert resp.status_code == 200
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
@@ -327,20 +333,22 @@ class TestMissingFocal:
     async def test_unknown_uuid_returns_404(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
         fake_id = str(uuid.uuid4())
-        resp = client.get("/kg/graph", params={"nodeId": fake_id, "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": fake_id, "depth": 1})
         assert resp.status_code == 404
         assert fake_id in resp.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_unknown_type_label_returns_404(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "Material:NoSuchMaterial", "depth": 1})
+        resp = client.get(
+            "/kg/graph/subgraph", params={"nodeId": "Material:NoSuchMaterial", "depth": 1}
+        )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_unknown_bare_label_returns_404(self, db_session: AsyncSession) -> None:
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": "NonExistentLabel", "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": "NonExistentLabel", "depth": 1})
         assert resp.status_code == 404
 
 
@@ -349,7 +357,7 @@ class TestCycleAndSelfLoop:
     async def test_self_loop_preserved(self, db_session: AsyncSession) -> None:
         await _seed_self_loop(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         edges = resp.json()["edges"]
         assert len(edges) >= 1
@@ -359,7 +367,7 @@ class TestCycleAndSelfLoop:
     async def test_triangle_correct_depths(self, db_session: AsyncSession) -> None:
         await _seed_triangle(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 2})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 2})
         assert resp.status_code == 200
         body = resp.json()
         node_depths = {n["id"]: n["properties"]["__depth"] for n in body["nodes"]}
@@ -375,7 +383,7 @@ class TestMultiEdge:
     async def test_multi_edge_both_returned(self, db_session: AsyncSession) -> None:
         await _seed_multi_edge(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         types = {e["type"] for e in resp.json()["edges"]}
         assert "hasProperty" in types
@@ -387,7 +395,7 @@ class TestResponseShape:
     async def test_focal_present_in_nodes_with_depth_0(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         assert resp.status_code == 200
         body = resp.json()
         assert body["focal"]["id"] == str(_A_UUID)
@@ -400,7 +408,7 @@ class TestResponseShape:
     async def test_depth_is_int(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 2})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 2})
         assert resp.status_code == 200
         for node in resp.json()["nodes"]:
             assert isinstance(node["properties"]["__depth"], int)
@@ -409,7 +417,7 @@ class TestResponseShape:
     async def test_nodes_sorted_deterministically(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 2})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 2})
         nodes = resp.json()["nodes"]
         for i in range(len(nodes) - 1):
             a, b = nodes[i], nodes[i + 1]
@@ -421,7 +429,7 @@ class TestResponseShape:
     async def test_edges_sorted_deterministically(self, db_session: AsyncSession) -> None:
         await _seed_triangle(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 2})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 2})
         edges = resp.json()["edges"]
         for i in range(len(edges) - 1):
             a, b = edges[i], edges[i + 1]
@@ -431,7 +439,7 @@ class TestResponseShape:
     async def test_node_schema_fields(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         node = resp.json()["nodes"][0]
         for field in ("id", "label", "type", "properties", "status", "confidence"):
             assert field in node
@@ -441,7 +449,7 @@ class TestResponseShape:
     async def test_edge_schema_fields(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         edge = resp.json()["edges"][0]
         for field in ("source", "target", "type", "properties", "confidence"):
             assert field in edge
@@ -452,7 +460,7 @@ class TestResponseShape:
         db_session.add(node)
         await db_session.flush()
         client = _make_client(lambda: db_session)
-        resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 1})
+        resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 1})
         body = resp.json()
         assert len(body["nodes"]) == 1
         assert body["nodes"][0]["id"] == str(_A_UUID)
@@ -469,18 +477,102 @@ class TestHardCaps:
             patch("nfm_db.services.kg_graph.MAX_EDGES", 1),
             patch("nfm_db.services.kg_graph.logger") as mock_logger,
         ):
-            resp = client.get("/kg/graph", params={"nodeId": str(_A_UUID), "depth": 3})
+            resp = client.get("/kg/graph/subgraph", params={"nodeId": str(_A_UUID), "depth": 3})
             assert resp.status_code == 200
             assert mock_logger.warning.called
+
+
+class TestMaterialIdTranslation:
+    """NFM-4083: ``materials.id`` UUID resolves to the ``KGNode`` for that material.
+
+    The frontend passes ``materials.id`` (e.g. ``068dc946-…`` for UO2) to
+    ``/kg/graph/subgraph``, but ``kg_nodes`` has an independent UUID space
+    (``496cf283-…`` for the UO2 KG node).  The endpoint must bridge the
+    two via ``materials.name`` so each material page renders its own
+    subgraph instead of the global pool.
+    """
+
+    _MATERIAL_UUID = uuid.UUID("068dc946-0000-0000-0000-000000000001")
+
+    async def test_materials_id_resolves_to_matching_kg_node(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Seed a Material row with the "frontend-side" UUID the page sends.
+        material = Material(
+            id=self._MATERIAL_UUID,
+            name="UO2",
+            formula="UO2",
+            is_active=True,
+        )
+        db_session.add(material)
+
+        # Seed the matching KG node under a different UUID (the KG space).
+        kg_node = _make_node(
+            node_id=_A_UUID,
+            label="UO2",
+            node_type="Material",
+        )
+        db_session.add(kg_node)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._MATERIAL_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Focal is the KG node, NOT the material row.
+        assert body["focal"]["id"] == str(_A_UUID)
+
+    async def test_unknown_materials_id_returns_404(self, db_session: AsyncSession) -> None:
+        # No material row, no kg row — should be a clean 404, not a 500.
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._MATERIAL_UUID), "depth": 1},
+        )
+        assert resp.status_code == 404
+        assert str(self._MATERIAL_UUID) in resp.json()["detail"]
+
+    async def test_materials_id_with_no_matching_kg_node_returns_404(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Material exists, but no Material KG node with that label.
+        material = Material(
+            id=self._MATERIAL_UUID,
+            name="Unobtainium",
+            is_active=True,
+        )
+        db_session.add(material)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._MATERIAL_UUID), "depth": 1},
+        )
+        assert resp.status_code == 404
+
+    async def test_direct_kg_uuid_still_resolves_without_bridge(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Passing the KG UUID directly must continue to work (no regression).
+        await _seed_linear_chain(db_session)
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_A_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["focal"]["id"] == str(_A_UUID)
 
 
 class TestServiceContract:
     """Locked contract #3: ``properties.__depth`` is injected by the service."""
 
     @pytest.mark.asyncio
-    async def test_service_node_carries_depth_in_properties(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_service_node_carries_depth_in_properties(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         focal = await resolve_focal_node(db_session, str(_A_UUID))
         assert focal is not None
@@ -494,9 +586,7 @@ class TestServiceContract:
             assert node.properties["__depth"] >= 0
 
     @pytest.mark.asyncio
-    async def test_service_nodes_sorted_by_depth_then_label(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_service_nodes_sorted_by_depth_then_label(self, db_session: AsyncSession) -> None:
         await _seed_linear_chain(db_session)
         focal = await resolve_focal_node(db_session, str(_A_UUID))
         assert focal is not None
