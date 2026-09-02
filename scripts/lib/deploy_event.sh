@@ -16,7 +16,8 @@
 #       --health-gate-first-poll-passed true \
 #       --rollback-triggered false \
 #       --skip-flag-used false \
-#       --duration-ms 41230
+#       --duration-ms 41230 \
+#       --health-status ok
 #
 # Event schema is fixed by the NFM-2035 spec, section 3.1: one JSON object per
 # line, appended, never rewritten.
@@ -82,6 +83,17 @@ _deploy_event_int() {
   esac
 }
 
+# NFM-4198 / ADR-NFM-4195 D2: normalise to the /health vocabulary pin
+# (ok | degraded | error). Anything else — including an omitted flag —
+# becomes "error" so a malformed call site can never invent new vocabulary
+# or silently read as success.
+_deploy_event_health_status() {
+  case "${1:-}" in
+    ok|degraded|error) printf '%s' "$1" ;;
+    *) printf 'error' ;;
+  esac
+}
+
 _deploy_event_uuid4() {
   if command -v uuidgen >/dev/null 2>&1; then
     uuidgen | tr 'A-Z' 'a-z'
@@ -106,6 +118,7 @@ _deploy_event_emit_impl() {
   local environment="unknown" triggered_by="unknown" commit_sha="unknown"
   local first_pass_success="false" health_gate_first_poll_passed="false"
   local rollback_triggered="false" skip_flag_used="false" duration_ms="0"
+  local health_status="error"
 
   while [ "$#" -gt 0 ]; do
     local key="$1"; shift
@@ -119,6 +132,7 @@ _deploy_event_emit_impl() {
       --rollback-triggered)             rollback_triggered="$val" ;;
       --skip-flag-used)                 skip_flag_used="$val" ;;
       --duration-ms)                    duration_ms="$val" ;;
+      --health-status)                  health_status="$val" ;;
       *) deploy_event_warn "ignoring unknown argument: $key" ;;
     esac
     [ "$#" -gt 0 ] && shift
@@ -138,7 +152,7 @@ _deploy_event_emit_impl() {
   fi
 
   local line
-  line="$(printf '{"event_id":"%s","ts":"%s","environment":"%s","triggered_by":"%s","commit_sha":"%s","first_pass_success":%s,"health_gate_first_poll_passed":%s,"rollback_triggered":%s,"skip_flag_used":%s,"duration_ms":%s}' \
+  line="$(printf '{"event_id":"%s","ts":"%s","environment":"%s","triggered_by":"%s","commit_sha":"%s","first_pass_success":%s,"health_gate_first_poll_passed":%s,"rollback_triggered":%s,"skip_flag_used":%s,"duration_ms":%s,"health_status":"%s"}' \
     "$(_deploy_event_uuid4)" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "$(_deploy_event_json_escape "$environment")" \
@@ -148,7 +162,8 @@ _deploy_event_emit_impl() {
     "$(_deploy_event_bool "$health_gate_first_poll_passed")" \
     "$(_deploy_event_bool "$rollback_triggered")" \
     "$(_deploy_event_bool "$skip_flag_used")" \
-    "$(_deploy_event_int "$duration_ms")")"
+    "$(_deploy_event_int "$duration_ms")" \
+    "$(_deploy_event_health_status "$health_status")")"
 
   # Single write of a short line to an O_APPEND fd: atomic against concurrent
   # appends, so a staging and a production deploy cannot interleave a line.
