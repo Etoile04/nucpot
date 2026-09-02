@@ -36,9 +36,12 @@ from nfm_db.schemas.potential import (  # noqa: F401
     PotentialSummary,
 )
 from nfm_db.schemas.property import (  # noqa: F401
+    DatasetAttributionBlock,
     DatasetCreate,
     DatasetResponse,
     DatasetUpdate,
+    DatasetWithAttributionResponse,
+    MeasurementAttributionBlock,
     MeasurementConditionCreate,
     MeasurementConditionResponse,
     MeasurementConditionUpdate,
@@ -48,6 +51,7 @@ from nfm_db.schemas.property import (  # noqa: F401
     PropertyMeasurementCreate,
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
+    PropertyMeasurementWithAttributionResponse,
     PropertyTypeCreate,
     PropertyTypeResponse,
     PropertyTypeUpdate,
