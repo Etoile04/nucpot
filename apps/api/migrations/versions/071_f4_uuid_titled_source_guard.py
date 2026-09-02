@@ -138,7 +138,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "071_f4_uuid_titled_source_guard"
-down_revision: str | Sequence[str] | None = "070_d2_dedup_bad_data_sources"
+down_revision: str | Sequence[str] | None = "070_extraction_gap_orm_column_align"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

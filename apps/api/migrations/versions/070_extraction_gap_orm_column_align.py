@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "070_extraction_gap_orm_column_align"
-down_revision: str | Sequence[str] | None = "069_add_v050_f8_property_types"
+down_revision: str | Sequence[str] | None = "070_d2_dedup_bad_data_sources"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
