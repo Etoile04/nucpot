@@ -6,8 +6,8 @@
  * input) are communicated back through callbacks so the parent can re-fetch
  * from the server.
  *
- * Columns: name, value, unit, source citation, confidence (ConfidenceBadge),
- *          count badge (NFM-4087).
+ * Columns: name, value (with inline ×N count badge when row is folded),
+ *          unit, source citation, confidence (ConfidenceBadge).
  *
  * Spec: NFM-1066 §3
  *
@@ -395,6 +395,15 @@ function ConditionsSubRow({
  * lists every underlying measurement's conditions; each row is anchored
  * to the original measurement id so React keys remain stable even when
  * two measurements have identical conditions.
+ *
+ * NFM-4118 (QA-FOLLOWUP W2 from NFM-4087) — the hand-written `<table>`
+ * nested inside Ant Table does NOT inherit the parent's
+ * `scroll={{x: 800}}`. On narrow viewports (~390px) the wider columns
+ * (来源 / 温度 / 压力 / 环境 / 辐照剂量 / 备注) clip off-screen. We
+ * wrap the inner table in an `overflow-x-auto` container and force a
+ * `min-w-[600px]` on the table itself so the six columns remain
+ * readable when the user scrolls horizontally. On wide viewports the
+ * container has no overflow, so the visual delta is zero.
  */
 function ExpandedConditionsTable({
   measurements,
@@ -406,23 +415,32 @@ function ExpandedConditionsTable({
       <Text className="text-gray-400 text-xs uppercase tracking-wide">
         底层 {measurements.length} 条 measurement 的 conditions
       </Text>
-      <table className="w-full mt-2 border-collapse">
-        <thead>
-          <tr className="text-left text-gray-400 text-xs">
-            <th className="py-1 pr-3 font-medium">来源</th>
-            <th className="py-1 pr-3 font-medium">温度</th>
-            <th className="py-1 pr-3 font-medium">压力</th>
-            <th className="py-1 pr-3 font-medium">环境</th>
-            <th className="py-1 pr-3 font-medium">辐照剂量</th>
-            <th className="py-1 pr-3 font-medium">备注</th>
-          </tr>
-        </thead>
-        <tbody>
-          {measurements.map((m) => (
-            <ConditionsSubRow key={m.id} measurement={m} />
-          ))}
-        </tbody>
-      </table>
+      {/* NFM-4118 — horizontally-scrollable wrapper. `overflow-x-auto` only
+          engages when the inner content exceeds the container width, so
+          wide-viewport renders stay visually identical to the pre-fix
+          behaviour. */}
+      <div
+        className="overflow-x-auto mt-2"
+        data-testid="conditions-sub-table-scroll"
+      >
+        <table className="w-full border-collapse min-w-[600px]">
+          <thead>
+            <tr className="text-left text-gray-400 text-xs">
+              <th className="py-1 pr-3 font-medium">来源</th>
+              <th className="py-1 pr-3 font-medium">温度</th>
+              <th className="py-1 pr-3 font-medium">压力</th>
+              <th className="py-1 pr-3 font-medium">环境</th>
+              <th className="py-1 pr-3 font-medium">辐照剂量</th>
+              <th className="py-1 pr-3 font-medium">备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            {measurements.map((m) => (
+              <ConditionsSubRow key={m.id} measurement={m} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -472,9 +490,22 @@ export function MaterialPropertyTable({
         key: "value",
         sorter: true,
         sortOrder: sortField === "value" ? (sortOrder === "asc" ? "ascend" : "descend") : null,
-        width: 180,
-        render: (text: string) => (
-          <Text className="text-gray-200 font-mono text-sm">{text}</Text>
+        width: 200,
+        render: (text: string, row: GroupedMaterialProperty) => (
+          // NFM-4117 W1 — surface the ×N badge in the value cell so it
+          // survives narrow viewports. Previously the badge lived in its
+          // own "计数" column (position 6, width 80px) which sits past the
+          // right edge of `.ant-table-body`'s horizontal scroll on
+          // viewport widths ≤ ~500px; with 17-fold rows now common on
+          // canonical-seed materials users on phones lose the only signal
+          // that a row was folded. Inlining in the value cell (column 2)
+          // keeps the indicator inside the always-visible region without
+          // adding column-width pressure that would force more columns
+          // off-screen on wide viewports.
+          <span className="inline-flex items-center gap-1.5">
+            <Text className="text-gray-200 font-mono text-sm">{text}</Text>
+            <CountBadge count={row.count} />
+          </span>
         ),
       },
       {
@@ -501,18 +532,14 @@ export function MaterialPropertyTable({
         width: 100,
         render: (value: number) => <ConfidenceBadge value={value} size="sm" />,
       },
-      {
-        // NFM-4087 — "×N" indicator that the row folds N underlying
-        // measurements. Rendered in its own column (not adjacent to the
-        // name column) so it sits next to the confidence pill — visually
-        // grouping "data quality" signals together.
-        title: "计数",
-        key: "count",
-        width: 80,
-        render: (_value: unknown, row: GroupedMaterialProperty) => (
-          <CountBadge count={row.count} />
-        ),
-      },
+      // NFM-4117 W1 — the dedicated "计数" column was removed. The ×N
+      // badge now lives inline next to the value cell (column 2) so it
+      // survives narrow viewports. Previously the column sat at position
+      // 6 (width 80px) which clipped past `.ant-table-body`'s horizontal
+      // scroll on viewports ≤ ~500px, hiding the fold indicator from
+      // phone users. The 80px of freed width brings the new total to
+      // 820px (within the `scroll.x: 800` threshold), and the badge
+      // remains discoverable because it's adjacent to the value text.
     ],
     [sortField, sortOrder],
   )

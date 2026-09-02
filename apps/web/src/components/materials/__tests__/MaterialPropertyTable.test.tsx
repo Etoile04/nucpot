@@ -979,6 +979,113 @@ describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
     expect(screen.getByText("post-anneal")).toBeInTheDocument()
   })
 
+  it("wraps the expanded conditions sub-table in a horizontally-scrollable container so T/P/env/dpa/notes columns stay reachable on mobile (NFM-4118)", () => {
+    // NFM-4118 (QA-FOLLOWUP W2 from NFM-4087) — on a ~390px viewport,
+    // the parent MaterialPropertyTable's `scroll={{x: 800}}` does NOT
+    // cover the expander's hand-written sub-table (it renders nested
+    // inside Ant Table and so does not inherit the parent scroll). The
+    // sub-table must therefore carry its own overflow handling, with a
+    // minimum width wide enough to keep all six column headers
+    // readable when the user scrolls horizontally.
+    const source = makeSource({ title: "NFM-4118 source" })
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({
+        id: "n1",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-1",
+            temperature: 873.15,
+            pressure: 0.1,
+            environment: "inert",
+            irradiation_dose: 5.0,
+            notes: "pre-anneal",
+          }),
+        ],
+      }),
+      makeProperty({
+        id: "n2",
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        conditions: [
+          makeCondition({
+            id: "c-2",
+            temperature: 1073.15,
+            pressure: 10.0,
+            environment: "oxidising",
+            irradiation_dose: 50.0,
+            notes: "post-anneal ramp 5 K/min",
+          }),
+        ],
+      }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    const expandButton = screen.getByRole("button", { name: "展开 conditions" })
+    fireEvent.click(expandButton)
+
+    // Heading confirms the expander opened.
+    const heading = screen.getByText(/底层 \d+ 条 measurement 的 conditions/)
+    expect(heading).toBeInTheDocument()
+
+    // All six column headers must be present in the expander sub-table
+    // — they are reachable via horizontal scroll on narrow viewports.
+    // (Headers are unique to the expander because the parent table uses
+    // "属性名称" / "数值" / etc., not "温度" / "压力" / "环境".)
+    expect(screen.getByText("温度")).toBeInTheDocument()
+    expect(screen.getByText("压力")).toBeInTheDocument()
+    expect(screen.getByText("环境")).toBeInTheDocument()
+    expect(screen.getByText("辐照剂量")).toBeInTheDocument()
+    expect(screen.getByText("备注")).toBeInTheDocument()
+
+    // Scope to the expander container (the bg-slate-900/40 div holding
+    // both the heading and the hand-written sub-table).
+    const expanderContainer = heading.parentElement
+    expect(expanderContainer).not.toBeNull()
+    const subTable = expanderContainer!.querySelector("table")
+    expect(subTable).not.toBeNull()
+
+    // The sub-table must be wrapped in a horizontally-scrollable
+    // container so the wider cells do not push the page off-screen on
+    // narrow viewports. The wrapper may be the expander container
+    // itself or a child wrapper — accept either, as long as the chain
+    // from the table up to the closest scroll-bearing ancestor includes
+    // an `overflow-x: auto` element.
+    const wrapper = subTable!.parentElement
+    expect(wrapper).not.toBeNull()
+    const wrapperStyle = wrapper!.className + " " + (wrapper!.getAttribute("style") ?? "")
+    expect(wrapperStyle).toMatch(/overflow-x-auto|overflow-x:\s*auto/)
+
+    // The inner table must enforce a minimum width wide enough for the
+    // six columns to remain readable when the wrapper scrolls. The
+    // implementation may use either an inline `style="min-width: Npx"`
+    // or a Tailwind arbitrary class `min-w-[Npx]` — both forms are
+    // accepted here. The numeric value must be at least 480px (enough
+    // for the six column headers plus their content to remain
+    // readable when scrolled horizontally on a 390px viewport).
+    const tableClass = subTable!.className
+    const tableStyle = subTable!.getAttribute("style") ?? ""
+    const inlineMatch = tableStyle.match(/min-width:\s*(\d+)px/)
+    const tailwindMatch = tableClass.match(/min-w-\[(\d+)px\]/)
+    const matchedPxRaw = inlineMatch?.[1] ?? tailwindMatch?.[1]
+    expect(matchedPxRaw).not.toBeUndefined()
+    const minWidthPx = matchedPxRaw !== undefined ? parseInt(matchedPxRaw, 10) : 0
+    expect(minWidthPx).toBeGreaterThanOrEqual(480)
+  })
+
   it("shows the page-level fold count next to the total when the page folded", () => {
     const source = makeSource({ title: "Folded source" })
     const rows: ReadonlyArray<MaterialProperty> = [1, 2].map((i) =>
@@ -1021,5 +1128,97 @@ describe("MaterialPropertyTable — NFM-4087 grouped rendering", () => {
 
     expect(screen.getByText(/共 2 条属性/)).toBeInTheDocument()
     expect(screen.queryByText(/本页折叠为/)).not.toBeInTheDocument()
+  })
+})
+
+// ── NFM-4117 W1: ×N badge must survive narrow viewports ───────────────
+//
+// On viewport widths ≤ ~500px the original "计数" column (position 6 of 6,
+// width 80px, total table width ~900px) lives past the right edge of
+// `.ant-table-body`'s horizontal scroll. With 17-fold rows now common on
+// canonical-seed materials, users on phones lose the only signal that a
+// row was folded. The fix is to surface the ×N badge inside the value
+// cell (column 2 of the new order) so it lives in the always-visible
+// region regardless of viewport width.
+
+describe("MaterialPropertyTable — NFM-4117 W1 narrow-viewport ×N badge", () => {
+  it("renders the ×N count badge INSIDE the value cell (column 2) so it survives narrow viewports", () => {
+    const source = makeSource({ title: "Narrow viewport source" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2, 3].map((i) =>
+      makeProperty({
+        id: `narrow-${i}`,
+        name: "Activation Energy",
+        value: "0.3",
+        unit: "eV",
+        source,
+        confidence: 0.9,
+      }),
+    )
+
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // The value cell (the one carrying "0.3") must contain the ×N badge
+    // as a descendant — meaning the badge lives in the always-visible
+    // second column, NOT in the cut-off 计数 column.
+    const valueCells = container.querySelectorAll(".ant-table-cell")
+    const cellWithValue = Array.from(valueCells).find((cell) =>
+      cell.textContent?.includes("0.3"),
+    )
+    expect(cellWithValue).toBeDefined()
+    expect(cellWithValue?.textContent).toMatch(/×3/)
+  })
+
+  it("does NOT render the off-screen 计数 column header", () => {
+    // The 计数 column is the column that gets clipped on narrow viewports;
+    // the fix moves the ×N indicator inline so that header is no longer
+    // needed.
+    const source = makeSource({ title: "Header test" })
+    const rows: ReadonlyArray<MaterialProperty> = [1, 2].map((i) =>
+      makeProperty({
+        id: `ht-${i}`,
+        name: "Density",
+        value: "10.5",
+        source,
+      }),
+    )
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    expect(screen.queryByText("计数")).not.toBeInTheDocument()
+  })
+
+  it("omits the inline ×N badge when count is 1 (single-measurement rows stay clean)", () => {
+    // Single-measurement rows should never render a ×N badge — the
+    // inline placement must respect the same count <= 1 guard that the
+    // 计数 column used.
+    const rows: ReadonlyArray<MaterialProperty> = [
+      makeProperty({ id: "p1", name: "Density", value: "10.5" }),
+    ]
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={rows}
+        total={rows.length}
+        error={null}
+      />,
+    )
+
+    // No fold → no ×N indicator anywhere in the row.
+    expect(screen.queryByText(/^×/)).not.toBeInTheDocument()
   })
 })
