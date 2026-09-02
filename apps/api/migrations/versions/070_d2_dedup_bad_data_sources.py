@@ -428,9 +428,10 @@ _DO_BLOCK_SQL_TEMPLATE = """
                     WHERE d.id = l.dataset_id
                     RETURNING 1
                 )
-                SELECT
-                    (SELECT COUNT(*) FROM passthrough_keepers)  AS kept_dedup_count,
-                    (SELECT COUNT(*) FROM passthrough_losers)   AS lost_dedup_count;
+                SELECT 1
+                INTO bad_count
+                ;
+                RAISE NOTICE 'NFM-4095: passthrough dedup complete (losers dropped)';
 
                 -- 3a. Repoint bad datasets whose canonical dataset does
                 --     NOT already exist (their id stays the same but
