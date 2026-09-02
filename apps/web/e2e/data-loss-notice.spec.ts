@@ -6,52 +6,102 @@
  *      can ever appear in the DOM, even when the flag is on.
  *   2. Cohort scope is enforced — a row whose `attribution.status` is
  *      `"intact"` never renders the notice.
- *   3. Property-detail row layout is invariant between shown and
- *      hidden states (no layout shift). Asserted by comparing
- *      bounding-box heights with the flag toggled off vs on for a
- *      `lost` row.
+ *   3. Property-detail row layout is stable across reloads (no layout
+ *      shift). Asserted by comparing bounding-box heights of the lost
+ *      row before and after a reload — the inline trigger sits on a
+ *      single line and must not change the measurement-row height.
+ *      (This does NOT toggle the flag within the test; the webServer
+ *      env keeps it on for the whole run.)
+ *   4. The `dataloss_notice_shown` analytics event fires on first
+ *      popover open.
  *
- * These run against a locally-served build; they require the property
- * detail page to render at least one row whose
- * `attribution.status === "lost"`. The test harness seeds a fixture
- * via the standard test-setup helpers (see apps/web/e2e/fixtures/).
+ * NFM-4204 — this spec previously failed deterministically in every
+ * environment: it asserted row-level selectors (`tr[data-attribution-
+ * status]`) that no component emitted, targeted the material DETAIL page
+ * (no property table renders there — the table lives on the properties
+ * sub-route), and relied on a fixture that was never shipped. It is now
+ * mock-based: `setupDataLossMocks` intercepts the properties API and
+ * seeds exactly one lost row. The flag is enabled for local runs via
+ * `NEXT_PUBLIC_DATA_LOSS_NOTICE=on` on the Playwright webServer (see
+ * playwright.config.ts); the spec is excluded from the CI live-E2E job
+ * (`NFMD_SPEC_PATTERN`) because prod has no lost rows and the flag is
+ * off there until the NFM-4177 rollout.
  */
 
 import { expect, test } from "@playwright/test"
 
-const PROPERTY_DETAIL_URL = "/materials/FeCrAl" // seeded with 1 lost row
+import { setupDataLossMocks } from "./fixtures/data-loss-notice-mock-server"
+import { MOCK_LOST_MEASUREMENT_ID } from "./fixtures/data-loss-notice-mock-data"
+
+// The property table renders on the properties sub-route, not on the
+// material detail page (NFM-4204).
+const PROPERTY_DETAIL_URL = "/materials/FeCrAl/properties"
 
 test.describe("DataLossNotice backstop (spec §7)", (): void => {
+  test.beforeEach(async ({ page }): Promise<void> => {
+    await setupDataLossMocks(page)
+  })
+
   test("variant=full never appears in the DOM", async ({ page }): Promise<void> => {
     await page.goto(PROPERTY_DETAIL_URL)
+    // Wait for the fixture rows so the assertion runs against a fully
+    // rendered table, not an empty loading state.
+    await expect(
+      page.locator('tr[data-attribution-status="lost"]'),
+    ).toHaveCount(1)
     const fullElements = await page.locator('[data-variant="full"]').count()
     expect(fullElements).toBe(0)
   })
 
   test("intact rows never render the notice", async ({ page }): Promise<void> => {
     await page.goto(PROPERTY_DETAIL_URL)
-    // The fixture seeds exactly one `lost` row and many `intact` rows.
-    const rowsWithNotice = await page
-      .locator("tr.material-property-row--data-loss")
-      .count()
+    // The fixture seeds exactly one `lost` row; every other row is
+    // intact or unadjudicated and must not render the notice. The
+    // expect() forms retry — the table renders after an async client
+    // fetch, so a raw count() right after goto would race the fetch.
+    await expect(
+      page.locator('tr[data-attribution-status="lost"]'),
+    ).toHaveCount(1)
+    await expect(
+      page.locator("tr.material-property-row--data-loss"),
+    ).toHaveCount(1)
+    await expect(
+      page.locator('[data-testid="data-loss-notice-trigger"]'),
+    ).toHaveCount(1)
+
+    // Cohort equality: rows marked --data-loss are exactly the lost
+    // rows (sampled after the retrying expects above synchronized the
+    // render).
     const lostRows = await page
       .locator('tr[data-attribution-status="lost"]')
+      .count()
+    const rowsWithNotice = await page
+      .locator("tr.material-property-row--data-loss")
       .count()
     expect(rowsWithNotice).toBe(lostRows)
   })
 
-  test("property-detail row height is invariant between flag off and on", async ({
+  test("property-detail row height is stable across reload (no layout shift)", async ({
     page,
   }): Promise<void> => {
     await page.goto(PROPERTY_DETAIL_URL)
+    // Diagnostic precondition: the fixture must seed exactly one lost
+    // row before we measure anything. Failing here — with a selector in
+    // the message — distinguishes "fixture/mock drift or DOM-contract
+    // regression" from a height mismatch measured against nothing.
+    await expect(
+      page.locator('tr[data-attribution-status="lost"]'),
+      "fixture must seed exactly one lost row",
+    ).toHaveCount(1)
     const row = page.locator('tr[data-attribution-status="lost"]').first()
+    await expect(row).toBeVisible()
     const beforeHeight = (await row.boundingBox())?.height ?? 0
-    // Toggle the flag via the env override path (NEXT_PUBLIC_ env vars
-    // require a reload — Playwright re-navigates to apply). We compare
-    // the row's measurement WITHOUT the disclosure rendered (the
-    // inline trigger sits on a single line and does not affect the
-    // measurement-row height).
+    // Reload re-renders the row through the same path (fixture + flag
+    // via the webServer env). Wait for the row to be visible again
+    // before measuring — a raw boundingBox() right after reload can
+    // sample mid-render.
     await page.reload()
+    await expect(row).toBeVisible()
     const afterHeight = (await row.boundingBox())?.height ?? 0
     expect(Math.abs(beforeHeight - afterHeight)).toBeLessThan(2)
   })
@@ -85,5 +135,11 @@ test.describe("DataLossNotice backstop (spec §7)", (): void => {
     expect(
       events.some((e): boolean => e.name === "dataloss_notice_shown"),
     ).toBe(true)
+    // The shown event must carry the fixture's lost measurement id so
+    // analytics stay correlatable to the row.
+    const shown = events.find(
+      (e): boolean => e.name === "dataloss_notice_shown",
+    )
+    expect(shown?.props.measurementId).toBe(MOCK_LOST_MEASUREMENT_ID)
   })
 })
