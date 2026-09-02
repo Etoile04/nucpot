@@ -23,7 +23,31 @@ TEMP_PREDICTOR_VERSION: str = "v1.0"
 
 # EnergyPredictor (NFM-2201): v3.0 — same 20D features, 2,909 unique PBE
 # compositions from NFM-1540 PathB (vs. v1.1's 855 unique).
-# AC: R² ≥ 0.90 on 80/20 hold-out. Achieved R²=0.9858.
+#
+# NFM-3959 (LE handoff from NFM-3953 grouped-CV confirmatory run; supersedes
+# NFM-3956 disclosure contract with three CTO architectural mandates):
+#   v3.0 is labeled [EXPLORATORY]. The random 80/20 hold-out R^2 = 0.9858
+#   and the random KFold CV R^2 = 0.9678 were both materially optimistic
+#   because element-system near-neighbour compositions leak across splits.
+#   The protocol-correct GroupKFold(n_splits=5) re-evaluation (same as
+#   PhaseClassifier v2.0) produced R^2 = 0.3111 +/- 0.4777 (LOW bucket).
+#   The prediction endpoint must NOT advertise R^2 = 0.9858.
+#
+#   prediction_service._compute_energy_confidence enforces three mandates:
+#     - Mandate 1: FAIL LOUDLY (RuntimeError) when ``rd2_label ==
+#       "[EXPLORATORY]"`` is set but ``grouped_cv_summary.r2_mean`` is
+#       absent. Never silently fall back to the random-split headline.
+#     - Mandate 2: ``confidence`` is clamped to
+#       ``max(0, min(r2_mean, r2_random, 1.0))`` for every model version
+#       that carries ``grouped_cv_summary``, so v3.1 (and any future
+#       successor) inherits the same honesty invariant.
+#     - Mandate 3: the ``energy_model_exploratory`` warning is driven
+#       solely by ``rd2_label == "[EXPLORATORY]"`` and disappears
+#       automatically when NFM-3958 clears the label on v3.1.
+#
+#   See apps/api/models/energy_predictor_v3.0_metrics.json (grouped_cv_summary)
+#   and apps/api/models/energy_predictor_v3.0_groupedcv_metrics.json
+#   (per-fold breakdown) for the full RD-3 evidence chain.
 ENERGY_PREDICTOR_VERSION: str = "v3.0"
 
 

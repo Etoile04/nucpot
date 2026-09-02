@@ -42,6 +42,20 @@ DEFAULT_LIMIT = 50
 #: (NFM-2422). ``info`` and ``warning`` are informational and excluded.
 ERROR_SEVERITIES = (SEVERITY_CRITICAL, SEVERITY_ERROR)
 
+#: ``health_events.event_type`` written by the NFM-4097 / NFM-4089
+#: F4 UUID-title guard trigger when a ``data_sources`` row with a
+#: UUID-shaped ``title`` is rejected.  Centralised here so the
+#: AC-4 ``/health`` flip and any on-call dashboard share one
+#: constant — drift between the two surfaces as "trigger fires
+#: but /health stays ok", the silent failure mode NFM-4097 exists
+#: to prevent.
+UUID_TITLE_BLOCKED_EVENT_TYPE: str = "uuid_titled_source_blocked"
+
+#: Default look-back window for the AC-4 ``/health`` flip.  Matches
+#: the issue spec: "24h count > 0" — a stale event older than this
+#: is not actionable on-call material.
+DEFAULT_UUID_TITLE_BLOCK_HOURS: int = 24
+
 
 def _default_since() -> datetime:
     """Return the default ``since`` timestamp (24 hours ago, UTC)."""
@@ -187,6 +201,49 @@ async def get_alerts_summary(
             ),
         ),
     )
+
+
+async def count_recent_uuid_titled_source_blocks(
+    db: AsyncSession,
+    *,
+    hours: int = DEFAULT_UUID_TITLE_BLOCK_HOURS,
+) -> int:
+    """Count ``uuid_titled_source_blocked`` events in the last ``hours``.
+
+    NFM-4097 AC-4 — the F4 UUID-title guard trigger (migration 071)
+    inserts ``health_events`` rows with
+    ``event_type='uuid_titled_source_blocked'`` whenever a UUID-title
+    ``data_sources`` row is rejected.  This helper counts the recent
+    occurrences so the ``/health`` endpoint can flip ``status`` to
+    ``'degraded'`` (the on-call signal) and so on-call dashboards can
+    render the same number without going through the HTTP layer.
+
+    Args:
+        db: Async database session.
+        hours: Look-back window in hours.  Defaults to 24 — matches the
+            issue spec ("24h count > 0") and the AC-4 acceptance
+            criterion.
+
+    Returns:
+        The number of ``uuid_titled_source_blocked`` events with
+        ``created_at >= now() - hours``.  Zero when no such events
+        exist; the function never returns ``None`` (the SQLAlchemy
+        ``scalar()`` is wrapped in ``or 0``).
+
+    The query is bounded by an index on ``created_at`` (NFM-2220)
+    plus a partial-style filter on ``event_type``, so the cost is
+    O(matching rows), not O(table size).
+    """
+    since = datetime.now(UTC) - timedelta(hours=hours)
+    stmt = (
+        select(func.count())
+        .select_from(HealthEvent)
+        .where(
+            HealthEvent.event_type == UUID_TITLE_BLOCKED_EVENT_TYPE,
+            HealthEvent.created_at >= since,
+        )
+    )
+    return (await db.execute(stmt)).scalar() or 0
 
 
 async def get_active_error_summary(

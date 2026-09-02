@@ -20,6 +20,8 @@ Usage:
     python stale_checkout_watchdog.py [--dry-run] [--stale-threshold-minutes 30] [--verbose]
 """
 
+# ruff: noqa: RUF059
+
 from __future__ import annotations
 
 import argparse
@@ -27,11 +29,11 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 __version__ = "1.0.0"
 
@@ -47,6 +49,7 @@ EXIT_DRY_RUN_STALE = 2
 # ---------------------------------------------------------------------------
 # HTTP client (stdlib-only)
 # ---------------------------------------------------------------------------
+
 
 class HttpClient:
     """Thin wrapper around urllib for Paperclip API calls."""
@@ -92,9 +95,7 @@ class HttpClient:
         except HTTPError as exc:
             if exc.code == 403:
                 raise PermissionError(f"403 — {exc.reason}") from exc
-            raise RuntimeError(
-                f"HTTP {exc.code} {exc.reason} on {method} {path}"
-            ) from exc
+            raise RuntimeError(f"HTTP {exc.code} {exc.reason} on {method} {path}") from exc
 
     def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, query=query)
@@ -111,6 +112,7 @@ class HttpClient:
 # Pure logic (testable without network)
 # ---------------------------------------------------------------------------
 
+
 def is_stale(updated_at: str, threshold_minutes: int) -> bool:
     """Return True if *updated_at* ISO timestamp is older than the threshold."""
     try:
@@ -118,9 +120,9 @@ def is_stale(updated_at: str, threshold_minutes: int) -> bool:
     except (ValueError, TypeError):
         logger.warning("Could not parse updatedAt=%r, treating as stale", updated_at)
         return True
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
+        ts = ts.replace(tzinfo=UTC)
     cutoff = now - timedelta(minutes=threshold_minutes)
     return ts < cutoff
 
@@ -161,7 +163,7 @@ def classify_issues(
 
 def build_reap_comment(issue_id: str, run_id: str) -> str:
     """Return the comment body for a reaped stale checkout."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return (
         f"[STALE-CHECKOUT-REAPED] Issue {issue_id} had a stale checkout "
         f"(checkoutRunId={run_id}). "
@@ -172,6 +174,7 @@ def build_reap_comment(issue_id: str, run_id: str) -> str:
 # ---------------------------------------------------------------------------
 # API interactions
 # ---------------------------------------------------------------------------
+
 
 def fetch_all_issues(
     api: HttpClient,
@@ -225,6 +228,7 @@ def reap_stale_issue(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(
     args: argparse.Namespace | None = None,
     api_client: HttpClient | None = None,
@@ -248,8 +252,7 @@ def main(
 
     if not base_url or not api_key or not cid:
         logger.error(
-            "Missing required env vars: PAPERCLIP_API_URL, "
-            "PAPERCLIP_API_KEY, PAPERCLIP_COMPANY_ID"
+            "Missing required env vars: PAPERCLIP_API_URL, PAPERCLIP_API_KEY, PAPERCLIP_COMPANY_ID"
         )
         return EXIT_ERROR
 
@@ -276,9 +279,7 @@ def main(
         identifier = issue.get("identifier", issue.get("id"))
         run_id = issue.get("checkoutRunId", "?")
         updated = issue.get("updatedAt", "?")
-        logger.info(
-            "  STALE: %s  run=%s  updatedAt=%s", identifier, run_id, updated
-        )
+        logger.info("  STALE: %s  run=%s  updatedAt=%s", identifier, run_id, updated)
 
     if dry_run:
         logger.info("[DRY RUN] Would reap %d stale checkout(s).", len(stale))

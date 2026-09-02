@@ -158,7 +158,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "collector workflow owns the JSONL write."
         ),
     )
-    parser.add_argument("--environment", required=True, help="Environment name (e.g. 'production').")
+    parser.add_argument(
+        "--environment", required=True, help="Environment name (e.g. 'production')."
+    )
     parser.add_argument("--triggered-by", required=True, help="GitHub actor or cron identifier.")
     parser.add_argument("--commit-sha", required=True, help="Full or short commit SHA.")
     parser.add_argument(

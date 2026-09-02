@@ -192,12 +192,8 @@ def _check_edge_types(
     changes: list[SchemaChange],
 ) -> None:
     """Check if relationship edge types have been narrowed or removed."""
-    baseline_rel = (
-        baseline.get("properties", {}).get("relationships", {}).get("items", {})
-    )
-    current_rel = (
-        current.get("properties", {}).get("relationships", {}).get("items", {})
-    )
+    baseline_rel = baseline.get("properties", {}).get("relationships", {}).get("items", {})
+    current_rel = current.get("properties", {}).get("relationships", {}).get("items", {})
 
     baseline_rel_props = baseline_rel.get("properties", {})
     current_rel_props = current_rel.get("properties", {})
@@ -327,10 +323,7 @@ def compare_schemas(
                     severity=ChangeSeverity.BLOCKING,
                     baseline_value=baseline_type,
                     current_value=current_type,
-                    detail=(
-                        f"Field '{path}' type changed from "
-                        f"{baseline_type} to {current_type}"
-                    ),
+                    detail=(f"Field '{path}' type changed from {baseline_type} to {current_type}"),
                 )
             )
 
@@ -347,10 +340,7 @@ def compare_schemas(
                         severity=ChangeSeverity.BLOCKING,
                         baseline_value=str(sorted(baseline_enums)),
                         current_value=str(sorted(current_enums)),
-                        detail=(
-                            f"Enum values removed from '{path}': "
-                            f"{sorted(removed_enums)}"
-                        ),
+                        detail=(f"Enum values removed from '{path}': {sorted(removed_enums)}"),
                     )
                 )
 
