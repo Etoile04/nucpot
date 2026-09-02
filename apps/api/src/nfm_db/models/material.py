@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -74,6 +75,19 @@ class Material(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_materials_category", "category_id"),
         Index("idx_materials_formula", "formula"),
+        # NFM-4143 / NFM-4140.b — see migration 078_data_origin_state.
+        # Declared here so the CI schema-drift guard
+        # (scripts/check_schema_drift.py) sees the migrated column,
+        # CHECK, and partial index in Base.metadata.
+        CheckConstraint(
+            "data_origin_state IN ('live', 'unverified', 'legacy_deleted')",
+            name="materials_data_origin_state_check",
+        ),
+        Index(
+            "materials_data_origin_state_nlive_idx",
+            "data_origin_state",
+            postgresql_where=text("data_origin_state <> 'live'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -92,6 +106,22 @@ class Material(TimestampMixin, Base):
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: Provenance/disclosure state for the material's dataset coverage.
+    #:
+    #: ``'live'``            — has retained real-provenance datasets.
+    #: ``'legacy_deleted'``  — datasets were retired by the 2026-09
+    #:                         ingest-path migration (070); the UI shows a
+    #:                         "no published data" badge + disclosure
+    #:                         footnote (NFM-4144).
+    #: ``'unverified'``      — default for bootstrap/new materials; no
+    #:                         user-facing badge, prompts verification.
+    #:
+    #: Backfilled by migration ``078_data_origin_state`` (NFM-4143).
+    data_origin_state: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("'unverified'"),
+    )
 
     # -- relationships --
     category: Mapped["MaterialCategory | None"] = relationship(
