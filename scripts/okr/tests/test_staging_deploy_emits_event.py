@@ -9,7 +9,7 @@ Approach: build a tempdir that mimics the repo layout (so the script's
 and ``curl`` on PATH, and assert what was appended to the JSONL.
 """
 
-# ruff: noqa: SIM105, SIM108
+# ruff: noqa: SIM105
 
 from __future__ import annotations
 
@@ -61,15 +61,20 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     shutil.copytree(LIB.parent, scripts / "lib", dirs_exist_ok=True)
     # NFM-2509 added a verify-cloudflared-token.sh call before the trap is
     # armed; without a stub here the deploy script exits before the test
-    # can exercise the cancel/health paths.
-    if VERIFY_CLOUDFLARED.exists():
-        shutil.copy(VERIFY_CLOUDFLARED, scripts / "verify-cloudflared-token.sh")
-        (scripts / "verify-cloudflared-token.sh").chmod(0o755)
-    else:
-        _make_stub(scripts, "verify-cloudflared-token.sh", "exit 0\n")
+    # can exercise the cancel/health paths. Always stub it: the real script
+    # JWT-decodes a live tunnel token (fixture has none), and its logic has
+    # its own coverage — here it must simply not block the deploy path.
+    _make_stub(scripts, "verify-cloudflared-token.sh", "exit 0\n")
 
-    # Minimal env file so load_env_file doesn't die.
-    (docker / ".env.staging").write_text("STAGING_IMAGE_TAG=latest\n")
+    # Minimal env file so load_env_file doesn't die. NFM-4077's
+    # write_api_env_file hard-requires DATABASE_URL + SECRET_KEY; without
+    # them every test died before reaching the health gate (the file was
+    # broken on main between NFM-4077 and NFM-4198).
+    (docker / ".env.staging").write_text(
+        "STAGING_IMAGE_TAG=latest\n"
+        "STAGING_DATABASE_URL=postgresql+asyncpg://stub:stub@localhost:5432/stub\n"
+        "STAGING_API_SECRET_KEY=stub-secret-for-tests\n"
+    )
 
     # Minimal compose file so `docker compose ... build` is at least parseable
     # by the stub.
@@ -95,10 +100,14 @@ def fake_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     return fake, bin_dir, events_path
 
 
-def _make_stubs(bin_dir: Path, *, health_should_pass: bool) -> None:
+def _make_stubs(
+    bin_dir: Path, *, health_should_pass: bool, health_body: str | None = None
+) -> None:
     """Stub docker + curl so the script runs end-to-end without real services."""
     _make_stub(bin_dir, "docker", "exit 0\n")
-    if health_should_pass:
+    if health_body is not None:
+        curl_body = health_body
+    elif health_should_pass:
         curl_body = 'printf \'{"status":"ok"}\''
     else:
         curl_body = "exit 22"
@@ -179,6 +188,9 @@ printf '{{"status":"ok"}}' ''',
         assert event["first_pass_success"] is False
         assert event["health_gate_first_poll_passed"] is False
         assert event["rollback_triggered"] is True
+        # NFM-4198: same no-overwrite rule as C2 for health_status — the
+        # rollback gate's OK must not mask the failed new deploy's "error".
+        assert event["health_status"] == "error"
 
     def test_reserved_skip_flag_is_always_false(self, fake_repo: tuple[Path, Path, Path]) -> None:
         """C5: the removed bypass flag remains a reserved false field."""
@@ -248,6 +260,66 @@ printf '{{"status":"ok"}}' ''',
         assert event["first_pass_success"] is True
         assert event["rollback_triggered"] is False
         assert event["health_gate_first_poll_passed"] is True
+        # NFM-4198: healthy deploys record health_status=ok (ADR D2).
+        assert event["health_status"] == "ok"
+
+    # -- NFM-4198 / ADR-NFM-4195: degraded-pass contract ---------------------
+
+    def test_degraded_health_passes_gate_without_rollback(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """ADR D1/D2/D3: degraded @ HTTP 200 PASSES the gate, never rolls back,
+        emits a distinguishable WARN, and records health_status=degraded."""
+        fake, bin_dir, events_path = fake_repo
+        _make_stubs(
+            bin_dir, health_should_pass=True, health_body='printf \'{"status":"degraded"}\''
+        )
+        result = _run(fake, bin_dir, events_path)
+
+        assert result.returncode == 0, (
+            f"degraded status must pass the gate per ADR-NFM-4195 D1 — "
+            f"stderr={result.stderr!r}"
+        )
+        assert "DEGRADED" in result.stderr, (
+            f"degraded-pass must emit a distinguishable WARN — stderr={result.stderr!r}"
+        )
+        events = _read_events(events_path)
+        assert len(events) == 1
+        event = events[0]
+        assert event["first_pass_success"] is True
+        assert event["rollback_triggered"] is False
+        assert event["health_gate_first_poll_passed"] is True
+        assert event["health_status"] == "degraded"
+
+    def test_error_status_fails_gate_and_rolls_back(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """status=error stays in the D1 fail set: rollback still applies."""
+        fake, bin_dir, events_path = fake_repo
+        _make_stubs(
+            bin_dir, health_should_pass=True, health_body='printf \'{"status":"error"}\''
+        )
+        result = _run(fake, bin_dir, events_path)
+
+        assert result.returncode != 0
+        events = _read_events(events_path)
+        assert len(events) == 1
+        event = events[0]
+        assert event["first_pass_success"] is False
+        assert event["rollback_triggered"] is True
+        assert event["health_status"] == "error"
+
+    def test_gate_failure_records_health_status_error(
+        self, fake_repo: tuple[Path, Path, Path]
+    ) -> None:
+        """Unreachable gate (curl exit 22) → health_status=error in the event."""
+        fake, bin_dir, events_path = fake_repo
+        _make_stubs(bin_dir, health_should_pass=False)
+        result = _run(fake, bin_dir, events_path)
+
+        assert result.returncode != 0
+        event = _read_events(events_path)[0]
+        assert event["health_status"] == "error"
 
     # -- NFM-2771: cancel / signal coverage ----------------------------------
 

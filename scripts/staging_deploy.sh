@@ -12,9 +12,12 @@
 # (docker/staging-api.Dockerfile) runs `alembic upgrade head` before serving,
 # so migrations apply automatically on every deploy.
 #
-# Health gate: the staging API must answer /api/v1/health with {"status":"ok"}
-# within STAGING_HEALTH_TIMEOUT seconds, or the deploy is rolled back
-# automatically. See docs/deployment/staging-pipeline.md.
+# Health gate (ADR-NFM-4195): PASS = the staging API answers /api/v1/health
+# with HTTP 200 and status ∈ {"ok","degraded"} within STAGING_HEALTH_TIMEOUT
+# seconds. "degraded" is a DB/ops-state fault (worker streak, sticky health
+# event) — it PASSES with a loud WARN and NEVER triggers rollback; only the
+# fail set (unreachable / non-200 / timeout / unparseable / "error") rolls
+# back. See docs/architecture/ADR-NFM-4195-staging-health-gate-degraded.md.
 # =============================================================================
 set -euo pipefail
 
@@ -54,6 +57,10 @@ _DEPLOY_EVENT_DURATION_START_MS=""
 _DEPLOY_EVENT_EMITTED="false"
 _DEPLOY_EVENT_BUILD_OK="false"
 _DEPLOY_EVENT_SIGNALED="false"
+# NFM-4198 (ADR D2): health_status of the FIRST completed gate evaluation
+# (ok | degraded | error). Same no-overwrite rule as C2 first-poll: a later
+# rollback-path gate result must not mask the new deploy's outcome.
+_DEPLOY_EVENT_HEALTH_STATUS=""
 
 require_env_file() {
   [ -f "$ENV_FILE" ] || die "docker/.env.staging not found. Run: cp docker/.env.staging.example docker/.env.staging  (then fill in secrets)"
@@ -61,8 +68,11 @@ require_env_file() {
 
 load_env_file() {
   require_env_file
+  set -a
+  # Path is operator-controlled by design.
   # shellcheck disable=SC1090
-  set -a; . "$ENV_FILE"; set +a
+  . "$ENV_FILE"
+  set +a
   STAGING_API_HOST_PORT="${STAGING_API_HOST_PORT:-8001}"
   STAGING_HEALTH_PATH="${STAGING_HEALTH_PATH:-/api/v1/health}"
   STAGING_HEALTH_TIMEOUT="${STAGING_HEALTH_TIMEOUT:-120}"
@@ -74,12 +84,30 @@ compose() {
 
 api_url() { printf 'http://127.0.0.1:%s%s' "$STAGING_API_HOST_PORT" "$STAGING_HEALTH_PATH"; }
 
+# Extract the top-level "status" value from a /health JSON body. Pure bash
+# (no subshell pipes) so `set -o pipefail` can never bite: the leftmost
+# "status" match wins, which is the top-level field in the /health payload.
+_health_status_from_body() {
+  local body="$1"
+  if [[ "$body" =~ \"status\"[[:space:]]*:[[:space:]]*\"([a-zA-Z_]+)\" ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+  return 0
+}
+
+# Single gate poll (ADR-NFM-4195 D1). PASS = HTTP 200 (curl -f) with a
+# parseable status of "ok" or "degraded" — on PASS the parsed status is
+# echoed to stdout. FAIL (rc 1, no output) = unreachable, non-200, timeout,
+# unparseable body, or status "error".
 check_health_once() {
-  local body
+  local body status
   body="$(curl -fsS --max-time 5 "$(api_url)" 2>/dev/null || true)"
   [ -n "$body" ] || return 1
-  printf '%s' "$body" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' || return 1
-  return 0
+  status="$(_health_status_from_body "$body")"
+  case "$status" in
+    ok|degraded) printf '%s' "$status"; return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 wait_for_health() {
@@ -87,12 +115,19 @@ wait_for_health() {
   local deadline=$(( SECONDS + STAGING_HEALTH_TIMEOUT ))
   log "Waiting for staging API health at $(api_url) (timeout ${STAGING_HEALTH_TIMEOUT}s)..."
   local poll_count=0
-  until check_health_once; do
+  local health_status=""
+  until health_status="$(check_health_once)"; do
     poll_count=$((poll_count + 1))
     if [ "$SECONDS" -ge "$deadline" ]; then
       if [ "${_DEPLOY_EVENT_ARMED}" = "true" ] \
            && [ -z "${_DEPLOY_EVENT_FIRST_POLL:-}" ]; then
         _DEPLOY_EVENT_FIRST_POLL="false"
+      fi
+      # NFM-4198: same first-result-wins rule as C2 — a later rollback-path
+      # gate pass must not mask the new deploy's failed gate.
+      if [ "${_DEPLOY_EVENT_ARMED}" = "true" ] \
+           && [ -z "${_DEPLOY_EVENT_HEALTH_STATUS:-}" ]; then
+        _DEPLOY_EVENT_HEALTH_STATUS="error"
       fi
       err "Health gate FAILED for $label after ${STAGING_HEALTH_TIMEOUT}s."
       return 1
@@ -110,7 +145,17 @@ wait_for_health() {
       _DEPLOY_EVENT_FIRST_POLL="false"
     fi
   fi
-  log "Health gate PASSED for $label."
+  if [ "${_DEPLOY_EVENT_ARMED}" = "true" ] \
+       && [ -z "${_DEPLOY_EVENT_HEALTH_STATUS:-}" ]; then
+    _DEPLOY_EVENT_HEALTH_STATUS="$health_status"
+  fi
+  if [ "$health_status" = "degraded" ]; then
+    # ADR-NFM-4195 D2/D3: loud WARN, but never blocks and never rolls back —
+    # degraded sources are DB/ops-state faults a rollback cannot remedy.
+    warn "Health gate PASSED for $label with DEGRADED status — ops-state fault (worker streak / sticky health event), NOT blocking and NOT rolling back. Alerting for degraded belongs to monitoring (ADR D5)."
+  else
+    log "Health gate PASSED for $label."
+  fi
   return 0
 }
 
@@ -193,7 +238,8 @@ _emit_staging_deploy_event() {
     --health-gate-first-poll-passed "${_DEPLOY_EVENT_FIRST_POLL:-false}" \
     --rollback-triggered "$_DEPLOY_EVENT_ROLLBACK" \
     --skip-flag-used false \
-    --duration-ms "$duration_ms"
+    --duration-ms "$duration_ms" \
+    --health-status "${_DEPLOY_EVENT_HEALTH_STATUS:-error}"
 
   return 0
 }
@@ -314,6 +360,7 @@ cmd_deploy() {
   _DEPLOY_EVENT_EMITTED="false"
   _DEPLOY_EVENT_BUILD_OK="false"
   _DEPLOY_EVENT_SIGNALED="false"
+  _DEPLOY_EVENT_HEALTH_STATUS=""
 
   # NFM-2771: arm the EXIT trap immediately after state reset and add
   # HUP/INT/TERM signal traps so a GH Action cancellation during the
@@ -417,10 +464,15 @@ cmd_status() {
   log "NFM-DB staging stack status:"
   compose ps || true
   echo
-  if check_health_once; then
-    log "API health: OK  ($(api_url))"
+  local health_status
+  if health_status="$(check_health_once)"; then
+    if [ "$health_status" = "degraded" ]; then
+      warn "API health: DEGRADED (pass-with-warning)  ($(api_url)) — ops-state fault, non-blocking per ADR-NFM-4195"
+    else
+      log "API health: OK  ($(api_url))"
+    fi
   else
-    warn "API health: NOT OK ($(api_url) did not return status=ok)"
+    warn "API health: NOT OK ($(api_url) did not return status=ok|degraded at HTTP 200)"
   fi
   if [ -f "$STATE_FILE" ]; then
     echo; log "Deploy state ($(basename "$STATE_FILE")):"
