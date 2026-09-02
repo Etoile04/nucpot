@@ -202,7 +202,16 @@ _DO_BLOCK_SQL_TEMPLATE = """
         -- 1. Identify bad ``data_sources`` rows.
         -- ------------------------------------------------------------
         CREATE TEMP TABLE _bad_sources ON COMMIT DROP AS
-        SELECT id
+        -- NFM-4104 schema-drift fix: include the columns the ranked
+        -- CTE reads (doi, file_hash, content_md, title) so the
+        -- ``bad.doi`` / ``bad.file_hash`` / ``bad.content_md`` /
+        -- ``bad.title`` references later in this DO block parse
+        -- against a real column.  Without this, fresh prod DBs
+        -- whose alembic_version is at the 069 head raise
+        -- ``UndefinedColumnError: column bad.doi does not exist``
+        -- (the column does exist on ``data_sources``, but not on
+        -- the temp table).  Carries forward into NFM-4095 ship.
+        SELECT id, doi, file_hash, content_md, title
         FROM data_sources
         WHERE title ~ __NFM_4099_UUID_RE_LITERAL__
            OR title = ANY(CAST(__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__ AS TEXT[]));
