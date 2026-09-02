@@ -2,11 +2,11 @@
 
 import logging
 import uuid
-from collections.abc import Callable, Iterable
-from datetime import UTC, date
-from typing import Any, Literal
+from collections.abc import Callable, Iterable, Mapping
+from datetime import UTC, date, datetime
+from typing import Any, Literal, NamedTuple
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -442,6 +442,17 @@ async def list_material_properties(
     stmt = stmt.offset(offset).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
 
+    # 6b. NFM-4146 — §5.2 attribution sets for this material, computed
+    #     once per request (2-4 queries) so every rendered row can carry
+    #     the same attribution block the dedicated
+    #     ``/properties/{id}/measurements`` endpoint emits. Skipped when
+    #     the page is empty — nothing to attribute.
+    attribution_sets = (
+        await _lost_attribution_sets(db, material_id=material_id)
+        if rows
+        else None
+    )
+
     # 7. Render rows. Sorting is on a single string column, so the flat
     #    response is a deterministic list — no further re-ordering.
     items: list[MaterialPropertyItem] = []
@@ -466,6 +477,28 @@ async def list_material_properties(
             MeasurementConditionResponse.model_validate(c)
             for c in sorted(r.conditions, key=lambda c: c.id)
         ]
+        # NFM-4146: per-row §5.2 attribution block. Same predicate as
+        # ``list_property_measurements_with_attribution`` — static loss
+        # set OR canonical-set extension — so the two endpoints can never
+        # disagree about which rows are ``lost``.
+        attribution = MeasurementAttributionBlock(status="intact")
+        if attribution_sets is not None:
+            is_lost = (
+                r.id in attribution_sets.lost_measurement_ids
+                or r.dataset_id in attribution_sets.canonical_dataset_ids
+            )
+            if is_lost:
+                attribution = MeasurementAttributionBlock(
+                    status="lost",
+                    lostAt=date.fromisoformat(
+                        NFM_4159_ATTRIBUTION_LOST_AT[:10]
+                    ),
+                    siblingPlaceholderCount=(
+                        attribution_sets.sibling_count_by_dataset.get(
+                            r.dataset_id, 1
+                        )
+                    ),
+                )
         items.append(
             MaterialPropertyItem(
                 id=r.id,
@@ -475,6 +508,7 @@ async def list_material_properties(
                 source=source_ref,
                 confidence=_derive_confidence(r),
                 conditions=conditions,
+                attribution=attribution,
             )
         )
 
@@ -495,6 +529,112 @@ async def list_material_properties(
 NFM_4159_ATTRIBUTION_LOST_AT = _ATTRIBUTION_LOST_AT_CUTOFF = (
     "2026-09-02T00:00:00Z"
 )
+
+
+class _LostAttributionSets(NamedTuple):
+    """Per-material §5.2 loss computation shared by both listing endpoints.
+
+    ``lost_measurement_ids`` — measurement ids matching the static loss
+    predicate (``created_at < cutoff AND dataset.source_id IS NULL``).
+
+    ``sibling_count_by_dataset`` — lost-measurement count per affected
+    dataset (the §5.2 ``siblingPlaceholderCount`` source).
+
+    ``canonical_dataset_ids`` — datasets whose source is one of the
+    env-var-backed canonical data_sources (extension beyond the static
+    predicate; empty set while the env var is unset).
+    """
+
+    lost_measurement_ids: frozenset[uuid.UUID]
+    sibling_count_by_dataset: Mapping[uuid.UUID, int]
+    canonical_dataset_ids: frozenset[uuid.UUID]
+
+
+async def _lost_attribution_sets(
+    db: AsyncSession,
+    *,
+    material_id: uuid.UUID,
+) -> _LostAttributionSets:
+    """Compute the §5.2 loss sets for one material (2-4 queries total).
+
+    Shared by ``list_property_measurements_with_attribution`` (the
+    dedicated endpoint) and ``list_material_properties`` (the React
+    table feed) so the two surfaces can never disagree about which
+    rows are ``lost``.
+    """
+    cutoff = datetime.fromisoformat(
+        NFM_4159_ATTRIBUTION_LOST_AT.replace("Z", "+00:00")
+    )
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=UTC)
+
+    # 1) Loss predicate via ORM (cross-DB safe).  Mirrors the SQL view:
+    #       pm.created_at < cutoff
+    #    AND d.source_id IS NULL
+    loss_predicate = and_(
+        PropertyMeasurement.created_at < cutoff,
+        Dataset.source_id.is_(None),
+    )
+
+    lost_ids_stmt = (
+        select(PropertyMeasurement.id)
+        .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+        .where(Dataset.material_id == material_id, loss_predicate)
+    )
+    lost_measurement_ids: frozenset[uuid.UUID] = frozenset(
+        row.id for row in (await db.execute(lost_ids_stmt)).all()
+    )
+
+    # 2) Sibling count per affected dataset.  One GROUP BY query — never
+    #    N+1, regardless of page size.
+    sibling_count_by_dataset: dict[uuid.UUID, int] = {}
+    if lost_measurement_ids:
+        ds_id_rows = (
+            await db.execute(
+                select(PropertyMeasurement.dataset_id).where(
+                    PropertyMeasurement.id.in_(lost_measurement_ids)
+                )
+            )
+        ).all()
+        lost_dataset_ids: set[uuid.UUID] = {row[0] for row in ds_id_rows}
+        if lost_dataset_ids:
+            sibling_stmt = (
+                select(
+                    PropertyMeasurement.dataset_id,
+                    func.count(PropertyMeasurement.id),
+                )
+                .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
+                .where(
+                    Dataset.id.in_(lost_dataset_ids),
+                    loss_predicate,
+                )
+                .group_by(PropertyMeasurement.dataset_id)
+            )
+            for ds_id, cnt in (await db.execute(sibling_stmt)).all():
+                sibling_count_by_dataset[ds_id] = int(cnt)
+
+    # 3) Canonical-set extension (env-var backed).  A measurement's
+    #    dataset whose source is one of the 4 canonicals gets ``lost``
+    #    even if the static view says ``intact``.
+    canonical_ids = get_lost_canonical_data_source_ids()
+    canonical_dataset_ids: frozenset[uuid.UUID] = frozenset()
+    if canonical_ids:
+        cds_stmt = (
+            select(Dataset.id)
+            .where(
+                Dataset.material_id == material_id,
+                Dataset.source_id.in_(canonical_ids),
+            )
+        )
+        canonical_dataset_ids = frozenset(
+            d_id for d_id, in (await db.execute(cds_stmt)).all()
+        )
+
+    return _LostAttributionSets(
+        lost_measurement_ids=lost_measurement_ids,
+        sibling_count_by_dataset=sibling_count_by_dataset,
+        canonical_dataset_ids=canonical_dataset_ids,
+    )
 
 
 async def list_property_measurements_with_attribution(
@@ -537,77 +677,13 @@ async def list_property_measurements_with_attribution(
     if per_page > 100:
         per_page = 100
 
-    from datetime import datetime
-
-    from sqlalchemy import and_
-
-    cutoff = datetime.fromisoformat(NFM_4159_ATTRIBUTION_LOST_AT.replace(
-        "Z", "+00:00"
-    ))
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=UTC)
-
-    # 1) Loss predicate via ORM (cross-DB safe).  Mirrors the SQL view:
-    #       pm.created_at < cutoff
-    #    AND d.source_id IS NULL
-    loss_predicate = and_(
-        PropertyMeasurement.created_at < cutoff,
-        Dataset.source_id.is_(None),
-    )
-
-    lost_ids_stmt = (
-        select(PropertyMeasurement.id)
-        .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
-        .where(Dataset.material_id == material_id, loss_predicate)
-    )
-    lost_measurement_ids: set[uuid.UUID] = {
-        row.id for row in (await db.execute(lost_ids_stmt)).all()
-    }
-
-    # 2) Sibling count per affected dataset.  One GROUP BY query — never
-    #    N+1, regardless of page size.
-    sibling_count_by_dataset: dict[uuid.UUID, int] = {}
-    if lost_measurement_ids:
-        ds_id_rows = (
-            await db.execute(
-                select(PropertyMeasurement.dataset_id).where(
-                    PropertyMeasurement.id.in_(lost_measurement_ids)
-                )
-            )
-        ).all()
-        lost_dataset_ids: set[uuid.UUID] = {row[0] for row in ds_id_rows}
-        if lost_dataset_ids:
-            sibling_stmt = (
-                select(
-                    PropertyMeasurement.dataset_id,
-                    func.count(PropertyMeasurement.id),
-                )
-                .join(Dataset, Dataset.id == PropertyMeasurement.dataset_id)
-                .where(
-                    Dataset.id.in_(lost_dataset_ids),
-                    loss_predicate,
-                )
-                .group_by(PropertyMeasurement.dataset_id)
-            )
-            for ds_id, cnt in (await db.execute(sibling_stmt)).all():
-                sibling_count_by_dataset[ds_id] = int(cnt)
-
-    # 3) Canonical-set extension (env-var backed).  A measurement's
-    #    dataset whose source is one of the 4 canonicals gets ``lost``
-    #    even if the static view says ``intact``.
-    canonical_ids = get_lost_canonical_data_source_ids()
-    canonical_dataset_ids: set[uuid.UUID] = set()
-    if canonical_ids:
-        cds_stmt = (
-            select(Dataset.id)
-            .where(
-                Dataset.material_id == material_id,
-                Dataset.source_id.in_(canonical_ids),
-            )
-        )
-        canonical_dataset_ids = {
-            d_id for d_id, in (await db.execute(cds_stmt)).all()
-        }
+    # 1-3) Static loss set, sibling counts, and canonical-set extension,
+    #       computed by the shared per-material helper (also used by
+    #       ``list_material_properties`` so the surfaces stay aligned).
+    sets = await _lost_attribution_sets(db, material_id=material_id)
+    lost_measurement_ids = sets.lost_measurement_ids
+    sibling_count_by_dataset = sets.sibling_count_by_dataset
+    canonical_dataset_ids = sets.canonical_dataset_ids
 
     # 4) Page of measurements in created_at DESC order.
     ids_stmt = (
