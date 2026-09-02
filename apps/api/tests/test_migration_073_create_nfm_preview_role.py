@@ -44,17 +44,12 @@ _MIGRATION_PATH = (
     / "073_create_nfm_preview_role.py"
 )
 _SQL_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "migrations"
-    / "sql"
-    / "create_nfm_preview_role.sql"
+    Path(__file__).resolve().parent.parent / "migrations" / "sql" / "create_nfm_preview_role.sql"
 )
 
 
 def _load_migration_module():
-    spec = importlib.util.spec_from_file_location(
-        "migration_073", _MIGRATION_PATH
-    )
+    spec = importlib.util.spec_from_file_location("migration_073", _MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -92,8 +87,10 @@ class TestRevisionMetadata:
         (NFM-4139) chained after 073, then 076 (NFM-4159 attribution
         view), then 077 (NFM-4159 datasets.source_id nullable) extended
         it further.  078 (NFM-4143, materials.data_origin_state) extended
-        it again, and 079 (NFM-4191, restore of the 070 cascade-deleted
-        measurements) extends it once more — 079 is the current head.
+        it again, 079 (NFM-4191, restore of the 070 cascade-deleted
+        measurements) extended it once more, and 080 (NFM-4185, KG
+        orphan bridge: U-10Mo dataset edges + U-3Si/PuO2 stub nodes)
+        extends it further — 080 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -103,12 +100,10 @@ class TestRevisionMetadata:
         # live database URL).
         from alembic.script import ScriptDirectory
 
-        migrations_dir = (
-            _MIGRATION_PATH.parents[1]
-        )  # .../apps/api/migrations
+        migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["079_restore_070_measurement_casualties"], (
+        assert heads == ["080_kg_orphan_bridge_u10mo_u3si_puo2"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
@@ -151,8 +146,7 @@ class TestPasswordSubstitution:
             "Loader did not substitute the psql variable reference."
         )
         assert "'hunter2'" in rendered, (
-            "Loader did not inject the password value as a SQL string "
-            "literal."
+            "Loader did not inject the password value as a SQL string literal."
         )
 
     def test_loader_escapes_single_quotes(self, monkeypatch) -> None:
@@ -229,9 +223,7 @@ class TestPasswordSubstitution:
             "SQLAlchemy will fail with a syntax error."
         )
 
-    def test_loader_raises_if_sql_missing_password_reference(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_loader_raises_if_sql_missing_password_reference(self, monkeypatch, tmp_path) -> None:
         """Defensive guard: if someone refactors the SQL and removes the
         ``:'NFMD_PREVIEW_DB_PASSWORD'`` reference, the loader must
         raise rather than silently emit a role without a password.
@@ -286,8 +278,7 @@ class TestBootstrapSqlStructure:
             "would fail with 'role already exists'."
         )
         assert "pg_roles" in sql_content, (
-            "Idempotency check does not consult pg_roles — the guard "
-            "is meaningless without it."
+            "Idempotency check does not consult pg_roles — the guard is meaningless without it."
         )
 
     def test_grants_connect_on_database(self, sql_content: str) -> None:
@@ -324,9 +315,7 @@ class TestBootstrapSqlStructure:
             re.IGNORECASE,
         )
 
-    def test_grants_select_only_on_alembic_version(
-        self, sql_content: str
-    ) -> None:
+    def test_grants_select_only_on_alembic_version(self, sql_content: str) -> None:
         """The load-bearing step: alembic_version must be SELECT only.
 
         Without this, ``alembic upgrade head`` would succeed in stamping
@@ -352,9 +341,7 @@ class TestBootstrapSqlStructure:
             re.IGNORECASE,
         )
 
-    def test_default_privileges_for_nfm_owned_objects(
-        self, sql_content: str
-    ) -> None:
+    def test_default_privileges_for_nfm_owned_objects(self, sql_content: str) -> None:
         """Future tables created by ``nfm`` must auto-grant to nfm_preview.
 
         Without this, a migration that adds a new table after the role
@@ -458,13 +445,7 @@ class TestBootstrapSqlSplitting:
         """
         module = _load_migration_module()
 
-        sql = (
-            "DO $$\n"
-            "BEGIN\n"
-            "  RAISE NOTICE 'NFM: ;skip';\n"
-            "END\n"
-            "$$;\n"
-        )
+        sql = "DO $$\nBEGIN\n  RAISE NOTICE 'NFM: ;skip';\nEND\n$$;\n"
         stmts = module.split_bootstrap_sql_statements(sql)
         assert len(stmts) == 1
 
@@ -481,10 +462,7 @@ class TestBootstrapSqlSplitting:
         """``/* ... */`` comments may contain ``;``. Skip over them."""
         module = _load_migration_module()
 
-        sql = (
-            "/* block ; with semicolon */\n"
-            "GRANT SELECT ON TABLE t TO r;\n"
-        )
+        sql = "/* block ; with semicolon */\nGRANT SELECT ON TABLE t TO r;\n"
         stmts = module.split_bootstrap_sql_statements(sql)
         assert len(stmts) == 1
         assert "GRANT SELECT" in stmts[0]
@@ -506,14 +484,7 @@ class TestBootstrapSqlSplitting:
         """``$tag$ ... $tag$`` form (not just bare ``$$``)."""
         module = _load_migration_module()
 
-        sql = (
-            "DO $body$\n"
-            "BEGIN\n"
-            "  RAISE NOTICE 'a';\n"
-            "END\n"
-            "$body$;\n"
-            "SELECT 1;\n"
-        )
+        sql = "DO $body$\nBEGIN\n  RAISE NOTICE 'a';\nEND\n$body$;\nSELECT 1;\n"
         stmts = module.split_bootstrap_sql_statements(sql)
         assert len(stmts) == 2
         assert "$body$" in stmts[0]
