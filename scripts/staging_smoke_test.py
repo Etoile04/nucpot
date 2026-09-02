@@ -95,9 +95,20 @@ def check_api_health(cfg: SmokeConfig) -> CheckResult:
         return CheckResult(name, False, f"unreachable: {exc}")
     if status != 200:
         return CheckResult(name, False, f"HTTP {status}")
-    if not isinstance(payload, dict) or payload.get("status") != "ok":
+    # NFM-4198 / ADR-NFM-4195 D1: this is a boot/liveness check, not an SLO
+    # check. ``degraded`` (worker failure streak / sticky ops-state event) is
+    # a DB/ops-state fault — HTTP 200 means the artifact booted and serves.
+    # Pass, but with a distinguishable warning so operators see it.
+    if not isinstance(payload, dict) or payload.get("status") not in ("ok", "degraded"):
         return CheckResult(name, False, f"unexpected body: {payload!r}")
-    return CheckResult(name, True, f"ok (status={payload.get('status')})")
+    if payload.get("status") == "degraded":
+        return CheckResult(
+            name,
+            True,
+            "pass-with-warning (status=degraded — ops-state fault, non-blocking"
+            " per ADR-NFM-4195; alerting is monitoring's job)",
+        )
+    return CheckResult(name, True, "ok (status=ok)")
 
 
 def check_web_reachable(cfg: SmokeConfig) -> CheckResult:

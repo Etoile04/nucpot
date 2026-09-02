@@ -34,6 +34,9 @@ SCHEMA_FIELDS = frozenset(
         "rollback_triggered",
         "skip_flag_used",
         "duration_ms",
+        # NFM-4198 / ADR-NFM-4195 D2: deploys-into-degraded become visible in
+        # the metric stream. Enum: ok | degraded | error.
+        "health_status",
     }
 )
 
@@ -50,7 +53,8 @@ _DEFAULT_ARGS = (
     "--health-gate-first-poll-passed true "
     "--rollback-triggered false "
     "--skip-flag-used false "
-    "--duration-ms 4321"
+    "--duration-ms 4321 "
+    "--health-status ok"
 )
 
 
@@ -216,3 +220,37 @@ class TestDefaultPath:
             NFMD_DEPLOY_EVENTS_PATH=str(target),
         )
         assert result.stdout.strip() == str(target)
+
+
+class TestHealthStatusField:
+    """NFM-4198 / ADR-NFM-4195 D2: the deploy event carries health_status.
+
+    Enum is closed (ok | degraded | error) — mirroring the /health vocabulary
+    pin — and malformed values degrade to ``error`` rather than inventing new
+    vocabulary.
+    """
+
+    def test_degraded_round_trips(self, tmp_path: Path) -> None:
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "--health-status degraded")
+        run_emit(events, args=args)
+        assert read_events(events)[0]["health_status"] == "degraded"
+
+    def test_error_round_trips(self, tmp_path: Path) -> None:
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "--health-status error")
+        run_emit(events, args=args)
+        assert read_events(events)[0]["health_status"] == "error"
+
+    def test_invalid_value_falls_back_to_error(self, tmp_path: Path) -> None:
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "--health-status cosmic")
+        run_emit(events, args=args)
+        assert read_events(events)[0]["health_status"] == "error"
+
+    def test_omitted_flag_defaults_to_error(self, tmp_path: Path) -> None:
+        """Callers that predate NFM-4198 still emit a well-formed line."""
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "")
+        run_emit(events, args=args)
+        assert read_events(events)[0]["health_status"] == "error"
