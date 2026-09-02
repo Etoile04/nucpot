@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.kg_graph import router
 from nfm_db.database import get_db
-from nfm_db.models.kg import KGNode
+from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.material import Material
 from nfm_db.models.source import DataSource
 
@@ -139,9 +139,7 @@ class TestPostMigrationBridge:
     async def test_u10mo_returns_200(self, db_session: AsyncSession) -> None:
         """U-10Mo (the headline AC material) resolves to the OECD-NEA kg_node."""
         db_session.add(_make_material(_MAT_U10MO, "U-10Mo", formula="U-10Mo"))
-        db_session.add(
-            _make_kg_node(_KG_U10MO, "U-10Mo")
-        )
+        db_session.add(_make_kg_node(_KG_U10MO, "U-10Mo"))
         await db_session.flush()
 
         client = _make_client(lambda: db_session)
@@ -160,16 +158,10 @@ class TestPostMigrationBridge:
         assert focal_nodes[0]["label"] == "U-10Mo"
 
     @pytest.mark.asyncio
-    async def test_urgent_hea_material_returns_200(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_urgent_hea_material_returns_200(self, db_session: AsyncSession) -> None:
         """CoCrFeMnNi Cantor合金 — one of the 8 urgent inserts."""
-        db_session.add(
-            _make_material(_MAT_URGENT_HEA, "CoCrFeMnNi Cantor合金")
-        )
-        db_session.add(
-            _make_kg_node(_KG_URGENT_HEA, "CoCrFeMnNi Cantor合金")
-        )
+        db_session.add(_make_material(_MAT_URGENT_HEA, "CoCrFeMnNi Cantor合金"))
+        db_session.add(_make_kg_node(_KG_URGENT_HEA, "CoCrFeMnNi Cantor合金"))
         await db_session.flush()
 
         client = _make_client(lambda: db_session)
@@ -178,21 +170,15 @@ class TestPostMigrationBridge:
             params={"nodeId": str(_MAT_URGENT_HEA), "depth": 1},
         )
         assert resp.status_code == 200, resp.text
-        focal_nodes = [
-            n for n in resp.json()["nodes"] if n["id"] == str(_KG_URGENT_HEA)
-        ]
+        focal_nodes = [n for n in resp.json()["nodes"] if n["id"] == str(_KG_URGENT_HEA)]
         assert len(focal_nodes) == 1
         assert focal_nodes[0]["label"] == "CoCrFeMnNi Cantor合金"
 
     @pytest.mark.asyncio
-    async def test_bucket_d_nonslice_returns_200(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_bucket_d_nonslice_returns_200(self, db_session: AsyncSession) -> None:
         """A Janney-2019 bucket-D non-slice row (no dataset_slice metadata)."""
         db_session.add(_make_janney_source())
-        db_session.add(
-            _make_material(_MAT_BUCKET_D_NONSLICE, "U_15Pu_10Zr_alloy")
-        )
+        db_session.add(_make_material(_MAT_BUCKET_D_NONSLICE, "U_15Pu_10Zr_alloy"))
         db_session.add(
             _make_kg_node(
                 _KG_BUCKET_D_NONSLICE,
@@ -209,16 +195,12 @@ class TestPostMigrationBridge:
             params={"nodeId": str(_MAT_BUCKET_D_NONSLICE), "depth": 1},
         )
         assert resp.status_code == 200, resp.text
-        focal_nodes = [
-            n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_NONSLICE)
-        ]
+        focal_nodes = [n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_NONSLICE)]
         # Non-slice rows have no dataset_slice metadata.
         assert focal_nodes[0]["properties"].get("dataset_slice") is not True
 
     @pytest.mark.asyncio
-    async def test_review_queue_flip_returns_200(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_review_queue_flip_returns_200(self, db_session: AsyncSession) -> None:
         """U-13at%Mo / U-16at%Mo — pre-existing pending_review flipped to active."""
         db_session.add(_make_material(_MAT_REVIEW_FLIP, "U-13at%Mo"))
         db_session.add(
@@ -236,9 +218,7 @@ class TestPostMigrationBridge:
             params={"nodeId": str(_MAT_REVIEW_FLIP), "depth": 1},
         )
         assert resp.status_code == 200, resp.text
-        focal_nodes = [
-            n for n in resp.json()["nodes"] if n["id"] == str(_KG_REVIEW_FLIP)
-        ]
+        focal_nodes = [n for n in resp.json()["nodes"] if n["id"] == str(_KG_REVIEW_FLIP)]
         assert focal_nodes[0]["status"] == "active"
 
 
@@ -256,11 +236,7 @@ class TestSliceMetadata:
     ) -> None:
         """A slice row exposes ``dataset_slice=true`` + ``slice_type`` in focal."""
         db_session.add(_make_janney_source())
-        db_session.add(
-            _make_material(
-                _MAT_BUCKET_D_SLICE, "U_20Pu_10Zr_thermal_conductivity"
-            )
-        )
+        db_session.add(_make_material(_MAT_BUCKET_D_SLICE, "U_20Pu_10Zr_thermal_conductivity"))
         db_session.add(
             _make_kg_node(
                 _KG_BUCKET_D_SLICE,
@@ -280,23 +256,17 @@ class TestSliceMetadata:
             params={"nodeId": str(_MAT_BUCKET_D_SLICE), "depth": 1},
         )
         assert resp.status_code == 200, resp.text
-        focal_nodes = [
-            n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_SLICE)
-        ]
+        focal_nodes = [n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_SLICE)]
         assert len(focal_nodes) == 1
         focal_props = focal_nodes[0]["properties"]
         assert focal_props["dataset_slice"] is True
         assert focal_props["slice_type"] == "thermal_conductivity"
 
     @pytest.mark.asyncio
-    async def test_nonslice_row_has_no_slice_metadata(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_nonslice_row_has_no_slice_metadata(self, db_session: AsyncSession) -> None:
         """A non-slice row MUST NOT carry dataset_slice=True (regression guard)."""
         db_session.add(_make_janney_source())
-        db_session.add(
-            _make_material(_MAT_BUCKET_D_NONSLICE, "U_15Pu_10Zr_alloy")
-        )
+        db_session.add(_make_material(_MAT_BUCKET_D_NONSLICE, "U_15Pu_10Zr_alloy"))
         db_session.add(
             _make_kg_node(
                 _KG_BUCKET_D_NONSLICE,
@@ -313,9 +283,7 @@ class TestSliceMetadata:
             params={"nodeId": str(_MAT_BUCKET_D_NONSLICE), "depth": 1},
         )
         assert resp.status_code == 200, resp.text
-        focal_nodes = [
-            n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_NONSLICE)
-        ]
+        focal_nodes = [n for n in resp.json()["nodes"] if n["id"] == str(_KG_BUCKET_D_NONSLICE)]
         assert len(focal_nodes) == 1
         props = focal_nodes[0]["properties"]
         assert "dataset_slice" not in props
@@ -331,9 +299,7 @@ class TestExactMatchOnly:
     """NFM-4093 CTO verdict: NO fuzzy matching.  Only exact label equality."""
 
     @pytest.mark.asyncio
-    async def test_case_mismatch_returns_404(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_case_mismatch_returns_404(self, db_session: AsyncSession) -> None:
         """``uo2`` (lowercase) MUST NOT match the ``UO2`` kg_node via the bridge.
 
         The bridge builds ``Material:<material.name>`` and resolves via
@@ -363,9 +329,7 @@ class TestExactMatchOnly:
         assert resp.status_code == 404, resp.text
 
     @pytest.mark.asyncio
-    async def test_typo_in_label_returns_404(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_typo_in_label_returns_404(self, db_session: AsyncSession) -> None:
         """A typo in ``Material:<label>`` MUST NOT match.
 
         Guards against accidental fuzzy / substring matching being
@@ -386,9 +350,7 @@ class TestExactMatchOnly:
         assert "U-10MM" in resp.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_unknown_material_returns_404(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_unknown_material_returns_404(self, db_session: AsyncSession) -> None:
         """A material with no matching kg_node produces a clean 404 (no 500)."""
         client = _make_client(lambda: db_session)
         resp = client.get(
@@ -399,9 +361,7 @@ class TestExactMatchOnly:
         assert str(_MAT_UNKNOWN) in resp.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_material_without_kg_node_returns_404(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_material_without_kg_node_returns_404(self, db_session: AsyncSession) -> None:
         """Material row exists but no kg_node row → 404."""
         db_session.add(_make_material(_MAT_UNKNOWN, "Unobtainium"))
         await db_session.flush()
@@ -455,12 +415,8 @@ class TestSameNameDuplicates:
         assert resp_b.json()["focal"]["id"] == str(_KG_DUP)
         # Pull labels out of nodes[] to confirm both focal nodes share
         # the same canonical label "Cr-doped UO2".
-        label_a = next(
-            n for n in resp_a.json()["nodes"] if n["id"] == str(_KG_DUP)
-        )["label"]
-        label_b = next(
-            n for n in resp_b.json()["nodes"] if n["id"] == str(_KG_DUP)
-        )["label"]
+        label_a = next(n for n in resp_a.json()["nodes"] if n["id"] == str(_KG_DUP))["label"]
+        label_b = next(n for n in resp_b.json()["nodes"] if n["id"] == str(_KG_DUP))["label"]
         assert label_a == label_b == "Cr-doped UO2"
 
 
@@ -473,9 +429,7 @@ class TestDirectKgNodeRegression:
     """NFM-4083 regression guard — passing a kg_node UUID still works."""
 
     @pytest.mark.asyncio
-    async def test_kg_node_uuid_returns_200(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_kg_node_uuid_returns_200(self, db_session: AsyncSession) -> None:
         db_session.add(_make_kg_node(_KG_U10MO, "U-10Mo"))
         await db_session.flush()
 
@@ -486,3 +440,288 @@ class TestDirectKgNodeRegression:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["focal"]["id"] == str(_KG_U10MO)
+
+
+# ---------------------------------------------------------------------------
+# NFM-4185 — KG orphan fix: U-10Mo edges + U-3Si/PuO2 stub nodes
+#
+# Mirrors the post-migration-080 graph shape so the API + BFS service are
+# pinned against the exact subgraphs AC1/AC2 require and the AC3
+# no-regression invariant (edge-bearing materials keep n/e ±0).
+# ---------------------------------------------------------------------------
+
+# Fresh UUID range for the NFM-4185 fixtures (068dc946-… was the NFM-4095
+# range; 068dc947-… keeps the two cohorts visually distinct).
+_MAT_N4185_U3SI = uuid.UUID("068dc947-0000-0000-0000-000000000010")
+_MAT_N4185_PUO2 = uuid.UUID("068dc947-0000-0000-0000-000000000020")
+_MAT_N4185_UO2 = uuid.UUID("068dc947-0000-0000-0000-000000000030")
+
+_KG_N4185_U3SI = uuid.UUID("496cf284-0000-0000-0000-000000000010")
+_KG_N4185_PUO2 = uuid.UUID("496cf284-0000-0000-0000-000000000020")
+_KG_N4185_ALPHA_U = uuid.UUID("496cf284-0000-0000-0000-000000000030")
+_KG_N4185_DELTA_PU = uuid.UUID("496cf284-0000-0000-0000-000000000040")
+_KG_N4185_UO2 = uuid.UUID("496cf284-0000-0000-0000-000000000050")
+_KG_N4185_UO2_PROP = uuid.UUID("496cf284-0000-0000-0000-000000000051")
+
+# The three U-10Mo datasets (prod: 075-restored "U-10Mo - Unknown Source"
+# rows b1f71371 / 00a9e563 / 94a20c7e; test uses fresh UUIDs).
+_N4185_DATASET_IDS = (
+    uuid.UUID("496cf284-0000-0000-0000-000000000060"),
+    uuid.UUID("496cf284-0000-0000-0000-000000000061"),
+    uuid.UUID("496cf284-0000-0000-0000-000000000062"),
+)
+_N4185_DATASET_NODE_IDS = (
+    uuid.UUID("496cf284-0000-0000-0000-000000000070"),
+    uuid.UUID("496cf284-0000-0000-0000-000000000071"),
+    uuid.UUID("496cf284-0000-0000-0000-000000000072"),
+)
+
+
+def _make_dataset_node(
+    node_id: uuid.UUID,
+    dataset_id: uuid.UUID,
+    title: str = "U-10Mo - Unknown Source",
+) -> KGNode:
+    """Build the Measurement node migration 080 creates per dataset."""
+    return KGNode(
+        id=node_id,
+        node_type="Measurement",
+        label=title,
+        status="active",
+        confidence=1.0,
+        properties={
+            "dataset_id": str(dataset_id),
+            "provenance": "NFM-4185:migration 080",
+        },
+        source_id=None,
+    )
+
+
+def _seed_u10mo_with_dataset_bridge(db_session: AsyncSession) -> None:
+    """Seed the post-080 U-10Mo subgraph shape (AC1 baseline)."""
+    from nfm_db.models.property import Dataset
+
+    db_session.add(_make_material(_MAT_U10MO, "U-10Mo", formula="U-10Mo"))
+    db_session.add(_make_kg_node(_KG_U10MO, "U-10Mo"))
+    for dataset_id, node_id in zip(_N4185_DATASET_IDS, _N4185_DATASET_NODE_IDS, strict=True):
+        db_session.add(
+            Dataset(
+                id=dataset_id,
+                material_id=_MAT_U10MO,
+                source_id=None,
+                title="U-10Mo - Unknown Source",
+            )
+        )
+        db_session.add(_make_dataset_node(node_id, dataset_id))
+        db_session.add(
+            KGEdge(
+                source_node_id=_KG_U10MO,
+                target_node_id=node_id,
+                relation_type="containsData",
+                properties={
+                    "dataset_id": str(dataset_id),
+                    "provenance": "NFM-4185:migration 080",
+                },
+                confidence=1.0,
+            )
+        )
+
+
+class TestNFM4185U10MoDatasetBridge:
+    """AC1 — U-10Mo depth-1 subgraph: self + 3 dataset nodes, ≥3 edges."""
+
+    @pytest.mark.asyncio
+    async def test_u10mo_depth1_has_4_nodes_3_edges(self, db_session: AsyncSession) -> None:
+        _seed_u10mo_with_dataset_bridge(db_session)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_MAT_U10MO), "depth": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["focal"]["id"] == str(_KG_U10MO)
+        # AC1: >=4 nodes (self + 3 dataset nodes) and >=3 edges.
+        assert len(body["nodes"]) >= 4, body["nodes"]
+        assert len(body["edges"]) >= 3, body["edges"]
+
+    @pytest.mark.asyncio
+    async def test_u10mo_edge_count_positive_orphan_regression_guard(
+        self, db_session: AsyncSession
+    ) -> None:
+        """AC4 orphan-regression guard — U-10Mo edge count must be > 0.
+
+        Pre-080 prod state was n=1/e=0 at every depth (the headline
+        defect).  This test fails if the dataset bridge edges ever
+        disappear again.
+        """
+        _seed_u10mo_with_dataset_bridge(db_session)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_MAT_U10MO), "depth": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["edges"]) > 0, (
+            "NFM-4185 regression: U-10Mo focal resolved but carries zero "
+            "edges — the Material→dataset containsData bridge is missing"
+        )
+
+    @pytest.mark.asyncio
+    async def test_u10mo_dataset_nodes_are_measurement_with_dataset_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """The 3 linked dataset nodes carry the durable dataset_id link."""
+        _seed_u10mo_with_dataset_bridge(db_session)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_MAT_U10MO), "depth": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        nodes = resp.json()["nodes"]
+        dataset_nodes = [n for n in nodes if n["id"] in {str(x) for x in _N4185_DATASET_NODE_IDS}]
+        assert len(dataset_nodes) == 3
+        linked_dataset_ids = {n["properties"]["dataset_id"] for n in dataset_nodes}
+        assert linked_dataset_ids == {str(x) for x in _N4185_DATASET_IDS}
+        for node in dataset_nodes:
+            assert node["type"] == "Measurement"
+        edges = resp.json()["edges"]
+        contains = [e for e in edges if e["type"] == "containsData"]
+        assert len(contains) >= 3
+        assert {e["source"] for e in contains} == {str(_KG_U10MO)}
+
+
+class TestNFM4185StubMaterials:
+    """AC2 — U-3Si and PuO2 resolve to 200 with ≥1 edge each."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("material_id", "kg_id", "name", "anchor_id", "anchor_label"),
+        [
+            (
+                _MAT_N4185_U3SI,
+                _KG_N4185_U3SI,
+                "U-3Si",
+                _KG_N4185_ALPHA_U,
+                "alpha_U_solid_solution",
+            ),
+            (
+                _MAT_N4185_PUO2,
+                _KG_N4185_PUO2,
+                "PuO2",
+                _KG_N4185_DELTA_PU,
+                "delta_Pu_solid_solution",
+            ),
+        ],
+    )
+    async def test_stub_material_returns_200_with_edge(
+        self,
+        db_session: AsyncSession,
+        material_id: uuid.UUID,
+        kg_id: uuid.UUID,
+        name: str,
+        anchor_id: uuid.UUID,
+        anchor_label: str,
+    ) -> None:
+        db_session.add(_make_material(material_id, name))
+        db_session.add(_make_kg_node(kg_id, name, source_id=None))
+        db_session.add(_make_kg_node(anchor_id, anchor_label))
+        db_session.add(
+            KGEdge(
+                source_node_id=kg_id,
+                target_node_id=anchor_id,
+                relation_type="relatedTo",
+                properties={"provenance": "NFM-4185:migration 080"},
+                confidence=1.0,
+            )
+        )
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(material_id), "depth": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["focal"]["id"] == str(kg_id)
+        assert len(body["nodes"]) >= 2
+        assert len(body["edges"]) >= 1, f"AC2: {name} must no longer be an orphan singleton"
+        edge = body["edges"][0]
+        assert {edge["source"], edge["target"]} == {str(kg_id), str(anchor_id)}
+
+
+class TestNFM4185NoRegressionOnEdgeBearers:
+    """AC3 — the new bridge must not leak into edge-bearing subgraphs."""
+
+    @pytest.mark.asyncio
+    async def test_uo2_subgraph_unchanged_by_orphan_bridge(self, db_session: AsyncSession) -> None:
+        """UO2 (edge-bearing, n=2/e=1 baseline) keeps n/e exactly.
+
+        The 080 bridge only attaches to orphan components (U-10Mo, the
+        new Measurement dataset nodes, U-3Si/PuO2, and their orphan
+        anchors).  An edge-bearing focal must see none of them at
+        depth 1 — the literal AC3 "n/e within +/-0" invariant.
+        """
+        # Edge-bearing baseline: UO2 --hasProperty--> Property.
+        db_session.add(_make_material(_MAT_N4185_UO2, "UO2", formula="UO2"))
+        db_session.add(_make_kg_node(_KG_N4185_UO2, "UO2"))
+        db_session.add(
+            KGNode(
+                id=_KG_N4185_UO2_PROP,
+                node_type="Property",
+                label="thermal conductivity",
+                status="active",
+                confidence=1.0,
+                properties={},
+            )
+        )
+        db_session.add(
+            KGEdge(
+                source_node_id=_KG_N4185_UO2,
+                target_node_id=_KG_N4185_UO2_PROP,
+                relation_type="hasProperty",
+                confidence=1.0,
+            )
+        )
+        # The full NFM-4185 bridge fixtures coexist in the same graph.
+        _seed_u10mo_with_dataset_bridge(db_session)
+        db_session.add(_make_kg_node(_KG_N4185_U3SI, "U-3Si"))
+        db_session.add(_make_kg_node(_KG_N4185_ALPHA_U, "alpha_U_solid_solution"))
+        db_session.add(
+            KGEdge(
+                source_node_id=_KG_N4185_U3SI,
+                target_node_id=_KG_N4185_ALPHA_U,
+                relation_type="relatedTo",
+                confidence=1.0,
+            )
+        )
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_MAT_N4185_UO2), "depth": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["nodes"]) == 2, body["nodes"]
+        assert len(body["edges"]) == 1, body["edges"]
+        node_ids = {n["id"] for n in body["nodes"]}
+        bridge_ids = {
+            str(x)
+            for x in (
+                _KG_U10MO,
+                *_N4185_DATASET_NODE_IDS,
+                _KG_N4185_U3SI,
+                _KG_N4185_PUO2,
+            )
+        }
+        assert node_ids.isdisjoint(bridge_ids)
