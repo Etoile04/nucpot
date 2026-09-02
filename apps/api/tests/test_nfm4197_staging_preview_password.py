@@ -24,6 +24,12 @@ These tests pin the config half so that cannot recur:
 * An empty default keeps deploys of staging DBs already past 073
   working — the migration itself is the single enforcement point.
 
+NFM-4215 adds the mode half: the generated file also carries
+``NFM_SECRET_KEY`` / ``NFM_DATABASE_URL`` / ``NFMD_PREVIEW_DB_PASSWORD``,
+so it must land 0600 — enforced by an explicit ``chmod 600`` (a creation-
+time umask cannot tighten a pre-existing 0644 file, which is what every
+host deployed before NFM-4215 has on disk).
+
 Mirrors ``test_nfm4170_canonical_config.py`` (PR #1115).
 """
 
@@ -31,6 +37,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import stat
 import subprocess
 from pathlib import Path
 
@@ -86,22 +93,33 @@ def _extract_write_api_env_file() -> str:
 def _run_write_api_env_file(
     tmp_path: Path,
     env_file_lines: list[str],
+    precreate_mode: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Execute the extracted function against a sandbox env file.
 
     Returns the bash process result and the content of the generated
     ``docker/.env.staging.api`` (empty string when the function died
-    before writing it).
+    before writing it). ``precreate_mode`` optionally plants the
+    generated file first with that mode — the on-disk state of every
+    host deployed before NFM-4215 (``>`` truncates without chmod'ing).
     """
     project_root = tmp_path / "project"
     docker_dir = project_root / "docker"
     docker_dir.mkdir(parents=True)
     env_file = docker_dir / ".env.staging"
     env_file.write_text("\n".join(env_file_lines) + "\n", encoding="utf-8")
+    if precreate_mode is not None:
+        stale = docker_dir / ".env.staging.api"
+        stale.write_text("STALE=1\n", encoding="utf-8")
+        stale.chmod(precreate_mode)
 
     harness = "\n".join(
         [
             "set -euo pipefail",
+            # Real deploys run under the typical daemon umask; pin it so a
+            # developer running pytest under a stricter umask can't mask a
+            # missing chmod in write_api_env_file() (NFM-4215).
+            "umask 022",
             "log() { :; }",
             "warn() { :; }",
             "die() { printf 'DIE: %s\\n' \"$*\" >&2; exit 1; }",
@@ -219,3 +237,41 @@ def test_write_api_env_file_preserves_existing_keys(tmp_path: Path) -> None:
         "NFM-4170 canonicals forwarding regressed"
     )
     assert parsed[ENV_VAR_NAME] == "some-password"
+
+
+# ---------------------------------------------------------------------------
+# Tests — NFM-4215: generated file mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "precreate_mode",
+    [None, 0o644],
+    ids=["fresh-create", "preexisting-0644"],
+)
+def test_write_api_env_file_enforces_mode_0600(
+    tmp_path: Path, precreate_mode: int | None
+) -> None:
+    """NFM-4215 — the generated api env file must land 0600.
+
+    The file holds ``NFM_SECRET_KEY``, ``NFM_DATABASE_URL`` and (since
+    NFM-4197) ``NFMD_PREVIEW_DB_PASSWORD``; a default-umask heredoc write
+    leaves it 0644. The ``preexisting-0644`` case is the discriminator:
+    ``cat >`` truncates an existing file without touching its mode, so
+    only an explicit ``chmod 600`` tightens hosts deployed before this
+    change — a creation-time ``umask`` fix would silently pass
+    ``fresh-create`` and fail there. Matches the 0600 already enforced
+    on the parent ``docker/.env.staging`` (NFM-4190).
+    """
+    proc, _content = _run_write_api_env_file(
+        tmp_path,
+        [f"{ENV_VAR_NAME}=some-password"],
+        precreate_mode=precreate_mode,
+    )
+    assert proc.returncode == 0, f"write_api_env_file died: {proc.stderr}"
+    generated = tmp_path / "project" / "docker" / ".env.staging.api"
+    mode = stat.S_IMODE(generated.stat().st_mode)
+    assert mode == 0o600, (
+        f"docker/.env.staging.api is {oct(mode)}, expected 0o600 — secrets "
+        "file must not be group/world-readable (NFM-4215)."
+    )
