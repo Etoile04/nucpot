@@ -89,7 +89,9 @@ class TestRevisionMetadata:
         """Ensure there is exactly one alembic head.
 
         Originally asserted 073 as the head (NFM-4122). Migration 075
-        (NFM-4139) now chains after 073, so 075 is the current head.
+        (NFM-4139) chained after 073, then 076 (NFM-4159 attribution
+        view), then 077 (NFM-4159 datasets.source_id nullable) extended
+        it further.  077 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -104,9 +106,10 @@ class TestRevisionMetadata:
         )  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["075_restore_placeholder_sources_datasets"], (
+        assert heads == ["077_datasets_source_id_nullable"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
-            f"deploy. Update 075's down_revision to point at the new head."
+            f"deploy. Update the new migration's down_revision to point at "
+            f"the actual chain head."
         )
 
 
