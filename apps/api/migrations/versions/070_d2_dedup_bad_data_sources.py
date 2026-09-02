@@ -1,11 +1,11 @@
-"""D2 dedup — collapse UUID-titled / placeholder ``data_sources`` into canonical rows.
+"""D2 dedup — collapse UUID-titled ``data_sources`` rows into canonical rows.
 
 Revision ID: 070_d2_dedup_bad_data_sources
 Revises: 069_add_v050_f8_property_types
 Create Date: 2026-09-02
 
-NFM-4088 — D2 data-side persistent fix (NFM-4084 D2 决策落地方)
-================================================================
+NFM-4088 / NFM-4130 — D2 data-side persistent fix (NFM-4084 D2 决策落地方)
+=========================================================================
 
 Root cause
 ----------
@@ -17,22 +17,26 @@ Root cause
 re-run created ~14 bad rows whose ``title`` matches the canonical UUID
 regex; ~20 ``property_measurement`` rows reference these bad sources.
 
-A second root cause is the placeholder title
-``"Unattributed source (no DOI)"`` / ``"Unknown Source"`` being reused
-across multiple distinct literature sources, which surfaces as
-multiple rows pointing at the same canonical dataset fingerprint but
-holding different source_ids.
-
-This migration collapses both classes of bad rows back to a single
+This migration collapses UUID-titled bad rows back to a single
 canonical ``DataSource`` per (doi, file_hash, content_md-fingerprint,
 normalized-title).
+
+NFM-4130 re-scope
+-----------------
+Placeholder titles ``"Unknown Source"`` / ``"Unattributed source (no
+DOI)"`` are 58 distinct real sources on staging (18 on prod) with no
+DOI, ``file_hash`` or ``content_md`` and are **not** dedup candidates
+— see [NFM-4130](/NFM/issues/NFM-4130) for evidence and the CTO
+ruling.  Their ingest-path is fixed separately in
+[NFM-4105](/NFM/issues/NFM-4105); they are explicitly OUT of scope
+for this migration.
 
 Strategy
 --------
 
 1. Identify ``bad_source_ids`` via a single SELECT:
-   ``title`` matches the canonical 36-char UUID regex OR
-   ``title IN ('Unknown Source', 'Unattributed source (no DOI)')``.
+   ``title`` matches the canonical 36-char UUID regex (placeholder
+   titles are excluded — see NFM-4130).
 2. For each bad row, match to a canonical ``DataSource`` (priority:
    DOI equality → file_hash equality → content_md SHA1 equality →
    normalized-title equality).  Unmatched rows are reported via RAISE
@@ -68,8 +72,12 @@ Cross-references
 * NFM-4086 — D1 schema (independent of this fix's success; D2 migration
   is closed-form on the current schema)
 * NFM-4087 — visual fast-fix (independent, not blocking)
+* NFM-4088 — original D2 migration (now re-scoped)
 * NFM-4091 — F4 ingest-path monitoring (independent follow-up)
-* NFM-4099 — asyncpg ``DO`` bind-param crash (this revision)
+* NFM-4099 — asyncpg ``DO`` bind-param crash (literal-inlining fix)
+* NFM-4105 — placeholder-title class follow-up (separate ticket; the
+  ingest-path guard that stops new placeholder rows from being created).
+* NFM-4130 — this re-scope (bad class = UUID-titled rows only).
 """
 
 from collections.abc import Sequence
@@ -90,22 +98,20 @@ depends_on: str | Sequence[str] | None = None
 # 36-char canonical UUID regex used to flag bad rows whose ``title``
 # field was wrongly populated from a previous source's primary-key
 # string. Anchored on both ends.
+#
+# NFM-4130: bad class is restricted to UUID-titled rows only.  The
+# earlier ``_PLACEHOLDER_TITLES = ("Unknown Source", "Unattributed
+# source (no DOI)")`` matching has been removed — those titles are
+# distinct real sources on staging/prod (58 / 18) with no DOI,
+# file_hash or content_md.  Their ingest-path is fixed in NFM-4105.
 _UUID_TITLE_RE: str = (
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
-# Placeholder titles emitted by ``extraction_to_db_mapper.py:691``
-# when neither ``reference`` nor ``source_file`` is supplied by the
-# upstream extractor.
-_PLACEHOLDER_TITLES: tuple[str, ...] = (
-    "Unknown Source",
-    "Unattributed source (no DOI)",
-)
-
 
 # ---------------------------------------------------------------------------
-# DO-block SQL builder (NFM-4099)
+# DO-block SQL builder (NFM-4099 + NFM-4130)
 # ---------------------------------------------------------------------------
 #
 # asyncpg uses server-side prepared statements and PostgreSQL ``DO``
@@ -119,21 +125,23 @@ _PLACEHOLDER_TITLES: tuple[str, ...] = (
 #
 # which crash-loops ``nucpot-staging-api`` on every ``alembic upgrade
 # head`` (CMD line: ``python check_staging_revision.py && alembic
-# upgrade head && exec uvicorn ...``).  The fix is to inline the values
-# as SQL string / array literals — they originate from this module's
-# own constants (``_UUID_TITLE_RE`` / ``_PLACEHOLDER_TITLES``) so the
-# inlining surface is safe (no user input).  The substitution MUST run
-# on the SQL string BEFORE it reaches ``sa.text()`` — ``TextClause``
-# has no ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
-# at construction time, so a substitution meant to remove bind params
-# has to precede it.
+# upgrade head && exec uvicorn ...``).  The fix is to inline the regex
+# as a SQL string literal — it originates from this module's own
+# constant (``_UUID_TITLE_RE``) so the inlining surface is safe (no
+# user input).  The substitution MUST run on the SQL string BEFORE it
+# reaches ``sa.text()`` — ``TextClause`` has no ``.replace``, and
+# ``sa.text()`` parses ``:name`` bind tokens at construction time, so
+# a substitution meant to remove bind params has to precede it.
+#
+# NFM-4130 — only the UUID regex is inlined now; the placeholder array
+# was removed entirely (placeholder titles are no longer in scope for
+# this migration — see ``_UUID_TITLE_RE`` comment above).
 
 
-# Sentinel tokens that mark the bind-param positions in the SQL
-# template.  Picked to be strings that cannot appear in normal SQL so a
-# naive ``str.replace`` cannot accidentally hit a real token.
+# Sentinel token that marks the bind-param position in the SQL
+# template.  Picked to be a string that cannot appear in normal SQL so
+# a naive ``str.replace`` cannot accidentally hit a real token.
 _UUID_TOKEN = "__NFM_4099_UUID_RE_LITERAL__"
-_PLACEHOLDER_TOKEN = "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__"
 
 
 def _sql_quote_literal(value: str) -> str:
@@ -141,51 +149,42 @@ def _sql_quote_literal(value: str) -> str:
 
     Escapes embedded single quotes by doubling them — the canonical
     PostgreSQL quoting rule (``'foo''bar'`` represents ``foo'bar``).
-    Used to inline the regex + placeholder titles into the ``DO`` block
-    as literal text instead of bind parameters.
+    Used to inline the UUID regex into the ``DO`` block as literal
+    text instead of a bind parameter.
     """
     return "'" + value.replace("'", "''") + "'"
 
 
-def _build_placeholder_array_sql(titles: Sequence[str]) -> str:
-    """Render ``titles`` as a PostgreSQL ``TEXT[]`` literal.
-
-    Example::
-
-        >>> _build_placeholder_array_sql(("Unknown Source",
-        ...                                "Unattributed source (no DOI)"))
-        "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
-    """
-    parts = [_sql_quote_literal(t) for t in titles]
-    return "ARRAY[" + ", ".join(parts) + "]::TEXT[]"
-
-
-def _build_do_block_sql(uuid_re: str, placeholder_titles: Sequence[str]) -> str:
-    """Render the forward-dedup ``DO $$`` block with the regex +
-    placeholder list inlined as SQL literals.
+def _build_do_block_sql(uuid_re: str) -> str:
+    """Render the forward-dedup ``DO $$`` block with the regex inlined
+    as a SQL literal.
 
     NFM-4099 — asyncpg refuses bind parameters on ``DO`` blocks (the
     PostgreSQL protocol treats ``DO`` as a 0-arg statement and asyncpg
-    uses server-side prepared statements).  The values originate from
-    this module's own constants — no user input — so literal inlining
+    uses server-side prepared statements).  The regex originates from
+    this module's own constant — no user input — so literal inlining
     is safe.
+
+    NFM-4130 — the placeholder array parameter is gone; the bad class
+    is now UUID-titled rows only.
     """
     sql_literal_regex = _sql_quote_literal(uuid_re)
-    sql_literal_array = _build_placeholder_array_sql(placeholder_titles)
-    return _DO_BLOCK_SQL_TEMPLATE.replace(_UUID_TOKEN, sql_literal_regex).replace(
-        _PLACEHOLDER_TOKEN, sql_literal_array
-    )
+    return _DO_BLOCK_SQL_TEMPLATE.replace(_UUID_TOKEN, sql_literal_regex)
 
 
 # ---------------------------------------------------------------------------
 # Forward dedup SQL — single plpgsql block.
 #
-# The ``:uuid_re`` / ``:placeholder_titles`` placeholders that lived in
-# this string prior to NFM-4099 have been replaced by sentinel tokens
-# (``_UUID_TOKEN`` and ``_PLACEHOLDER_TOKEN``) that ``_build_do_block_sql``
-# substitutes with properly-escaped SQL literals before execution.
-# This keeps the SQL readable while ensuring the final statement carries
-# no bind parameters — the format asyncpg requires for ``DO`` blocks.
+# The ``:uuid_re`` placeholder that lived in this string prior to
+# NFM-4099 has been replaced by a sentinel token (``_UUID_TOKEN``) that
+# ``_build_do_block_sql`` substitutes with a properly-escaped SQL
+# literal before execution.  This keeps the SQL readable while
+# ensuring the final statement carries no bind parameters — the format
+# asyncpg requires for ``DO`` blocks.
+#
+# NFM-4130 — the placeholder array sentinel + substitution path are
+# gone; the bad class is UUID-titled rows only and ``_bad_sources``
+# reads ``WHERE title ~ __NFM_4099_UUID_RE_LITERAL__``.
 # ---------------------------------------------------------------------------
 
 
@@ -214,8 +213,7 @@ _DO_BLOCK_SQL_TEMPLATE = """
         -- the temp table).  Carries forward into NFM-4095 ship.
         SELECT id, doi, file_hash, content_md, title
         FROM data_sources
-        WHERE title ~ __NFM_4099_UUID_RE_LITERAL__
-           OR title = ANY(CAST(__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__ AS TEXT[]));
+        WHERE title ~ __NFM_4099_UUID_RE_LITERAL__;
 
                 CREATE INDEX ON _bad_sources(id);
 
@@ -697,10 +695,10 @@ def upgrade() -> None:
     # PostgreSQL ``DO`` blocks accept 0 bind parameters and asyncpg
     # refuses any attempt to pass them
     # (``InterfaceError: the server expects 0 arguments for this
-    # query, 2 were passed``).  Earlier revisions of this migration
-    # bound ``:uuid_re`` and ``:placeholder_titles`` here, which
-    # worked under psycopg2 (client-side interpolation) but broke the
-    # staging ``alembic upgrade head`` health-gate under asyncpg.
+    # query, 1 were passed``).  Earlier revisions of this migration
+    # bound ``:uuid_re`` here, which worked under psycopg2 (client-side
+    # interpolation) but broke the staging ``alembic upgrade head``
+    # health-gate under asyncpg.
     # The fix inlines the regex + placeholder list as SQL string
     # literals via ``_build_do_block_sql``; the values originate from
     # this module's own constants — no user input — so literal
@@ -709,7 +707,7 @@ def upgrade() -> None:
     # ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
     # at construction time, so a substitution meant to remove bind
     # params has to precede it.
-    bind.execute(sa.text(_build_do_block_sql(_UUID_TITLE_RE, _PLACEHOLDER_TITLES)))
+    bind.execute(sa.text(_build_do_block_sql(_UUID_TITLE_RE)))
 
 
 # ---------------------------------------------------------------------------
