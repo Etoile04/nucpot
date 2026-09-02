@@ -304,10 +304,32 @@ def upgrade() -> None:
     # --------------------------------------------------------------
     # 2. UPDATE U-10Mo datasets — repoint to OECD-NEA source.
     # --------------------------------------------------------------
-    # 3 datasets titled 'U-10Mo - Unknown Source' (one per material
-    # form / measurement set).  The data_sources row for OECD-NEA
-    # was just inserted; resolve its id at runtime.  The OECD-NEA
-    # title is inlined as a literal (see comment on step 1).
+    # Deduplicate first: U-10Mo has 3 datasets with the same
+    # material_id (data quality issue NFM-4093-DUP-CONSOLIDATE) and
+    # ``uq_datasets_source_material`` forbids two rows with the
+    # same (source_id, material_id).  Keep the smallest id per
+    # material_id, delete the rest; then repoint the keeper to
+    # OECD-NEA.  The OECD-NEA title is inlined as a literal (see
+    # comment on step 1).
+    bind.execute(
+        sa.text(
+            f"""
+            DELETE FROM datasets d
+            WHERE d.title = 'U-10Mo - Unknown Source'
+              AND d.id NOT IN (
+                  SELECT DISTINCT ON (material_id) id
+                  FROM datasets
+                  WHERE title = 'U-10Mo - Unknown Source'
+                    AND source_id IS NOT NULL
+                    AND source_id IN (
+                        SELECT id FROM data_sources
+                        WHERE title IN ('Unknown Source', 'Unattributed source (no DOI)')
+                    )
+                  ORDER BY material_id, id
+              )
+            """
+        )
+    )
     bind.execute(
         sa.text(
             f"""
