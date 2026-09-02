@@ -20,13 +20,13 @@ import argparse
 import json
 import os
 import subprocess
-from pathlib import Path
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from pathlib import Path
 
 
 # --------------------------------------------------------------------------- #
@@ -66,7 +66,7 @@ class Report:
 # --------------------------------------------------------------------------- #
 def fetch_json(url: str, timeout: float) -> tuple[int, object]:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8", errors="replace")
         try:
             return resp.status, json.loads(body)
@@ -77,7 +77,7 @@ def fetch_json(url: str, timeout: float) -> tuple[int, object]:
 def fetch_status(url: str, timeout: float) -> tuple[int, str]:
     req = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read(200).decode("utf-8", errors="replace").splitlines()
             return resp.status, body[0] if body else ""
     except urllib.error.HTTPError as exc:
@@ -115,7 +115,10 @@ def _docker_ps_names(prefix: str) -> list[str]:
     try:
         proc = subprocess.run(
             ["docker", "ps", "--filter", f"name={prefix}", "--format", "{{.Names}}"],
-            check=True, capture_output=True, text=True, timeout=15,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         return []
@@ -128,7 +131,9 @@ def check_container_set(cfg: SmokeConfig) -> CheckResult:
         return CheckResult(name, True, "skipped (--skip-docker)")
     running = _docker_ps_names(cfg.container_prefix)
     if not running:
-        return CheckResult(name, False, f"no '{cfg.container_prefix}*' containers found (is docker reachable?)")
+        return CheckResult(
+            name, False, f"no '{cfg.container_prefix}*' containers found (is docker reachable?)"
+        )
     missing = [c for c in cfg.expected_containers if c not in running]
     if missing:
         return CheckResult(name, False, f"missing containers: {missing} (running: {running})")
@@ -171,7 +176,7 @@ def _load_staging_env_contract() -> None:
             os.environ[key] = val.strip().strip('"').strip("'")
 
 
-def parse_args(argv: Optional[list[str]] = None) -> SmokeConfig:
+def parse_args(argv: list[str] | None = None) -> SmokeConfig:
     p = argparse.ArgumentParser(
         description="NFM-DB staging smoke tests (NFM-111). Exits 0 iff all checks pass."
     )
@@ -183,16 +188,28 @@ def parse_args(argv: Optional[list[str]] = None) -> SmokeConfig:
     _load_staging_env_contract()
     api_port = os.environ.get("STAGING_API_HOST_PORT", "8001")
     web_port = os.environ.get("STAGING_WEB_HOST_PORT", "3000")
-    p.add_argument("--api-url", default=f"http://127.0.0.1:{api_port}/api/v1/health",
-                   help="staging API health URL (default: %(default)s)")
-    p.add_argument("--web-url", default=f"http://127.0.0.1:{web_port}/",
-                   help="staging web URL (default: %(default)s)")
-    p.add_argument("--timeout", type=float, default=5.0,
-                   help="per-request timeout in seconds (default: %(default)s)")
-    p.add_argument("--container-prefix", default="nucpot-staging-",
-                   help="docker container name prefix (default: %(default)s)")
-    p.add_argument("--skip-docker", action="store_true",
-                   help="skip the docker container-set check")
+    p.add_argument(
+        "--api-url",
+        default=f"http://127.0.0.1:{api_port}/api/v1/health",
+        help="staging API health URL (default: %(default)s)",
+    )
+    p.add_argument(
+        "--web-url",
+        default=f"http://127.0.0.1:{web_port}/",
+        help="staging web URL (default: %(default)s)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=5.0,
+        help="per-request timeout in seconds (default: %(default)s)",
+    )
+    p.add_argument(
+        "--container-prefix",
+        default="nucpot-staging-",
+        help="docker container name prefix (default: %(default)s)",
+    )
+    p.add_argument("--skip-docker", action="store_true", help="skip the docker container-set check")
     args = p.parse_args(argv)
 
     expected = (
@@ -220,14 +237,17 @@ def run(cfg: SmokeConfig) -> Report:
     return report
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     cfg = parse_args(argv)
     start = time.monotonic()
     report = run(cfg)
     elapsed = time.monotonic() - start
-    print(f"\n{'ALL CHECKS PASSED' if report.all_passed else 'SMOKE TESTS FAILED'} "
-          f"({len([r for r in report.results if r.passed])}/{len(report.results)} ok, "
-          f"{elapsed:.1f}s)", file=sys.stderr)
+    print(
+        f"\n{'ALL CHECKS PASSED' if report.all_passed else 'SMOKE TESTS FAILED'} "
+        f"({len([r for r in report.results if r.passed])}/{len(report.results)} ok, "
+        f"{elapsed:.1f}s)",
+        file=sys.stderr,
+    )
     return 0 if report.all_passed else 1
 
 

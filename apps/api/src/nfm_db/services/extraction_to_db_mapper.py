@@ -17,7 +17,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -65,6 +66,27 @@ def _is_dedup_conflict(exc: IntegrityError) -> bool:
     """True if the IntegrityError came from a 5-tuple unique violation."""
     msg = str(exc.orig).lower() if exc.orig else str(exc).lower()
     return any(frag.lower() in msg for frag in _DEDUP_CONFLICT_FRAGMENTS)
+
+
+#: NFM-4088 — guard against UUID-pattern ``title`` (root cause: prior
+#: source's primary-key string was being copied into the new row's
+#: ``title`` when extraction emitted a UUID instead of a reference).
+#: Canonical 36-char UUID, case-insensitive, anchored on both ends.
+_UUID_TITLE_PATTERN: re.Pattern[str] = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+#: NFM-4088 — placeholder titles that the DOI-empty branch emits when
+#: neither ``reference`` nor ``source_file`` is supplied.  These were
+#: reused across distinct literature sources in production; the
+#: dedup migration 070 collapses them.  The mapper still allows new
+#: INSERTs under these titles (re-run compatibility) but prefers a
+#: dedup hit on file_hash or content_md first.
+_BORING_PLACEHOLDER_TITLES: frozenset[str] = frozenset(
+    {"Unknown Source", "Unattributed source (no DOI)"}
+)
 
 
 #: Pydantic Literal allowed values for ExtractedProperty.property_category.
@@ -170,7 +192,16 @@ def _coerce_heuristic_payload(raw: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class MappingResult:
-    """Immutable result counts from the mapping operation."""
+    """Immutable result counts from the mapping operation.
+
+    ``skipped_unknown_details`` is the structured capture list used by the
+    NFM-4013 measurement harness to enumerate the LLM-only 14 property
+    names that static gap analysis misses (heuristic_extractor vs
+    031_seed_property_types.py). Each entry preserves enough context
+    (``source_doi``, ``material_name``, ``sample_value``) for downstream
+    classification on NFM-4008. The list is built inside
+    :func:`map_and_persist` at the ``_lookup_property_type`` drop site.
+    """
 
     created_sources: int = 0
     created_materials: int = 0
@@ -179,7 +210,18 @@ class MappingResult:
     reused_entities: int = 0
     skipped_duplicate_measurements: int = 0
     skipped_unknown_properties: int = 0
+    # NFM-3919: items where BOTH material_name and composition are None
+    # (e.g. an extractor that omits both fields) are rejected at the mapper
+    # bottom line so the database is never polluted with fresh
+    # ``name='Unknown Material'`` rows. Counted separately from
+    # ``skipped_unknown_properties`` so operators can alert on the specific
+    # "extractor schema-drift" signal.
+    skipped_unknown_materials: int = 0
     validation_errors: int = 0
+    # NFM-4013 / Path (a): capture list populated at the unknown-property
+    # drop site. Each entry is a dict with the keys below — see
+    # ``scripts/nfm-4012-unknown-property-enumeration.py`` for the consumer.
+    skipped_unknown_details: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def total_created(self) -> int:
@@ -197,6 +239,7 @@ class MappingResult:
             self.reused_entities
             + self.skipped_duplicate_measurements
             + self.skipped_unknown_properties
+            + self.skipped_unknown_materials
         )
 
 
@@ -414,11 +457,14 @@ ONTOFUEL_CATEGORY_TO_SLUG: dict[str, str] = {
 }
 
 
-def _normalize_category_slug(category_name: str) -> str | None:
+def _normalize_category_slug(category_name: str | None) -> str | None:
     """Translate an OntoFuel category literal to a DB ``property_categories.slug``.
 
-    Returns ``None`` if the literal is not recognised.
+    Returns ``None`` if the literal is not recognised (including ``None``
+    input from upstream ``ExtractedProperty.property_category``).
     """
+    if category_name is None:
+        return None
     return ONTOFUEL_CATEGORY_TO_SLUG.get(category_name)
 
 
@@ -430,31 +476,93 @@ async def _lookup_property_type(
 ) -> PropertyType | None:
     """Find PropertyType by OntoFuel category literal + property name.
 
-    Normalises the OntoFuel category literal to a DB ``slug`` via
-    ``_normalize_category_slug`` before querying.
+    Two-stage lookup (NFM-4019):
+
+    1. **Strict lookup** — match ``(property_categories.slug, property_types.name)``
+       against the OntoFuel category literal (normalised via
+       :func:`_normalize_category_slug`). This is the canonical path and
+       handles every property whose LLM-extracted category literal matches
+       the seed.
+    2. **Name-only fallback** — when the strict lookup misses AND the
+       property name is unique across all categories, return that unique
+       match. This resolves the 4 LLM-side category-context mismatches
+       flagged by NFM-4019:
+       - ``bulk_modulus``, ``lattice_constant``, ``thermal_conductivity``:
+         LLM emits no category literal at all (stage 1 returns None
+         immediately).
+       - ``melting_point``: LLM emits ``category=thermal`` but the seed
+         places it under ``physical``; strict lookup misses on the slug,
+         and the fallback finds the single row under ``physical``.
+
+    The fallback only succeeds when ``property_types.name`` matches
+    **exactly one** row across all categories. Catalog gaps like
+    ``elastic_constant`` (singular, addressed by NFM-4008 / 032_seed) and
+    ``solubility_limit`` (addressed by NFM-4008 / 032_seed) remain absent
+    from ``property_types`` entirely, so the fallback also misses and the
+    mapper correctly drops them.
 
     Returns None if not found (caller should skip measurement).
     """
-    if not category_name:
+    if not property_name:
         return None
 
-    category_slug = _normalize_category_slug(category_name)
-    if category_slug is None:
+    # Stage 1: strict (slug, name) lookup.
+    if category_name:
+        category_slug = _normalize_category_slug(category_name)
+        if category_slug is None:
+            logger.debug(
+                "Unknown OntoFuel category literal: %r; trying name-only fallback",
+                category_name,
+            )
+        else:
+            stmt = (
+                select(PropertyType)
+                .join(PropertyCategory)
+                .where(
+                    PropertyCategory.slug == category_slug,
+                    PropertyType.name == property_name,
+                )
+            )
+            result = (await db.execute(stmt)).scalar_one_or_none()
+            if result is not None:
+                return result
+            logger.debug(
+                "Strict lookup miss: category_slug=%s name=%s; trying name-only fallback",
+                category_slug,
+                property_name,
+            )
+    else:
         logger.debug(
-            "Unknown OntoFuel category literal: %r", category_name,
+            "No category literal; trying name-only fallback for name=%s",
+            property_name,
         )
-        return None
 
-    stmt = (
-        select(PropertyType)
-        .join(PropertyCategory)
-        .where(
-            PropertyCategory.slug == category_slug,
-            PropertyType.name == property_name,
+    # Stage 2: name-only fallback (NFM-4019).
+    # Only succeed when the property name is unique across all categories.
+    # This is safe because the seed canonicalises each (name, category)
+    # pair, and the AC-1 v0.5.0 ontology expansion (NFM-4008) keeps each
+    # canonical name under exactly one category.
+    fallback_stmt = select(PropertyType).where(PropertyType.name == property_name)
+    fallback_rows = (await db.execute(fallback_stmt)).scalars().all()
+    if len(fallback_rows) == 1:
+        resolved = fallback_rows[0]
+        logger.info(
+            "NFM-4019 fallback: resolved name=%s via name-only lookup to "
+            "category_id=%s (raw_category=%r)",
+            property_name,
+            resolved.category_id,
+            category_name,
         )
-    )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    return result
+        return resolved
+
+    if len(fallback_rows) > 1:
+        logger.debug(
+            "NFM-4019 fallback ambiguous: name=%s matches %d property_types "
+            "rows; skipping (would need explicit category resolution)",
+            property_name,
+            len(fallback_rows),
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -559,11 +667,38 @@ async def map_and_persist(
     reused_entities = 0
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
+    skipped_unknown_materials = 0  # NFM-3919
+    # NFM-4013 / Path (a): accumulate structured unknown-property records so
+    # ``MappingResult.skipped_unknown_details`` enumerates the LLM-only
+    # names dropped by ``_lookup_property_type``.
+    skipped_unknown_details: list[dict[str, Any]] = []
 
     for item in validated:
         s_key = _source_key(item)
         m_key = _material_key(item)
         d_key = _dataset_key(s_key, m_key)
+
+        # --- NFM-3919 bottom-line guard: reject ONLY when both material
+        # identity fields are absent. Rejecting on EITHER-missing was the
+        # CR-1 bug (E2E QA 2026-09-01): LLM extraction_prompt.py:305-306
+        # explicitly permits ``composition=None`` for materials where the
+        # name itself carries the chemistry (e.g. SS316, Zr-2.5Nb, Inconel
+        # 718). 78/131 prod ``materials`` rows currently have
+        # ``name = formula`` from the legacy ``or material_name`` fallback
+        # — the same pattern. The previous ``not (A and B)`` check
+        # (= ``not A or not B``) would have silently dropped all of them.
+        # Now restricted to both-None, with explicit ``is None`` so empty
+        # strings are still accepted (extractor schema-drift guard).
+        if item.material_name is None and item.composition is None:
+            logger.warning(
+                "Skipping extraction item with no material identity: "
+                "material_name=%r composition=%r "
+                "(NFM-3919 — extractor schema-drift guard)",
+                item.material_name,
+                item.composition,
+            )
+            skipped_unknown_materials += 1
+            continue
 
         # --- DataSource (find or create) ---
         if s_key not in source_map:
@@ -594,21 +729,59 @@ async def map_and_persist(
                     source_map[s_key] = source
                     created_sources += 1
             else:
-                source = DataSource(
-                    title=title,
-                    source_type="other",
-                )
-                db.add(source)
-                await db.flush()
-                source_map[s_key] = source
-                created_sources += 1
+                # NFM-4088 — write-path guard for the DOI-empty branch.
+                #
+                # Root cause: prior runs copied a previous source's
+                # primary-key UUID into the new row's ``title`` field
+                # when extraction emitted no real reference.  This block:
+                #
+                #   1. Refuses INSERT when ``title`` matches the canonical
+                #      36-char UUID pattern (defence-in-depth: the regex
+                #      guards against re-introducing the regression that
+                #      migration 070 just cleaned up).
+                #   2. Dedups by exact ``title`` (handles the placeholder
+                #      reuse case: ``"Unattributed source (no DOI)"``
+                #      resolves to a single canonical row across reruns).
+                #   3. Falls back to ``file_hash`` / ``content_md`` matching
+                #      when the title-based lookup misses, matching the
+                #      NFM-1486 PDF upload pipeline's identity model.
+                #   4. Inserts a fresh row only when all 3 lookups miss.
+                #
+                # Behaviour on UUID title (AC-4): raise ``ValueError`` so
+                # the caller's transaction aborts and the upstream batch
+                # is dropped — the alternative (silent substitute) would
+                # paper over a logic bug in the extraction pipeline.
+                _reject_uuid_title(title)
+
+                existing = await _find_source_by_title(db, title)
+                if existing is None:
+                    existing = await _find_source_by_content_md_prefix(
+                        db, item.source_file
+                    )
+
+                if existing:
+                    source_map[s_key] = existing
+                    reused_entities += 1
+                else:
+                    source = DataSource(
+                        title=title,
+                        source_type="other",
+                    )
+                    db.add(source)
+                    await db.flush()
+                    source_map[s_key] = source
+                    created_sources += 1
 
         source = source_map[s_key]
 
         # --- Material (find or create) ---
+        # NFM-3919: the top-of-loop guard ensures both ``item.material_name``
+        # and ``item.composition`` are truthy here, so we no longer fall back
+        # to ``"Unknown Material"`` — that fallback was the root cause of the
+        # pollution where every heuristic run inserted a fresh row.
         if m_key not in material_map:
-            material_name = item.material_name or "Unknown Material"
-            formula = item.composition or item.material_name
+            material_name = item.material_name
+            formula = item.composition
 
             existing_mat = await _find_material_by_formula(db, formula)
             if existing_mat:
@@ -631,13 +804,17 @@ async def map_and_persist(
         if d_key not in dataset_map:
             dataset_title = f"{material.name} - {source.title}"
             existing_dataset = (
-                await db.execute(
-                    select(Dataset).where(
-                        Dataset.material_id == material.id,
-                        Dataset.source_id == source.id,
+                (
+                    await db.execute(
+                        select(Dataset).where(
+                            Dataset.material_id == material.id,
+                            Dataset.source_id == source.id,
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if existing_dataset is not None:
                 # Cross-request hit: same source+material already has a
                 # dataset.  Reuse it so the 5-tuple dedup keys line up.
@@ -668,6 +845,22 @@ async def map_and_persist(
                 "Skipping unknown property: category=%s name=%s",
                 item.property_category,
                 item.property,
+            )
+            # NFM-4013 / Path (a): record the drop with enough context for
+            # the harness to bucket by (category_slug, raw_category,
+            # property_name) and to fold sample values + source provenance
+            # into the NFM-4008 classification table.
+            category_slug = _normalize_category_slug(item.property_category)
+            skipped_unknown_details.append(
+                {
+                    "category_slug": category_slug,
+                    "raw_category": item.property_category,
+                    "property_name": item.property,
+                    "sample_value": item.value,
+                    "source_doi": item.source_doi,
+                    "source_file": item.source_file,
+                    "material_name": item.material_name,
+                }
             )
             skipped_unknown_properties += 1
             continue
@@ -764,7 +957,9 @@ async def map_and_persist(
         reused_entities=reused_entities,
         skipped_duplicate_measurements=skipped_duplicate_measurements,
         skipped_unknown_properties=skipped_unknown_properties,
+        skipped_unknown_materials=skipped_unknown_materials,
         validation_errors=validation_error_count,
+        skipped_unknown_details=skipped_unknown_details,
     )
 
 
@@ -782,15 +977,95 @@ async def _find_source_by_doi(
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+def _reject_uuid_title(title: str) -> None:
+    """Raise ``ValueError`` when ``title`` is a 36-char UUID string.
+
+    NFM-4088 AC-4 (write-path guard).
+
+    The pre-fix DOI-empty branch (lines 709-717) silently inserted a
+    row whose ``title`` was the primary-key UUID of another source.
+    Migration 070 cleans the existing rows; this guard prevents the
+    regression from re-emerging.  We refuse the INSERT rather than
+    silently substitute because the only way the title can be a UUID
+    is a logic bug in the upstream extraction chain — substituting
+    a different label would mask that bug.
+    """
+    if _UUID_TITLE_PATTERN.match(title):
+        raise ValueError(
+            f"Refusing to create DataSource with UUID-pattern title={title!r}. "
+            "The upstream extraction chain supplied a UUID instead of a "
+            "literature reference; investigate the extractor before retrying."
+        )
+
+
+async def _find_source_by_title(
+    db: AsyncSession,
+    title: str,
+) -> DataSource | None:
+    """Find an existing DataSource by exact ``title`` equality.
+
+    NFM-4088 AC-3 (write-path guard fallback 1).
+
+    Returns at most one row; the existing ``data_sources`` table has
+    no UNIQUE constraint on ``title`` (only ``doi``) so two rows may
+    legitimately share a title in legacy states.  We use ``.first()``
+    rather than ``scalar_one_or_none()`` to avoid raising
+    ``MultipleResultsFound`` (mirrors the NFM-3919 dedup-by-formula
+    pattern).
+    """
+    if not title:
+        return None
+    stmt = select(DataSource).where(DataSource.title == title).limit(1)
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _find_source_by_content_md_prefix(
+    db: AsyncSession,
+    source_file: str | None,
+) -> DataSource | None:
+    """Find an existing DataSource by ``source_file`` substring match.
+
+    NFM-4088 AC-3 (write-path guard fallback 2).
+
+    When ``source_file`` is a Markdown path the NFM-1486 PDF pipeline
+    uploaded, the corresponding ``content_md`` column holds the parsed
+    text and was uploaded under the same file.  We match by
+    ``LIKE '%<basename>%'`` — exact equality is unreliable across
+    absolute-vs-relative paths.
+
+    Returns ``None`` when ``source_file`` is absent or no row matches.
+    """
+    if not source_file:
+        return None
+    basename = source_file.rstrip("/").split("/")[-1]
+    if not basename or len(basename) < 4:
+        return None
+    stmt = (
+        select(DataSource)
+        .where(DataSource.content_md.is_not(None))
+        .where(DataSource.content_md.like(f"%{basename}%"))
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
 async def _find_material_by_formula(
     db: AsyncSession,
     formula: str | None,
 ) -> Material | None:
-    """Find existing Material by formula."""
+    """Find existing Material by formula.
+
+    NFM-3919: tolerates duplicate ``formula`` rows that exist in the
+    database from prior batches. ``scalar_one_or_none()`` would raise
+    ``MultipleResultsFound`` and fail the entire ingest batch the moment
+    a second row with the same formula was inserted (e.g. legacy
+    ``Unknown Material`` pollution). We instead use ``.limit(1)`` plus
+    ``scalars().first()`` so the lookup returns one row deterministically.
+    """
     if not formula:
         return None
-    stmt = select(Material).where(Material.formula == formula)
-    return (await db.execute(stmt)).scalar_one_or_none()
+    stmt = select(Material).where(Material.formula == formula).limit(1)
+    return (await db.execute(stmt)).scalars().first()
 
 
 def _parse_float(value: str) -> float | None:

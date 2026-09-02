@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "_comment": [
+    "NFM-4048 AC-2: snapshot of the PRODUCTION Owen2023 Material-label corpus.",
+    "This file is an OBSERVATION, not an expectation — it records exactly which",
+    "labels prod `kg_nodes` holds for the Owen2023 source. The label -> ",
+    "element_system expectations live in `_OWEN2023_LABELS` in",
+    "apps/api/tests/test_kg_to_staging_bridge.py; the audit-pin test cross-checks",
+    "this snapshot against that pin table, so a corpus that grows past the pin",
+    "fails the suite instead of silently drifting (the W1/W2 gap NFM-4037 QA found).",
+    "Regenerate with: scripts/nfm-4048-refresh-owen2023-label-snapshot.py"
+  ],
+  "source_id": "9320cb50-eb65-4178-8d2e-c56aeb848b21",
+  "source_name": "Owen2023",
+  "node_type": "Material",
+  "query": "SELECT DISTINCT label FROM kg_nodes WHERE source_id = '9320cb50-eb65-4178-8d2e-c56aeb848b21' AND node_type = 'Material'",
+  "captured_at": "2026-09-01",
+  "captured_from": "nucpot-prod-db (pgvector/pgvector:pg16), database nfm_db",
+  "captured_for_issue": "NFM-4048",
+  "newest_node_created_at": "2026-09-01T08:06:07.944314+00:00",
+  "label_count": 17,
+  "labels": [
+    "Cr-doped UO2",
+    "Cr-doped UO2 (amorphous)",
+    "Cr-doped amorphous UO2",
+    "Cr2O3",
+    "UO2 (amorphous)",
+    "UO2-10at.%Cr",
+    "UO2-20at.%Cr",
+    "UO2-30at.%Cr",
+    "UO2-40at.%Cr",
+    "UO2-50at.%Cr",
+    "amorphous UO2",
+    "amorphous UO2 (undoped and Cr-doped)",
+    "amorphous UO2-10at.%Cr",
+    "amorphous UO2-20at.%Cr",
+    "amorphous UO2-30at.%Cr",
+    "amorphous UO2-40at.%Cr",
+    "amorphous UO2-50at.%Cr"
+  ]
+}

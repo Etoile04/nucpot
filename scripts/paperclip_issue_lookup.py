@@ -65,6 +65,7 @@ Usage
 Never conclude "the issue was deleted" from anything other than ``NotFound``.
 """
 
+# ruff: noqa: N818, UP007
 from __future__ import annotations
 
 import os
@@ -76,13 +77,13 @@ from typing import Any, Union
 import requests
 
 __all__ = [
-    "Ok",
+    "ApiError",
     "AuthError",
+    "LookupResult",
     "NotFound",
+    "Ok",
     "WrongPath",
     "WrongPathError",
-    "ApiError",
-    "LookupResult",
     "lookup_issue",
     "lookup_issues",
 ]
@@ -260,9 +261,7 @@ def _rows_from(response: requests.Response) -> list[dict] | ApiError:
     )
 
 
-def _paginate(
-    params: dict[str, Any], max_pages: int
-) -> tuple[list[dict], int, bool] | ApiError:
+def _paginate(params: dict[str, Any], max_pages: int) -> tuple[list[dict], int, bool] | ApiError:
     """Walk `offset` in PAGE_SIZE chunks until a short read or the page cap."""
     key = _api_key()
     url = _validated_url()
@@ -404,9 +403,7 @@ def lookup_issue(identifier: str, max_pages: int = DEFAULT_MAX_PAGES) -> LookupR
                 expanded = _fetch_expanded_issue(row_uuid)
                 if isinstance(expanded, ApiError):
                     # Fall back to the collection row if expanded fetch fails.
-                    return Ok(
-                        issues=[row], pages_consumed=pages, truncated=truncated
-                    )
+                    return Ok(issues=[row], pages_consumed=pages, truncated=truncated)
                 return Ok(issues=[expanded], pages_consumed=pages, truncated=truncated)
             return Ok(issues=[row], pages_consumed=pages, truncated=truncated)
 

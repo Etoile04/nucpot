@@ -21,6 +21,8 @@ refuses to perform it — so a regression that moved the guards to after the
 request would fail loudly rather than silently pass.
 """
 
+# ruff: noqa: B904
+
 from __future__ import annotations
 
 import os
@@ -30,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import paperclip_issue_lookup as plu  # noqa: E402
+import paperclip_issue_lookup as plu
 
 LIVE_IDENTIFIER = "NFM-1909"
 ABSENT_IDENTIFIER = "NFM-DOES-NOT-EXIST-9999"
@@ -49,9 +51,7 @@ class SpyRequests:
 
     def get(self, *args, **kwargs):
         self.calls.append((args, kwargs))
-        raise AssertionError(
-            "helper opened an HTTP connection before its pre-flight guards ran"
-        )
+        raise AssertionError("helper opened an HTTP connection before its pre-flight guards ran")
 
 
 class Guard:
@@ -114,10 +114,7 @@ def case_3_not_found() -> str:
         raise AssertionError(f"NotFound not distinct from errors: {result!r}")
     if not isinstance(result, plu.NotFound):
         raise AssertionError(f"expected NotFound, got {result!r}")
-    return (
-        f"NotFound(identifier={result.identifier!r}, "
-        f"http_status={result.http_status})"
-    )
+    return f"NotFound(identifier={result.identifier!r}, http_status={result.http_status})"
 
 
 def case_4_live_issue() -> str:
@@ -128,9 +125,7 @@ def case_4_live_issue() -> str:
     if len(result.issues) != 1:
         raise AssertionError(f"expected exactly 1 issue, got {len(result.issues)}")
     if result.pages_consumed != 1:
-        raise AssertionError(
-            f"expected pages_consumed == 1, got {result.pages_consumed}"
-        )
+        raise AssertionError(f"expected pages_consumed == 1, got {result.pages_consumed}")
 
     issue = result.issues[0]
     if issue.get("identifier") != LIVE_IDENTIFIER:
@@ -158,14 +153,9 @@ def case_5_blocked_issue_a() -> str:
             f"keys present: {[k for k in issue if k.startswith('block')]}"
         )
     if not isinstance(blocked_by, list) or len(blocked_by) == 0:
-        raise AssertionError(
-            f"blockedBy is empty list/missing — trap-3 not fixed: {blocked_by!r}"
-        )
+        raise AssertionError(f"blockedBy is empty list/missing — trap-3 not fixed: {blocked_by!r}")
 
-    blockers = [
-        b.get("identifier", b.get("id", "?"))
-        for b in blocked_by
-    ]
+    blockers = [b.get("identifier", b.get("id", "?")) for b in blocked_by]
     return f"blockedBy present: {blockers}"
 
 
@@ -184,14 +174,9 @@ def case_6_blocked_issue_b() -> str:
             f"blockedBy is key-absent — trap-3 not fixed for {BLOCKED_IDENTIFIER_B}"
         )
     if not isinstance(blocked_by, list) or len(blocked_by) == 0:
-        raise AssertionError(
-            f"blockedBy empty/missing for {BLOCKED_IDENTIFIER_B}: {blocked_by!r}"
-        )
+        raise AssertionError(f"blockedBy empty/missing for {BLOCKED_IDENTIFIER_B}: {blocked_by!r}")
 
-    blockers = [
-        b.get("identifier", b.get("id", "?"))
-        for b in blocked_by
-    ]
+    blockers = [b.get("identifier", b.get("id", "?")) for b in blocked_by]
     return f"blockedBy present ({len(blockers)} blockers): {blockers}"
 
 
@@ -221,7 +206,7 @@ def main() -> int:
     for number, description, run in CASES:
         try:
             detail = run()
-        except Exception as err:  # noqa: BLE001 — the gate reports, never crashes
+        except Exception as err:
             failures += 1
             print(f"FAIL  case {number}: {description}")
             print(f"      {type(err).__name__}: {err}")

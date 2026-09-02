@@ -28,10 +28,10 @@ from scripts.okr.coverage import (
     parse_cobertura,
 )
 
-
 # ---------------------------------------------------------------------------
 # Synthetic Cobertura fixtures
 # ---------------------------------------------------------------------------
+
 
 def _cobertura(source: str, packages: str) -> str:
     """Wrap package XML fragments in a minimal Cobertura document."""

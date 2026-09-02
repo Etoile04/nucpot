@@ -61,6 +61,7 @@ def write_jsonl(path: Path, events: list[dict]) -> Path:
 # load_events
 # ---------------------------------------------------------------------------
 
+
 class TestLoadEvents:
     def test_missing_file_yields_empty_list(self, tmp_path: Path) -> None:
         assert load_events(tmp_path / "nope.jsonl") == []
@@ -99,6 +100,7 @@ class TestLoadEvents:
 # compute_value
 # ---------------------------------------------------------------------------
 
+
 class TestComputeValue:
     def test_no_events_is_none_not_one(self) -> None:
         """The whole point of the KR: absence of data must not read as success."""
@@ -130,6 +132,7 @@ class TestComputeValue:
 # ---------------------------------------------------------------------------
 # filter_window
 # ---------------------------------------------------------------------------
+
 
 class TestFilterWindow:
     def test_unbounded_window_keeps_everything(self) -> None:
@@ -166,6 +169,7 @@ class TestFilterWindow:
 # ---------------------------------------------------------------------------
 # filter_environment (C6.1.4)
 # ---------------------------------------------------------------------------
+
 
 class TestFilterEnvironment:
     """The prod collector (C6.1.2) appends into the same JSONL as the staging
@@ -208,6 +212,7 @@ class TestFilterEnvironment:
 # ---------------------------------------------------------------------------
 # build_report
 # ---------------------------------------------------------------------------
+
 
 class TestBuildReport:
     def test_shape_is_exactly_the_five_spec_keys(self, tmp_path: Path) -> None:
@@ -344,12 +349,8 @@ class TestResolveProdPathFallback:
 
     _SYNTHETIC_HOME = Path("/opt/synthetic/nfmd-home")
 
-    def test_fallback_contains_no_lwj04_literal(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
-        )
+    def test_fallback_contains_no_lwj04_literal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME))
         monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
 
         resolved = _resolve_prod_path(None)
@@ -362,9 +363,7 @@ class TestResolveProdPathFallback:
     def test_default_prod_path_contains_no_lwj04_literal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
-        )
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME))
 
         assert "lwj04" not in str(_default_prod_path())
 
@@ -374,13 +373,12 @@ class TestResolveProdPathFallback:
         """The literal ``/Users/<name>`` and ``/home/<name>`` forms must
         never appear in the resolved fallback. Catches both the macOS
         and Linux conventions."""
-        monkeypatch.setattr(
-            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
-        )
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME))
         monkeypatch.delenv("NFMD_PROD_EVENTS_PATH", raising=False)
 
         resolved_str = str(_resolve_prod_path(None))
         import re as _re
+
         offenders = _re.findall(r"(?:/Users/|/home/)[A-Za-z0-9._-]+/", resolved_str)
         assert not offenders, (
             f"prod-path fallback {resolved_str!r} contains a hardcoded "
@@ -399,23 +397,15 @@ class TestResolveProdPathFallback:
         assert _resolve_prod_path(None) == expected
         assert _default_prod_path() == expected
 
-    def test_env_var_wins_over_fallback(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
-        )
+    def test_env_var_wins_over_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME))
         monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/custom-prod.jsonl")
 
         # Env var wins; the synthetic-home / fallback is never reached.
         assert _resolve_prod_path(None) == Path("/opt/custom-prod.jsonl")
 
-    def test_explicit_arg_wins_over_env_var(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME)
-        )
+    def test_explicit_arg_wins_over_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: self._SYNTHETIC_HOME))
         monkeypatch.setenv("NFMD_PROD_EVENTS_PATH", "/opt/env-prod.jsonl")
 
         assert _resolve_prod_path("/opt/arg-prod.jsonl") == Path("/opt/arg-prod.jsonl")
@@ -424,6 +414,7 @@ class TestResolveProdPathFallback:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 class TestMain:
     def test_prints_json_and_exits_zero(self, tmp_path: Path, capsys) -> None:
@@ -454,6 +445,7 @@ class TestMain:
 # CLI --environment (C6.1.4)
 # ---------------------------------------------------------------------------
 
+
 def mixed_jsonl(tmp_path: Path) -> Path:
     """3 staging + 2 production rows — the C6.1 mixed-stream shape."""
     return write_jsonl(
@@ -473,9 +465,7 @@ class TestMainEnvironment:
         assert main(["--path", str(path), "--environment", "production"]) == 0
         assert json.loads(capsys.readouterr().out)["n"] == 2
 
-    def test_omitting_the_flag_is_all_not_explicit_staging(
-        self, tmp_path: Path, capsys
-    ) -> None:
+    def test_omitting_the_flag_is_all_not_explicit_staging(self, tmp_path: Path, capsys) -> None:
         """The v1 baseline regression guard, updated for the C6.1 contract.
         Default is ``all`` (whole JSONL); explicit ``--environment staging``
         filters to one series. The two outputs differ in ``n`` — that's the
