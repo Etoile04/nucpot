@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import case, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,6 +86,23 @@ _UUID_TITLE_PATTERN: re.Pattern[str] = re.compile(
 #: dedup hit on file_hash or content_md first.
 _BORING_PLACEHOLDER_TITLES: frozenset[str] = frozenset(
     {"Unknown Source", "Unattributed source (no DOI)"}
+)
+
+
+#: NFM-4105 — canonical sentinel title for "truly unattributed" extractions
+#: (no DOI, no reference, no source_file).  Distinct from the legacy
+#: ``"Unattributed source (no DOI)"`` placeholder so a migration can later
+#: quarantine / retire the legacy rows without touching the new sentinel.
+#: All new "no provenance at all" extractions converge on a single row
+#: via ``_get_or_create_unattributed_sentinel`` (advisory-locked).
+_UNATTRIBUTED_SENTINEL_TITLE: str = "Unattributed (no source provenance)"
+
+#: NFM-4105 — Postgres advisory-lock key for the sentinel-source
+#: get-or-create path.  Computed once at import time from a stable
+#: module-level hash so all workers agree on the same lock.
+_UNATTRIBUTED_SENTINEL_LOCK_KEY: int = int(
+    hashlib.sha256(b"nfm_db.extraction_to_db_mapper.unattributed_sentinel").hexdigest()[:8],
+    16,
 )
 
 
@@ -753,24 +770,51 @@ async def map_and_persist(
                 # paper over a logic bug in the extraction pipeline.
                 _reject_uuid_title(title)
 
-                existing = await _find_source_by_title(db, title)
-                if existing is None:
-                    existing = await _find_source_by_content_md_prefix(
-                        db, item.source_file
+                # NFM-4105 AC-1 — convergence for truly unattributed rows.
+                #
+                # The 58+ staging / 12 prod rows observed in the live
+                # provenance graph (NFM-4105 AC-1) all share
+                # ``doi IS NULL AND reference IS NULL AND source_file IS NULL``.
+                # The prior title-based dedup could only collapse rows
+                # within a single mapper invocation; concurrent extractions
+                # in separate transactions each saw the lookup miss and
+                # inserted a fresh placeholder row, multiplying the count.
+                #
+                # When the item carries ZERO provenance we route through
+                # ``_get_or_create_unattributed_sentinel`` (advisory-locked
+                # SELECT-then-INSERT) so every concurrent caller converges
+                # on one canonical row instead of growing the pile.  The
+                # sentinel row is mapped into ``source_map`` so the rest of
+                # the loop body (Material / Dataset / Measurement) proceeds
+                # against it exactly like any other source.
+                if not _has_any_provenance(item):
+                    sentinel, sentinel_created_now = (
+                        await _get_or_create_unattributed_sentinel(db)
                     )
-
-                if existing:
-                    source_map[s_key] = existing
-                    reused_entities += 1
+                    source_map[s_key] = sentinel
+                    if sentinel_created_now:
+                        created_sources += 1
+                    else:
+                        reused_entities += 1
                 else:
-                    source = DataSource(
-                        title=title,
-                        source_type="other",
-                    )
-                    db.add(source)
-                    await db.flush()
-                    source_map[s_key] = source
-                    created_sources += 1
+                    existing = await _find_source_by_title(db, title)
+                    if existing is None:
+                        existing = await _find_source_by_content_md_prefix(
+                            db, item.source_file
+                        )
+
+                    if existing:
+                        source_map[s_key] = existing
+                        reused_entities += 1
+                    else:
+                        source = DataSource(
+                            title=title,
+                            source_type="other",
+                        )
+                        db.add(source)
+                        await db.flush()
+                        source_map[s_key] = source
+                        created_sources += 1
 
         source = source_map[s_key]
 
@@ -1047,6 +1091,119 @@ async def _find_source_by_content_md_prefix(
         .limit(1)
     )
     return (await db.execute(stmt)).scalars().first()
+
+
+async def _get_or_create_unattributed_sentinel(
+    db: AsyncSession,
+) -> tuple[DataSource, bool]:
+    """Return the canonical ``Unattributed (no source provenance)`` row.
+
+    NFM-4105 AC-1 (stop-the-bleed).
+
+    Convergence guarantee: every concurrent extraction that has NO
+    provenance at all (no DOI, no ``reference``, no ``source_file``,
+    no ``file_hash``, no ``content_md``) reuses a single row instead
+    of inserting a fresh placeholder row per call.
+
+    Returns ``(source, created_now)`` where ``created_now`` is True iff
+    this call inserted the sentinel row in the current transaction.
+    Callers use the bool to update ``created_sources`` / ``reused_entities``
+    counters accurately.
+
+    Mechanism:
+      1. Acquire ``pg_advisory_xact_lock`` (transaction-scoped).  Two
+         concurrent mappers serialize on this lock so the
+         SELECT-then-INSERT pair becomes atomic.
+      2. ``SELECT … WHERE title = sentinel LIMIT 1``.  If a row exists,
+         return it with ``created_now=False``.
+      3. Otherwise INSERT one row with the canonical sentinel title and
+         ``source_type='other'``.  Return it with ``created_now=True``.
+
+    The advisory lock is released automatically at COMMIT/ROLLBACK,
+    so a crashed worker cannot leave the lock held.
+
+    Why not a UNIQUE constraint: ``data_sources`` has only
+    ``uq_data_sources_doi`` (NFM-1486); adding a partial unique index
+    on ``title`` would be a schema change outside the AC-1 scope.
+    The advisory lock gives the same convergence guarantee without
+    a migration.
+
+    Legacy-placeholder reuse: if a row already exists with one of the
+    legacy placeholder titles (``"Unattributed source (no DOI)"`` /
+    ``"Unknown Source"``) the sentinel helper reuses it instead of
+    creating a fresh row.  This keeps environments with legacy
+    pollution on a single canonical row without waiting for the
+    follow-up migration 070+ to quarantine the legacy rows.
+
+    SQLite fallback: the test suite (and any SQLite-backed dev DB)
+    does not implement ``pg_advisory_xact_lock``.  SQLite serializes
+    writes at the connection level so the SELECT-then-INSERT race
+    cannot occur — we skip the advisory lock entirely on SQLite and
+    rely on the per-session visibility of the just-flushed row.
+    """
+    bind = db.get_bind()
+    dialect_name = bind.dialect.name if bind is not None else ""
+    if dialect_name != "sqlite":
+        # 1. Serialize concurrent sentinel creation across sessions.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:k)"),
+            {"k": _UNATTRIBUTED_SENTINEL_LOCK_KEY},
+        )
+    # 2. Look up an existing canonical row — prefer the new sentinel
+    #    title, fall back to legacy placeholder titles so already-
+    #    polluted environments converge on a single reused row.
+    lookup_titles = (
+        _UNATTRIBUTED_SENTINEL_TITLE,
+        *_BORING_PLACEHOLDER_TITLES,
+    )
+    existing = (
+        await db.execute(
+            select(DataSource)
+            .where(DataSource.title.in_(lookup_titles))
+            .order_by(
+                # New sentinel title ranks highest (1), legacy placeholders
+                # second (0).  CASE returns an int SQL expression that
+                # ``order_by(...).desc()`` can serialize.
+                case(
+                    (DataSource.title == _UNATTRIBUTED_SENTINEL_TITLE, 1),
+                    else_=0,
+                ).desc()
+            )
+            .limit(1)
+        )
+    ).scalars().first()
+    if existing is not None:
+        return existing, False
+    # 3. Create the canonical sentinel row.
+    source = DataSource(
+        title=_UNATTRIBUTED_SENTINEL_TITLE,
+        source_type="other",
+    )
+    db.add(source)
+    await db.flush()
+    logger.info(
+        "Created Unattributed (no source provenance) sentinel DataSource "
+        "(id=%s) — all subsequent DOI-empty / no-provenance extractions "
+        "will reuse this row (NFM-4105 AC-1).",
+        source.id,
+    )
+    return source, True
+
+
+def _has_any_provenance(item: ExtractedProperty) -> bool:
+    """True when the extracted item carries ANY identifying provenance.
+
+    NFM-4105 AC-1 sub-classifier.
+
+    Used to route the DOI-empty branch to one of two paths:
+      * has provenance  → existing title / file_hash / content_md dedup
+      * no provenance   → sentinel-row reuse (single canonical row)
+    """
+    return bool(
+        item.source_doi
+        or item.reference
+        or item.source_file
+    )
 
 
 async def _find_material_by_formula(
