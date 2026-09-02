@@ -1,0 +1,65 @@
+# =============================================================================
+# Latched-error watchdog cron (NFM-3995)
+# =============================================================================
+# Scans every claude_local agent every 5 minutes and emits a board-level
+# [SRE-LATCHED] issue for any agent whose status === "error" and whose
+# lastHeartbeatAt is older than 10 minutes. See
+# docs/runbooks/latched-error-recovery.md for the recovery paths.
+#
+# Schedule: every 5 minutes. The heartbeat grace window in the watchdog is
+# 10 minutes, so a 5-minute cadence means a latched agent is detected within
+# one watchdog cycle of crossing the threshold.
+#
+# >>>>> INSTALLATION REQUIRED <<<<<
+#
+# WATCHDOG_REPO_DIR / WATCHDOG_PYTHON below are dev-machine defaults.
+# Edit before `sudo install`-ing this file into /etc/cron.d/.
+#
+# Quick reference values for a typical Linux host:
+#   WATCHDOG_REPO_DIR   -> /srv/nucpot                  (path to checkout)
+#   WATCHDOG_PYTHON     -> /srv/nucpot/.venv/bin/python
+#   WATCHDOG_ENV_FILE   -> /etc/nucpot/paperclip.env    (must export
+#                           PAPERCLIP_API_URL, PAPERCLIP_API_KEY,
+#                           PAPERCLIP_COMPANY_ID)
+#   cron-line script    -> /srv/nucpot/scripts/latched_error_watchdog.py
+#
+# Quick reference values for the macOS dev machine (NFMD):
+#   WATCHDOG_REPO_DIR   -> /Users/lwj04/Projects/nucpot
+#   WATCHDOG_PYTHON     -> /opt/homebrew/bin/python3.14
+#   WATCHDOG_ENV_FILE   -> /Users/lwj04/.paperclip/instances/default/agent.env
+# =============================================================================
+#
+# Full install paths:
+#   Linux:
+#     sudo install -o root -g root -m 0644 \
+#         scripts/cron/latched-error-watchdog.d/nucpot-latched-error-watchdog \
+#         /etc/cron.d/nucpot-latched-error-watchdog
+#     sudo systemctl restart cron
+#
+#   macOS (per-user launchd plist recommended over crontab — survives reboots
+#   and gets proper logging):
+#     # See docs/runbooks/latched-error-recovery.md §5 for the plist.
+#
+# Verify after install:
+#   python3 scripts/latched_error_watchdog.py --dry-run --verbose
+#   echo $?  # 0 (clean) or 2 (latched detected, dry-run only)
+# =============================================================================
+
+# Environment
+WATCHDOG_REPO_DIR=/Users/lwj04/Projects/nucpot
+WATCHDOG_PYTHON=/opt/homebrew/bin/python3.14
+WATCHDOG_ENV_FILE=/Users/lwj04/.paperclip/instances/default/agent.env
+WATCHDOG_LOG_DIR=/var/log/nucpot/latched-error-watchdog
+WATCHDOG_THRESHOLD_MINUTES=10
+WATCHDOG_DEDUP_HOURS=6
+
+# Every 5 minutes — pick a minute offset (e.g. :02, :07) so multiple Paperclip
+# company watchdogs do not pile up at exactly :00/:05/:10.
+*/5 * * * * root \
+    set -a && . "$WATCHDOG_ENV_FILE" 2>/dev/null; set +a && \
+    mkdir -p "$WATCHDOG_LOG_DIR" && \
+    cd "$WATCHDOG_REPO_DIR" && \
+    "$WATCHDOG_PYTHON" scripts/latched_error_watchdog.py \
+        --threshold-minutes "$WATCHDOG_THRESHOLD_MINUTES" \
+        --dedup-hours "$WATCHDOG_DEDUP_HOURS" \
+        >> "$WATCHDOG_LOG_DIR/watchdog.log" 2>&1
