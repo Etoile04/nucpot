@@ -206,7 +206,7 @@ export function GapCandidateDrawer({
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {/* Candidate Details */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             候选实体信息
           </Divider>
           <Descriptions column={2} size="small" style={{ marginTop: 8 }}>
@@ -227,7 +227,7 @@ export function GapCandidateDrawer({
 
         {/* Source Passage with Highlights */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             来源段落
           </Divider>
           <div
@@ -243,7 +243,7 @@ export function GapCandidateDrawer({
         {/* Suggested Properties */}
         {candidate.suggested_properties.length > 0 && (
           <div>
-            <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+            <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
               建议属性
             </Divider>
             <div className="mt-2 space-y-1">
@@ -265,7 +265,7 @@ export function GapCandidateDrawer({
 
         {/* Prior Decisions */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             历史决策
           </Divider>
           <div className="mt-2">

@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor
@@ -25,6 +26,7 @@ from nfm_db.schemas.property import (
     PropertyMeasurementDetailResponse,
     PropertyMeasurementResponse,
     PropertyMeasurementUpdate,
+    PropertyMeasurementWithAttributionResponse,
     PropertyStatsResponse,
 )
 from nfm_db.services.property_service import (
@@ -32,6 +34,7 @@ from nfm_db.services.property_service import (
     get_measurement,
     get_measurement_stats,
     list_measurements,
+    list_property_measurements_with_attribution,
     update_measurement,
 )
 
@@ -98,6 +101,53 @@ async def get_property_endpoint(
     if detail is None:
         raise HTTPException(status_code=404, detail="Property measurement not found")
     return ApiResponse(success=True, data=detail)
+
+
+# ---------------------------------------------------------------------------
+# NFM-4159 — ``GET /properties/{property_id}/measurements`` with attribution.
+# ``property_id`` here is a Material id (the spec calls it "property-id"
+# in §3.3 of the parent design but the route semantics are per-material —
+# same join chain as the existing ``/properties`` listing with
+# ``material_id`` filter).
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/properties/{property_id}/measurements",
+    response_model=ApiResponse[PaginatedResponse[PropertyMeasurementWithAttributionResponse]],
+    summary="按属性 ID 分页查询物性测量（含 §5.2 attribution 块）",
+    description=(
+        "返回分页的物性测量记录列表，每行携带 §5.2 LOCKED 合同 "
+        "``attribution`` 块（status / lostAt / siblingPlaceholderCount）。\n\n"
+        "Return a paginated list of measurements for the given material id, "
+        "with the §5.2 attribution block per row."
+    ),
+)
+async def list_property_measurements_with_attribution_endpoint(
+    property_id: UUID,
+    pagination: PaginationParams = Depends(PaginationParams),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[PaginatedResponse[PropertyMeasurementWithAttributionResponse]]:
+    """List measurements for a material with the §5.2 attribution block per row."""
+    # 404 when the material is missing — fail-fast vs returning an empty list.
+    from nfm_db.models import Material
+
+    mat = (
+        await db.execute(select(Material).where(Material.id == property_id))
+    ).scalar_one_or_none()
+    if mat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Property (material) {property_id} not found",
+        )
+
+    result = await list_property_measurements_with_attribution(
+        db,
+        material_id=property_id,
+        page=pagination.page,
+        per_page=pagination.per_page,
+    )
+    return ApiResponse(success=True, data=result)
 
 
 @router.post(

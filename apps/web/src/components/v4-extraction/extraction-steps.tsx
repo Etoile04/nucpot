@@ -15,7 +15,7 @@ import {
   LoadingOutlined,
   SafetyOutlined,
 } from "@ant-design/icons"
-import type { StepProps } from "antd"
+import type { StepsProps } from "antd"
 import type { JobStatus } from "@/lib/v4-extraction/types"
 import { JOB_STATUS_STEP_MAP } from "@/lib/v4-extraction/constants"
 
@@ -52,11 +52,11 @@ export default function ExtractionSteps({
 
   const currentStep = stepMap[status] ?? -1
 
-  const items: StepProps[] = EXTRACTION_STEPS.map((step, index) => {
+  const items: StepsProps["items"][number][] = EXTRACTION_STEPS.map((step, index) => {
     const isCurrent = index === currentStep
     const isPast = index < currentStep
 
-    let stepStatus: StepProps["status"] = "wait"
+    let stepStatus: StepItemShape["status"] = "wait"
     if (isPast) {
       stepStatus = "finish"
     }

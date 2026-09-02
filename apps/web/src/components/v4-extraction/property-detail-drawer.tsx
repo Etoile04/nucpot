@@ -50,7 +50,7 @@ export default function PropertyDetailDrawer({
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {/* Basic Info Section */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             基本信息 / Basic Info
           </Divider>
           <Descriptions column={2} size="small" style={{ marginTop: 8 }}>
@@ -100,7 +100,7 @@ export default function PropertyDetailDrawer({
 
         {/* Data Section */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             数据 / Data
           </Divider>
           <Descriptions column={1} size="small" style={{ marginTop: 8 }}>
@@ -120,7 +120,7 @@ export default function PropertyDetailDrawer({
 
         {/* Context Section */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             上下文 / Context
           </Divider>
           <div
@@ -140,7 +140,7 @@ export default function PropertyDetailDrawer({
 
         {/* Source Section */}
         <div>
-          <Divider orientation="left" plain style={{ margin: 0, fontSize: 13 }}>
+          <Divider orientation="start" plain style={{ margin: 0, fontSize: 13 }}>
             来源 / Source
           </Divider>
           <Descriptions column={1} size="small" style={{ marginTop: 8 }}>
