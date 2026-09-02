@@ -131,9 +131,15 @@ class Dataset(TimestampMixin, Base):
         ForeignKey("materials.id", ondelete="CASCADE"),
         index=True,
     )
-    source_id: Mapped[uuid.UUID] = mapped_column(
+    # NFM-4159 — source_id may be NULL on the recast cohort (datasets that
+    # survived migration 070's cascade with their FK nulled).  Allowed by
+    # the §5.1 server filter; the ORM keeps a CASCADE on delete for the
+    # non-null case so admin-side ``DELETE FROM data_sources WHERE id = ?``
+    # still propagates.
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("data_sources.id", ondelete="CASCADE"),
         index=True,
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
