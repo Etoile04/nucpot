@@ -141,6 +141,17 @@ services:
       # NFM-1489 §C: PDF/DOI uploads land here and the worker reads them
       # from the same path.  Distinct from the potentials / LightRAG volumes.
       - prod-uploads:/app/uploads
+      # NFM-4106: durable home for the prod-migration audit JSONL written by
+      # apps/api/scripts/check_prod_migration.py. The migration runs in an
+      # ephemeral `docker compose run --rm` container (scripts/prod_migrate.sh);
+      # without a mount the --rm destroys the audit row with the container and
+      # the runbook §6.3 grep target (/var/log/nfmd/prod-migrations.log) never
+      # exists on the host. Named volume, not a host bind: the macOS prod
+      # host's /var/log is root-owned and the CI deploy runs unprivileged.
+      # Preview/QA containers (docker-compose.preview.yml, stacked on this
+      # file) inherit the mount, so guard refusals append to the same trail.
+      # Read: docker exec nucpot-prod-api cat /var/log/nfmd/prod-migrations.log
+      - prod-migration-audit:/var/log/nfmd
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -377,6 +388,13 @@ volumes:
   # NFM-1489 §C: literature upload landing zone.  Owned by the api
   # service (writes) and shared read-only by the worker (parses).
   prod-uploads:
+  # NFM-4106: prod-migration audit log (see apps/api/scripts/
+  # check_prod_migration.py and docs/runbooks/prod-deploy.md §6.3).
+  # Fixed name (same pattern as prod-lightrag-data) so the preview
+  # overlay project (nucpot-prod-preview) resolves to the SAME physical
+  # volume — QA guard refusals and RE migration rows share one trail.
+  prod-migration-audit:
+    name: nucpot-prod-migration-audit
 
 networks:
   prod:

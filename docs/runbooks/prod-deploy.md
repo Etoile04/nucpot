@@ -235,11 +235,28 @@ Every invocation writes a single JSONL row to:
 /var/log/nfmd/prod-migrations.log
 ```
 
-(the path the runbook greps; bind-mounted by the RE in
-`docker-compose.prod.yml`). If that path is unwritable (e.g. local
-dev, QA preview), the row falls back to `/tmp/prod-migration-audit.log`
-and a `WARNING` line is written to stderr. The runbook grep target is
-the preferred path — a fallback row will NOT be visible there.
+inside the named volume `nucpot-prod-migration-audit`, mounted on the
+`api` service (and therefore on both the long-running
+`nucpot-prod-api` container and the ephemeral `docker compose run --rm`
+migration container, plus preview/QA containers via the
+`docker-compose.preview.yml` overlay). Read it with:
+
+```bash
+docker exec nucpot-prod-api cat /var/log/nfmd/prod-migrations.log
+# or, if the api container is down:
+docker run --rm -v nucpot-prod-migration-audit:/var/log/nfmd \
+  busybox cat /var/log/nfmd/prod-migrations.log
+```
+
+History note: before this volume existed (deploys up to and including
+`14e16f5e4`, 2026-09-02), the ephemeral migration container was
+destroyed by `--rm` along with its audit row; the only surviving copy
+of those rows is the `AUDIT {…}` stderr line each one mirrored into
+the GitHub Actions deploy-job log. If that path is unwritable (e.g.
+local dev without Docker), the row falls back to
+`/tmp/prod-migration-audit.log` and a `WARNING` line is written to
+stderr. The volume is the grep target — a fallback row will NOT be
+visible there.
 
 Row schema (every field except `ts` and `outcome` is optional in
 runbook queries):
