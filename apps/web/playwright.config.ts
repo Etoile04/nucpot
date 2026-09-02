@@ -22,9 +22,16 @@ const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
  * its live smoke run was failing; the underlying race + drawer-modal
  * fixture bug is fixed in NFM-3798, so we remove it from this list and
  * re-exercise the spec under live E2E on every merge to main.
+ *
+ * `data-loss-notice` was added here by NFM-4204 (2026-09-03): the spec
+ * asserts a DOM contract (`tr[data-attribution-status]`,
+ * `data-loss-notice-trigger`) that live prod cannot satisfy — the
+ * NEXT_PUBLIC_DATA_LOSS_NOTICE flag is default-OFF (NFM-4177 rollout)
+ * and prod has zero `lost` attribution rows. Remove from this list only
+ * when BOTH preconditions hold in prod.
  */
 const NFMD_SPEC_PATTERN =
-/(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review)\.spec\.ts$/
+/(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review|data-loss-notice)\.spec\.ts$/
 
 const baseURL =
   process.env.BASE_URL ||
