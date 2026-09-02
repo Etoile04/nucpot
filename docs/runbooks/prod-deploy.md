@@ -341,8 +341,11 @@ supported path is:
 | DDL rights            | **None** — no `CREATE` on database or schema     |
 
 A bare `docker exec nucpot-prod-api-preview alembic upgrade head`
-against `nucpot-prod-db` fails at the INSERT into `alembic_version`
-with `ERROR: permission denied for table alembic_version`, closing
+against `nucpot-prod-db` fails when alembic tries to stamp
+`alembic_version` (verified live 2026-09-03: the
+`UPDATE alembic_version SET version_num='080_...'` at the end of the
+run raises `ERROR: permission denied for table alembic_version`, and
+transactional DDL rolls the whole migration back), closing
 NFM-4106 acceptance criterion 1.
 
 ##### Creating the role
@@ -359,6 +362,11 @@ alembic path and the manual psql path read from that one file, so
 the two cannot drift.
 
 ##### Bootstrapping the role BEFORE the 070 embargo lifts
+
+> **Historical (2026-09-02):** the embargo has since been lifted —
+> prod applied 070–079 (NFM-4191 / PR #1117) and sits at
+> `079_restore_070_measurement_casualties`. The manual bootstrap below
+> is no longer required; the psql path remains valid disaster recovery.
 
 The 070 embargo keeps prod at alembic head `069_add_v050_f8_property_types`
 until NFM-4104 lifts it. During that window, the 073 migration
@@ -383,23 +391,53 @@ load-bearing guard rail.
 
 ##### Starting a preview container with `nfm_preview`
 
-The supported overlay is `docker-compose.preview.yml`. It declares
-the `nucpot-prod-api-preview` and `nucpot-prod-web-preview` services
-pointed at `nfm_preview`:
+The supported overlay is `docker-compose.preview.yml`. It overrides
+the `api` and `web` services into preview containers
+(`nucpot-prod-api-preview` / `nucpot-prod-web-preview`) that connect
+as `nfm_preview`:
 
 ```bash
 docker compose \
   -f docker-compose.prod.yml \
   -f docker-compose.preview.yml \
   --env-file docker/.env.prod \
-  up -d --no-deps \
-    --force-recreate nucpot-prod-api-preview nucpot-prod-web-preview
+  up -d --no-deps --force-recreate api web
 ```
+
+**`up` takes SERVICE names (`api`, `web`), not `container_name`
+values** — `nucpot-prod-api-preview` is the resulting container, not
+a compose service, and passing it to `up` errors out.
 
 `--no-deps` prevents compose from starting the prod-only LightRAG
 sidecar if it is not already running. The overlay does NOT define
 the `db` / `redis` / `lightrag` services — it inherits those from
 `docker-compose.prod.yml`.
+
+Overlay mechanics (NFM-4202), so nobody re-adds the old workarounds:
+
+- **Host ports.** The overlay `!override`s `ports`, so the preview
+  stack publishes ONLY `${PREVIEW_API_HOST_PORT:-8008}` (api) and
+  `${PREVIEW_WEB_HOST_PORT:-3030}` (web). Compose merges `ports` by
+  published-port key, so without the override the preview api ALSO
+  tries to bind prod's `${PROD_API_HOST_PORT:-8001}` and fails with
+  `Bind for 0.0.0.0:8001 failed: port is already allocated` while
+  the prod stack is up. Do NOT work around this by moving
+  `PROD_API_HOST_PORT` — that just moves prod off its port.
+- **Network.** The overlay attaches to the prod stack's bridge
+  network (`nucpot-prod_prod`) as an EXTERNAL network, so
+  `nucpot-prod-db` / `nucpot-prod-redis` resolve without a manual
+  `docker network connect`. Corollary: **the prod stack must be up**
+  (or at least its network must exist) before starting a preview
+  stack — compose will refuse with `network nucpot-prod_prod not
+  found` otherwise. The preview containers also claim the
+  `api` / `web` service aliases on that shared network; that is
+  dormant because every prod service pins the explicit
+  `nucpot-prod-*` container names in its env.
+- **Image.** `PROD_IMAGE_TAG` (shell env or `docker/.env.prod`)
+  selects the `nucpot-prod-api` / `nucpot-prod-web` image tag;
+  unset means `latest`, which is NOT guaranteed to exist for both
+  images — pin a deploy tag (what `docker inspect nucpot-prod-api
+  --format '{{.Config.Image}}'` shows) when in doubt.
 
 ##### Rotating the password
 
@@ -425,7 +463,9 @@ docker exec nucpot-prod-db psql -U nfm -d nfm_db -c \
 # 2. Confirm nfm_preview can read but not write alembic_version.
 docker exec nucpot-prod-db psql -U nfm_preview -d nfm_db -c \
   "SELECT version_num FROM alembic_version;"
-# Expect: 069_add_v050_f8_property_types (current prod head)
+# Expect: prod's current head — 079_restore_070_measurement_casualties
+# as of 2026-09-03 (the embargo lifted 2026-09-02, NFM-4191); must
+# equal what the nfm-role query returns
 
 docker exec nucpot-prod-db psql -U nfm_preview -d nfm_db -c \
   "INSERT INTO alembic_version (version_num) VALUES ('070_d2_dedup_bad_data_sources');"
@@ -435,11 +475,15 @@ docker exec nucpot-prod-db psql -U nfm_preview -d nfm_db -c \
 #    upgrade head must fail, and prod's alembic_version must be
 #    unchanged afterwards.
 docker exec nucpot-prod-api-preview alembic upgrade head
-# Expect: permission-denied error (no stamp)
+# Expect: permission-denied error (no stamp). NOTE: the preview
+# image must contain at least one migration NEWER than the DB's
+# current version, otherwise nothing is pending and this exits 0
+# as a no-op (hit live 2026-09-03 with an image whose head matched
+# prod). Pin PROD_IMAGE_TAG to a post-head build for this test.
 
 docker exec nucpot-prod-db psql -U nfm -d nfm_db -c \
   "SELECT version_num FROM alembic_version;"
-# Expect: still 069_add_v050_f8_property_types
+# Expect: unchanged — the same version as the pre-attempt query
 ```
 
 For read-only smoke tests against prod, use the staging API image
