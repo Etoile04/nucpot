@@ -1,11 +1,11 @@
-"""D2 dedup — collapse UUID-titled / placeholder ``data_sources`` into canonical rows.
+"""D2 dedup — collapse UUID-titled ``data_sources`` rows into canonical rows.
 
 Revision ID: 070_d2_dedup_bad_data_sources
 Revises: 069_add_v050_f8_property_types
 Create Date: 2026-09-02
 
-NFM-4088 — D2 data-side persistent fix (NFM-4084 D2 决策落地方)
-================================================================
+NFM-4088 / NFM-4130 — D2 data-side persistent fix (NFM-4084 D2 决策落地方)
+=========================================================================
 
 Root cause
 ----------
@@ -17,22 +17,26 @@ Root cause
 re-run created ~14 bad rows whose ``title`` matches the canonical UUID
 regex; ~20 ``property_measurement`` rows reference these bad sources.
 
-A second root cause is the placeholder title
-``"Unattributed source (no DOI)"`` / ``"Unknown Source"`` being reused
-across multiple distinct literature sources, which surfaces as
-multiple rows pointing at the same canonical dataset fingerprint but
-holding different source_ids.
-
-This migration collapses both classes of bad rows back to a single
+This migration collapses UUID-titled bad rows back to a single
 canonical ``DataSource`` per (doi, file_hash, content_md-fingerprint,
 normalized-title).
+
+NFM-4130 re-scope
+-----------------
+Placeholder titles ``"Unknown Source"`` / ``"Unattributed source (no
+DOI)"`` are 58 distinct real sources on staging (18 on prod) with no
+DOI, ``file_hash`` or ``content_md`` and are **not** dedup candidates
+— see [NFM-4130](/NFM/issues/NFM-4130) for evidence and the CTO
+ruling.  Their ingest-path is fixed separately in
+[NFM-4105](/NFM/issues/NFM-4105); they are explicitly OUT of scope
+for this migration.
 
 Strategy
 --------
 
 1. Identify ``bad_source_ids`` via a single SELECT:
-   ``title`` matches the canonical 36-char UUID regex OR
-   ``title IN ('Unknown Source', 'Unattributed source (no DOI)')``.
+   ``title`` matches the canonical 36-char UUID regex (placeholder
+   titles are excluded — see NFM-4130).
 2. For each bad row, match to a canonical ``DataSource`` (priority:
    DOI equality → file_hash equality → content_md SHA1 equality →
    normalized-title equality).  Unmatched rows are reported via RAISE
@@ -68,8 +72,12 @@ Cross-references
 * NFM-4086 — D1 schema (independent of this fix's success; D2 migration
   is closed-form on the current schema)
 * NFM-4087 — visual fast-fix (independent, not blocking)
+* NFM-4088 — original D2 migration (now re-scoped)
 * NFM-4091 — F4 ingest-path monitoring (independent follow-up)
-* NFM-4099 — asyncpg ``DO`` bind-param crash (this revision)
+* NFM-4099 — asyncpg ``DO`` bind-param crash (literal-inlining fix)
+* NFM-4105 — placeholder-title class follow-up (separate ticket; the
+  ingest-path guard that stops new placeholder rows from being created).
+* NFM-4130 — this re-scope (bad class = UUID-titled rows only).
 """
 
 from collections.abc import Sequence
@@ -90,22 +98,20 @@ depends_on: str | Sequence[str] | None = None
 # 36-char canonical UUID regex used to flag bad rows whose ``title``
 # field was wrongly populated from a previous source's primary-key
 # string. Anchored on both ends.
+#
+# NFM-4130: bad class is restricted to UUID-titled rows only.  The
+# earlier ``_PLACEHOLDER_TITLES = ("Unknown Source", "Unattributed
+# source (no DOI)")`` matching has been removed — those titles are
+# distinct real sources on staging/prod (58 / 18) with no DOI,
+# file_hash or content_md.  Their ingest-path is fixed in NFM-4105.
 _UUID_TITLE_RE: str = (
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
-# Placeholder titles emitted by ``extraction_to_db_mapper.py:691``
-# when neither ``reference`` nor ``source_file`` is supplied by the
-# upstream extractor.
-_PLACEHOLDER_TITLES: tuple[str, ...] = (
-    "Unknown Source",
-    "Unattributed source (no DOI)",
-)
-
 
 # ---------------------------------------------------------------------------
-# DO-block SQL builder (NFM-4099)
+# DO-block SQL builder (NFM-4099 + NFM-4130)
 # ---------------------------------------------------------------------------
 #
 # asyncpg uses server-side prepared statements and PostgreSQL ``DO``
@@ -119,21 +125,23 @@ _PLACEHOLDER_TITLES: tuple[str, ...] = (
 #
 # which crash-loops ``nucpot-staging-api`` on every ``alembic upgrade
 # head`` (CMD line: ``python check_staging_revision.py && alembic
-# upgrade head && exec uvicorn ...``).  The fix is to inline the values
-# as SQL string / array literals — they originate from this module's
-# own constants (``_UUID_TITLE_RE`` / ``_PLACEHOLDER_TITLES``) so the
-# inlining surface is safe (no user input).  The substitution MUST run
-# on the SQL string BEFORE it reaches ``sa.text()`` — ``TextClause``
-# has no ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
-# at construction time, so a substitution meant to remove bind params
-# has to precede it.
+# upgrade head && exec uvicorn ...``).  The fix is to inline the regex
+# as a SQL string literal — it originates from this module's own
+# constant (``_UUID_TITLE_RE``) so the inlining surface is safe (no
+# user input).  The substitution MUST run on the SQL string BEFORE it
+# reaches ``sa.text()`` — ``TextClause`` has no ``.replace``, and
+# ``sa.text()`` parses ``:name`` bind tokens at construction time, so
+# a substitution meant to remove bind params has to precede it.
+#
+# NFM-4130 — only the UUID regex is inlined now; the placeholder array
+# was removed entirely (placeholder titles are no longer in scope for
+# this migration — see ``_UUID_TITLE_RE`` comment above).
 
 
-# Sentinel tokens that mark the bind-param positions in the SQL
-# template.  Picked to be strings that cannot appear in normal SQL so a
-# naive ``str.replace`` cannot accidentally hit a real token.
+# Sentinel token that marks the bind-param position in the SQL
+# template.  Picked to be a string that cannot appear in normal SQL so
+# a naive ``str.replace`` cannot accidentally hit a real token.
 _UUID_TOKEN = "__NFM_4099_UUID_RE_LITERAL__"
-_PLACEHOLDER_TOKEN = "__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__"
 
 
 def _sql_quote_literal(value: str) -> str:
@@ -141,51 +149,42 @@ def _sql_quote_literal(value: str) -> str:
 
     Escapes embedded single quotes by doubling them — the canonical
     PostgreSQL quoting rule (``'foo''bar'`` represents ``foo'bar``).
-    Used to inline the regex + placeholder titles into the ``DO`` block
-    as literal text instead of bind parameters.
+    Used to inline the UUID regex into the ``DO`` block as literal
+    text instead of a bind parameter.
     """
     return "'" + value.replace("'", "''") + "'"
 
 
-def _build_placeholder_array_sql(titles: Sequence[str]) -> str:
-    """Render ``titles`` as a PostgreSQL ``TEXT[]`` literal.
-
-    Example::
-
-        >>> _build_placeholder_array_sql(("Unknown Source",
-        ...                                "Unattributed source (no DOI)"))
-        "ARRAY['Unknown Source', 'Unattributed source (no DOI)']::TEXT[]"
-    """
-    parts = [_sql_quote_literal(t) for t in titles]
-    return "ARRAY[" + ", ".join(parts) + "]::TEXT[]"
-
-
-def _build_do_block_sql(uuid_re: str, placeholder_titles: Sequence[str]) -> str:
-    """Render the forward-dedup ``DO $$`` block with the regex +
-    placeholder list inlined as SQL literals.
+def _build_do_block_sql(uuid_re: str) -> str:
+    """Render the forward-dedup ``DO $$`` block with the regex inlined
+    as a SQL literal.
 
     NFM-4099 — asyncpg refuses bind parameters on ``DO`` blocks (the
     PostgreSQL protocol treats ``DO`` as a 0-arg statement and asyncpg
-    uses server-side prepared statements).  The values originate from
-    this module's own constants — no user input — so literal inlining
+    uses server-side prepared statements).  The regex originates from
+    this module's own constant — no user input — so literal inlining
     is safe.
+
+    NFM-4130 — the placeholder array parameter is gone; the bad class
+    is now UUID-titled rows only.
     """
     sql_literal_regex = _sql_quote_literal(uuid_re)
-    sql_literal_array = _build_placeholder_array_sql(placeholder_titles)
-    return _DO_BLOCK_SQL_TEMPLATE.replace(_UUID_TOKEN, sql_literal_regex).replace(
-        _PLACEHOLDER_TOKEN, sql_literal_array
-    )
+    return _DO_BLOCK_SQL_TEMPLATE.replace(_UUID_TOKEN, sql_literal_regex)
 
 
 # ---------------------------------------------------------------------------
 # Forward dedup SQL — single plpgsql block.
 #
-# The ``:uuid_re`` / ``:placeholder_titles`` placeholders that lived in
-# this string prior to NFM-4099 have been replaced by sentinel tokens
-# (``_UUID_TOKEN`` and ``_PLACEHOLDER_TOKEN``) that ``_build_do_block_sql``
-# substitutes with properly-escaped SQL literals before execution.
-# This keeps the SQL readable while ensuring the final statement carries
-# no bind parameters — the format asyncpg requires for ``DO`` blocks.
+# The ``:uuid_re`` placeholder that lived in this string prior to
+# NFM-4099 has been replaced by a sentinel token (``_UUID_TOKEN``) that
+# ``_build_do_block_sql`` substitutes with a properly-escaped SQL
+# literal before execution.  This keeps the SQL readable while
+# ensuring the final statement carries no bind parameters — the format
+# asyncpg requires for ``DO`` blocks.
+#
+# NFM-4130 — the placeholder array sentinel + substitution path are
+# gone; the bad class is UUID-titled rows only and ``_bad_sources``
+# reads ``WHERE title ~ __NFM_4099_UUID_RE_LITERAL__``.
 # ---------------------------------------------------------------------------
 
 
@@ -196,16 +195,25 @@ _DO_BLOCK_SQL_TEMPLATE = """
         matched_count     INTEGER;
         migrated_pm_count INTEGER;
         deleted_ds_count  INTEGER;
+        deleted_unmatched_datasets_count INTEGER;
         unmatched_count   INTEGER;
     BEGIN
         -- ------------------------------------------------------------
         -- 1. Identify bad ``data_sources`` rows.
         -- ------------------------------------------------------------
         CREATE TEMP TABLE _bad_sources ON COMMIT DROP AS
-        SELECT id
+        -- NFM-4104 schema-drift fix: include the columns the ranked
+        -- CTE reads (doi, file_hash, content_md, title) so the
+        -- ``bad.doi`` / ``bad.file_hash`` / ``bad.content_md`` /
+        -- ``bad.title`` references later in this DO block parse
+        -- against a real column.  Without this, fresh prod DBs
+        -- whose alembic_version is at the 069 head raise
+        -- ``UndefinedColumnError: column bad.doi does not exist``
+        -- (the column does exist on ``data_sources``, but not on
+        -- the temp table).  Carries forward into NFM-4095 ship.
+        SELECT id, doi, file_hash, content_md, title
         FROM data_sources
-        WHERE title ~ __NFM_4099_UUID_RE_LITERAL__
-           OR title = ANY(CAST(__NFM_4099_PLACEHOLDER_ARRAY_LITERAL__ AS TEXT[]));
+        WHERE title ~ __NFM_4099_UUID_RE_LITERAL__;
 
                 CREATE INDEX ON _bad_sources(id);
 
@@ -236,8 +244,8 @@ _DO_BLOCK_SQL_TEMPLATE = """
                                           THEN 0 ELSE 1 END,
                                 CASE WHEN bad.content_md IS NOT NULL
                                           AND candidate.content_md IS NOT NULL
-                                          AND encode(sha256(SUBSTRING(candidate.content_md, 1, 200)), 'hex')
-                                           = encode(sha256(SUBSTRING(bad.content_md, 1, 200)), 'hex')
+                                          AND encode(sha256(convert_to(SUBSTRING(candidate.content_md, 1, 200), 'UTF8')), 'hex')
+                                           = encode(sha256(convert_to(SUBSTRING(bad.content_md, 1, 200), 'UTF8')), 'hex')
                                           THEN 0 ELSE 1 END,
                                 CASE WHEN LENGTH(COALESCE(bad.title, '')) >= 12
                                           AND LOWER(REGEXP_REPLACE(
@@ -267,8 +275,8 @@ _DO_BLOCK_SQL_TEMPLATE = """
                                 AND candidate.file_hash = bad.file_hash)
                          OR (bad.content_md IS NOT NULL
                                 AND candidate.content_md IS NOT NULL
-                                AND encode(sha256(SUBSTRING(candidate.content_md, 1, 200)), 'hex')
-                                 = encode(sha256(SUBSTRING(bad.content_md, 1, 200)), 'hex'))
+                                AND encode(sha256(convert_to(SUBSTRING(candidate.content_md, 1, 200), 'UTF8')), 'hex')
+                                 = encode(sha256(convert_to(SUBSTRING(bad.content_md, 1, 200), 'UTF8')), 'hex'))
                          OR (
                                 LENGTH(COALESCE(bad.title, '')) >= 12
                                 AND LOWER(REGEXP_REPLACE(
@@ -348,6 +356,82 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 CREATE INDEX ON _dataset_redirect(bad_dataset_id);
                 CREATE INDEX ON _dataset_redirect(canonical_dataset_id);
 
+                -- 3-prep. Dedup passthrough datasets that map to the
+                --     same (candidate_id, material_id).  Multiple bad
+                --     sources can each carry a passthrough dataset for
+                --     the same material; when step 3a tries to UPDATE
+                --     all of them to (candidate, material), the second
+                --     UPDATE collides on uq_datasets_source_material.
+                --     Keep the lowest-id dataset per (candidate,
+                --     material); migrate the losers' PMs to the keeper
+                --     first so no measurement data is lost.
+                WITH ranked_passthrough AS (
+                    SELECT d.id            AS dataset_id,
+                           cm.candidate_id AS candidate_id,
+                           d.material_id   AS material_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cm.candidate_id, d.material_id
+                               ORDER BY d.id
+                           ) AS rn
+                    FROM datasets d
+                    JOIN _canonical_map cm ON cm.bad_id = d.source_id
+                    WHERE cm.candidate_id IS NOT NULL
+                      AND cm.candidate_id <> d.source_id
+                      AND NOT EXISTS (
+                          SELECT 1 FROM datasets canonical_d
+                          WHERE canonical_d.source_id = cm.candidate_id
+                            AND canonical_d.material_id = d.material_id
+                      )
+                ),
+                passthrough_keepers AS (
+                    SELECT dataset_id, candidate_id, material_id
+                    FROM ranked_passthrough WHERE rn = 1
+                ),
+                passthrough_losers AS (
+                    SELECT dataset_id, candidate_id, material_id
+                    FROM ranked_passthrough WHERE rn > 1
+                ),
+                loser_pm_migrated AS (
+                    INSERT INTO property_measurements (
+                        dataset_id, property_type_id, value_scalar, value_min, value_max,
+                        value_expression, value_list, value_text, uncertainty, unit_id,
+                        notes, review_status, reviewer_note, reviewed_at,
+                        conditions_hash, method, created_at, updated_at
+                    )
+                    SELECT
+                        k.dataset_id,
+                        pm.property_type_id,
+                        pm.value_scalar, pm.value_min, pm.value_max,
+                        pm.value_expression, pm.value_list, pm.value_text,
+                        pm.uncertainty, pm.unit_id,
+                        pm.notes, pm.review_status, pm.reviewer_note, pm.reviewed_at,
+                        pm.conditions_hash, pm.method,
+                        NOW(), NOW()
+                    FROM property_measurements pm
+                    JOIN passthrough_losers l ON l.dataset_id = pm.dataset_id
+                    JOIN passthrough_keepers k
+                        ON k.candidate_id = l.candidate_id
+                       AND k.material_id  = l.material_id
+                    ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING
+                    RETURNING 1
+                ),
+                loser_pms_dropped AS (
+                    DELETE FROM property_measurements pm
+                    USING passthrough_losers l
+                    WHERE pm.dataset_id = l.dataset_id
+                    RETURNING 1
+                ),
+                loser_datasets_dropped AS (
+                    DELETE FROM datasets d
+                    USING passthrough_losers l
+                    WHERE d.id = l.dataset_id
+                    RETURNING 1
+                )
+                SELECT 1
+                INTO bad_count
+                ;
+                RAISE NOTICE 'NFM-4095: passthrough dedup complete (losers dropped)';
+
                 -- 3a. Repoint bad datasets whose canonical dataset does
                 --     NOT already exist (their id stays the same but
                 --     source_id becomes the canonical source's id).
@@ -384,7 +468,7 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 JOIN _dataset_redirect dr
                     ON dr.bad_dataset_id = pm.dataset_id
                 WHERE dr.bad_dataset_id <> dr.canonical_dataset_id
-                ON CONFLICT ON CONSTRAINT uq_pm_dedup DO NOTHING;
+                ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING;
 
                 GET DIAGNOSTICS migrated_pm_count = ROW_COUNT;
                 RAISE NOTICE 'NFM-4088: migrated % property_measurements rows (conflicts skipped)',
@@ -396,11 +480,31 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 --     to the canonical dataset so their measurement
                 --     conditions (CASCADE) follow correctly when the
                 --     bad dataset is deleted.
+                --
+                --     NFM-4095 follow-up: step 4's INSERT runs with
+                --     ``ON CONFLICT DO NOTHING`` keyed on
+                --     ``uq_pm_dedup``.  For tuples that did NOT conflict
+                --     (canonical was empty for that property_type +
+                --     conditions_hash + method), step 4 created a brand
+                --     new PM at the canonical dataset.  A blind UPDATE
+                --     here would then move the original bad-dataset PM
+                --     to the same canonical dataset, colliding on
+                --     ``uq_pm_dedup``.  Skip the move if the target tuple
+                --     already exists at the canonical dataset; step 4c
+                --     will clean up the now-empty bad dataset via
+                --     CASCADE on the orphan PM.
                 UPDATE property_measurements pm
                 SET dataset_id = dr.canonical_dataset_id
                 FROM _dataset_redirect dr
                 WHERE pm.dataset_id = dr.bad_dataset_id
-                  AND dr.bad_dataset_id <> dr.canonical_dataset_id;
+                  AND dr.bad_dataset_id <> dr.canonical_dataset_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM property_measurements pm2
+                      WHERE pm2.dataset_id        = dr.canonical_dataset_id
+                        AND pm2.property_type_id  = pm.property_type_id
+                        AND pm2.conditions_hash   = pm.conditions_hash
+                        AND pm2.method IS NOT DISTINCT FROM pm.method
+                  );
 
                 -- 4b. Clean orphan measurement_conditions: rows whose
                 --     measurement moved datasets may keep duplicate
@@ -434,17 +538,117 @@ _DO_BLOCK_SQL_TEMPLATE = """
                 -- ------------------------------------------------------------
                 -- 5. Delete bad source rows.
                 -- ------------------------------------------------------------
-                -- Defence-in-depth: refuse the delete if any dataset
-                -- still references the bad source (it shouldn't, but
-                -- this catches a regression in any of the previous
-                -- steps and aborts the migration loudly).
-                IF EXISTS (
-                    SELECT 1
-                    FROM datasets ds
-                    JOIN _bad_sources bs ON bs.id = ds.source_id
-                ) THEN
+                -- 5a. Clean up datasets/PMs/conditions belonging to
+                --     UNMATCHED bad sources (their canonical_id is NULL,
+                --     so they have nothing to redirect to).  CASCADE on
+                --     datasets → property_measurements → measurement_
+                --     conditions handles the rest.  NFM-4095 follow-up:
+                --     prod at 069 had 32 bad sources, 5 unmatched,
+                --     carrying orphan datasets / PMs.
+                DELETE FROM datasets d
+                USING _canonical_map cm
+                WHERE d.source_id = cm.bad_id
+                  AND cm.is_unmatched;
+
+                GET DIAGNOSTICS deleted_unmatched_datasets_count = ROW_COUNT;
+                RAISE NOTICE 'NFM-4088: deleted % datasets under unmatched bad sources',
+                    deleted_unmatched_datasets_count;
+
+                -- 5b. Fold MATCHED bad sources whose candidate is ITSELF
+                --     bad into the cluster leader (the candidate).
+                --     Bad-to-bad matches are caused by UUID-title sharing
+                --     ("9320cb50-…" matched by title equality across
+                --     multiple bad rows).  After this step every bad
+                --     source that still owns datasets will either be
+                --     the leader of its bad-cluster, or have been wiped
+                --     in 5a.  This is what enables the final DELETE on
+                --     bad sources — by the time we reach step 5c the
+                --     only datasets referencing bad sources belong to
+                --     cluster leaders, which step 5c keeps.
+                WITH bad_cluster_members AS (
+                    -- A bad source whose candidate is also a bad source.
+                    SELECT
+                        cm.bad_id     AS member_bad_id,
+                        cm.candidate_id AS leader_bad_id
+                    FROM _canonical_map cm
+                    JOIN _bad_sources leader ON leader.id = cm.candidate_id
+                    WHERE NOT cm.is_unmatched
+                      AND cm.candidate_id IS NOT NULL
+                ),
+                leader_dataset_redirect AS (
+                    -- For each (member_bad_id, leader_bad_id) pair, find
+                    -- the leader's dataset on the same material and
+                    -- mark member datasets for PM-merge into it.
+                    SELECT
+                        mem_d.id         AS member_dataset_id,
+                        lea_d.id         AS leader_dataset_id,
+                        mem_d.material_id AS material_id
+                    FROM bad_cluster_members bcm
+                    JOIN datasets mem_d ON mem_d.source_id = bcm.member_bad_id
+                    JOIN datasets lea_d
+                        ON lea_d.source_id = bcm.leader_bad_id
+                       AND lea_d.material_id = mem_d.material_id
+                ),
+                fold_pm_migrated AS (
+                    INSERT INTO property_measurements (
+                        dataset_id, property_type_id, value_scalar, value_min, value_max,
+                        value_expression, value_list, value_text, uncertainty, unit_id,
+                        notes, review_status, reviewer_note, reviewed_at,
+                        conditions_hash, method, created_at, updated_at
+                    )
+                    SELECT
+                        ldr.leader_dataset_id,
+                        pm.property_type_id,
+                        pm.value_scalar, pm.value_min, pm.value_max,
+                        pm.value_expression, pm.value_list, pm.value_text,
+                        pm.uncertainty, pm.unit_id,
+                        pm.notes, pm.review_status, pm.reviewer_note, pm.reviewed_at,
+                        pm.conditions_hash, pm.method,
+                        NOW(), NOW()
+                    FROM property_measurements pm
+                    JOIN leader_dataset_redirect ldr
+                        ON ldr.member_dataset_id = pm.dataset_id
+                    ON CONFLICT (dataset_id, property_type_id, conditions_hash, method) DO NOTHING
+                    RETURNING 1
+                ),
+                fold_member_datasets_deleted AS (
+                    DELETE FROM datasets d
+                    USING bad_cluster_members bcm
+                    WHERE d.source_id = bcm.member_bad_id
+                    RETURNING 1
+                )
+                SELECT 1 INTO bad_count
+                ;
+                RAISE NOTICE 'NFM-4095: bad-to-bad cluster fold complete';
+
+                -- 5c. DELETE bad sources.  Datasets for member bad
+                --     sources have been deleted in 5b's fold; datasets
+                --     for cluster leaders remain (they'll be repointed
+                --     to themselves — leader is its own canonical — and
+                --     their PMs were already migrated by step 4).
+                --     datasets.source_id is ON DELETE CASCADE so any
+                --     leftover reference would be silently wiped by
+                --     that CASCADE — that would be silent data loss.
+                --     Final defence-in-depth guard: refuse the DELETE
+                --     if any dataset still references a bad source.
+                --
+                --     NFM-4095: this guard is a regression net for
+                --     future schema changes that might break the
+                --     4c/5a/5b cleanup chain.  Step 5b's bad-to-bad
+                --     cluster fold is what enables step 5c — without
+                --     it, 27 of 32 prod bad sources still had datasets
+                --     at step 5c, and the CASCADE would have wiped
+                --     ~32 datasets.  With the guard in place a future
+                --     regression in step 5b fails the migration loudly
+                --     instead of silently losing rows.
+                SELECT COUNT(*) INTO deleted_ds_count
+                FROM datasets d
+                JOIN _canonical_map cm ON d.source_id = cm.bad_id;
+                IF deleted_ds_count > 0 THEN
                     RAISE EXCEPTION
-                        'NFM-4088: refusing DELETE — datasets still reference bad sources';
+                        'NFM-4088: refusing DELETE — % datasets still reference bad sources '
+                        '(step 5b cluster fold likely broken)',
+                        deleted_ds_count;
                 END IF;
 
                 DELETE FROM data_sources WHERE id IN (SELECT bad_id FROM _canonical_map);
@@ -491,10 +695,10 @@ def upgrade() -> None:
     # PostgreSQL ``DO`` blocks accept 0 bind parameters and asyncpg
     # refuses any attempt to pass them
     # (``InterfaceError: the server expects 0 arguments for this
-    # query, 2 were passed``).  Earlier revisions of this migration
-    # bound ``:uuid_re`` and ``:placeholder_titles`` here, which
-    # worked under psycopg2 (client-side interpolation) but broke the
-    # staging ``alembic upgrade head`` health-gate under asyncpg.
+    # query, 1 were passed``).  Earlier revisions of this migration
+    # bound ``:uuid_re`` here, which worked under psycopg2 (client-side
+    # interpolation) but broke the staging ``alembic upgrade head``
+    # health-gate under asyncpg.
     # The fix inlines the regex + placeholder list as SQL string
     # literals via ``_build_do_block_sql``; the values originate from
     # this module's own constants — no user input — so literal
@@ -503,7 +707,7 @@ def upgrade() -> None:
     # ``.replace``, and ``sa.text()`` parses ``:name`` bind tokens
     # at construction time, so a substitution meant to remove bind
     # params has to precede it.
-    bind.execute(sa.text(_build_do_block_sql(_UUID_TITLE_RE, _PLACEHOLDER_TITLES)))
+    bind.execute(sa.text(_build_do_block_sql(_UUID_TITLE_RE)))
 
 
 # ---------------------------------------------------------------------------

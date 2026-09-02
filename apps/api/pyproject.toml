@@ -140,6 +140,10 @@ ignore = [
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
 # Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
 "tests/test_design_optimization.py" = ["RUF001", "RUF002"]
+# NFM-4095: multiplication sign × is intentional in kg-node coverage arithmetic
+# (the "8× Cr-doped UO2" / "5× U-Mo" same-name duplicate groups per CTO verdict
+# 9fdcc932). Mirrors the test_design_optimization.py precedent above.
+"tests/test_kg_graph_coverage.py" = ["RUF002"]
 # NFM-2195: Chinese fullwidth punctuation is intentional in blog customer-case test data
 "tests/api/v1/test_blog_customer_case.py" = ["RUF001", "RUF002"]
 # NFM-3916: scripts that manipulate sys.path and import sqlalchemy + nfm_db in
