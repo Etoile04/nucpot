@@ -60,7 +60,7 @@ Alembic is the only migration runner in production. The two `apps/api/scripts/mi
 
 - **D1**
   - `nucpot-prod-api`, `nucpot-prod-lightrag`, `nucpot-prod-worker` (shares api image), and `nucpot-prod-web` are each built with a `<short-sha>` tag for every production deploy.
-  - The deploy workflow writes `PROD_IMAGE_TAG=${{ github.sha }}` into the compose `--env-file` (or passes it on the command line) before `up -d`.
+  - The deploy workflow passes `PROD_IMAGE_TAG=${{ github.sha }}` on the command line before `up -d`. Never write it into the compose `--env-file` — a SHA pinned there goes stale and is silently inherited by ad-hoc host-side compose invocations (the NFM-4264 landmine; banned and enforced by NFM-4265, `scripts/check_prod_image_tag.py`).
   - The `docker compose ... up -d --build` form is **banned** in the production deploy workflow; replaced with explicit `docker build -t <image>:<sha> ...` followed by `docker compose ... up -d`.
   - Retention: at least the last 10 successful `nucpot-prod-*` image tags remain in the local daemon after each deploy (a `docker image prune` step filters out older tags).
   - Rollback test: a one-command documented procedure (e.g. `docker compose -f docker-compose.prod.yml --env-file .env.prod.prod-rollback up -d` with `PROD_IMAGE_TAG=<prev-sha>`) restores the prior image without rebuild, verified by a load-test or smoke pass.

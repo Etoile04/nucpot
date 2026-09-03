@@ -60,6 +60,11 @@ services:
     networks: [prod]
 
   # ---- FastAPI backend -------------------------------------------------------
+  # NFM-4265: PROD_IMAGE_TAG arrives as an INLINE env var on every sanctioned
+  # SHA deploy (deploy_prod.sh exports DEPLOY_SHA; rollback passes it inline).
+  # The docker/.env.prod value is only inherited by ad-hoc host-side compose
+  # invocations — it must stay `latest`, never a SHA
+  # (see scripts/check_prod_image_tag.py, NFM-4264 incident 2026-09-04).
   api:
     build:
       context: .

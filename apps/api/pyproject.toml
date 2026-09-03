@@ -159,6 +159,11 @@ ignore = [
 # W292) that flag old-style typing imports / unsorted imports / missing
 # trailing newlines, none of which are bugs in generated migration code.
 "migrations/versions/*.py" = ["UP035", "UP007", "F401", "I001", "W292"]
+# NFM-4259: train_energy_v31_grouped_cv.py is a byte-exact archived trainer
+# deliverable — editing it post-archive would break the preservation contract,
+# so its unused sklearn imports (F401) and missing trailing newline (W292)
+# are ignored here, mirroring the migrations/versions/*.py precedent above.
+"src/nfm_db/ml/train_energy_v31_grouped_cv.py" = ["F401", "W292"]
 # Multiplication sign × is intentional in alloy/chemistry composition
 # strings (e.g. "Ti10×V5×Al3"). RUF001 would corrupt the data.
 "scripts/generate_golden_fixtures.py" = ["RUF001"]

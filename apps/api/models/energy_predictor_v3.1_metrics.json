@@ -1,0 +1,150 @@
+{
+  "model_version": "v3.1",
+  "n_samples": 2909,
+  "n_train": 2327,
+  "n_test": 582,
+  "n_features": 12,
+  "random_state": 42,
+  "feature_names": [
+    "mo_equivalent",
+    "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus"
+  ],
+  "dropped_features": [
+    "vec",
+    "hr_valence_diff",
+    "dg_en_radius_distance",
+    "max_pair_en_diff",
+    "en_variance",
+    "volume_variance",
+    "d_electron_variance",
+    "bulk_modulus_variance"
+  ],
+  "dataset_source": "NFM-1540 PathB Star-xingyi (2,909 unique PBE compositions)",
+  "xgb_params": {
+    "n_estimators": 800,
+    "max_depth": 5,
+    "learning_rate": 0.02,
+    "subsample": 0.7,
+    "colsample_bytree": 0.7,
+    "reg_alpha": 1.5,
+    "reg_lambda": 10.0,
+    "min_child_weight": 10,
+    "gamma": 0.1,
+    "random_state": 42,
+    "verbosity": 0
+  },
+  "xgb_params_source": "train_energy_v30.py:149-161 (literal copy)",
+  "random_cv_r2": 0.9481,
+  "random_cv_r2_std": 0.0157,
+  "random_cv_per_fold_r2": [
+    0.9618,
+    0.9492,
+    0.9634,
+    0.9197,
+    0.9462
+  ],
+  "random_cv_per_fold_n_test": [
+    582,
+    582,
+    582,
+    581,
+    582
+  ],
+  "grouped_cv_r2": 0.2598,
+  "grouped_cv_r2_std": 0.5075,
+  "grouped_cv_per_fold_r2": [
+    0.6425,
+    -0.5541,
+    0.6354,
+    -0.1225,
+    0.6977
+  ],
+  "grouped_cv_per_fold_rmse": [
+    0.293645,
+    0.264908,
+    0.259205,
+    0.179144,
+    0.584394
+  ],
+  "grouped_cv_per_fold_mae": [
+    0.203852,
+    0.158842,
+    0.147381,
+    0.114625,
+    0.452475
+  ],
+  "grouped_per_fold_n_train": [
+    2328,
+    2326,
+    2328,
+    2327,
+    2327
+  ],
+  "grouped_per_fold_n_test": [
+    581,
+    583,
+    581,
+    582,
+    582
+  ],
+  "grouped_per_fold_n_test_groups": [
+    13,
+    14,
+    13,
+    14,
+    14
+  ],
+  "grouped_n_groups": 68,
+  "r2": 0.9596,
+  "rmse": 0.130886,
+  "mae": 0.061732,
+  "r2_train": 0.9697,
+  "rmse_train": 0.106615,
+  "mae_train": 0.054013,
+  "v30_random_cv_r2_mean": 0.9678,
+  "v30_random_cv_r2_std": 0.0102,
+  "v30_grouped_cv_r2_mean": 0.3111,
+  "v30_grouped_cv_r2_std": 0.4777,
+  "random_cv_delta_vs_v30": -0.0197,
+  "grouped_cv_delta_vs_v30": -0.0513,
+  "rd2_label": "[EXPLORATORY] \u2014 grouped R\u00b2 0.2598 landed in FAIL bucket (<0.60) per NFM-3958 PREREG \u00a76; 12D feature ablation did not close the random-vs-grouped gap (\u0394=0.6883, larger than v3.0 \u0394=0.6567). v3.1 is NOT cleared for production dispatch.",
+  "rd3_verdict": {
+    "prereg_source_of_truth": "NFM-3958 PREREG \u00a73-\u00a76 (locked feature set, method, and decision matrix)",
+    "rootcause_cross_reference": "NFM-3955 \u2014 RD-3 anomaly review + Option D/A plan; v3.0 rootcause attributed 54% of impurity gain to pairwise/variance stratum (dg_en_radius_distance 0.3635, max_pair_en_diff 0.1798).",
+    "bucket_landed": "fail (<0.60)",
+    "bucket_landed_value": 0.2598,
+    "bucket_thresholds": {
+      "high": ">=0.85",
+      "mid": "[0.80, 0.85)",
+      "low": "[0.60, 0.80)",
+      "fail": "<0.60"
+    },
+    "random_vs_grouped_delta": 0.6883,
+    "v30_random_vs_grouped_delta": 0.6567,
+    "delta_worsened_vs_v30": true,
+    "random_cv_r2": 0.9481,
+    "grouped_cv_r2": 0.2598,
+    "grouped_cv_r2_std": 0.5075,
+    "dispatch_decision": "do not change dispatch (per NFM-3958 PREREG \u00a76 fail-bucket rule)",
+    "nfm3959_revert_triggered": false,
+    "nfm3959_status": "Option D confidence-surface patch remains authoritative until v3.1 (or successor) clears the grouped-CV bar",
+    "ship_decision": "do_not_ship",
+    "followup_action": "open follow-up issue against NFM-3955 \u2014 pairwise/variance stratum ablation did not resolve the generalization gap; investigate other candidate leak channels (e.g., composition-weight overlap with element-system presence, dataset temporal/cluster structure, lookup coverage asymmetry).",
+    "ac_compliance": {
+      "AC-C1": "PASS \u2014 model card JSON exists at apps/api/models/energy_predictor_v3.1_metrics.json with all locked fields.",
+      "AC-C2": "PASS \u2014 rd2_label is [EXPLORATORY] with band landed recorded (FAIL bucket, 0.2598); consistent with NFM-3958 PREREG \u00a76 decision matrix.",
+      "AC-C3": "PASS \u2014 rd3_verdict block records bucket (fail), delta rationale (0.6883 random-vs-grouped, worsened vs v3.0), dispatch decision (no change), and NFM-3959 revert status (not triggered).",
+      "AC-C4": "PASS \u2014 JSON validates (loadable, no NaN/Infinity, no None values)."
+    }
+  }
+}

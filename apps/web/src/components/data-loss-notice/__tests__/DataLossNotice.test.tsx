@@ -26,21 +26,31 @@
  *       placement prop (top/right/bottom) for tests / e2e selectors.
  */
 
-import { act, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useState } from "react"
 import type { JSX } from "react"
 
-import {
-  DataLossNotice,
-  DataLossNoticeProvider,
-} from "../index"
-import { setRuntimeOverride } from "../feature-flag"
+import { DataLossNotice, DataLossNoticeGate, DataLossNoticeProvider } from "../index"
+import { FEATURE_FLAG_NAME, setRuntimeOverride } from "../feature-flag"
 import {
   subscribeDataLossEvents,
   type DataLossEventName,
   type DataLossEventProps,
 } from "../analytics"
+
+// NFM-4253 — the gate calls `refreshFeatureFlag()` → `evaluateFlag()`.
+// Mock the flag-service so the gate's async fetch resolves under our
+// control instead of touching the real backend.
+vi.mock("@/lib/flag-service", () => ({
+  evaluateFlag: vi.fn(),
+  getCachedEvaluation: vi.fn().mockReturnValue(undefined),
+}))
+
+import { evaluateFlag, getCachedEvaluation } from "@/lib/flag-service"
+
+const mockedEvaluate = vi.mocked(evaluateFlag)
+const mockedGetCached = vi.mocked(getCachedEvaluation)
 
 interface EventCapture {
   name: DataLossEventName
@@ -63,9 +73,7 @@ function ProviderWrapper({
   children: React.ReactNode
 }): JSX.Element {
   return (
-    <DataLossNoticeProvider forceEnabled={forceEnabled ?? null}>
-      {children}
-    </DataLossNoticeProvider>
+    <DataLossNoticeProvider forceEnabled={forceEnabled ?? null}>{children}</DataLossNoticeProvider>
   )
 }
 
@@ -73,6 +81,8 @@ describe("DataLossNotice", (): void => {
   beforeEach((): void => {
     window.localStorage.clear()
     setRuntimeOverride(null)
+    mockedEvaluate.mockReset()
+    mockedGetCached.mockReturnValue(undefined)
   })
 
   afterEach((): void => {
@@ -83,11 +93,7 @@ describe("DataLossNotice", (): void => {
     setRuntimeOverride(false)
     const { container } = render(
       <ProviderWrapper forceEnabled={false}>
-        <DataLossNotice
-          variant="inline"
-          measurementId="m-1"
-          attribution={LOST_ATTR}
-        />
+        <DataLossNotice variant="inline" measurementId="m-1" attribution={LOST_ATTR} />
       </ProviderWrapper>,
     )
     expect(container.firstChild).toBeNull()
@@ -97,11 +103,7 @@ describe("DataLossNotice", (): void => {
     setRuntimeOverride(true)
     const { container } = render(
       <ProviderWrapper forceEnabled={true}>
-        <DataLossNotice
-          variant="inline"
-          measurementId="m-1"
-          attribution={INTACT_ATTR}
-        />
+        <DataLossNotice variant="inline" measurementId="m-1" attribution={INTACT_ATTR} />
       </ProviderWrapper>,
     )
     expect(container.firstChild).toBeNull()
@@ -146,19 +148,13 @@ describe("DataLossNotice", (): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
     expect(screen.getByTestId("data-loss-notice-popover")).toBeInTheDocument()
-    expect(
-      captured.some((e): boolean => e.name === "dataloss_notice_shown"),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_shown")).toBe(true)
 
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-dismiss"))
     })
 
-    expect(
-      captured.some(
-        (e): boolean => e.name === "dataloss_notice_dismissed",
-      ),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_dismissed")).toBe(true)
 
     unsubscribe()
   })
@@ -188,12 +184,9 @@ describe("DataLossNotice", (): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-learn-more"))
     })
 
-    expect(
-      captured.some(
-        (e): boolean =>
-          e.name === "dataloss_notice_learn_more_clicked",
-      ),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_learn_more_clicked")).toBe(
+      true,
+    )
 
     unsubscribe()
   })
@@ -210,9 +203,7 @@ describe("DataLossNotice", (): void => {
         />
       </ProviderWrapper>,
     )
-    expect(
-      screen.getByTestId("data-loss-notice-trigger").textContent,
-    ).toContain("来源信息缺失")
+    expect(screen.getByTestId("data-loss-notice-trigger").textContent).toContain("来源信息缺失")
   })
 
   it("substitutes {siblingPlaceholderCount} from the attribution payload", (): void => {
@@ -233,9 +224,7 @@ describe("DataLossNotice", (): void => {
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
-    expect(
-      screen.getByTestId("data-loss-notice-popover").textContent,
-    ).toContain("7")
+    expect(screen.getByTestId("data-loss-notice-popover").textContent).toContain("7")
   })
 
   it("shows the previously-dismissed affordance after dismissal", (): void => {
@@ -250,10 +239,7 @@ describe("DataLossNotice", (): void => {
             attribution={LOST_ATTR}
             key={String(version)}
           />
-          <button
-            data-testid="rerender"
-            onClick={(): void => setVersion((v) => v + 1)}
-          >
+          <button data-testid="rerender" onClick={(): void => setVersion((v) => v + 1)}>
             rerender
           </button>
         </ProviderWrapper>
@@ -272,9 +258,9 @@ describe("DataLossNotice", (): void => {
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
-    expect(
-      screen.getByTestId("data-loss-notice-popover").textContent,
-    ).toContain("previously dismissed")
+    expect(screen.getByTestId("data-loss-notice-popover").textContent).toContain(
+      "previously dismissed",
+    )
   })
 
   // NFM-4238 — P1 fix (CPO-authorized): the popover used to mount at
@@ -413,9 +399,7 @@ describe("DataLossNotice", (): void => {
       </ProviderWrapper>,
     )
 
-    const trigger = screen.getByTestId(
-      "data-loss-notice-trigger",
-    ) as HTMLElement
+    const trigger = screen.getByTestId("data-loss-notice-trigger") as HTMLElement
     act((): void => {
       fireEvent.click(trigger)
     })
@@ -446,5 +430,55 @@ describe("DataLossNotice", (): void => {
     })
     const popover = screen.getByTestId("data-loss-notice-popover")
     expect(popover.getAttribute("data-placement")).toBe("bottom")
+  })
+
+  // NFM-4253 — first-paint render race. The component used to read
+  // `resolveFeatureFlag()` imperatively; the provider's `setRuntimeOverride`
+  // side-effect (which feeds the imperative path) runs AFTER the render
+  // commits, so the first paint saw `{ enabled: false, source: "default-off" }`
+  // and the chip stayed dormant until any benign re-render (page-size,
+  // sort, filter). The fix subscribes the component to the provider's
+  // context so the gate's resolved value re-renders the chip
+  // automatically — no user interaction required.
+  it("renders the chip after the gate's flag-fetch resolves without user re-render (NFM-4253 first-paint race)", async (): Promise<void> => {
+    mockedEvaluate.mockResolvedValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 100,
+      value: true,
+      bucket: 7,
+    })
+
+    function Tree(): JSX.Element {
+      return (
+        <DataLossNoticeGate>
+          <DataLossNotice
+            variant="inline"
+            measurementId="m-1"
+            attribution={LOST_ATTR}
+            surface="property-detail"
+          />
+        </DataLossNoticeGate>
+      )
+    }
+
+    render(<Tree />)
+
+    // Before the gate's async flag-fetch resolves the gate holds
+    // `flagEnabled=false`; the chip MUST stay dormant. (A naive fix
+    // that always renders would pass this assertion trivially and fail
+    // the next one.)
+    expect(screen.queryByTestId("data-loss-notice-trigger")).toBeNull()
+
+    // After the fetch resolves, the gate commits the resolved value to
+    // the provider, the provider re-renders with `forceEnabled=true`,
+    // the context value updates, and the component MUST re-render to
+    // show the chip — without any user-triggered re-render.
+    await waitFor(
+      (): void => {
+        expect(screen.getByTestId("data-loss-notice-trigger")).toBeInTheDocument()
+      },
+      { timeout: 5000 },
+    )
   })
 })
