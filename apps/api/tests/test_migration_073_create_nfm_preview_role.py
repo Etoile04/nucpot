@@ -90,7 +90,9 @@ class TestRevisionMetadata:
         it again, 079 (NFM-4191, restore of the 070 cascade-deleted
         measurements) extended it once more, and 080 (NFM-4185, KG
         orphan bridge: U-10Mo dataset edges + U-3Si/PuO2 stub nodes)
-        extends it further — 080 is the current head.
+        extends it further — 080 (NFM-4185) was the head until 081
+        (NFM-4180, feature_flags table for the DataLossNotice runtime
+        flag) chained after it — 081 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -103,7 +105,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["080_kg_orphan_bridge_u10mo_u3si_puo2"], (
+        assert heads == ["081_create_feature_flags_table"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
