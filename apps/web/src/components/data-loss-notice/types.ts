@@ -60,6 +60,15 @@ export interface DataLossNoticeProps {
   readonly datasetId?: string
 }
 
+/**
+ * The disclosure destination for the "Learn more" link — spec §2
+ * ("defaults to `/about/data-integrity`") + §8 #4 (the stub page ships
+ * with the notice; final copy is CTO-owned). Exported so every mount
+ * (property-detail today, search-card later) points at the SAME
+ * destination instead of each inventing its own URL (NFM-4236).
+ */
+export const DATA_LOSS_LEARN_MORE_HREF = "/about/data-integrity"
+
 export interface DataLossNoticeContextValue {
   /**
    * Whether the feature flag is ON. Off → the component renders

@@ -53,7 +53,10 @@ import { Table, Input, Empty, Spin, Typography, Tooltip, Badge } from "antd"
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table"
 import type { SorterResult } from "antd/es/table/interface"
 import { ConfidenceBadge } from "@/components/shared/ConfidenceBadge"
-import { DataLossNotice } from "@/components/data-loss-notice"
+import {
+  DataLossNotice,
+  DATA_LOSS_LEARN_MORE_HREF,
+} from "@/components/data-loss-notice"
 import type {
   MaterialProperty,
   MeasurementCondition,
@@ -563,6 +566,9 @@ export function MaterialPropertyTable({
         // "lost". Spec §3.3 places the notice alongside the source cell.
         // The smallest-id measurement is the dismiss key (same id used as
         // the row's `key`), so dismiss state is shared across the group.
+        // NFM-4236 — pass the spec §2/§8 #4 disclosure destination so the
+        // popover's "Learn more" link renders (without it the link — and
+        // the learn_more_clicked analytics event — are unreachable).
         render: (
           source: SourceRef | null,
           row: GroupedMaterialProperty,
@@ -580,6 +586,7 @@ export function MaterialPropertyTable({
                   attribution={lostMeasurement.attribution}
                   surface="property-detail"
                   popoverPlacement="right"
+                  onLearnMoreHref={DATA_LOSS_LEARN_MORE_HREF}
                 />
               </span>
             )
