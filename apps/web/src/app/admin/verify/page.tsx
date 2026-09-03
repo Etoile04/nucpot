@@ -520,7 +520,16 @@ export default function AdminVerifyPage() {
                     <td className="px-4 py-2 text-gray-300">{p.type}</td>
                     <td className="px-4 py-2 text-gray-300">{p.elements.join('-')}</td>
                     <td className="px-4 py-2 text-center">
-                      <VerificationBadge grade={(p.verified_props as Record<string, unknown>)?.overall_grade as string | undefined} />
+                      <VerificationBadge
+                        grade={(p.verified_props as Record<string, unknown>)?.overall_grade as string | undefined}
+                        referenceFlag={
+                          ((p.verified_props as Record<string, unknown>)?.reference_flags as Record<string, string> | undefined) === undefined
+                            ? ((p.verified_props as Record<string, any>)?.lattice_constant as Record<string, string> | undefined)?.reference_flag
+                            : Object.values(
+                                (p.verified_props as Record<string, any>)?.reference_flags as Record<string, string>,
+                              ).find((f) => f === 'reference_missing') ?? null
+                        }
+                      />
                     </td>
                     <td className="px-4 py-2 text-center">
                       <button

@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 # Re-exported for mypy; the emitter validates at write time.
 EVENT_GENERIC_SILENT_CATCH = "generic_silent_catch"
 
+# BUG-22 (NFM-4076): sentinel capturing the pristine module-level factory.
+# ``process_literature_sync`` compares the live module attribute against
+# this to detect test monkeypatching (patched factory → use it as-is).
+_DEFAULT_SESSION_FACTORY = async_session_factory
+
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
@@ -643,6 +648,74 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             db=db,
         )
 
+        # --- Step 3a: persist extraction chunks (BUG-16 wiring, NFM-4077) --
+        # `ontofuel_extract` chunks internally but discards them. The
+        # gap_scanner (Phase 4) reads `extraction_chunks` — without rows
+        # here, extraction_gaps can never populate. Persist one chunk row
+        # per (up to) 20K-char segment of content_md under a job tagged
+        # with the ontology version that produced the extraction, then
+        # run the per-literature gap scan so missed expected-properties
+        # become visible ExtractionGap rows.
+        try:
+            from nfm_db.models.extraction_chunk import ExtractionChunk as _Chunk
+            from nfm_db.models.extraction_job import ExtractionJob as _Job
+            from nfm_db.services.extraction_pipeline import (
+                _chunk_content as _chunk_split,
+            )
+            from nfm_db.services.extraction_pipeline import (
+                _get_latest_published_ontology,
+            )
+            from nfm_db.services.gap_scanner import GapScanService
+
+            _ov = await _get_latest_published_ontology(db)
+            if _ov is not None and ds.content_md:
+                _job = _Job(
+                    source_reference=str(ds.id),
+                    source_type="datasource",
+                    status="completed",
+                    corpus_id=str(ds.id),
+                    ontology_version_id=_ov.id,
+                )
+                db.add(_job)
+                await db.flush()
+
+                for _i, _seg in enumerate(_chunk_split(ds.content_md)):
+                    db.add(
+                        _Chunk(
+                            job_id=_job.id,
+                            step_name="chunk",
+                            source_reference=f"segment:{_i}",
+                            chunk_index=_i,
+                            content=_seg[:2000],  # preview cap
+                            token_count=max(1, len(_seg) // 4),
+                            metadata_={
+                                "segment_index": _i,
+                                "segment_chars": len(_seg),
+                            },
+                        )
+                    )
+
+                _gaps = await GapScanService(db).scan_literature(
+                    literature_id=ds.id,
+                    ontology_version=_ov.version,
+                    only_open=False,
+                )
+                logger.info(
+                    "process_literature: datasource_id=%s chunk+gap wiring: "
+                    "chunks=%d gaps=%d (ontology=%s)",
+                    ds.id,
+                    len(_chunk_split(ds.content_md)),
+                    len(_gaps),
+                    _ov.version,
+                )
+        except Exception:  # wiring is best-effort, never gates extraction
+            logger.warning(
+                "process_literature: datasource_id=%s — chunk persistence / "
+                "gap scan failed (non-fatal)",
+                ds.id,
+                exc_info=True,
+            )
+
         # --- Step 3b: heuristic supplement (NFM-3424) --------------------
         # Always run the regex extractor alongside the LLM path.
         # The LLM catches narrative prose; the heuristic catches inline
@@ -1108,25 +1181,113 @@ def process_literature_sync(datasource_id: UUID | str) -> dict[str, Any]:
     detection pattern in :mod:`nfm_db.services.celery_app` so unit tests
     that exercise this helper from inside an ``async def`` test still
     get a clean run.
+
+    BUG-22 (NFM-4076): the module-level ``engine``'s asyncpg pool binds
+    its connections to the event loop that first used them.  Celery
+    prefork workers call this helper once per task, each through a fresh
+    ``asyncio.run`` loop — a later task on the same worker process then
+    fails with ``Future attached to a different loop`` and, worse, the
+    DataSource row is left stuck in ``parsing`` forever because the
+    failure happens outside ``process_literature``'s own try/except.
+
+    Fix: run each task on a task-local NullPool engine bound to that
+    task's loop and dispose it afterwards, so no cross-loop state leaks
+    between tasks — unless the module-level factory has been patched
+    (unit tests redirect it to a SQLite session), in which case the
+    patched factory wins.  A belt-and-braces ``except`` marks the
+    DataSource ``failed`` so a crash can never leave a row spinning.
     """
     if isinstance(datasource_id, str):
         datasource_id = UUID(datasource_id)
 
+    def _factory_is_patched() -> bool:
+        # The module-level factory is a stock async_sessionmaker whose
+        # .bind is the shared engine. Tests monkeypatch the *module
+        # attribute*, so any non-default object means "use the patched
+        # one" — that keeps TestSyncWrapper working unchanged.
+        import nfm_db.services.literature_service as _mod
+
+        return _mod.async_session_factory is not _DEFAULT_SESSION_FACTORY
+
+    def _fresh_engine() -> Any:
+        import sqlalchemy as _sa
+        from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+        from nfm_db.config import get_settings as _gs
+
+        return _cae(
+            _gs().database_url,
+            echo=_gs().debug,
+            poolclass=_sa.pool.NullPool,
+        )
+
+    async def _mark_failed_async(err: Exception) -> None:
+        import sqlalchemy as _sa
+
+        fb = _fresh_engine()
+        try:
+            async with fb.begin() as conn:
+                await conn.execute(
+                    _sa.text(
+                        "UPDATE data_sources SET parse_status = 'failed', "
+                        "parse_error = :err, updated_at = now() "
+                        "WHERE id = :ds_id"
+                    ),
+                    {"err": str(err)[:500], "ds_id": str(datasource_id)},
+                )
+        finally:
+            await fb.dispose()
+
+    def _mark_datasource_failed(err: Exception) -> None:
+        """Best-effort: swallow everything — must never mask the raise."""
+        try:
+            asyncio.run(_mark_failed_async(err))
+        except Exception:
+            logger.exception(
+                "BUG-22 fallback: could not mark datasource %s failed",
+                datasource_id,
+            )
+
+    _task_engine = None
+    _session_factory_local: Any
+    if not _factory_is_patched():
+        _task_engine = _fresh_engine()
+        from sqlalchemy.ext.asyncio import (
+            async_sessionmaker as _asm,
+        )
+
+        _session_factory_local = _asm(
+            _task_engine, class_=AsyncSession, expire_on_commit=False
+        )
+    else:
+        _session_factory_local = async_session_factory
+
     async def _run() -> dict[str, Any]:
-        async with async_session_factory() as session:
+        async with _session_factory_local() as session:
             return await process_literature(session, datasource_id)
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        # Normal Celery context: no loop running.  Use asyncio.run directly.
-        return asyncio.run(_run())
+    async def _run_wrapper() -> dict[str, Any]:
+        try:
+            return await _run()
+        finally:
+            if _task_engine is not None:
+                await _task_engine.dispose()
 
-    # Already inside an event loop (e.g. pytest-asyncio).  Run in a worker
-    # thread with its own loop so we don't nest.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, _run())
-        return future.result()
+    try:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Normal Celery context: no loop running. asyncio.run is safe.
+            return asyncio.run(_run_wrapper())
+
+        # Already inside an event loop (e.g. pytest-asyncio).  Run in a
+        # worker thread with its own loop so we don't nest.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, _run_wrapper())
+            return future.result()
+    except Exception as exc:
+        _mark_datasource_failed(exc)
+        raise
 
 
 __all__ = [
@@ -1136,6 +1297,7 @@ __all__ = [
     "PARSE_STATUS_FAILED",
     "PARSE_STATUS_PARSING",
     "PARSE_STATUS_UPLOADED",
+    "async_session_factory",
     "process_literature",
     "process_literature_sync",
 ]
