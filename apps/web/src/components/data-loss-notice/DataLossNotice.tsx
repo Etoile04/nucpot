@@ -33,7 +33,7 @@
  * via viewport-relative coords.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react"
 import type { CSSProperties, JSX } from "react"
 import { createPortal } from "react-dom"
 
@@ -43,11 +43,9 @@ import { DataLossNoticeIcon } from "./DataLossNoticeIcon"
 import { emitDataLossEvent } from "./analytics"
 import { formatCreatedAt, getMessages } from "./messages"
 import { resolveFeatureFlag } from "./feature-flag"
-import type {
-  DataLossLocale,
-  DataLossNoticeProps,
-} from "./types"
+import type { DataLossLocale, DataLossNoticeProps } from "./types"
 import { useDataLossNotice } from "./useDataLossNotice"
+import { DataLossNoticeContext } from "./DataLossNoticeProvider"
 
 const DEFAULT_LOST_AT = "2026-09-02"
 const DEFAULT_LOCALE: DataLossLocale = "en"
@@ -56,8 +54,7 @@ const DEFAULT_LOCALE: DataLossLocale = "en"
 // the server ("use client" components are still SSR'd by Next), even
 // though the effect body only matters after a client-side click. Swap
 // in `useEffect` on the server to keep the console clean.
-const useIsomorphicLayoutEffect =
-  typeof window === "undefined" ? useEffect : useLayoutEffect
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect
 
 // Viewport margin kept clear around the fixed popover (matches the 8px
 // offset the old absolute CSS used between trigger and popover).
@@ -91,10 +88,8 @@ function computePopoverPlacement(
   popoverHeight: number,
 ): PopoverPlacement {
   const margin = POPOVER_VIEWPORT_MARGIN
-  const viewportWidth =
-    typeof window === "undefined" ? 0 : window.innerWidth
-  const viewportHeight =
-    typeof window === "undefined" ? 0 : window.innerHeight
+  const viewportWidth = typeof window === "undefined" ? 0 : window.innerWidth
+  const viewportHeight = typeof window === "undefined" ? 0 : window.innerHeight
 
   // Default X = align with the trigger's left edge (matches the old
   // absolute CSS for `--top` / `--bottom`).
@@ -116,20 +111,14 @@ function computePopoverPlacement(
   }
 
   // Clamp horizontally so the popover stays inside the viewport.
-  const maxLeft = Math.max(
-    margin,
-    viewportWidth - popoverWidth - margin,
-  )
+  const maxLeft = Math.max(margin, viewportWidth - popoverWidth - margin)
   if (left < margin) left = margin
   if (left > maxLeft) left = maxLeft
 
   // Clamp vertically — the "top" placement can otherwise overflow when
   // the trigger sits near the top of the viewport; the "right"
   // placement can overflow on short viewports.
-  const maxTop = Math.max(
-    margin,
-    viewportHeight - popoverHeight - margin,
-  )
+  const maxTop = Math.max(margin, viewportHeight - popoverHeight - margin)
   if (top < margin) top = margin
   if (top > maxTop) top = maxTop
 
@@ -150,12 +139,24 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
   } = props
 
   const { isDismissed, dismiss } = useDataLossNotice(measurementId)
+  // NFM-4253 — subscribe to the provider's flag value via context.
+  // Reading `resolveFeatureFlag()` imperatively only sees the module-level
+  // override, which `<DataLossNoticeProvider>` writes from a `useEffect`
+  // — that effect runs AFTER the render commits, so the first paint
+  // always observed `{ enabled: false, source: "default-off" }` and the
+  // chip stayed dormant until any benign state change (page-size, sort,
+  // filter) triggered a re-render. The context value updates in the same
+  // commit as the gate's resolved value, so the chip appears as soon as
+  // the gate's async flag-fetch resolves, with no user interaction.
+  // Fall back to the imperative reader for callers that render the
+  // component without a provider (e.g. legacy/admin debug switch), so
+  // the existing `setRuntimeOverride()` path still works.
+  const flagCtx = useContext(DataLossNoticeContext)
   const locale: DataLossLocale = language ?? DEFAULT_LOCALE
   const messages = getMessages(locale)
 
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const [popoverCoords, setPopoverCoords] =
-    useState<PopoverPlacement | null>(null)
+  const [popoverCoords, setPopoverCoords] = useState<PopoverPlacement | null>(null)
   const openedAtRef = useRef<number | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -167,9 +168,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
   // can change between renders — early-returning above the hooks would
   // crash React with "Rendered fewer hooks than expected".
   const isLost = attribution?.status === "lost"
-  const siblingPlaceholderCount = isLost
-    ? attribution.siblingPlaceholderCount ?? 0
-    : 0
+  const siblingPlaceholderCount = isLost ? (attribution.siblingPlaceholderCount ?? 0) : 0
 
   // Fire `shown` analytics once when popover first opens.
   useEffect((): (() => void) | void => {
@@ -207,14 +206,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
         }
       }
     }
-  }, [
-    popoverOpen,
-    measurementId,
-    datasetId,
-    siblingPlaceholderCount,
-    surface,
-    locale,
-  ])
+  }, [popoverOpen, measurementId, datasetId, siblingPlaceholderCount, surface, locale])
 
   // Click-away / escape to close. The click-away handler is ref-based
   // (it tests `popoverRef.current?.contains(target)` and
@@ -265,14 +257,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
       const popoverWidth = popoverEl?.offsetWidth ?? POPOVER_MAX_WIDTH
       const popoverHeight = popoverEl?.offsetHeight ?? 0
       const rect = trigger.getBoundingClientRect()
-      setPopoverCoords(
-        computePopoverPlacement(
-          rect,
-          popoverPlacement,
-          popoverWidth,
-          popoverHeight,
-        ),
-      )
+      setPopoverCoords(computePopoverPlacement(rect, popoverPlacement, popoverWidth, popoverHeight))
     }
 
     recompute()
@@ -305,14 +290,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
       surface,
       locale,
     })
-  }, [
-    dismiss,
-    measurementId,
-    datasetId,
-    siblingPlaceholderCount,
-    surface,
-    locale,
-  ])
+  }, [dismiss, measurementId, datasetId, siblingPlaceholderCount, surface, locale])
 
   const onLearnMore = useCallback((): void => {
     emitDataLossEvent("dataloss_notice_learn_more_clicked", {
@@ -329,13 +307,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
       surface,
       locale,
     })
-  }, [
-    measurementId,
-    datasetId,
-    siblingPlaceholderCount,
-    surface,
-    locale,
-  ])
+  }, [measurementId, datasetId, siblingPlaceholderCount, surface, locale])
 
   // Render guards — intentionally below every hook (see the comment
   // above). Filter to the lost cohort only: the server contract (§5.2)
@@ -345,17 +317,18 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
   if (!attribution || attribution.status !== "lost") return null
 
   // Spec §6.1: when flag is OFF (or no provider), render nothing.
-  const flag = resolveFeatureFlag()
-  if (!flag.enabled) return null
+  // NFM-4253 — prefer the context value so the chip re-renders when
+  // `<DataLossNoticeGate>` commits the resolved flag-service evaluation.
+  // The imperative reader is kept as a fallback for callers that mount
+  // the component without a provider (admin debug switch / legacy).
+  const flagEnabled = flagCtx?.isEnabled ?? resolveFeatureFlag().enabled
+  if (!flagEnabled) return null
 
   const createdAt = formatCreatedAt(attribution.lostAt, DEFAULT_LOST_AT)
 
   const interpolated = {
     headline: messages.headline,
-    body: messages.body.replace(
-      "{siblingPlaceholderCount}",
-      String(siblingPlaceholderCount),
-    ),
+    body: messages.body.replace("{siblingPlaceholderCount}", String(siblingPlaceholderCount)),
     forwardLook: messages.forwardLook,
     inlineLabel: messages.inlineLabel(createdAt),
   }
@@ -396,20 +369,13 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
               <span>{interpolated.headline}</span>
             </div>
             {isDismissed ? (
-              <p className="data-loss-notice__previously">
-                {messages.previouslyDismissed}
-              </p>
+              <p className="data-loss-notice__previously">{messages.previouslyDismissed}</p>
             ) : (
               <>
-                <p
-                  id={`dataloss-body-${measurementId}`}
-                  className="data-loss-notice__body"
-                >
+                <p id={`dataloss-body-${measurementId}`} className="data-loss-notice__body">
                   {interpolated.body}
                 </p>
-                <p className="data-loss-notice__forward-look">
-                  {interpolated.forwardLook}
-                </p>
+                <p className="data-loss-notice__forward-look">{interpolated.forwardLook}</p>
               </>
             )}
             <div className="data-loss-notice__actions">
@@ -456,9 +422,7 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
         onClick={onTriggerClick}
       >
         <DataLossNoticeIcon size={14} />
-        <span className="data-loss-notice__label">
-          {interpolated.inlineLabel}
-        </span>
+        <span className="data-loss-notice__label">{interpolated.inlineLabel}</span>
       </button>
 
       {popover}
