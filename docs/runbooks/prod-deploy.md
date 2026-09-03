@@ -1,5 +1,14 @@
 # Production Deployment Runbook
 
+> **NFM-4270 / ADR-013 G2 (prod compose gate):** once the host gate is
+> applied, bare `docker compose -f docker-compose.prod.yml ...` /
+> `docker exec nucpot-prod-*` commands from a desktop shell are DENIED with
+> a 403 by design. Use the sanctioned routes in
+> [prod-compose-gate.md](./prod-compose-gate.md) — deploy via
+> `run-deploy.sh`, restart/rollback via `run-recovery.sh`. This runbook's
+> inline `docker` commands remain the reference for WHAT runs; route them
+> through the entries (or the GH workflow, which already does).
+
 **Audience:** on-call operators handling the
 `wenjiedeMac-Studio` self-hosted production runner when
 `.github/workflows/production-deployment.yml` is blocked or a hot

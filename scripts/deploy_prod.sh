@@ -73,12 +73,28 @@ docker compose version
 export PROD_IMAGE_TAG="${DEPLOY_SHA}"
 echo "==> Deploying with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
-for i in 1 2 3 4 5; do
-  git fetch origin main && break
-  [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
-  echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
-done
-git reset --hard origin/main
+if [ "${NFM_G2_DEPLOY_IDENTITY:-0}" = "1" ]; then
+  # NFM-4270 (ADR-013 G2): running as the sanctioned deploy identity
+  # (nfmdeploy via /usr/local/lib/nfm-g2/run-deploy.sh). The repo is owned
+  # by the desktop user, and the CALLER has already synced it to DEPLOY_SHA
+  # (GH Actions does `git reset --hard <github.sha>` as lwj04 before invoking
+  # the sudo entry). No git mutations here — verify the tree is exactly the
+  # SHA being deployed, then proceed.
+  HEAD_SHA="$(git rev-parse HEAD)"
+  if [ "${HEAD_SHA}" != "${DEPLOY_SHA}" ]; then
+    echo "FATAL (NFM-4270): repo HEAD ${HEAD_SHA} != DEPLOY_SHA ${DEPLOY_SHA} — refusing to deploy an unsynced tree" >&2
+    echo "  Sync as the repo owner: cd ~/Projects/nucpot && git fetch origin && git reset --hard ${DEPLOY_SHA}" >&2
+    exit 1
+  fi
+  echo "==> NFM-4270: sanctioned deploy identity at ${HEAD_SHA:0:12} (git sync skipped, HEAD verified)"
+else
+  for i in 1 2 3 4 5; do
+    git fetch origin main && break
+    [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
+    echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
+  done
+  git reset --hard origin/main
+fi
 
 # Build the 3 distinct images (D1, NFM-2148). The api image is shared by the
 # api and worker services (docker-compose.prod.yml), so one build tag covers
