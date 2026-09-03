@@ -80,6 +80,19 @@ for i in 1 2 3 4 5; do
 done
 git reset --hard origin/main
 
+# NFM-4265 (NFM-4264 follow-up): stale-tag landmine guard. On 2026-09-04 a
+# host-side `docker compose --env-file docker/.env.prod up -d --build` (outside
+# this script) inherited PROD_IMAGE_TAG=dce00e626… (Sep-2 SHA) still pinned in
+# docker/.env.prod and silently re-tagged prod to it while building current
+# tree. Every sanctioned flow passes the tag as an INLINE env var (this script
+# exports DEPLOY_SHA above; rollback uses `PROD_IMAGE_TAG=<prev-sha> … up -d`),
+# so the env-file must never pin a SHA — its value is only ever inherited by
+# ad-hoc host-side invocations. The guard aborts here if the env-file pins a
+# 40-hex SHA or the effective tag is not DEPLOY_SHA.
+python3 scripts/check_prod_image_tag.py \
+  --expected "${DEPLOY_SHA}" --env-file docker/.env.prod \
+  || { echo "FATAL: prod image tag guard failed (NFM-4265) — fix docker/.env.prod before deploying"; exit 1; }
+
 # Build the 3 distinct images (D1, NFM-2148). The api image is shared by the
 # api and worker services (docker-compose.prod.yml), so one build tag covers
 # both. --build is BANNED below in the compose step — it would re-tag the new
