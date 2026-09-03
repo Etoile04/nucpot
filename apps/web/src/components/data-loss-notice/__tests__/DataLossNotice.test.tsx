@@ -1,7 +1,9 @@
 /**
- * Vitest coverage for DataLossNotice (NFM-4146, spec §7 backstop).
+ * Vitest coverage for DataLossNotice (NFM-4146, spec §7 backstop;
+ * NFM-4238 portal-based un-clip backstop).
  *
- * Test surface mirrors the §7 anti-regression checklist:
+ * Test surface mirrors the §7 anti-regression checklist + NFM-4238
+ * portal behavior:
  *   1. Flag OFF → component renders null.
  *   2. Status: "intact" → component renders null.
  *   3. Status: "lost" + flag ON → renders the trigger + headline copy.
@@ -9,6 +11,19 @@
  *   5. Learn-more fires the analytics event.
  *   6. ZH-CN locale renders the localized headline.
  *   7. Dismissed state shows the "previously dismissed" affordance.
+ *   8. NFM-4238 — popover mounts as a child of `document.body`
+ *      (portaled out of the trigger's span) so it escapes every
+ *      ancestor `overflow: hidden`.
+ *   9. NFM-4238 — popover is positioned `position: fixed` with
+ *      viewport-relative `top`/`left` derived from the trigger's
+ *      `getBoundingClientRect()`.
+ *   10. NFM-4238 — clicking inside the portaled popover does NOT
+ *       close it (ref-based click-away still works across the
+ *       portal boundary; AC-3 dismissal path intact).
+ *   11. NFM-4238 — Escape closes the popover and restores focus to
+ *       the trigger (keyboard path unchanged by portaling).
+ *   12. NFM-4238 — `data-placement` attribute reflects the requested
+ *       placement prop (top/right/bottom) for tests / e2e selectors.
  */
 
 import { act, fireEvent, render, screen } from "@testing-library/react"
@@ -260,5 +275,176 @@ describe("DataLossNotice", (): void => {
     expect(
       screen.getByTestId("data-loss-notice-popover").textContent,
     ).toContain("previously dismissed")
+  })
+
+  // NFM-4238 — P1 fix (CPO-authorized): the popover used to mount at
+  // `position: absolute` inside `td.ant-table-cell-ellipsis`
+  // (`overflow: hidden`) within antd Table's `.ant-table-content`
+  // (`overflow: auto`) scroll container — disclosure text and the
+  // dismiss control were clipped invisible to mouse users at 1440 /
+  // 768 / 375. The fix portals the popover to `document.body` via
+  // `createPortal` and positions it `position: fixed` from the
+  // trigger's viewport rect. Asserting on the inline style proves the
+  // component does the work itself — jsdom cannot observe the visual
+  // result, but a real browser follows the same inline `top`/`left`
+  // values and escapes every `overflow: hidden` ancestor because the
+  // dialog node is no longer a descendant of any clipped subtree.
+  it("renders the popover as position:fixed with computed top/left (NFM-4238 un-clip)", (): void => {
+    setRuntimeOverride(true)
+    // Mock the trigger's viewport rect so the layout effect computes
+    // non-degenerate coordinates. jsdom returns 0,0,0,0 by default, which
+    // would still satisfy the "non-empty inline style" assertions below but
+    // would not exercise the trigger-rect path. Pin a known rect.
+    const triggerRect = {
+      x: 200,
+      y: 300,
+      width: 80,
+      height: 20,
+      top: 300,
+      bottom: 320,
+      left: 200,
+      right: 280,
+      toJSON: (): Record<string, never> => ({}),
+    }
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+    const trigger = screen.getByTestId("data-loss-notice-trigger")
+    trigger.getBoundingClientRect = (): DOMRect => triggerRect
+    act((): void => {
+      fireEvent.click(trigger)
+    })
+    const popover = screen.getByTestId("data-loss-notice-popover") as HTMLElement
+    // The popover MUST be position:fixed so it escapes the ancestor
+    // overflow:hidden chain (td.ant-table-cell-ellipsis + the table's
+    // .ant-table-content overflow:auto scroll container).
+    expect(popover.style.position).toBe("fixed")
+    // Top/left MUST be set inline from the trigger's viewport rect.
+    expect(popover.style.top).not.toBe("")
+    expect(popover.style.left).not.toBe("")
+    // Sanity: the resolved px values parse as numbers (the effect formats
+    // them as `${n}px`; if the formatter regressed, the values would be
+    // empty or NaN here).
+    const topPx = Number.parseFloat(popover.style.top)
+    const leftPx = Number.parseFloat(popover.style.left)
+    expect(Number.isFinite(topPx)).toBe(true)
+    expect(Number.isFinite(leftPx)).toBe(true)
+  })
+
+  it("mounts the popover as a direct child of document.body (NFM-4238 portal)", (): void => {
+    setRuntimeOverride(true)
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
+    })
+
+    const popover = screen.getByTestId("data-loss-notice-popover")
+    // Portal invariant: the popover's `parentNode` is `document.body`,
+    // NOT the `.data-loss-notice` span. This is what escapes every
+    // ancestor `overflow: hidden` (notably td.ant-table-cell-ellipsis).
+    expect(popover.parentElement).toBe(document.body)
+
+    // The trigger's span does NOT contain the popover — it's mounted
+    // outside the trigger's DOM subtree entirely.
+    const triggerSpan = screen.getByTestId("data-loss-notice")
+    expect(triggerSpan.contains(popover)).toBe(false)
+  })
+
+  it("keeps the popover open when clicked inside (NFM-4238 portal-safe click-away)", (): void => {
+    setRuntimeOverride(true)
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
+    })
+    const popover = screen.getByTestId("data-loss-notice-popover")
+    expect(popover).toBeInTheDocument()
+
+    // Click on the headline element inside the portaled popover. The
+    // click-away listener tests `popoverRef.current?.contains(target)`,
+    // which works across the portal boundary because the ref tracks the
+    // portaled node directly. The popover MUST stay open — this is the
+    // classic portal regression guard (rewriting the handler to close
+    // on the popover's own click would break dismissal here).
+    const headline = popover.querySelector(".data-loss-notice__headline")
+    expect(headline).not.toBeNull()
+    act((): void => {
+      fireEvent.mouseDown(headline as HTMLElement)
+    })
+    expect(screen.queryByTestId("data-loss-notice-popover")).not.toBeNull()
+  })
+
+  it("closes on Escape and restores focus to the trigger (NFM-4238)", (): void => {
+    setRuntimeOverride(true)
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+
+    const trigger = screen.getByTestId(
+      "data-loss-notice-trigger",
+    ) as HTMLElement
+    act((): void => {
+      fireEvent.click(trigger)
+    })
+    expect(screen.getByTestId("data-loss-notice-popover")).toBeInTheDocument()
+
+    act((): void => {
+      fireEvent.keyDown(document, { key: "Escape" })
+    })
+    expect(screen.queryByTestId("data-loss-notice-popover")).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it("reflects the requested popover placement via data-placement (NFM-4238)", (): void => {
+    setRuntimeOverride(true)
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          popoverPlacement="bottom"
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
+    })
+    const popover = screen.getByTestId("data-loss-notice-popover")
+    expect(popover.getAttribute("data-placement")).toBe("bottom")
   })
 })
