@@ -2,7 +2,7 @@
  * Client for the internal feature-flag service (NFM-4180).
  *
  * Backend: FastAPI `/api/v1/feature-flags/{key}/evaluate?subject=<id>`
- * (migration 071, table `feature_flags`). Values are read at request
+ * (migration 081, table `feature_flags`). Values are read at request
  * time, so operators toggle flags via the admin PUT endpoint with no
  * redeploy, and `rollout_percentage` gives deterministic per-browser
  * cohort bucketing (e.g. a 10% canary).
@@ -10,7 +10,9 @@
  * Fails closed: any fetch/parse error resolves to `value: false`, so a
  * down backend can never accidentally widen a rollout. The last
  * successful evaluation is cached module-side so sync readers
- * (`isDataLossNoticeEnabled`) keep working between refreshes.
+ * (`resolveFeatureFlag` in `@/components/data-loss-notice/feature-flag`,
+ * refreshed on mount + 60s by `<DataLossNoticeGate>`) keep working
+ * between refreshes.
  */
 
 import { request } from "@/lib/api-client"
