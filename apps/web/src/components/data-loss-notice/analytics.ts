@@ -7,10 +7,15 @@
  * either naming scheme without a rename PR.
  *
  * Events are emitted via `window.dispatchEvent` so the surface stays
- * integration-agnostic. A real analytics client subscribes once at
- * app root and forwards the events into its pipeline.
+ * integration-agnostic. Since NFM-4181 the dotted-form contract events
+ * are additionally dispatched to the internal events pipeline
+ * (`trackDataLossNotice` → POST /api/analytics/events →
+ * `public.frontend_events`); the underscore aliases stay local-only so
+ * legacy window-channel subscribers keep working without hitting the
+ * route's allowlist.
  */
 
+import { trackDataLossNotice, type DataLossNoticeEvent } from "@/lib/analytics"
 import type { DataLossSurface } from "./types"
 
 export type DataLossEventName =
@@ -33,6 +38,21 @@ export interface DataLossEventProps {
 const EVENT_TARGET = "paperclip-data-loss-notice"
 
 /**
+ * Dotted-form names are the cross-product analytics contract (spec
+ * §6.4) and the only events accepted by the ingestion route's
+ * allowlist — these are the ones forwarded to the pipeline.
+ */
+const PIPELINE_EVENT_NAMES: ReadonlySet<string> = new Set([
+  "data_loss_notice.viewed",
+  "data_loss_notice.dismissed",
+  "data_loss_notice.learn_more_clicked",
+])
+
+function isPipelineEvent(name: DataLossEventName): name is DataLossNoticeEvent {
+  return PIPELINE_EVENT_NAMES.has(name)
+}
+
+/**
  * Fire a DataLossNotice analytics event. Safe to call during SSR —
  * the helper no-ops when `window` is undefined.
  */
@@ -43,6 +63,10 @@ export function emitDataLossEvent(
   if (typeof window === "undefined") return
   const detail = Object.freeze({ name, props: Object.freeze(props) })
   window.dispatchEvent(new CustomEvent(EVENT_TARGET, { detail }))
+  if (isPipelineEvent(name)) {
+    // Fire-and-forget; never throws (see lib/analytics.ts).
+    trackDataLossNotice(name, props)
+  }
 }
 
 /**
