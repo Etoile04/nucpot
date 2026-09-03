@@ -1455,3 +1455,74 @@ describe("MaterialPropertyTable — learn-more wiring (NFM-4236)", () => {
     expect(screen.queryByTestId("data-loss-notice-learn-more")).toBeNull()
   })
 })
+
+// ── NFM-4262 D2 — responsive 来源 column + stacked SourceMetaLine ──────
+//
+// antd `responsive: ["md"]` UNMOUNTS the 来源 column below md; the
+// 属性名称 cell then hosts the stacked SourceMetaLine (citation +
+// data-loss chip). The single-mount invariant (spec §5.2) requires
+// exactly ONE `data-loss-notice-trigger` per lost row at any viewport
+// — a double mount would double-fire `.viewed` on the same
+// measurementId. jsdom's noop matchMedia mock (src/test/setup.ts)
+// reports `matches: false`, i.e. the below-md regime: the column
+// cells are unmounted and the stacked line owns the chip, which is
+// exactly the regime these tests pin. The ≥768 regime (column mount,
+// stacked chip unmounted via useIsBelowMd) is asserted by the e2e
+// pixel gate at 767/768 and 1440.
+
+describe("MaterialPropertyTable — stacked SourceMetaLine (NFM-4262 D2)", () => {
+  afterEach((): void => {
+    setRuntimeOverride(null)
+  })
+
+  it("renders the stacked meta line on every row and exactly one chip per lost row (single-mount invariant)", () => {
+    setRuntimeOverride(true)
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-lost-a", name: "密度", value: "10.5", source: null, attribution: { status: "lost" } }),
+          makeProperty({ id: "p-lost-b", name: "熔点", value: "1850", source: null, attribution: { status: "lost" } }),
+          makeProperty({ id: "p-intact", name: "热导率", value: "3.0", attribution: { status: "intact" } }),
+          makeProperty({ id: "p-plain", name: "电阻率", value: "9.8" }),
+        ]}
+        total={4}
+        error={null}
+      />,
+    )
+
+    // The meta line renders for EVERY row (it carries the citation;
+    // the chip is a guest on lost rows only).
+    expect(container.querySelectorAll("[data-testid='source-meta-line']")).toHaveLength(4)
+
+    // Single-mount invariant: one trigger per lost cohort row —
+    // the two intact/plain rows mount no chip.
+    expect(container.querySelectorAll("[data-testid='data-loss-notice-trigger']")).toHaveLength(2)
+
+    // The chip lives INSIDE the stacked line (the column cells are
+    // unmounted below md), and the line carries the 来源： label.
+    const lines = container.querySelectorAll("[data-testid='source-meta-line']")
+    const withChip = Array.from(lines).filter(
+      (el): boolean => el.querySelector("[data-testid='data-loss-notice-trigger']") !== null,
+    )
+    expect(withChip).toHaveLength(2)
+    expect(lines[0]?.textContent).toContain("来源：")
+  })
+
+  it("mounts no chip anywhere when the flag is OFF (stacked line keeps only the citation)", () => {
+    setRuntimeOverride(false)
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-lost", name: "密度", value: "10.5", source: null, attribution: { status: "lost" } }),
+        ]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    expect(container.querySelectorAll("[data-testid='data-loss-notice-trigger']")).toHaveLength(0)
+    expect(container.querySelectorAll("[data-testid='source-meta-line']")).toHaveLength(1)
+  })
+})

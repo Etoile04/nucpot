@@ -53,8 +53,55 @@
   box-shadow: 0 0 0 2px var(--warning-border, #b45309);
 }
 
+/* NFM-4262 D1 — structured truncation. The label is composed of two
+ * spans (headline + date) that mirror the i18n pieces behind
+ * `messages.inlineLabel(createdAt)`. Base rules give the chip a
+ * truncation context at EVERY width: the trigger can no longer exceed
+ * its container (the 来源 cell is fixed 240px at every viewport, so a
+ * media-query-only fix would not have scoped the ~74–77px overflow),
+ * the headline never shrinks, and only the date ellipsises. */
+.data-loss-notice__trigger {
+  max-width: 100%;
+}
+
 .data-loss-notice__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
   letter-spacing: var(--tracking-cjk, 0.02em);
+}
+
+.data-loss-notice__label-headline {
+  flex-shrink: 0;
+}
+
+.data-loss-notice__label-date {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* NFM-4262 D1 wrap-below (<768, the canonical globals.css
+ * breakpoint): the date moves to its own second line so the full date
+ * reads without opening the popover. The ellipsis rules above persist
+ * as a backstop for pathological containers. padding-left 20px =
+ * icon 14px + trigger gap 6px (0.375rem) — optically aligns the date
+ * under the headline start. Cost: +~19px row height on lost-cohort
+ * rows only. */
+@media (max-width: 767px) {
+  .data-loss-notice__trigger {
+    flex-wrap: wrap;
+    row-gap: 0.125rem;
+  }
+  .data-loss-notice__label {
+    flex-wrap: wrap;
+  }
+  .data-loss-notice__label-date {
+    flex-basis: 100%;
+    padding-left: calc(14px + 0.375rem);
+  }
 }
 
 /* Popover surface — only the `inline` variant exists post re-scope
@@ -89,6 +136,17 @@
     0 4px 12px rgba(0, 0, 0, 0.45),
     0 0 0 1px var(--color-border, #374151);
   animation: data-loss-notice-fade var(--dur-base, 200ms) var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1));
+}
+
+/* NFM-4262 D3 — 320px floor: at <768 the popover never gets wider
+ * than 100vw − 1.5rem (24px total gutter), keeping both side gutters
+ * ≥ 12px (POPOVER_VIEWPORT_MARGIN). min-width 280 is unchanged:
+ * at a 320px viewport the clamped max is 296px ≥ 280 so the min
+ * never wins. */
+@media (max-width: 767px) {
+  .data-loss-notice__popover {
+    max-width: calc(100vw - 1.5rem);
+  }
 }
 
 .data-loss-notice__headline {

@@ -48,7 +48,7 @@
  * forward, so title-instability risk is bounded.
  */
 
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Table, Input, Empty, Spin, Typography, Tooltip, Badge } from "antd"
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table"
 import type { SorterResult } from "antd/es/table/interface"
@@ -220,6 +220,114 @@ export function renderSourceCell(source: SourceRef | null): React.ReactNode {
         {citation}
       </Text>
     </Tooltip>
+  )
+}
+
+// ── Data-loss notice mounts (NFM-4262 D2) ────────────────────────────────
+
+/**
+ * Find the first underlying measurement in a grouped row whose
+ * attribution status is "lost". Shared by the ≥768 来源 column render
+ * and the <768 stacked SourceMetaLine so the two mounts cannot drift.
+ */
+function findLostMeasurement(
+  row: GroupedMaterialProperty,
+): MaterialProperty | null {
+  const lost = row.allMeasurements.find(
+    (m) => m.attribution?.status === "lost",
+  )
+  return lost ?? null
+}
+
+/**
+ * Render the `<DataLossNotice>` for a lost measurement. ONE shared
+ * function feeds BOTH mounts (the ≥768 来源 column cell and the <768
+ * stacked SourceMetaLine) so props stay identical by construction.
+ *
+ * Single-mount invariant (spec §5.2): `data_loss_notice.viewed` fires
+ * from the trigger only. antd `responsive: ["md"]` UNMOUNTS the 来源
+ * cells below md, and the stacked line mounts its chip only below md
+ * (`useIsBelowMd`), so exactly one trigger per lost row exists at any
+ * viewport — a double mount would double-fire `.viewed` on the same
+ * measurementId.
+ */
+function renderDataLossNotice(
+  lost: MaterialProperty,
+): React.ReactNode {
+  if (!lost.attribution) return null
+  return (
+    <DataLossNotice
+      variant="inline"
+      measurementId={lost.id}
+      attribution={lost.attribution}
+      surface="property-detail"
+      popoverPlacement="right"
+      onLearnMoreHref={DATA_LOSS_LEARN_MORE_HREF}
+    />
+  )
+}
+
+/**
+ * Track whether the viewport is below antd's `md` breakpoint (768px).
+ * antd's `responsive` column hiding is CSS+DOM driven but React-free —
+ * it unmounts hidden cells via matchMedia internally, with no way to
+ * ask "is the 来源 column currently mounted?" from the render tree.
+ * We need the same answer in JS to gate the stacked line's
+ * `<DataLossNotice>` mount (CSS `md:hidden` alone would leave a second
+ * chip mounted-but-invisible at ≥768 and break the single-mount
+ * invariant).
+ *
+ * Defaults to `true` (below md) so SSR HTML and first paint at <768
+ * include the stacked chip — the NFM-4253 first-paint contract. At
+ * ≥768 the line is `md:hidden` and the effect unmounts the chip
+ * before it can ever open.
+ */
+function useIsBelowMd(): boolean {
+  const [belowMd, setBelowMd] = useState(true)
+  useEffect((): (() => void) | void => {
+    const mq = window.matchMedia("(min-width: 768px)")
+    const update = (): void => setBelowMd(!mq.matches)
+    update()
+    mq.addEventListener("change", update)
+    return (): void => {
+      mq.removeEventListener("change", update)
+    }
+  }, [])
+  return belowMd
+}
+
+/**
+ * SourceMetaLine — the <768 substitute for the 来源 column
+ * (NFM-4262 D2, fixes UX advisory 1). antd unmounts the
+ * `responsive: ["md"]` 来源 cells below md; this secondary line in the
+ * 属性名称 cell keeps the citation (and the data-loss chip) reachable
+ * without a 513px horizontal swipe — table scroll width drops
+ * 888 → 648px at <768.
+ *
+ * The `来源：` label uses a fullwidth colon (zh-first headers). The
+ * citation clamps to 2 lines; the full citation remains in the ≥768
+ * column, the anchor title, and the expanded conditions sub-table.
+ * Hidden via `md:hidden` at ≥768 — where the column mount owns the
+ * chip — and the chip itself is additionally mount-gated by
+ * `belowMd` (see `renderDataLossNotice`).
+ */
+function SourceMetaLine({
+  row,
+  belowMd,
+}: {
+  readonly row: GroupedMaterialProperty
+  readonly belowMd: boolean
+}): React.ReactNode {
+  const lost = findLostMeasurement(row)
+  return (
+    <div
+      className="md:hidden mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[length:var(--fs-xs)] leading-[var(--lh-loose)] tracking-[var(--tracking-cjk)] text-[color:var(--color-text-secondary)]"
+      data-testid="source-meta-line"
+    >
+      <span>来源：</span>
+      <span className="min-w-0 line-clamp-2">{renderSourceCell(row.source)}</span>
+      {belowMd && lost !== null ? renderDataLossNotice(lost) : null}
+    </div>
   )
 }
 
@@ -509,6 +617,10 @@ export function MaterialPropertyTable({
     [data],
   )
 
+  // NFM-4262 D2 — gates the stacked SourceMetaLine's `<DataLossNotice>`
+  // mount to <768 (see `useIsBelowMd` for the single-mount invariant).
+  const belowMd = useIsBelowMd()
+
   const columns: ColumnsType<GroupedMaterialProperty> = useMemo(
     () => [
       {
@@ -518,8 +630,16 @@ export function MaterialPropertyTable({
         sorter: true,
         sortOrder: sortField === "name" ? (sortOrder === "asc" ? "ascend" : "descend") : null,
         width: 200,
-        render: (text: string) => (
-          <Text className="text-gray-100 font-medium">{text}</Text>
+        render: (text: string, row: GroupedMaterialProperty) => (
+          // NFM-4262 D2 — the 属性名称 cell hosts the <768 stacked
+          // SourceMetaLine (citation + data-loss chip) that replaces
+          // the `responsive: ["md"]`-hidden 来源 column below md. The
+          // line is `md:hidden` and renders no chip at ≥768, so wide
+          // viewports keep the exact pre-D2 layout (zero visual delta).
+          <div className="min-w-0">
+            <Text className="text-gray-100 font-medium">{text}</Text>
+            <SourceMetaLine row={row} belowMd={belowMd} />
+          </div>
         ),
       },
       {
@@ -561,6 +681,13 @@ export function MaterialPropertyTable({
         key: "source",
         width: 240,
         ellipsis: true,
+        // NFM-4262 D2 — antd UNMOUNTS the column's header + cells below
+        // md (768px), which is what makes room for the stacked
+        // SourceMetaLine in the 属性名称 cell and preserves the
+        // single-mount invariant for the data-loss chip (exactly one
+        // trigger per lost row at any viewport). In-repo precedent:
+        // md-verification/task-list.tsx responsive columns.
+        responsive: ["md"],
         // NFM-4146 — render the data-loss disclosure when ANY underlying
         // measurement in this grouped row carries attribution.status ===
         // "lost". Spec §3.3 places the notice alongside the source cell.
@@ -569,25 +696,19 @@ export function MaterialPropertyTable({
         // NFM-4236 — pass the spec §2/§8 #4 disclosure destination so the
         // popover's "Learn more" link renders (without it the link — and
         // the learn_more_clicked analytics event — are unreachable).
+        // NFM-4262 D2 — the notice markup is built by ONE shared
+        // `renderDataLossNotice` used by both this column mount and the
+        // <768 stacked SourceMetaLine, so the two cannot drift.
         render: (
           source: SourceRef | null,
           row: GroupedMaterialProperty,
         ): React.ReactNode => {
-          const lostMeasurement = row.allMeasurements.find(
-            (m) => m.attribution?.status === "lost",
-          )
-          if (lostMeasurement && lostMeasurement.attribution) {
+          const lost = findLostMeasurement(row)
+          if (lost !== null && lost.attribution) {
             return (
               <span className="inline-flex items-center gap-1.5">
                 {renderSourceCell(source)}
-                <DataLossNotice
-                  variant="inline"
-                  measurementId={lostMeasurement.id}
-                  attribution={lostMeasurement.attribution}
-                  surface="property-detail"
-                  popoverPlacement="right"
-                  onLearnMoreHref={DATA_LOSS_LEARN_MORE_HREF}
-                />
+                {renderDataLossNotice(lost)}
               </span>
             )
           }
@@ -610,7 +731,7 @@ export function MaterialPropertyTable({
       // 820px (within the `scroll.x: 800` threshold), and the badge
       // remains discoverable because it's adjacent to the value text.
     ],
-    [sortField, sortOrder],
+    [sortField, sortOrder, belowMd],
   )
 
   const handleTableChange = useCallback(
