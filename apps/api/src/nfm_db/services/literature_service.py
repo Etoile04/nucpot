@@ -841,7 +841,15 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             for _r in raw_properties:
                 if not isinstance(_r, dict):
                     continue
-                _prop = str(_r.get("property_name") or _r.get("name") or "")
+                # ExtractedProperty's canonical key is ``property``
+                # (schemas/extraction.py); heuristic items use
+                # ``property_name``. Accept both, plus ``name``.
+                _prop = str(
+                    _r.get("property")
+                    or _r.get("property_name")
+                    or _r.get("name")
+                    or ""
+                )
                 if not _prop:
                     continue
                 db.add(
