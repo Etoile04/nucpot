@@ -662,6 +662,11 @@ jobs:
           # it executes on PR runners and catches regressions in
           # `tools/prod-tag-retention/prune.sh` before they reach prod.
           python3 -m pytest tools/prod-tag-retention/test_prune.py -v
+          # NFM-4272: ADR-013 G4b deploy-drift alarm. Same fake-docker
+          # shim pattern; exercises the checker the Hermes cron runs against
+          # prod (including its stub-Paperclip end-to-end filing path)
+          # before any of it ships.
+          python3 -m pytest scripts/tests/test_check_deploy_drift.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
