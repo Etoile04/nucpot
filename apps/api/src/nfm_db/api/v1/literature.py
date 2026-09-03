@@ -25,7 +25,7 @@ import hashlib
 import logging
 import math
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from fastapi.responses import Response
@@ -458,6 +458,25 @@ async def from_doi_literature(
 
     # --- Create DataSource row (AC #6: status='parsed') -----------------
     file_hash = hashlib.sha256(md_bytes).hexdigest()
+
+    # BUG-17 (NFM-4082): previously year/journal were left NULL because
+    # the Semantic Scholar payload only carried a title. Parse the fetched
+    # markdown for bibliographic metadata and prefer explicit fields,
+    # falling back to the DOI-stub title.
+    biblio: dict[str, Any] = {}
+    try:
+        from nfm_db.services.bibliographic_metadata import (
+            extract_bibliographic_metadata,
+        )
+
+        biblio = extract_bibliographic_metadata(md_content)
+    except Exception:  # metadata is best-effort, never gates the fetch
+        logger.warning(
+            "from_doi: bibliographic metadata extraction failed for doi=%s",
+            doi,
+            exc_info=True,
+        )
+
     source = DataSource(
         id=datasource_id,
         doi=doi,
@@ -468,7 +487,12 @@ async def from_doi_literature(
         parse_status="parsed",
         original_filename=md_filename,
         source_type="journal_article",
-        title=f"DOI: {doi}",
+        title=(
+            biblio.get("title")
+            or (f"DOI: {doi}")
+        ),
+        year=biblio.get("year"),
+        journal=biblio.get("journal"),
     )
     db.add(source)
     await db.commit()

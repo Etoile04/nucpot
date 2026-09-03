@@ -825,6 +825,56 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             len(raw_properties),
         )
 
+        # --- Step 3c: persist extraction results (BUG-18, NFM-4084) -----
+        # The /literature detail UI derived its "extraction results" from
+        # kg_nodes/kg_edges, but ``extraction_results`` (the canonical
+        # review-queue source) was never written by the literature
+        # pipeline — the table stayed at 0 rows. Persist the raw LLM +
+        # heuristic properties here so downstream consumers (review UI,
+        # recall metrics, parity audits) see the same data the detail
+        # page shows. Failure is non-fatal.
+        try:
+            from nfm_db.models.extraction_result import (
+                ExtractionResult as ExtractionResultModel,
+            )
+
+            for _r in raw_properties:
+                if not isinstance(_r, dict):
+                    continue
+                _prop = str(_r.get("property_name") or _r.get("name") or "")
+                if not _prop:
+                    continue
+                db.add(
+                    ExtractionResultModel(
+                        source_id=ds.id,
+                        property_name=_prop[:500],
+                        item_type=str(
+                            _r.get("item_type") or "property"
+                        ),
+                        item_data=_r,
+                        value=_r.get("value"),
+                        confidence=float(_r.get("confidence") or 0.0),
+                        extraction_method=str(
+                            _r.get("extraction_method") or "llm"
+                        ),
+                    )
+                )
+            if raw_properties:
+                await db.flush()
+                logger.info(
+                    "process_literature: datasource_id=%s persisted %d "
+                    "rows to extraction_results (BUG-18)",
+                    ds.id,
+                    len(raw_properties),
+                )
+        except Exception:  # persistence is best-effort
+            logger.warning(
+                "process_literature: datasource_id=%s — extraction_results "
+                "persistence failed (non-fatal)",
+                ds.id,
+                exc_info=True,
+            )
+
         # --- Step 3c: record ontology provenance -----------------------
         # NFM-3478 Step 2 (s2-lit-ov): ontofuel_extract resolves the
         # ontology version internally (latest published) but the chosen
@@ -1023,6 +1073,44 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             from nfm_db.services.kg_re import dispatch_build_result
 
             dispatch_build_result(build_result)
+
+            # BUG-04 (NFM-4083): the fire-and-forget LightRAG ingest
+            # scheduled by ``dispatch_build_result`` attaches its
+            # ``asyncio.Task`` to the current loop — which, in the Celery
+            # worker path, is the throwaway loop ``asyncio.run`` is about
+            # to close. The task was silently cancelled before it ever
+            # ran, so newly ingested literature never reached LightRAG
+            # (13 stale docs, zero auto-syncs). While we are still inside
+            # the live loop, run the ingest inline (it is already
+            # exception-safe and a no-op when LightRAG is unconfigured).
+            if build_result.ingest_nodes or build_result.ingest_edges:
+                try:
+                    from nfm_db.services.kg_lightrag_sync import (
+                        ingest_kg_to_lightrag,
+                    )
+
+                    node_labels = {
+                        n.id: n.label for n in build_result.ingest_nodes
+                    }
+                    await ingest_kg_to_lightrag(
+                        nodes=list(build_result.ingest_nodes),
+                        edges=list(build_result.ingest_edges),
+                        node_labels=node_labels,
+                    )
+                    logger.info(
+                        "process_literature: datasource_id=%s LightRAG "
+                        "inline ingest done (nodes=%d edges=%d)",
+                        ds.id,
+                        len(build_result.ingest_nodes),
+                        len(build_result.ingest_edges),
+                    )
+                except Exception:
+                    logger.warning(
+                        "process_literature: datasource_id=%s — inline "
+                        "LightRAG ingest failed (non-fatal)",
+                        ds.id,
+                        exc_info=True,
+                    )
 
         logger.info(
             "process_literature: datasource_id=%s completed",
