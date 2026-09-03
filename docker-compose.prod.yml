@@ -376,6 +376,11 @@ services:
       # "Cannot read properties of null (reading 'auth')" → HTTP 500.
       # Value lives in docker/.env.prod (gitignored), never in this file.
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+    volumes:
+      # NFM-4087 (BUG-06): read-only view of the shared upload volume so
+      # /uploads/<id>.<ext> potential files written by the api service are
+      # served as Next.js static files without a proxy hop.
+      - prod-uploads:/app/apps/web/public/uploads
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
