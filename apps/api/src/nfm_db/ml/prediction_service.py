@@ -52,6 +52,9 @@ import numpy as np
 from nfm_db.ml.energy_features_v11 import (
     ENERGY_V11_FEATURE_NAMES,
 )
+from nfm_db.ml.energy_features_v31 import (
+    ENERGY_V31_FEATURE_NAMES,
+)
 from nfm_db.ml.model_version import (
     ENERGY_PREDICTOR_VERSION,
     PHASE_CLASSIFIER_VERSION,
@@ -559,6 +562,7 @@ def _predict_temp_from_dict(
 # ---------------------------------------------------------------------------
 
 ENERGY_MODEL_V30_FILENAME = "energy_predictor_v30.joblib"
+ENERGY_MODEL_V31_FILENAME = "energy_predictor_v31.joblib"
 ENERGY_MODEL_V11_FILENAME = "energy_predictor_v11.joblib"
 ENERGY_MODEL_V10_FILENAME = "energy_predictor_v10.joblib"
 
@@ -672,6 +676,76 @@ def _merge_energy_card_metrics(
     return merged
 
 
+_ENERGY_V31_CARD_PATH: Path = MODELS_DIR / "energy_predictor_v3.1_metrics.json"
+_ENERGY_V31_CARD_CACHE: dict | None = None
+
+
+def _load_energy_v31_card_metrics() -> dict | None:
+    """Read the v3.1 model-card sidecar JSON once per process.
+
+    The NFM-3990 card uses flat top-level keys (``grouped_cv_r2``,
+    ``grouped_cv_r2_std``, ``rd2_label``) rather than a nested
+    ``grouped_cv_summary`` block. Mirrors ``_load_energy_card_metrics``
+    (NFM-4059): a missing or malformed card degrades to ``None`` — never
+    a 5xx — and the v3.1 dispatch falls back to artifact-embedded
+    metrics.
+    """
+    global _ENERGY_V31_CARD_CACHE
+    if _ENERGY_V31_CARD_CACHE is not None:
+        return _ENERGY_V31_CARD_CACHE
+    if not _ENERGY_V31_CARD_PATH.is_file():
+        logger.warning(
+            "EnergyPredictor v3.1 model card not found at %s; "
+            "rd2_label / grouped_cv_summary will fall back to "
+            "artifact-embedded values",
+            _ENERGY_V31_CARD_PATH,
+        )
+        _ENERGY_V31_CARD_CACHE = {}
+        return None
+    try:
+        with _ENERGY_V31_CARD_PATH.open("r", encoding="utf-8") as source:
+            _ENERGY_V31_CARD_CACHE = json.load(source)
+    except (OSError, ValueError):
+        logger.exception(
+            "Failed to read EnergyPredictor v3.1 model card at %s; "
+            "falling back to artifact-embedded metrics",
+            _ENERGY_V31_CARD_PATH,
+        )
+        _ENERGY_V31_CARD_CACHE = {}
+        return None
+    return _ENERGY_V31_CARD_CACHE
+
+
+def _merge_energy_v31_card_metrics(
+    artifact_metrics: dict,
+    card_metrics: dict | None,
+) -> dict:
+    """Merge the flat NFM-3990 card into the v3.1 artifact metrics.
+
+    The v3.1 trainer writes ``rd2_label`` / grouped-CV figures only to
+    the sidecar JSON, so a rebuild from the canonical trainer relies on
+    this merge to keep the NFM-3959 honesty contract (mandates 1-3)
+    reachable without re-running the repack script. The flat card is
+    projected onto the runtime ``grouped_cv_summary`` shape and then run
+    through the shared NFM-4059 precedence rule: artifact-embedded keys
+    win, the card fills only what is absent. Pure function.
+    """
+    if not card_metrics:
+        return dict(artifact_metrics)
+    normalized: dict = {
+        key: card_metrics[key]
+        for key in ("rd2_label", "rd2_label_status")
+        if card_metrics.get(key) is not None
+    }
+    if "grouped_cv_r2" in card_metrics:
+        normalized["grouped_cv_summary"] = {
+            "r2_mean": card_metrics["grouped_cv_r2"],
+            "r2_std": card_metrics.get("grouped_cv_r2_std"),
+            "per_fold_r2": card_metrics.get("grouped_cv_per_fold_r2", []),
+        }
+    return _merge_energy_card_metrics(artifact_metrics, normalized)
+
+
 def _predict_energy_v11(features: dict[str, float]) -> dict | None:
     """Run the v1.1 20D EnergyPredictor (lazy-loaded).
 
@@ -781,7 +855,9 @@ def _predict_energy_v10(features: dict[str, float]) -> dict | None:
         return None
 
 
-def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[dict]]:
+def _compute_energy_confidence(
+    metrics: dict, model_version_label: str = "v3.0"
+) -> tuple[float | None, str, list[dict]]:
     """Compute the honest confidence score for an EnergyPredictor artifact.
 
     Implements the CTO architectural mandates from NFM-3959 (RD-3
@@ -843,7 +919,15 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[d
     except (TypeError, ValueError):
         r2_random = 0.0
     grouped_cv = metrics.get("grouped_cv_summary") or {}
-    is_exploratory = metrics.get("rd2_label") == "[EXPLORATORY]"
+    # NFM-3990 model card carries the provenance suffix after the
+    # [EXPLORATORY] marker (e.g. ``"[EXPLORATORY] — grouped R² 0.2598
+    # landed in FAIL bucket..."``), so we match by prefix instead of strict
+    # equality. The original NFM-3953 contract used the bare label; the
+    # extended provenance text is forward-compatible.
+    is_exploratory = (
+        isinstance(metrics.get("rd2_label"), str)
+        and metrics["rd2_label"].startswith("[EXPLORATORY]")
+    )
     has_grouped_r2_mean = "r2_mean" in grouped_cv
 
     # Mandate 1 (NFM-3959): FAIL LOUDLY when the artifact is labeled
@@ -875,12 +959,20 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[d
         if is_exploratory:
             # Mandate 3 (NFM-3959): the exact message per the spec. The
             # warning drives off rd2_label so it disappears automatically
-            # when NFM-3958 clears the label on v3.1.
-            warning_msg = (
-                f"v3.0 metrics re-labeled [EXPLORATORY] under RD-3; "
-                f"grouped-CV R^2={r2_mean_raw:.4f} reported as confidence "
-                f"until v3.1 ships (NFM-3958)."
-            )
+            # when a successor artifact clears the label. The model version
+            # is included so the message reads correctly for v3.0 vs v3.1.
+            if model_version_label == "v3.0":
+                warning_msg = (
+                    f"v3.0 metrics re-labeled [EXPLORATORY] under RD-3; "
+                    f"grouped-CV R^2={r2_mean_raw:.4f} reported as confidence "
+                    f"until v3.1 ships (NFM-3958)."
+                )
+            else:
+                warning_msg = (
+                    f"{model_version_label} metrics labeled [EXPLORATORY] "
+                    f"per NFM-3958 PREREG §6 (FAIL bucket, grouped-CV "
+                    f"R^2={r2_mean_raw:.4f} reported as confidence)."
+                )
             warnings: list[dict] = [
                 {
                     "code": "energy_model_exploratory",
@@ -915,6 +1007,81 @@ def _compute_energy_confidence(metrics: dict) -> tuple[float | None, str, list[d
         }
     ]
     return None, "random_split_r2", warnings
+
+
+def _predict_energy_v31(features: dict[str, float]) -> dict | None:
+    """Run the v3.1 EnergyPredictor (12D aggregates-only, lazy-loaded).
+
+    v3.1 is the NFM-3958 PREREG ablation: the 8 pairwise/variance stratum
+    from v3.0's 20D feature set is dropped, leaving a locked 12D
+    aggregates-only feature vector (NFM-3988, ENERGY_V31_FEATURE_NAMES).
+    The 12D ablation landed in the FAIL bucket under GroupKFold
+    (grouped R² = 0.2598 ± 0.5075 per NFM-3990 model card), so the
+    artifact carries ``rd2_label == "[EXPLORATORY]"`` and the response
+    surfaces the clamped grouped-CV R² as ``confidence`` plus an
+    ``energy_model_exploratory`` warning. Mandate 1 (FAIL LOUDLY) still
+    applies: an [EXPLORATORY] artifact without ``grouped_cv_summary.r2_mean``
+    raises ``RuntimeError`` (NFM-3959).
+
+    Returns None when the v3.1 artifact is unavailable.
+
+    Expected artifact: ``models/energy_predictor_v31.joblib`` (joblib dict
+    with keys ``model``, ``version``, ``metrics``, ``feature_names``). The
+    ``metrics`` dict carries ``rd2_label`` and ``grouped_cv_summary`` per
+    NFM-3990.
+    """
+    v31_path = _env_path(ENERGY_MODEL_V31_FILENAME)
+    if not v31_path.exists():
+        logger.warning(
+            "v3.1 energy model not found at %s; v3.1 callers must accept None",
+            v31_path,
+        )
+        return None
+    try:
+        import joblib
+
+        raw = joblib.load(v31_path)
+        if isinstance(raw, dict) and "model" in raw:
+            model = raw["model"]
+            feature_names = raw.get("feature_names", ENERGY_V31_FEATURE_NAMES)
+            model_data = raw
+        else:
+            model = raw
+            feature_names = ENERGY_V31_FEATURE_NAMES
+            model_data = {"model": raw}
+
+        vals = [features.get(n, 0.0) for n in (feature_names or [])]
+        X = np.array(vals, dtype=np.float64).reshape(1, -1)
+        if X is None or X.shape[1] == 0:
+            return None
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        predicted = float(model.predict(X)[0])
+        artifact_metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        # NFM-4059 precedence rule, v3.1 side: the flat NFM-3990 card fills
+        # rd2_label / grouped_cv_summary only when the artifact lacks them,
+        # so a rebuild from the canonical trainer keeps the NFM-3959
+        # honesty contract without re-running the repack script.
+        metrics = _merge_energy_v31_card_metrics(
+            artifact_metrics, _load_energy_v31_card_metrics()
+        )
+    except Exception:
+        logger.exception("v3.1 energy prediction failed")
+        return None
+
+    # Confidence computation lives outside the broad except above: the
+    # NFM-3959 mandate-1 RuntimeError (artifact labeled [EXPLORATORY] but
+    # grouped_cv_summary.r2_mean absent) MUST propagate as a 5xx so the
+    # operator sees the misconfiguration.
+    confidence, confidence_source, warnings = _compute_energy_confidence(
+        metrics, model_version_label="v3.1"
+    )
+    return {
+        "predicted_energy": round(predicted, 6),
+        "confidence": confidence,
+        "confidence_source": confidence_source,
+        "model_version": raw.get("version", "v3.1") if isinstance(raw, dict) else "v3.1",
+        "warnings": warnings,
+    }
 
 
 def _predict_energy_v30(features: dict[str, float]) -> dict | None:
@@ -1014,6 +1181,8 @@ def predict_energy(
         ``None`` if the requested artifact is unavailable.
     """
     effective = model_version or ENERGY_PREDICTOR_VERSION
+    if effective == "v3.1":
+        return _predict_energy_v31(features)
     if effective == "v3.0":
         return _predict_energy_v30(features)
     if effective == "v1.1":
@@ -1039,6 +1208,14 @@ def predict_energy_from_composition(
 
         v10_features = compute_ml_features(composition)
         return predict_energy(v10_features, model_version="v1.0")
+    if effective == "v3.1":
+        # v3.1 uses the locked 12D aggregates-only feature vector
+        # (NFM-3958 PREREG §3-§4, ENERGY_V31_FEATURE_NAMES). The 8D
+        # pairwise/variance stratum from v3.0 is deliberately omitted.
+        from nfm_db.ml.energy_features_v31 import compute_energy_features_v31
+
+        features = compute_energy_features_v31(composition)
+        return predict_energy(features, model_version="v3.1")
     # v3.0 (default) and v1.1 share the 20D feature computation.
     # Compute features once, then dispatch through predict_energy()
     # which routes to the correct model artifact.
