@@ -838,6 +838,25 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ExtractionResult as ExtractionResultModel,
             )
 
+            def _coerce_confidence(raw: Any) -> float:
+                """Map confidence to [0,1] float.
+
+                LLM items carry categorical labels ('high'/'medium'/'low',
+                see ExtractedProperty.confidence) while heuristic items
+                carry numeric values — a plain ``float()`` raised
+                ValueError ('could not convert string to float: high')
+                and the non-fatal handler dropped the whole batch.
+                """
+                if isinstance(raw, (int, float)):
+                    return float(raw)
+                label = str(raw or "").strip().lower()
+                return {
+                    "high": 0.9,
+                    "medium": 0.6,
+                    "med": 0.6,
+                    "low": 0.3,
+                }.get(label, 0.0)
+
             for _r in raw_properties:
                 if not isinstance(_r, dict):
                     continue
@@ -861,7 +880,9 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         ),
                         item_data=_r,
                         value=_r.get("value"),
-                        confidence=float(_r.get("confidence") or 0.0),
+                        confidence=_coerce_confidence(
+                            _r.get("confidence")
+                        ),
                         extraction_method=str(
                             _r.get("extraction_method") or "llm"
                         ),
