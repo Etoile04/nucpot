@@ -22,6 +22,7 @@ from nfm_db.api.v1 import (
     dft,
     extraction,
     extraction_gaps,
+    feature_flags,
     feedback,
     health,
     jobs,
@@ -300,6 +301,7 @@ async def _upload_error_handler(_request: Request, exc: PotentialUploadError) ->
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(admin_api.router, prefix="/api/admin", tags=["管理健康监控"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
+app.include_router(feature_flags.router, prefix="/api/v1", tags=["功能开关"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["参考值缺口"])
 app.include_router(extraction.router, prefix="/api/v1", tags=["信息抽取"])

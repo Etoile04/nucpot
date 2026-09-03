@@ -40,4 +40,22 @@ export async function setupDataLossMocks(page: Page): Promise<void> {
   await page.route("**/api/v1/materials/FeCrAl/properties*", (route) => {
     jsonResponse(route, MOCK_PROPERTIES_RESPONSE)
   })
+
+  // NFM-4180: the flag now comes from the backend feature-flag service
+  // (`<DataLossNoticeGate>` fetches `/api/v1/feature-flags/{key}/evaluate`
+  // on mount), replacing the webServer `NEXT_PUBLIC_DATA_LOSS_NOTICE=on`
+  // env of the NFM-4204 setup. Serve an enabled evaluation so the spec
+  // exercises the flag-ON render path without a real backend.
+  await page.route("**/api/v1/feature-flags/**", (route) => {
+    jsonResponse(route, {
+      success: true,
+      data: {
+        key: "DATA_LOSS_NOTICE",
+        enabled: true,
+        rollout_percentage: 100,
+        value: true,
+        bucket: 0,
+      },
+    })
+  })
 }

@@ -6,7 +6,7 @@ import Footer from "@/components/Footer"
 import Nav from "@/components/Nav"
 import AuthProvider from "@/components/AuthProvider"
 import { SessionProvider } from "@/components/session"
-import { DataLossNoticeProvider } from "@/components/data-loss-notice"
+import { DataLossNoticeGate } from "@/components/data-loss-notice"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
@@ -42,12 +42,14 @@ export default function RootLayout({
           <QueryProvider>
             <AuthProvider>
             <SessionProvider>
-              <DataLossNoticeProvider>
+              {/* NFM-4180: flag gate reads the runtime feature-flag service
+                  (mount + 60s re-check) instead of a build-time env var. */}
+              <DataLossNoticeGate>
                 <Nav />
                 <main className="flex-1 overflow-y-auto">{children}</main>
                 <Footer />
                 <FeedbackFloatButton />
-              </DataLossNoticeProvider>
+              </DataLossNoticeGate>
             </SessionProvider>
             </AuthProvider>
           </QueryProvider>

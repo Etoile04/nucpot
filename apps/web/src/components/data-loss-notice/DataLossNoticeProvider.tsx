@@ -102,7 +102,9 @@ function pruneExpired(records: Record<string, DismissedRecord>): void {
 export interface DataLossNoticeProviderProps {
   /**
    * Override the flag at runtime. Used by the admin debug switch +
-   * integration tests. Resolves precedence over `NEXT_PUBLIC_DATA_LOSS_NOTICE`.
+   * integration tests, and by `<DataLossNoticeGate>` (NFM-4180), which
+   * feeds in the live flag-service value. Resolves precedence over the
+   * flag-service cache.
    */
   readonly forceEnabled?: boolean | null
   readonly children: ReactNode
@@ -122,7 +124,17 @@ export function DataLossNoticeProvider({
     }
   }, [forceEnabled])
 
-  const snapshot = useMemo(() => resolveFeatureFlag(), [])
+  // NFM-4180: `<DataLossNoticeGate>` feeds the live flag-service value
+  // in as `forceEnabled`. Resolve it directly (instead of through the
+  // module override, which the effect above only sets after this
+  // render) so the context updates in the same render as the gate.
+  const snapshot = useMemo(
+    () =>
+      forceEnabled !== null
+        ? { enabled: forceEnabled, source: "provider" as const }
+        : resolveFeatureFlag(),
+    [forceEnabled],
+  )
   const [records, setRecords] = useState<Record<string, DismissedRecord>>({})
 
   // Read + prune on mount.

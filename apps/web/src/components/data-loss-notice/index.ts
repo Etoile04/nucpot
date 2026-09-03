@@ -8,6 +8,7 @@
  */
 
 export { DataLossNotice } from "./DataLossNotice"
+export { DataLossNoticeGate } from "./DataLossNoticeGate"
 export { DataLossNoticeProvider } from "./DataLossNoticeProvider"
 export type {
   DataLossAttribution,
