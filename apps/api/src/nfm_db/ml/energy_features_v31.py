@@ -26,7 +26,7 @@ References:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable
 
 from nfm_db.ml.energy_features_v11 import (
     calculate_avg_allen_chi,
@@ -83,7 +83,10 @@ assert not (set(ENERGY_V31_FEATURE_NAMES) & V31_DROPPED_FEATURE_NAMES), (
 )
 
 
-def _safe_avg(composition: dict[str, float], calc) -> float:
+def _safe_avg(
+    composition: dict[str, float],
+    calc: Callable[[dict[str, float]], float | None],
+) -> float:
     """Compute an aggregate feature, returning 0.0 on lookup failure.
 
     The v1.1 calculators return 0.0 when no element in the composition has

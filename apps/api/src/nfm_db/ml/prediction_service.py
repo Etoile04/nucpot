@@ -676,6 +676,76 @@ def _merge_energy_card_metrics(
     return merged
 
 
+_ENERGY_V31_CARD_PATH: Path = MODELS_DIR / "energy_predictor_v3.1_metrics.json"
+_ENERGY_V31_CARD_CACHE: dict | None = None
+
+
+def _load_energy_v31_card_metrics() -> dict | None:
+    """Read the v3.1 model-card sidecar JSON once per process.
+
+    The NFM-3990 card uses flat top-level keys (``grouped_cv_r2``,
+    ``grouped_cv_r2_std``, ``rd2_label``) rather than a nested
+    ``grouped_cv_summary`` block. Mirrors ``_load_energy_card_metrics``
+    (NFM-4059): a missing or malformed card degrades to ``None`` — never
+    a 5xx — and the v3.1 dispatch falls back to artifact-embedded
+    metrics.
+    """
+    global _ENERGY_V31_CARD_CACHE
+    if _ENERGY_V31_CARD_CACHE is not None:
+        return _ENERGY_V31_CARD_CACHE
+    if not _ENERGY_V31_CARD_PATH.is_file():
+        logger.warning(
+            "EnergyPredictor v3.1 model card not found at %s; "
+            "rd2_label / grouped_cv_summary will fall back to "
+            "artifact-embedded values",
+            _ENERGY_V31_CARD_PATH,
+        )
+        _ENERGY_V31_CARD_CACHE = {}
+        return None
+    try:
+        with _ENERGY_V31_CARD_PATH.open("r", encoding="utf-8") as source:
+            _ENERGY_V31_CARD_CACHE = json.load(source)
+    except (OSError, ValueError):
+        logger.exception(
+            "Failed to read EnergyPredictor v3.1 model card at %s; "
+            "falling back to artifact-embedded metrics",
+            _ENERGY_V31_CARD_PATH,
+        )
+        _ENERGY_V31_CARD_CACHE = {}
+        return None
+    return _ENERGY_V31_CARD_CACHE
+
+
+def _merge_energy_v31_card_metrics(
+    artifact_metrics: dict,
+    card_metrics: dict | None,
+) -> dict:
+    """Merge the flat NFM-3990 card into the v3.1 artifact metrics.
+
+    The v3.1 trainer writes ``rd2_label`` / grouped-CV figures only to
+    the sidecar JSON, so a rebuild from the canonical trainer relies on
+    this merge to keep the NFM-3959 honesty contract (mandates 1-3)
+    reachable without re-running the repack script. The flat card is
+    projected onto the runtime ``grouped_cv_summary`` shape and then run
+    through the shared NFM-4059 precedence rule: artifact-embedded keys
+    win, the card fills only what is absent. Pure function.
+    """
+    if not card_metrics:
+        return dict(artifact_metrics)
+    normalized: dict = {
+        key: card_metrics[key]
+        for key in ("rd2_label", "rd2_label_status")
+        if card_metrics.get(key) is not None
+    }
+    if "grouped_cv_r2" in card_metrics:
+        normalized["grouped_cv_summary"] = {
+            "r2_mean": card_metrics["grouped_cv_r2"],
+            "r2_std": card_metrics.get("grouped_cv_r2_std"),
+            "per_fold_r2": card_metrics.get("grouped_cv_per_fold_r2", []),
+        }
+    return _merge_energy_card_metrics(artifact_metrics, normalized)
+
+
 def _predict_energy_v11(features: dict[str, float]) -> dict | None:
     """Run the v1.1 20D EnergyPredictor (lazy-loaded).
 
@@ -986,7 +1056,14 @@ def _predict_energy_v31(features: dict[str, float]) -> dict | None:
             return None
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         predicted = float(model.predict(X)[0])
-        metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        artifact_metrics = model_data.get("metrics", {}) if isinstance(model_data, dict) else {}
+        # NFM-4059 precedence rule, v3.1 side: the flat NFM-3990 card fills
+        # rd2_label / grouped_cv_summary only when the artifact lacks them,
+        # so a rebuild from the canonical trainer keeps the NFM-3959
+        # honesty contract without re-running the repack script.
+        metrics = _merge_energy_v31_card_metrics(
+            artifact_metrics, _load_energy_v31_card_metrics()
+        )
     except Exception:
         logger.exception("v3.1 energy prediction failed")
         return None

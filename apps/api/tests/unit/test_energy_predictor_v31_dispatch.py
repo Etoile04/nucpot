@@ -213,14 +213,22 @@ class TestV31Dispatch:
         mock_v31.assert_not_called()
         assert result["model_version"] == "v3.0"
 
-    def test_predict_energy_v31_none_on_missing_artifact(self) -> None:
-        """predict_energy returns None when v3.1 artifact is unavailable."""
+    def test_predict_energy_v31_none_on_missing_artifact(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """predict_energy returns None when v3.1 artifact is unavailable.
+
+        Exercises the real guard in _predict_energy_v31: _env_path() honors
+        the ENERGY_PREDICTOR_PATH override, so pointing it at a nonexistent
+        path drives the exists() check → warning → None path.
+        """
         from nfm_db.ml.prediction_service import predict_energy
 
-        features = {"mo_equivalent": 0.5}
-        with patch("nfm_db.ml.prediction_service._predict_energy_v31") as mock:
-            mock.return_value = None
-            result = predict_energy(features, model_version="v3.1")
+        monkeypatch.setenv(
+            "ENERGY_PREDICTOR_PATH",
+            str(tmp_path / "missing" / "energy_predictor_v31.joblib"),
+        )
+        result = predict_energy({"mo_equivalent": 0.5}, model_version="v3.1")
 
         assert result is None
 
@@ -325,6 +333,99 @@ class TestV31ConfidenceContract:
         # Clamp invariant: confidence ≤ min(r2_mean, r2_random)
         clamp_ceiling = min(r2_mean, r2_random, 1.0)
         assert result["confidence"] <= clamp_ceiling + 1e-4
+
+
+# ---------------------------------------------------------------------------
+# Card merge: a rebuild from the canonical trainer keeps the honesty contract
+# ---------------------------------------------------------------------------
+
+
+class _StubV31Model:
+    """Minimal picklable stand-in for the XGBoost estimator."""
+
+    def predict(self, X):
+        return [-0.05]
+
+
+class TestV31CardMerge:
+    """The v3.1 dispatch merges the NFM-3990 sidecar card at runtime.
+
+    The committed trainer writes rd2_label / grouped-CV figures only to
+    the JSON sidecar, not into the joblib's metrics dict. A rebuild that
+    skips the repack script must still surface the card's grouped-CV
+    figure and the EXPLORATORY disclosure — not the legacy
+    random-split fallback.
+    """
+
+    @staticmethod
+    def _write_stub_artifact(
+        tmp_path: Path, metrics: dict
+    ) -> Path:
+        import joblib
+
+        artifact_path = tmp_path / "energy_predictor_v31.joblib"
+        joblib.dump(
+            {
+                "model": _StubV31Model(),
+                "version": "v3.1",
+                "metrics": metrics,
+                "feature_names": ["mo_equivalent"],
+            },
+            artifact_path,
+        )
+        return artifact_path
+
+    def test_card_fills_honesty_keys_on_unrepacked_rebuild(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Stub artifact without honesty keys: card fills them at runtime."""
+        from nfm_db.ml import prediction_service
+
+        if not V31_METRICS_PATH.exists():
+            pytest.skip("v3.1 metrics card not on disk")
+
+        monkeypatch.setenv(
+            "ENERGY_PREDICTOR_PATH",
+            str(self._write_stub_artifact(tmp_path, {"r2": 0.9})),
+        )
+
+        result = prediction_service._predict_energy_v31({"mo_equivalent": 0.5})
+        assert result is not None
+
+        with open(V31_METRICS_PATH) as f:
+            card = json.load(f)
+        assert card["rd2_label"].startswith("[EXPLORATORY]")
+
+        assert result["confidence_source"] == "grouped_cv_r2_mean"
+        assert result["confidence"] == pytest.approx(min(card["grouped_cv_r2"], 0.9))
+        codes = [w["code"] for w in result["warnings"]]
+        assert "energy_model_exploratory" in codes
+        assert "energy_model_pre_grouped_cv" not in codes
+
+    def test_artifact_embedded_keys_win_over_card(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Artifact-embedded grouped_cv_summary takes precedence over card."""
+        from nfm_db.ml import prediction_service
+
+        monkeypatch.setenv(
+            "ENERGY_PREDICTOR_PATH",
+            str(
+                self._write_stub_artifact(
+                    tmp_path,
+                    {
+                        "r2": 0.5,
+                        "rd2_label": "[EXPLORATORY] — embedded provenance",
+                        "grouped_cv_summary": {"r2_mean": 0.4, "r2_std": 0.1},
+                    },
+                )
+            ),
+        )
+
+        result = prediction_service._predict_energy_v31({"mo_equivalent": 0.5})
+        assert result is not None
+        assert result["confidence"] == pytest.approx(0.4)
+        assert result["confidence_source"] == "grouped_cv_r2_mean"
 
 
 # ---------------------------------------------------------------------------

@@ -29,14 +29,15 @@ stack.
 The `api` image runs `alembic upgrade head` before serving, so the staging
 schema is migrated automatically on every start.
 
-The `api` image also bakes in the ML model artifacts from `apps/api/models/`
-(same set as `docker/prod-api.Dockerfile`): `energy_predictor_v30.joblib`,
-`energy_predictor_v3.0_metrics.json`, `phase_classifier_v01.joblib`,
-`temp_predictor_v01.joblib`, plus the `specialists/` directory. With these
-baked in, `/api/v1/predict/*` can serve real predictions on staging (instead
-of returning 503 `Energy predictor model is not available`), so the staging
-container is a viable wire-format verification target — not just a health
-endpoint. (NFM-4078.)
+The `api` image also bakes in the ML model artifacts: the entire
+`apps/api/models/` directory (see its listing — the authoritative source —
+for the current set, e.g. the energy predictors v1.1/v3.0/v3.1 with their
+metrics sidecars, plus the `specialists/` directory), copied verbatim by
+`docker/staging-api.Dockerfile` the same way `docker/prod-api.Dockerfile`
+does. With these baked in, `/api/v1/predict/*` can serve real predictions on
+staging (instead of returning 503 `Energy predictor model is not
+available`), so the staging container is a viable wire-format verification
+target — not just a health endpoint. (NFM-4078.)
 
 Public ingress is served by the `cloudflared` service — a Cloudflare Tunnel
 connector that runs inside the stack (NFM-112 / NFM-120), so bringing the stack
