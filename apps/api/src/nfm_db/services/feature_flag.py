@@ -14,13 +14,13 @@ _BUCKET_SALT = "nfm-feature-flag-v1"
 
 
 def bucket_for_subject(key: str, subject: str) -> int:
-    """Deterministically map (flag key, subject) to a stable 0–99 bucket.
+    """Deterministically map (flag key, subject) to a stable 0-99 bucket.
 
     The same browser (subject id) always lands in the same bucket for a
     given flag, so a 10% rollout is a sticky canary cohort rather than a
     per-request coin flip.
     """
-    digest = hashlib.sha256(f"{_BUCKET_SALT}:{key}:{subject}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{_BUCKET_SALT}:{key}:{subject}".encode()).hexdigest()
     return int(digest[:8], 16) % 100
 
 
