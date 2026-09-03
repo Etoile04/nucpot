@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { render, screen, fireEvent, act } from "@testing-library/react"
 import {
   MaterialPropertyTable,
   formatCitation,
@@ -9,6 +9,13 @@ import {
   rowAttributionStatus,
 } from "../MaterialPropertyTable"
 import type { MaterialProperty, MeasurementCondition, SourceRef } from "@/lib/materials-api"
+import { setRuntimeOverride } from "@/components/data-loss-notice/feature-flag"
+import {
+  subscribeDataLossEvents,
+  type DataLossEventName,
+  type DataLossEventProps,
+} from "@/components/data-loss-notice/analytics"
+import { DATA_LOSS_LEARN_MORE_HREF } from "@/components/data-loss-notice"
 
 // ── Mock ConfidenceBadge ───────────────────────────────────────────────
 // ConfidenceBadge uses dynamic Tailwind classes that don't resolve in jsdom.
@@ -1320,5 +1327,131 @@ describe("MaterialPropertyTable — row attribution DOM contract (NFM-4204)", ()
 
     // Rows outside the adjudicated cohort carry no status attribute at all.
     expect(container.querySelectorAll("tr[data-attribution-status]")).toHaveLength(1)
+  })
+})
+
+// ── NFM-4236 — learn-more wiring at the property-detail mount ──────────
+//
+// NFM-4232 E2E QA flagged that `data_loss_notice.learn_more_clicked` was
+// pipeline-verified (POST → 204 → DB row) but never user-triggerable:
+// the only production mount never passed `onLearnMoreHref`, so the link
+// never rendered. These tests pin the mount wiring — the spec §2/§8 #4
+// destination (`/about/data-integrity`), the lost-state-only render, and
+// the analytics payload — so a refactor cannot silently drop the prop
+// again.
+
+interface LearnMoreEventCapture {
+  name: DataLossEventName
+  props: DataLossEventProps
+}
+
+describe("MaterialPropertyTable — learn-more wiring (NFM-4236)", () => {
+  afterEach((): void => {
+    // The runtime flag override is module-global; reset so the NFM-4204
+    // attribution-DOM tests above (which rely on the default-off flag)
+    // stay hermetic regardless of execution order.
+    setRuntimeOverride(null)
+    // NOTE: no localStorage cleanup needed here — these tests never
+    // dismiss, and this jsdom env exposes no `window.localStorage`
+    // (same pre-existing quirk that fails DataLossNotice.test.tsx's
+    // own beforeEach on this machine; CI is unaffected).
+  })
+
+  it("renders the learn-more link at the spec §2 destination on lost rows when the flag is ON", () => {
+    setRuntimeOverride(true)
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-lost", name: "密度", value: "10.5", source: null, attribution: { status: "lost" } }),
+          makeProperty({ id: "p-intact", name: "熔点", value: "1850", attribution: { status: "intact" } }),
+        ]}
+        total={2}
+        error={null}
+      />,
+    )
+
+    // Popover is closed initially — the link only exists inside it.
+    expect(screen.queryByTestId("data-loss-notice-learn-more")).toBeNull()
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
+    })
+
+    const link = screen.getByTestId("data-loss-notice-learn-more")
+    expect(link).toBeInTheDocument()
+    expect(link.getAttribute("href")).toBe(DATA_LOSS_LEARN_MORE_HREF)
+    expect(link.getAttribute("href")).toBe("/about/data-integrity")
+    // Plain anchor navigation: no preventDefault-style interception that
+    // would swallow the spec'd navigation to the disclosure page.
+    expect(link.tagName).toBe("A")
+  })
+
+  it("fires data_loss_notice.learn_more_clicked with measurementId/surface/locale when the link is clicked", () => {
+    setRuntimeOverride(true)
+    const captured: LearnMoreEventCapture[] = []
+    const unsubscribe = subscribeDataLossEvents((name, props): void => {
+      captured.push({ name, props })
+    })
+
+    render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({
+            id: "p-lost",
+            name: "密度",
+            value: "10.5",
+            source: null,
+            attribution: { status: "lost", lostAt: "2026-09-02", siblingPlaceholderCount: 2 },
+          }),
+        ]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
+    })
+    act((): void => {
+      fireEvent.click(screen.getByTestId("data-loss-notice-learn-more"))
+    })
+
+    // Both the legacy underscore name and the §6.4 dotted name fire; the
+    // QA pipeline (NFM-4232 AC-3/AC-4) asserts the dotted one.
+    const dotted = captured.find((e): boolean => e.name === "data_loss_notice.learn_more_clicked")
+    expect(dotted).toBeDefined()
+    expect(dotted?.props.measurementId).toBe("p-lost")
+    expect(dotted?.props.surface).toBe("property-detail")
+    expect(dotted?.props.locale).toBe("en")
+    expect(
+      captured.some((e): boolean => e.name === "dataloss_notice_learn_more_clicked"),
+    ).toBe(true)
+
+    // No regression to viewed/dismissed (AC-4): the popover-open path
+    // still emits the shown/viewed event from the same interaction.
+    expect(
+      captured.some((e): boolean => e.name === "dataloss_notice_shown"),
+    ).toBe(true)
+
+    unsubscribe()
+  })
+
+  it("renders no notice (and no learn-more link) when the flag is OFF", () => {
+    setRuntimeOverride(false)
+    const { container } = render(
+      <MaterialPropertyTable
+        {...TABLE_PROPS}
+        data={[
+          makeProperty({ id: "p-lost", name: "密度", value: "10.5", source: null, attribution: { status: "lost" } }),
+        ]}
+        total={1}
+        error={null}
+      />,
+    )
+
+    expect(container.querySelector("[data-testid='data-loss-notice']")).toBeNull()
+    expect(screen.queryByTestId("data-loss-notice-learn-more")).toBeNull()
   })
 })
