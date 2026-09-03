@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-4270 (ADR-013 G2) — full (sanctioned) docker gate proxy.
+     Installed to /Library/LaunchDaemons by scripts/host-prod-gate/host_setup.sh.
+     Socket /var/run/nfm-g2/docker-full.sock mode 660 group prod-deploy: only
+     root and the deploy identity (nfmdeploy) can connect; the proxy allows
+     everything and audits every mutation with peer identity. Reachable only
+     through the root-owned /usr/local/lib/nfm-g2/run-*.sh sudoers entries. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.docker-full</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/lib/nfm-g2/start-proxy.sh</string>
+        <string>full</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/launchd-full.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/launchd-full.log</string>
+</dict>
+</plist>

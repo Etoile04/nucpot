@@ -1,0 +1,26 @@
+# NFM-4270 / ADR-013 G2 — sanctioned prod-mutation entrypoints (AC-G2.4).
+#
+# Command-enumerated ONLY: no wildcards, no arbitrary runas, no blanket ALL.
+# The four entry scripts are root-owned (installed by
+# scripts/host-prod-gate/host_setup.sh from the nucpot repo) and validate
+# their own arguments before touching docker. They run as the dedicated
+# deploy identity nfmdeploy — the only non-root identity that can connect
+# to the full docker gate socket (group prod-deploy).
+#
+# Enumerated chokepoints:
+#   run-deploy.sh             — deploy_prod.sh via GH Actions / operator
+#   run-pre-deploy-assert.sh  — GH Actions pre-deploy DB<->code assertion
+#   run-recovery.sh           — NFM-1664 deterministic recovery playbook
+#   run-worker-inspect.sh     — GH Actions post-deploy celery verification
+#   run-sql.sh                — run-migration.yml standalone DB migration
+
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-deploy.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-pre-deploy-assert.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-recovery.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-worker-inspect.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-sql.sh
+
+# sudo env_reset strips the caller environment; the deploy entry needs
+# exactly these two. Scoped to the entry script via Defaults! (command-
+# specific), not globally.
+Defaults!/usr/local/lib/nfm-g2/run-deploy.sh env_keep += "DEPLOY_SHA PROXY_PORT"
