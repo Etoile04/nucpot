@@ -33,6 +33,22 @@ export PATH="/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:$PATH"
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
 : "${PROXY_PORT:=7897}"
 
+
+# NFM-4272 / ADR-013 §2 G4b — deploy lockfile. The drift-checker cron
+# (scripts/check_deploy_drift.py, per runbook §8) diffs live container
+# digests against the deploy manifest recorded at the END of this script.
+# While a sanctioned deploy RUNS, live state legitimately diverges from the
+# previous manifest; this lockfile tells the checker to stand down (fresh
+# lock ⇒ deploy in progress, no drift issue filed — AC-G4b.2). Removed on
+# ANY exit including failures: a crashed deploy left prod diverged and that
+# MUST alarm. A lock orphaned by a host crash goes stale and is ignored by
+# the checker after --max-lock-age (default 2h; cold build is ~30 min).
+NFM_DEPLOY_LOCK="${NFM_DEPLOY_LOCK:-$HOME/.nfmd/prod-deploy.lock}"
+mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
+printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
+trap 'rm -f "$NFM_DEPLOY_LOCK"' EXIT
+
 # NFM-3328: fail-fast semantics. Prior deploys slid past failed steps (build
 # errors, `docker compose` unavailable) into green health checks against
 # stale containers — four consecutive false-success deploys (2026-08-18..19).

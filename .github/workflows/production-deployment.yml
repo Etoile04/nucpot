@@ -657,6 +657,11 @@ jobs:
           # shim pattern; exercises the script both deploy paths call, before
           # it reaches prod.
           python3 -m pytest scripts/tests/test_record_deploy_manifest.py -v
+          # NFM-4272: ADR-013 G4b deploy-drift alarm. Same fake-docker
+          # shim pattern; exercises the checker the Hermes cron runs against
+          # prod (including its stub-Paperclip end-to-end filing path)
+          # before any of it ships.
+          python3 -m pytest scripts/tests/test_check_deploy_drift.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
