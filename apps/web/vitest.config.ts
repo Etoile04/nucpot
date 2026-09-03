@@ -43,6 +43,9 @@ export default defineConfig({
     conditions: ["development"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Mirror the tsconfig path so tests resolve the platform package
+      // at its TS source, same as the Next.js build does (NFM-4179).
+      "@nfm-db/shared": path.resolve(__dirname, "../../packages/shared/src"),
     },
   },
 })
