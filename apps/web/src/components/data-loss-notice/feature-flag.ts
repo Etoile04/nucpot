@@ -1,26 +1,33 @@
 /**
  * Feature flag check for DataLossNotice.
  *
- * Spec §6.1 — default OFF in dev, ON in staging/prod. The frontend reads
- * the flag at render time; when OFF the component returns `null` so the
- * existing source citation renders unchanged. The flag is the iteration
- * lever for §4.1 copy ratification.
+ * Spec §6.1 — default OFF. The frontend reads the flag at render time;
+ * when OFF the component returns `null` so the existing source citation
+ * renders unchanged. The flag is the iteration lever for §4.1 copy
+ * ratification.
  *
- * This module does NOT introduce a feature-flag dependency. The project
- * does not yet have one (NFM-4177 ships SRE's flag-flip plan separately
- * for staging/prod). Until then we resolve from a runtime-only override
- * set by `<DataLossNoticeProvider>` and a build-time env override:
+ * NFM-4146-FU2 / NFM-4180: the source of truth is now the backend
+ * `feature_flags` table (migration 081), evaluated per-request at
+ * `/api/v1/feature-flags/{key}/evaluate` with deterministic per-browser
+ * cohort bucketing (`rollout_percentage`). This replaces the build-time
+ * env-var gate shipped by NFM-4146 and patched by NFM-4207 (the
+ * `NEXT_PUBLIC_`-prefixed DataLossNotice var) — that env var is no
+ * longer read anywhere: an
+ * operator flips the flag via `PUT /api/v1/feature-flags/DATA_LOSS_NOTICE`
+ * and every client picks the change up within one refresh interval
+ * (60s, see `<DataLossNoticeGate>`) with no redeploy.
  *
- *   NEXT_PUBLIC_DATA_LOSS_NOTICE=on   → enable in dev
+ * Resolution order:
  *
- * The env value is BAKED into the client bundle at `next build` time
- * (docker/web.Dockerfile ARG of the same name) — changing the container's
- * runtime env after the build does not flip the flag (NFM-4207).
- *
- * Default = OFF. The SRE owner flips the actual rollout behind
- * `feature_flags.DATA_LOSS_NOTICE` once the backend's `attribution`
- * field ships (NFM-4159).
+ *   1. Runtime override (set via `setRuntimeOverride` — admin debug
+ *      switch + integration tests).
+ *   2. Flag-service cache: the last successful evaluation fetched by
+ *      `<DataLossNoticeGate>` (mount + 60s re-check).
+ *   3. Default = OFF (fail closed — a down backend can never widen a
+ *      rollout).
  */
+
+import { evaluateFlag, getCachedEvaluation } from "@/lib/flag-service"
 
 const FLAG_NAME = "DATA_LOSS_NOTICE"
 
@@ -28,7 +35,7 @@ export interface FeatureFlagSnapshot {
   /** True iff the notice should render at all. */
   readonly enabled: boolean
   /** Source of the resolved value, for observability. */
-  readonly source: "env" | "provider" | "default-off"
+  readonly source: "provider" | "flag-service" | "default-off"
 }
 
 let runtimeOverride: boolean | null = null
@@ -36,53 +43,38 @@ let runtimeOverride: boolean | null = null
 /**
  * Set the runtime override. Called by `<DataLossNoticeProvider>` so a
  * parent (e.g. an admin debug switch, a route-level config) can flip
- * the flag without redeploying.
+ * the flag for the current session.
  */
 export function setRuntimeOverride(value: boolean | null): void {
   runtimeOverride = value
 }
 
 /**
- * Resolve the current flag value. Resolution order:
- *
- *   1. Runtime override (set via `setRuntimeOverride`).
- *   2. Build-time env: `NEXT_PUBLIC_DATA_LOSS_NOTICE=on`.
- *   3. Default = OFF.
+ * Resolve the current flag value. Synchronous by design: it reads the
+ * flag-service cache filled by `<DataLossNoticeGate>`, so the
+ * authoritative (re)fetch lives in exactly one place.
  */
 export function resolveFeatureFlag(): FeatureFlagSnapshot {
   if (runtimeOverride !== null) {
     return { enabled: runtimeOverride, source: "provider" }
   }
-  const envValue = readBuildTimeEnv()
-  if (envValue === true) {
-    return { enabled: true, source: "env" }
+  const evaluation = getCachedEvaluation(FLAG_NAME)
+  if (evaluation !== undefined) {
+    return { enabled: evaluation.value, source: "flag-service" }
   }
   return { enabled: false, source: "default-off" }
 }
 
-function readBuildTimeEnv(): boolean | null {
-  // Next.js exposes only `NEXT_PUBLIC_*` vars to the browser by inlining
-  // them at build time: DefinePlugin replaces *free*
-  // `process.env.NEXT_PUBLIC_*` member expressions with the literal value.
-  // The read MUST therefore be rooted at the bare `process` identifier —
-  // a lookup chain rooted at `globalThis` (or any other object) is never
-  // replaced, and browsers have no `process` global, so it silently
-  // resolved to `undefined` (flag stuck OFF) in the shipped client bundle
-  // (NFM-4207 Finding 1). The `typeof` guard is for un-bundled consumers
-  // only; after inlining the expression is a string literal.
-  const env =
-    typeof process === "undefined"
-      ? undefined
-      : process.env.NEXT_PUBLIC_DATA_LOSS_NOTICE
-  if (typeof env !== "string") return null
-  const normalized = env.trim().toLowerCase()
-  if (normalized === "on" || normalized === "true" || normalized === "1") {
-    return true
-  }
-  if (normalized === "off" || normalized === "false" || normalized === "0") {
-    return false
-  }
-  return null
+/**
+ * Fetch the current evaluation from the flag service and update the
+ * cache read by `resolveFeatureFlag()`. Called by
+ * `<DataLossNoticeGate>` on mount and on its 60s refresh interval;
+ * resolves to the refreshed value (fail-closed `false` on any error —
+ * see `lib/flag-service.ts`).
+ */
+export async function refreshFeatureFlag(): Promise<boolean> {
+  const evaluation = await evaluateFlag(FLAG_NAME)
+  return evaluation.value
 }
 
 export const FEATURE_FLAG_NAME = FLAG_NAME

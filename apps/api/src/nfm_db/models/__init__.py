@@ -148,6 +148,7 @@ from nfm_db.models.extraction_result import (  # noqa: E402
 from nfm_db.models.extraction_step import (  # noqa: E402
     ExtractionStep,
 )
+from nfm_db.models.feature_flag import FeatureFlag  # noqa: E402
 from nfm_db.models.feedback import (  # noqa: E402
     Feedback,
     FeedbackStatus,
@@ -290,6 +291,7 @@ __all__ = [
     "ExtractionJob",
     "ExtractionResult",
     "ExtractionStep",
+    "FeatureFlag",
     "Feedback",
     "FeedbackStatus",
     "FeedbackType",

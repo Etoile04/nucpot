@@ -1,91 +1,107 @@
 /**
- * Unit + build-contract coverage for the DATA_LOSS_NOTICE feature flag
- * (NFM-4207).
+ * Unit + contract coverage for the DATA_LOSS_NOTICE feature flag
+ * resolution (NFM-4180).
  *
- * Why a *source* contract test: the shipped defect was invisible to
- * behaviour tests. The env read used to be rooted at `globalThis`, which
- * Next.js build-time inlining (DefinePlugin) never replaces — and browsers
- * have no `process` global — so in the production client bundle the flag
- * always resolved to `undefined` (default OFF). Vitest/jsdom run under
- * Node where `globalThis.process` exists, so every behaviour test passed
- * anyway. The static assertions below pin the real contract: the env read
- * must be a *free* `process.env.NEXT_PUBLIC_*` member expression so the
- * bundler inlines the value at build time.
+ * NFM-4146/NFM-4207 resolved the flag from a build-time env var
+ * (`NEXT_PUBLIC_DATA_LOSS_NOTICE`), and a source-contract test pinned
+ * the free `process.env.*` member expression so Next.js inlined it.
+ * NFM-4180 replaces that mechanism wholesale: the source of truth is
+ * the backend feature-flag service (`lib/flag-service.ts`), so the
+ * build contract inverts — the env var must be read NOWHERE, and the
+ * module must resolve from the flag-service cache with a fail-closed
+ * default.
  */
 
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { resolveFeatureFlag, setRuntimeOverride } from "../feature-flag"
+import {
+  FEATURE_FLAG_NAME,
+  refreshFeatureFlag,
+  resolveFeatureFlag,
+  setRuntimeOverride,
+} from "../feature-flag"
+
+vi.mock("@/lib/flag-service", () => ({
+  evaluateFlag: vi.fn(),
+  getCachedEvaluation: vi.fn().mockReturnValue(undefined),
+}))
+
+import { evaluateFlag, getCachedEvaluation } from "@/lib/flag-service"
+
+const mockedEvaluate = vi.mocked(evaluateFlag)
+const mockedGetCached = vi.mocked(getCachedEvaluation)
 
 const MODULE_SOURCE = readFileSync(
   join(import.meta.dirname, "..", "feature-flag.ts"),
   "utf8",
 )
 
-describe("feature-flag build contract (NFM-4207)", (): void => {
-  it("reads the flag via a free process.env.NEXT_PUBLIC_* member expression", (): void => {
-    // This is the exact expression Next.js DefinePlugin replaces at build
-    // time. If it is absent (e.g. rewritten as `x?.process?.env?.…`) the
-    // value never reaches the browser bundle.
-    expect(MODULE_SOURCE).toMatch(
-      /process\s*\.\s*env\s*\.\s*NEXT_PUBLIC_DATA_LOSS_NOTICE/,
-    )
+describe("feature-flag source contract (NFM-4180)", (): void => {
+  it("never reads the NEXT_PUBLIC_DATA_LOSS_NOTICE env var", (): void => {
+    // The env var was baked into the client bundle at build time —
+    // flipping it required a redeploy (the exact defect NFM-4180
+    // removes). Any reintroduction of this read is a regression.
+    expect(MODULE_SOURCE).not.toMatch(/NEXT_PUBLIC_DATA_LOSS_NOTICE/)
   })
 
-  it("never roots the env read at another object", (): void => {
-    // `process` must appear as a bare identifier. Member access like
-    // `globalThis?.process`, `window.process` or `foo.process` is NOT
-    // replaced by DefinePlugin, and browsers have no `process` global —
-    // the flag would silently read `undefined` in every production
-    // browser (NFM-4207 Finding 1).
-    expect(MODULE_SOURCE).not.toMatch(/[$\w)\]]\s*\.\s*process\b/)
-    expect(MODULE_SOURCE).not.toMatch(/\?\.\s*process\b/)
+  it("resolves through the flag-service cache", (): void => {
+    expect(MODULE_SOURCE).toMatch(/getCachedEvaluation/)
   })
 })
 
 describe("resolveFeatureFlag", (): void => {
   beforeEach((): void => {
     setRuntimeOverride(null)
-    delete process.env.NEXT_PUBLIC_DATA_LOSS_NOTICE
+    mockedGetCached.mockReturnValue(undefined)
+    mockedEvaluate.mockReset()
   })
 
-  afterEach((): void => {
-    setRuntimeOverride(null)
-    vi.unstubAllEnvs()
-    delete process.env.NEXT_PUBLIC_DATA_LOSS_NOTICE
-  })
-
-  it("defaults to OFF when the env var is unset", (): void => {
+  it("defaults to OFF (fail closed) with no cache and no override", (): void => {
     expect(resolveFeatureFlag()).toEqual({
       enabled: false,
       source: "default-off",
     })
   })
 
-  it.each(["on", "true", "1", " ON ", "True"])(
-    "enables via env value %j",
-    (value: string): void => {
-      vi.stubEnv("NEXT_PUBLIC_DATA_LOSS_NOTICE", value)
-      expect(resolveFeatureFlag()).toEqual({ enabled: true, source: "env" })
-    },
-  )
+  it("resolves the cached flag-service evaluation", (): void => {
+    mockedGetCached.mockReturnValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 100,
+      value: true,
+      bucket: 7,
+    })
+    expect(resolveFeatureFlag()).toEqual({
+      enabled: true,
+      source: "flag-service",
+    })
+  })
 
-  it.each(["off", "false", "0", "yes", "  "])(
-    "stays OFF for non-enabling env value %j",
-    (value: string): void => {
-      vi.stubEnv("NEXT_PUBLIC_DATA_LOSS_NOTICE", value)
-      expect(resolveFeatureFlag()).toEqual({
-        enabled: false,
-        source: "default-off",
-      })
-    },
-  )
+  it("a cached value of false stays OFF (fail closed on backend kill switch)", (): void => {
+    mockedGetCached.mockReturnValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: false,
+      rollout_percentage: 0,
+      value: false,
+      bucket: 7,
+    })
+    expect(resolveFeatureFlag()).toEqual({
+      enabled: false,
+      source: "flag-service",
+    })
+  })
 
-  it("runtime override wins over the env value (both directions)", (): void => {
-    vi.stubEnv("NEXT_PUBLIC_DATA_LOSS_NOTICE", "on")
+  it("runtime override wins over the cached value (both directions)", (): void => {
+    mockedGetCached.mockReturnValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 100,
+      value: true,
+      bucket: 7,
+    })
     setRuntimeOverride(false)
     expect(resolveFeatureFlag()).toEqual({ enabled: false, source: "provider" })
 
@@ -93,10 +109,48 @@ describe("resolveFeatureFlag", (): void => {
     expect(resolveFeatureFlag()).toEqual({ enabled: true, source: "provider" })
   })
 
-  it("falls back to env after the override is cleared", (): void => {
-    vi.stubEnv("NEXT_PUBLIC_DATA_LOSS_NOTICE", "on")
-    setRuntimeOverride(true)
+  it("falls back to the cache after the override is cleared", (): void => {
+    mockedGetCached.mockReturnValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 100,
+      value: true,
+      bucket: 7,
+    })
+    setRuntimeOverride(false)
     setRuntimeOverride(null)
-    expect(resolveFeatureFlag()).toEqual({ enabled: true, source: "env" })
+    expect(resolveFeatureFlag()).toEqual({
+      enabled: true,
+      source: "flag-service",
+    })
+  })
+})
+
+describe("refreshFeatureFlag", (): void => {
+  beforeEach((): void => {
+    mockedEvaluate.mockReset()
+  })
+
+  it("returns the evaluation value from the flag service", async (): Promise<void> => {
+    mockedEvaluate.mockResolvedValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 10,
+      value: true,
+      bucket: 3,
+    })
+    await expect(refreshFeatureFlag()).resolves.toBe(true)
+    expect(mockedEvaluate).toHaveBeenCalledWith(FEATURE_FLAG_NAME)
+  })
+
+  it("propagates the fail-closed false on evaluation failure", async (): Promise<void> => {
+    mockedEvaluate.mockResolvedValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: false,
+      rollout_percentage: 0,
+      value: false,
+      bucket: 0,
+    })
+    await expect(refreshFeatureFlag()).resolves.toBe(false)
   })
 })
