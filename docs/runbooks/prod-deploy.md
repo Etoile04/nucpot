@@ -526,3 +526,43 @@ reconstruct the migration timeline.
 - `apps/api/scripts/check_staging_revision.py` — the staging analog
   (NFM-4066). The prod guard follows the same shape but adds the
   permission gate.
+## 7. Deploy manifest (NFM-4271 / ADR-013 §2 G4a)
+
+Every sanctioned deploy records ONE JSON manifest of what it left running.
+The G4b drift alarm (sibling task) diffs live `docker inspect` state against
+it, bounding the dwell time of any out-of-band prod mutation (incident
+NFM-4264: 6h of attribution with zero audit trail).
+
+- **Recorder:** `scripts/record_deploy_manifest.py` (stdlib-only python3).
+- **Written by:** `scripts/deploy_prod.sh` (in-script, after the cutover
+  assertion and health gates) AND `production-deployment.yml` deploy-prod job
+  (outside-script belt-and-braces step — NFM-3777 lesson: defenses that live
+  only inside the deploy body die with it). The workflow injects
+  `DEPLOY_ACTOR='gh-runner:<actor>'`; manual on-host runs default to
+  `deploy_prod.sh:<user>`.
+- **Host path:** `~/.nfmd/prod-deploy-manifest.json` (override:
+  `--manifest` / `NFM_DEPLOY_MANIFEST`). Both sanctioned paths execute as the
+  same host user, so `~` resolves identically.
+- **Permissions:** file `0600` inside a `0700` directory created by the
+  recorder — best-effort tamper resistance (an out-of-band mutator running as
+  another user cannot refresh the manifest to cover its tracks). A same-user
+  actor can still defeat this; detecting that residual is the drift alarm's
+  job.
+- **Write semantics:** collect-everything-then-write, tmp file + `fsync` +
+  atomic `os.replace`. A failed collection aborts non-zero and leaves the
+  previous manifest byte-identical — never a silently-wrong manifest. A
+  knowingly-incomplete deploy can pass `--partial "<reason>"` to record an
+  explicitly-marked partial state.
+- **Schema (field names frozen for the G4b sibling):**
+  `{deploy_sha, image_tags, image_digests, service_containers, timestamp,
+  actor}` — keyed by compose service of project `nucpot-prod`
+  (db/redis/api/lightrag/worker/web).
+- **Digest precedence (the drift alarm must recompute identically):**
+  `RepoDigests[0]` when non-empty, else the container's image-ID digest
+  (`docker inspect --format '{{.Image}}'`). Prod images are built on the host,
+  so most entries are image-ID digests — still immutable, still
+  inspect-derivable, and a fresh rebuild of the same tag mints a new one
+  (exactly the NFM-4264 detection signal).
+- **Verification:** `python3 -m pytest scripts/tests/test_record_deploy_manifest.py -v`
+  (runs in CI: batch1 scripts-tests job + the production workflow's
+  pre-deploy-assert-smoke unit-test step).

@@ -178,6 +178,20 @@ fi
 echo "Checking Web health..."
 curl -f http://localhost:3000/ || exit 1
 
+# NFM-4271 / ADR-013 §2 G4a — record the deploy manifest now that cutover and
+# health gates have passed. The manifest (one JSON artifact, overwritten per
+# deploy, written atomically 0600 to ~/.nfmd/prod-deploy-manifest.json) is the
+# G4b drift alarm's baseline: {deploy_sha, image_tags, image_digests,
+# service_containers, timestamp, actor}. DEPLOY_ACTOR distinguishes the deploy
+# path — the GH workflow injects gh-runner:<actor>; a manual on-host run
+# defaults to deploy_prod.sh:<user>. Failure aborts the deploy ON PURPOSE: a
+# deploy that cannot record its manifest must not count as sanctioned (the
+# previous manifest survives and the drift alarm flags the divergence).
+echo "==> Recording deploy manifest (NFM-4271 / ADR-013 G4a)"
+python3 scripts/record_deploy_manifest.py \
+  --deploy-sha "${DEPLOY_SHA}" \
+  --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
+
 # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent 10
 # nucpot-prod-* tags per repository in the local daemon. The new SHA we just
 # built is always newest, so it is never pruned.

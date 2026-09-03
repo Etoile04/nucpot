@@ -662,6 +662,10 @@ jobs:
           # it executes on PR runners and catches regressions in
           # `tools/prod-tag-retention/prune.sh` before they reach prod.
           python3 -m pytest tools/prod-tag-retention/test_prune.py -v
+          # NFM-4271: deploy manifest recorder (ADR-013 G4a). Same fake-docker
+          # shim pattern; exercises the script both deploy paths call, before
+          # it reaches prod.
+          python3 -m pytest scripts/tests/test_record_deploy_manifest.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -789,8 +793,11 @@ jobs:
           set -euo pipefail
           scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key \
             scripts/deploy_prod.sh lwj04@127.0.0.1:/tmp/nfm-deploy-prod.sh
+          # NFM-4271: DEPLOY_ACTOR tells the in-script manifest recorder this
+          # deploy's path is the GH runner (a manual deploy_prod.sh run keeps
+          # the deploy_prod.sh:<user> default inside the script).
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' bash /tmp/nfm-deploy-prod.sh"
+            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' bash /tmp/nfm-deploy-prod.sh"
 
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
@@ -830,6 +837,25 @@ jobs:
             fi
           done
           echo "CUTOVER_ASSERT_OK: all 4 nucpot-prod containers on ${{ github.sha }}"
+
+      # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest OUTSIDE the
+      # deploy script as belt-and-braces (NFM-3777/#1050 lesson: every defense
+      # that lived only inside the deploy body died with it when the tail was
+      # swallowed). deploy_prod.sh already records the manifest in-script once
+      # its health gates pass; this job-context step re-records from the host
+      # repo checkout so a manifest exists even if the script's tail was eaten.
+      # Same host user/home as the in-script call → same manifest path, and the
+      # overwrite-per-deploy contract makes the double write idempotent.
+      - name: Record deploy manifest (outside-script, NFM-4271 G4a)
+        run: |
+          set -euo pipefail
+          # Non-interactive SSH shell (zsh) lacks /usr/local/bin where docker
+          # lives on this host — same PATH fix the deploy script applies.
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "export PATH=\"/usr/local/bin:/usr/local/sbin:\$PATH\"; cd ~/Projects/nucpot && \
+             python3 scripts/record_deploy_manifest.py \
+               --deploy-sha '${{ github.sha }}' \
+               --actor 'gh-runner:${{ github.actor }}'"
 
       - name: External smoke tests
         id: external-smoke-tests
