@@ -1,0 +1,7 @@
+name: prod-guard
+version: 1.0.0
+description: "ADR-013 (NFM-4266/NFM-4269) G1+G3: refuses Hermes-terminal prod-compose mutations (docker compose up/down/build/... against docker-compose.prod.yml / docker/.env.prod / nucpot-prod, bare docker stop/rm/restart/kill/exec on prod containers, and writes to the prod compose/env files) with a refusal message naming the sanctioned path; logs full command text for every prod-touching terminal command including successes. Fail-closed."
+author: "NFMD Lead Engineer (NFM-4269)"
+hooks:
+  - pre_tool_call
+  - post_tool_call
