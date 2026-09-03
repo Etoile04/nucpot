@@ -10,8 +10,8 @@
  *      shift). Asserted by comparing bounding-box heights of the lost
  *      row before and after a reload — the inline trigger sits on a
  *      single line and must not change the measurement-row height.
- *      (This does NOT toggle the flag within the test; the webServer
- *      env keeps it on for the whole run.)
+ *      (This does NOT toggle the flag within the test; the mocked
+ *      flag-service evaluation keeps it on for the whole run.)
  *   4. The `dataloss_notice_shown` analytics event fires on first
  *      popover open.
  *
@@ -21,9 +21,10 @@
  * (no property table renders there — the table lives on the properties
  * sub-route), and relied on a fixture that was never shipped. It is now
  * mock-based: `setupDataLossMocks` intercepts the properties API and
- * seeds exactly one lost row. The flag is enabled for local runs via
- * `NEXT_PUBLIC_DATA_LOSS_NOTICE=on` on the Playwright webServer (see
- * playwright.config.ts); the spec is excluded from the CI live-E2E job
+ * seeds exactly one lost row. NFM-4180: the flag is enabled for local
+ * runs by the same mock server, which intercepts
+ * `/api/v1/feature-flags/DATA_LOSS_NOTICE/evaluate`; the spec is
+ * excluded from the CI live-E2E job
  * (`NFMD_SPEC_PATTERN`) because prod has no lost rows and the flag is
  * off there until the NFM-4177 rollout.
  */

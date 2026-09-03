@@ -106,22 +106,13 @@ export default defineConfig({
           // otherwise be silently reused (NFM-4204 lesson).
           reuseExistingServer: !isCI,
           timeout: 120_000,
-          // NFM-4204 — enable the DataLossNotice feature flag for local
-          // e2e runs so the backstop spec exercises the flag-ON render
-          // path (trigger, popover, analytics). Prod keeps the flag off
-          // until the NFM-4177 rollout; locally the flag only affects
-          // rows with attribution.status === "lost", which exist solely
-          // in the data-loss-notice fixture, so no other spec changes
-          // behavior. The env var must be present when the dev server
-          // COMPILES the page: feature-flag.ts reads the static
-          // `process.env.NEXT_PUBLIC_DATA_LOSS_NOTICE` expression, which
-          // Next.js inlines into the browser bundle at compile time —
-          // setting it per-test in the browser would be too late. That
-          // is why this lives on the webServer rather than in the spec.
-          env: {
-            ...process.env,
-            NEXT_PUBLIC_DATA_LOSS_NOTICE: "on",
-          },
+          // NFM-4180 — the DataLossNotice flag is no longer a build-time
+          // env var: the backstop spec enables it by intercepting
+          // `/api/v1/feature-flags/DATA_LOSS_NOTICE/evaluate` in
+          // `setupDataLossMocks` (see e2e/fixtures/data-loss-notice-
+          // mock-server.ts), so no webServer env is needed. The old
+          // `NEXT_PUBLIC_DATA_LOSS_NOTICE=on` webServer env from
+          // NFM-4204 is gone — it no longer gates anything.
         },
       }),
 })
