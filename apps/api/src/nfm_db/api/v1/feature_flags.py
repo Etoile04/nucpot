@@ -21,14 +21,14 @@ router = APIRouter(tags=["功能开关"])
 
 @router.get(
     "/feature-flags",
-    response_model=ApiResponse,
+    response_model=ApiResponse[list[FeatureFlagResponse]],
     summary="列出功能开关",
     description="列出全部功能开关的存储状态（管理员）。\n\nList all feature flags with their stored state (admin).",
 )
 async def list_feature_flags_endpoint(
     _admin: Annotated[User, Depends(require_admin)],
     session: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[list[FeatureFlagResponse]]:
     flags = await list_flags(session)
     return ApiResponse(
         success=True,
@@ -38,7 +38,7 @@ async def list_feature_flags_endpoint(
 
 @router.get(
     "/feature-flags/{key}/evaluate",
-    response_model=ApiResponse,
+    response_model=ApiResponse[FeatureFlagEvaluation],
     summary="评估功能开关",
     description="为给定 subject（匿名客户端 ID）评估开关值。公开端点：subject 是随机 UUID，不是身份标识。\n\nEvaluate a flag for a subject (anonymous client id). Public endpoint: the subject is a random UUID, not an identity.",
 )
@@ -46,7 +46,7 @@ async def evaluate_feature_flag_endpoint(
     key: str,
     subject: str = Query(min_length=1, max_length=64),
     session: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[FeatureFlagEvaluation]:
     flag = await get_flag(session, key)
     if flag is None:
         raise HTTPException(status_code=404, detail=f"Unknown feature flag: {key}")
@@ -56,7 +56,7 @@ async def evaluate_feature_flag_endpoint(
 
 @router.put(
     "/feature-flags/{key}",
-    response_model=ApiResponse,
+    response_model=ApiResponse[FeatureFlagResponse],
     summary="更新功能开关",
     description="更新开关的启用状态 / 百分比放量 / 描述（管理员）。改动即时生效，无需重新部署。\n\nUpdate a flag's enabled state / rollout percentage / description (admin). Takes effect immediately, no redeploy.",
 )
@@ -65,7 +65,7 @@ async def update_feature_flag_endpoint(
     payload: FeatureFlagUpdate,
     _admin: Annotated[User, Depends(require_admin)],
     session: AsyncSession = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[FeatureFlagResponse]:
     flag = await upsert_flag(session, key, payload)
     if flag is None:
         raise HTTPException(status_code=404, detail=f"Unknown feature flag: {key}")
