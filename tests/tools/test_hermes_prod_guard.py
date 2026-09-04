@@ -664,7 +664,7 @@ def test_belt_blocks_incident_command():
     # NFM-4284 N1 (scope-pin 860a0d88) — backslash+LF continuation family:
     # row 1 (continuation immediately before the verb) defeats the
     # space-anchored verb globs above, so the belt needs its own
-    # continuation entries; rows 2–4 place the continuation elsewhere and
+    # continuation entries; rows 2-4 place the continuation elsewhere and
     # are already caught by the leading `*` of the plain entries.
     "docker compose --env-file docker/.env.prod \\\nup -d --build api web",
     "echo deploying && \\\ndocker compose --env-file docker/.env.prod up -d",
