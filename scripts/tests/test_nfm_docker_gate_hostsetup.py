@@ -27,7 +27,7 @@ sys.path.insert(0, str(GATE_DIR))
 from nfm_docker_gate.watchdog import _parse_context, assert_context  # noqa: E402
 
 ENTRIES = sorted((GATE_DIR / "entries").glob("*.sh"))
-ALL_BASH = ENTRIES + [GATE_DIR / "host_setup.sh", GATE_DIR / "probe_g2.sh"]
+ALL_BASH = [*ENTRIES, GATE_DIR / "host_setup.sh", GATE_DIR / "probe_g2.sh"]
 
 SANCTIONED = [
     "run-deploy.sh",
@@ -61,7 +61,9 @@ def test_all_sanctioned_entries_exist():
 
 def _sudoers_lines():
     text = (GATE_DIR / "sudoers.d" / "nfm-prod-deploy").read_text(encoding="utf-8")
-    return [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    return [
+        line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    ]
 
 
 def test_sudoers_every_grant_is_an_enumerated_g2_entry():
@@ -124,11 +126,13 @@ class EntryHarness:
         self._write_executable("id", 'printf "nfmdeploy\\n"')
         self._write_executable(
             "docker",
-            f'printf \'%s\\n\' "$*" >> {self.docker_calls}\nexit 0\n',
+            f"printf '%s\\n' \"$*\" >> {self.docker_calls}\nexit 0\n",
         )
         # stub of the real assert.sh — records argv, exits 0
         stub = self.repo / "tools" / "pre-deploy-assert-smoke" / "assert.sh"
-        stub.write_text(f"#!/bin/bash\nprintf 'assert %s\\n' \"$*\" >> {self.docker_calls}\nexit 0\n")
+        stub.write_text(
+            f"#!/bin/bash\nprintf 'assert %s\\n' \"$*\" >> {self.docker_calls}\nexit 0\n"
+        )
         stub.chmod(0o755)
 
     def _write_executable(self, name: str, body: str) -> None:
@@ -136,7 +140,9 @@ class EntryHarness:
         target.write_text(f"#!/bin/bash\n{body}\n")
         target.chmod(0o755)
 
-    def run(self, script: str, *args: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    def run(
+        self, script: str, *args: str, env_extra: dict | None = None
+    ) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         env.setdefault("NFM_G2_REPO", str(self.repo))  # test hook; env_reset kills it in prod
@@ -144,7 +150,10 @@ class EntryHarness:
             env.update(env_extra)
         return subprocess.run(
             ["/bin/bash", str(GATE_DIR / "entries" / script), *args],
-            capture_output=True, text=True, env=env, timeout=20,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
         )
 
     def docker_argv(self) -> list[list[str]]:
@@ -163,7 +172,9 @@ def test_entry_refuses_wrong_identity(script):
     """Without the fake id (real test user), every entry exits 77."""
     result = subprocess.run(
         ["/bin/bash", str(GATE_DIR / "entries" / script)],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     assert result.returncode == 77
     assert "nfmdeploy" in result.stderr
@@ -195,16 +206,20 @@ def test_run_sql_success_path_reads_repo_file(entry):
     (entry.repo / "apps" / "api" / "sql").mkdir(parents=True)
     sql = entry.repo / "apps" / "api" / "sql" / "001_x.sql"
     sql.write_text("SELECT 1;\n")
-    result = entry.run("run-sql.sh", "--db-name", "nfm_db", "apps/api/sql/001_x.sql",
-                       env_extra={"NFM_G2_REPO": str(entry.repo)})
+    result = entry.run(
+        "run-sql.sh",
+        "--db-name",
+        "nfm_db",
+        "apps/api/sql/001_x.sql",
+        env_extra={"NFM_G2_REPO": str(entry.repo)},
+    )
     assert result.returncode == 0, result.stderr
     recorded = entry.docker_calls.read_text()
     assert "exec -i nucpot-prod-db psql -U nfm -d nfm_db" in recorded
 
 
 def test_run_sql_missing_file_fails_loudly(entry):
-    result = entry.run("run-sql.sh", "nope/missing.sql",
-                       env_extra={"NFM_G2_REPO": str(entry.repo)})
+    result = entry.run("run-sql.sh", "nope/missing.sql", env_extra={"NFM_G2_REPO": str(entry.repo)})
     assert result.returncode == 66
 
 
@@ -213,24 +228,58 @@ def test_run_recovery_restart_db_allowed(entry):
 
 
 def test_run_pre_deploy_assert_rejects_foreign_image(entry):
-    assert entry.run("run-pre-deploy-assert.sh", "--image", "alpine:latest",
-                     "--db-container", "nucpot-prod-db").returncode == 64
+    assert (
+        entry.run(
+            "run-pre-deploy-assert.sh",
+            "--image",
+            "alpine:latest",
+            "--db-container",
+            "nucpot-prod-db",
+        ).returncode
+        == 64
+    )
 
 
 def test_run_pre_deploy_assert_rejects_foreign_db_container(entry):
-    assert entry.run("run-pre-deploy-assert.sh", "--image", "nucpot-prod-api:candidate-abc",
-                     "--db-container", "nucpot-staging-db").returncode == 64
+    assert (
+        entry.run(
+            "run-pre-deploy-assert.sh",
+            "--image",
+            "nucpot-prod-api:candidate-abc",
+            "--db-container",
+            "nucpot-staging-db",
+        ).returncode
+        == 64
+    )
 
 
 def test_run_pre_deploy_assert_rejects_shell_metacharacters(entry):
-    assert entry.run("run-pre-deploy-assert.sh", "--image", "nucpot-prod-api:candidate-$(id)",
-                     "--db-container", "nucpot-prod-db").returncode == 64
+    assert (
+        entry.run(
+            "run-pre-deploy-assert.sh",
+            "--image",
+            "nucpot-prod-api:candidate-$(id)",
+            "--db-container",
+            "nucpot-prod-db",
+        ).returncode
+        == 64
+    )
 
 
 def test_run_pre_deploy_assert_accepts_candidate_tag(entry):
-    result = entry.run("run-pre-deploy-assert.sh", "--image", "nucpot-prod-api:candidate-abc1234",
-                       "--db-container", "nucpot-prod-db",
-                       "--db-user", "nfm", "--db-name", "nfm_db", "--distinct-exit", "64")
+    result = entry.run(
+        "run-pre-deploy-assert.sh",
+        "--image",
+        "nucpot-prod-api:candidate-abc1234",
+        "--db-container",
+        "nucpot-prod-db",
+        "--db-user",
+        "nfm",
+        "--db-name",
+        "nfm_db",
+        "--distinct-exit",
+        "64",
+    )
     assert result.returncode == 0, result.stderr
     recorded = entry.docker_calls.read_text()
     assert "--image nucpot-prod-api:candidate-abc1234" in recorded
@@ -268,24 +317,45 @@ class RecorderSpy:
 
 
 def test_run_record_manifest_rejects_non_hex_sha(entry):
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "zz-not-hex",
-                     "--actor", "gh-runner:lwj04").returncode == 64
+    assert (
+        entry.run(
+            "run-record-manifest.sh", "--deploy-sha", "zz-not-hex", "--actor", "gh-runner:lwj04"
+        ).returncode
+        == 64
+    )
 
 
 def test_run_record_manifest_rejects_short_and_oversized_sha(entry):
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "abc123",
-                     "--actor", "gh-runner:lwj04").returncode == 64
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 41,
-                     "--actor", "gh-runner:lwj04").returncode == 64
+    assert (
+        entry.run(
+            "run-record-manifest.sh", "--deploy-sha", "abc123", "--actor", "gh-runner:lwj04"
+        ).returncode
+        == 64
+    )
+    assert (
+        entry.run(
+            "run-record-manifest.sh", "--deploy-sha", "a" * 41, "--actor", "gh-runner:lwj04"
+        ).returncode
+        == 64
+    )
 
 
 def test_run_record_manifest_rejects_shell_metacharacters_in_actor(entry):
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
-                     "--actor", "gh-runner:$(id)").returncode == 64
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
-                     "--actor", "path:user; rm -rf /").returncode == 64
-    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
-                     "--actor", "").returncode == 64
+    assert (
+        entry.run(
+            "run-record-manifest.sh", "--deploy-sha", "a" * 7, "--actor", "gh-runner:$(id)"
+        ).returncode
+        == 64
+    )
+    assert (
+        entry.run(
+            "run-record-manifest.sh", "--deploy-sha", "a" * 7, "--actor", "path:user; rm -rf /"
+        ).returncode
+        == 64
+    )
+    assert (
+        entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7, "--actor", "").returncode == 64
+    )
 
 
 def test_run_record_manifest_requires_both_args(entry):
@@ -298,9 +368,13 @@ def test_run_record_manifest_invokes_recorder_at_canonical_path(entry):
     """The exec'd recorder must see the canonical G4 manifest path + the
     world-readable flag, with sha/actor forwarded verbatim (NFM-4273)."""
     RecorderSpy(entry)
-    result = entry.run("run-record-manifest.sh",
-                       "--deploy-sha", "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
-                       "--actor", "gh-runner:lwj04")
+    result = entry.run(
+        "run-record-manifest.sh",
+        "--deploy-sha",
+        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+        "--actor",
+        "gh-runner:lwj04",
+    )
     assert result.returncode == 0, result.stderr
     log = (entry.repo / "recorder-calls.log").read_text()
     assert "--deploy-sha 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" in log
@@ -312,8 +386,9 @@ def test_run_record_manifest_invokes_recorder_at_canonical_path(entry):
 def test_run_record_manifest_accepts_short_sha(entry):
     """git short sha (7 hex) is the documented minimum — must pass through."""
     RecorderSpy(entry)
-    result = entry.run("run-record-manifest.sh", "--deploy-sha", "1a2b3c4",
-                       "--actor", "deploy_prod.sh:lwj04")
+    result = entry.run(
+        "run-record-manifest.sh", "--deploy-sha", "1a2b3c4", "--actor", "deploy_prod.sh:lwj04"
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -332,9 +407,7 @@ def test_sudoers_env_keep_scoped_to_deploy_entry_only():
     for line in _sudoers_lines():
         if not line.startswith("Defaults!"):
             continue
-        match = re.match(
-            r'Defaults!/usr/local/lib/nfm-g2/(\S+) env_keep \+= "([^"]*)"', line
-        )
+        match = re.match(r'Defaults!/usr/local/lib/nfm-g2/(\S+) env_keep \+= "([^"]*)"', line)
         assert match, f"unrecognized Defaults line: {line}"
         kept.setdefault(match.group(1), set()).update(match.group(2).split())
     assert kept.get("run-deploy.sh") == {"DEPLOY_SHA", "PROXY_PORT", "DEPLOY_ACTOR"}
@@ -351,11 +424,12 @@ def test_run_deploy_forwards_actor_env_into_deploy_body(entry):
     )
     entry._write_executable(
         "bash",
-        f'printf \'body argv=%s actor=[%s] sha=[%s] port=[%s]\\n\' "$*" '
+        f"printf 'body argv=%s actor=[%s] sha=[%s] port=[%s]\\n' \"$*\" "
         f'"$DEPLOY_ACTOR" "$DEPLOY_SHA" "$PROXY_PORT" >> {entry.docker_calls}\nexit 0\n',
     )
-    result = entry.run("run-deploy.sh",
-                       env_extra={"DEPLOY_SHA": _SHA, "DEPLOY_ACTOR": "gh-runner:lwj04"})
+    result = entry.run(
+        "run-deploy.sh", env_extra={"DEPLOY_SHA": _SHA, "DEPLOY_ACTOR": "gh-runner:lwj04"}
+    )
     assert result.returncode == 0, result.stderr
     log = entry.docker_calls.read_text()
     assert "body argv=scripts/deploy_prod.sh" in log
@@ -372,7 +446,7 @@ def test_run_deploy_defaults_actor_to_empty_for_manual_runs(entry):
     )
     entry._write_executable(
         "bash",
-        f'printf \'body actor=[%s]\\n\' "$DEPLOY_ACTOR" >> {entry.docker_calls}\nexit 0\n',
+        f"printf 'body actor=[%s]\\n' \"$DEPLOY_ACTOR\" >> {entry.docker_calls}\nexit 0\n",
     )
     result = entry.run("run-deploy.sh", env_extra={"DEPLOY_SHA": _SHA})
     assert result.returncode == 0, result.stderr
@@ -388,18 +462,18 @@ def test_run_recovery_rollback_re_records_manifest_after_compose(entry, tmp_path
     tag = "1a2b3c4d5e6f7a8b"
     entry._write_executable(
         "python3",
-        f'printf \'python3 %s\\n\' "$*" >> {entry.docker_calls}\n'
-        f'printf \'manifest=%s world=%s\\n\' "$NFM_DEPLOY_MANIFEST" '
+        f"printf 'python3 %s\\n' \"$*\" >> {entry.docker_calls}\n"
+        f"printf 'manifest=%s world=%s\\n' \"$NFM_DEPLOY_MANIFEST\" "
         f'"$NFM_DEPLOY_MANIFEST_WORLD_READABLE" >> {entry.docker_calls}\nexit 0\n',
     )
-    result = entry.run("run-recovery.sh", "rollback", "--tag", tag,
-                       env_extra={"NFM_G2_VAR_DIR": str(gate_var)})
+    result = entry.run(
+        "run-recovery.sh", "rollback", "--tag", tag, env_extra={"NFM_G2_VAR_DIR": str(gate_var)}
+    )
     assert result.returncode == 0, result.stderr
     log = entry.docker_calls.read_text().splitlines()
     compose_at = next(i for i, ln in enumerate(log) if "up -d" in ln)
     record_at = next(
-        i for i, ln in enumerate(log)
-        if ln.startswith("python3 scripts/record_deploy_manifest.py")
+        i for i, ln in enumerate(log) if ln.startswith("python3 scripts/record_deploy_manifest.py")
     )
     assert record_at > compose_at, f"manifest re-record must follow compose up: {log}"
     assert f"--deploy-sha {tag}" in log[record_at]
@@ -427,8 +501,10 @@ def test_assert_context_repairs_drift(tmp_path, monkeypatch):
             return subprocess.CompletedProcess(argv, 0, stdout="desktop-linux\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("nfm_docker_gate.watchdog._run_as", lambda user, args: fake_run(
-        ["sudo", "-H", "-u", user, "docker", *args]))
+    monkeypatch.setattr(
+        "nfm_docker_gate.watchdog._run_as",
+        lambda user, args: fake_run(["sudo", "-H", "-u", user, "docker", *args]),
+    )
 
     audit = AuditLog(str(tmp_path / "wd.log"), "watchdog")
     assert_context("lwj04", "nfm-ro", audit)
@@ -447,8 +523,10 @@ def test_assert_context_noop_when_correct(tmp_path, monkeypatch):
             return subprocess.CompletedProcess(argv, 0, stdout="nfm-ro\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("nfm_docker_gate.watchdog._run_as", lambda user, args: fake_run(
-        ["sudo", "-H", "-u", user, "docker", *args]))
+    monkeypatch.setattr(
+        "nfm_docker_gate.watchdog._run_as",
+        lambda user, args: fake_run(["sudo", "-H", "-u", user, "docker", *args]),
+    )
 
     audit = AuditLog(str(tmp_path / "wd.log"), "watchdog")
     assert_context("lwj04", "nfm-ro", audit)

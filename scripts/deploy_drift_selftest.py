@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +24,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from check_deploy_drift import DEFAULT_COMPOSE_PROJECT, SRE_MONITOR_AGENT_ID, TITLE_PREFIX, main
-
 
 # ---------------------------------------------------------------- selftest
 
@@ -77,8 +75,12 @@ class _SelftestStubHandler(BaseHTTPRequestHandler):
         self.server.journal.append({"method": "POST", "path": path, "body": raw})
         if path.endswith("/issues"):
             self.server.seq += 1
-            issue = {"id": f"st-uuid-{self.server.seq}",
-                     "identifier": f"NFM-ST{self.server.seq}", "status": "todo", **raw}
+            issue = {
+                "id": f"st-uuid-{self.server.seq}",
+                "identifier": f"NFM-ST{self.server.seq}",
+                "status": "todo",
+                **raw,
+            }
             self.server.issues[issue["id"]] = issue
             self._send(issue, 201)
         elif path.endswith("/comments"):
@@ -110,7 +112,6 @@ def run_selftest() -> int:
     server.journal = []  # type: ignore[attr-defined]
     server.issues = {}  # type: ignore[attr-defined]
     server.seq = 0  # type: ignore[attr-defined]
-    import threading
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     old_path = os.environ.get("PATH", "")
@@ -136,9 +137,7 @@ def run_selftest() -> int:
         bin_dir = work / "bin"
         bin_dir.mkdir()
         shim = bin_dir / "docker"
-        shim.write_text(
-            "#!/bin/sh\nexec python3 \"$FAKE_DOCKER_SHIM\" \"$@\"\n", encoding="utf-8"
-        )
+        shim.write_text('#!/bin/sh\nexec python3 "$FAKE_DOCKER_SHIM" "$@"\n', encoding="utf-8")
         shim.chmod(0o755)
         # Delegate to the tests' fake-docker shape via a tiny inline shim.
         shim.write_text(
@@ -162,41 +161,65 @@ def run_selftest() -> int:
         os.environ["FAKE_DOCKER_STATE"] = str(state_path)
 
         argv = [
-            "--manifest", str(manifest_path),
-            "--state", str(work / "drift-state.json"),
-            "--lock", str(work / "no-such.lock"),
-            "--recheck-seconds", "0",
-            "--paperclip-url", f"http://127.0.0.1:{server.server_address[1]}",
-            "--paperclip-key", "selftest-key",
-            "--company-id", "selftest-company",
+            "--manifest",
+            str(manifest_path),
+            "--state",
+            str(work / "drift-state.json"),
+            "--lock",
+            str(work / "no-such.lock"),
+            "--recheck-seconds",
+            "0",
+            "--paperclip-url",
+            f"http://127.0.0.1:{server.server_address[1]}",
+            "--paperclip-key",
+            "selftest-key",
+            "--company-id",
+            "selftest-company",
         ]
         rc1 = main(argv)
-        creates = [r for r in server.journal  # type: ignore[attr-defined]
-                   if r["method"] == "POST" and r["path"].endswith("/issues")]
+        creates = [
+            r
+            for r in server.journal  # type: ignore[attr-defined]
+            if r["method"] == "POST" and r["path"].endswith("/issues")
+        ]
         payload = creates[0]["body"] if creates else {}
         body = str(payload.get("description", ""))
         checks += [
             ("run 1 exits 1 (drift filed)", rc1 == 1),
             ("exactly one issue created", len(creates) == 1),
             ("assigned to SRE Monitor", payload.get("assigneeAgentId") == SRE_MONITOR_AGENT_ID),
-            ("title has [DEPLOY-DRIFT] prefix + service",
-             str(payload.get("title", "")).startswith(TITLE_PREFIX)
-             and "api" in str(payload.get("title", ""))),
-            ("body names expected vs actual digest",
-             f"sha256:{'a' * 64}" in body and f"sha256:{'f' * 64}" in body),
-            ("body carries manifest actor + first-seen + signature",
-             "selftest" in body and "first-seen:" in body and "signature: " in body),
+            (
+                "title has [DEPLOY-DRIFT] prefix + service",
+                str(payload.get("title", "")).startswith(TITLE_PREFIX)
+                and "api" in str(payload.get("title", "")),
+            ),
+            (
+                "body names expected vs actual digest",
+                f"sha256:{'a' * 64}" in body and f"sha256:{'f' * 64}" in body,
+            ),
+            (
+                "body carries manifest actor + first-seen + signature",
+                "selftest" in body and "first-seen:" in body and "signature: " in body,
+            ),
         ]
         rc2 = main(argv)
-        creates2 = [r for r in server.journal  # type: ignore[attr-defined]
-                    if r["method"] == "POST" and r["path"].endswith("/issues")]
-        comments = [r for r in server.journal  # type: ignore[attr-defined]
-                    if r["method"] == "POST" and r["path"].endswith("/comments")]
+        creates2 = [
+            r
+            for r in server.journal  # type: ignore[attr-defined]
+            if r["method"] == "POST" and r["path"].endswith("/issues")
+        ]
+        comments = [
+            r
+            for r in server.journal  # type: ignore[attr-defined]
+            if r["method"] == "POST" and r["path"].endswith("/comments")
+        ]
         checks += [
             ("run 2 exits 1 (drift persists)", rc2 == 1),
             ("dedupe: no second issue", len(creates2) == 1),
-            ("dedupe: comment appended", len(comments) == 1
-             and "still diverged" in str(comments[0]["body"].get("body", ""))),
+            (
+                "dedupe: comment appended",
+                len(comments) == 1 and "still diverged" in str(comments[0]["body"].get("body", "")),
+            ),
         ]
     finally:
         os.environ["PATH"] = old_path
@@ -205,6 +228,7 @@ def run_selftest() -> int:
         server.server_close()
         thread.join(timeout=5)
         import shutil
+
         shutil.rmtree(work, ignore_errors=True)
 
     failed = [name for name, ok in checks if not ok]
@@ -213,6 +237,8 @@ def run_selftest() -> int:
     if failed:
         print(f"SELFTEST FAIL — {len(failed)} check(s) failed.")
         return 1
-    print("SELFTEST PASS — fabricated divergence detected, filed to SRE Monitor, "
-          "and deduped end-to-end against the stub target.")
+    print(
+        "SELFTEST PASS — fabricated divergence detected, filed to SRE Monitor, "
+        "and deduped end-to-end against the stub target."
+    )
     return 0

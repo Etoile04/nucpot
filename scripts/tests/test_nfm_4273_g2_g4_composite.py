@@ -54,9 +54,7 @@ def fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     def _load(containers: dict, **extra: object) -> Path:
-        state_path.write_text(
-            json.dumps({"containers": containers, **extra}), encoding="utf-8"
-        )
+        state_path.write_text(json.dumps({"containers": containers, **extra}), encoding="utf-8")
         monkeypatch.setenv("FAKE_DOCKER_STATE", str(state_path))
         return state_path
 
@@ -73,9 +71,7 @@ def stub_paperclip():
 # ------------------------------------------------------------- the composite
 
 
-def test_g4_record_then_drift_detect_at_canonical_path(
-    fake_docker, stub_paperclip, tmp_path: Path
-):
+def test_g4_record_then_drift_detect_at_canonical_path(fake_docker, stub_paperclip, tmp_path: Path):
     """The full G4a→G4b loop at the canonical gate-path shape (NFM-4273).
 
     Recorder output (not a handcrafted fixture) is the alarm's baseline:
@@ -93,11 +89,16 @@ def test_g4_record_then_drift_detect_at_canonical_path(
     # RECORDER honors the contract the entry sets.
     recorded = subprocess.run(
         [
-            sys.executable, str(recorder.SCRIPT),
-            "--deploy-sha", DEPLOY_SHA,
-            "--actor", "gh-runner:lwj04",
+            sys.executable,
+            str(recorder.SCRIPT),
+            "--deploy-sha",
+            DEPLOY_SHA,
+            "--actor",
+            "gh-runner:lwj04",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env={
             **os.environ,
             "NFM_DEPLOY_MANIFEST": str(manifest),
@@ -115,29 +116,36 @@ def test_g4_record_then_drift_detect_at_canonical_path(
     diverged[f"{COMPOSE_PROJECT}-api"] = drift._container("api", "5" * 64)
     # same tag shape (nucpot-prod-api:<short>), different image-id digest —
     # a fresh rebuild mints a new one; this is the detection signal.
-    assert (
-        diverged[f"{COMPOSE_PROJECT}-api"]["Config"]["Image"]
-        != drift.prod_containers()[f"{COMPOSE_PROJECT}-api"]["Config"]["Image"]
-        or drift.expected_digest(diverged[f"{COMPOSE_PROJECT}-api"])
-        != drift.expected_digest(
-            drift.prod_containers()[f"{COMPOSE_PROJECT}-api"]
-        )
-    )
+    assert diverged[f"{COMPOSE_PROJECT}-api"]["Config"]["Image"] != drift.prod_containers()[
+        f"{COMPOSE_PROJECT}-api"
+    ]["Config"]["Image"] or drift.expected_digest(
+        diverged[f"{COMPOSE_PROJECT}-api"]
+    ) != drift.expected_digest(drift.prod_containers()[f"{COMPOSE_PROJECT}-api"])
     fake_docker(diverged)
 
     # -- 3. the drift cron fires once against the canonical-shaped paths ----
     checker = subprocess.run(
         [
-            sys.executable, str(drift.SCRIPT),
-            "--manifest", str(manifest),
-            "--lock", str(gate_var / "prod-deploy.lock"),
-            "--state", str(tmp_path / "drift-state.json"),
-            "--recheck-seconds", "0",
-            "--paperclip-url", stub_paperclip.url,
-            "--paperclip-key", "test-key",
-            "--company-id", drift.COMPANY_ID,
+            sys.executable,
+            str(drift.SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--lock",
+            str(gate_var / "prod-deploy.lock"),
+            "--state",
+            str(tmp_path / "drift-state.json"),
+            "--recheck-seconds",
+            "0",
+            "--paperclip-url",
+            stub_paperclip.url,
+            "--paperclip-key",
+            "test-key",
+            "--company-id",
+            drift.COMPANY_ID,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert checker.returncode == 1, checker.stdout + checker.stderr
 
@@ -149,9 +157,9 @@ def test_g4_record_then_drift_detect_at_canonical_path(
     body = issue["description"]
     # names the service with expected vs actual digest (AC: composite test)
     assert "api" in body
-    assert drift.expected_digest(
-        drift.prod_containers()[f"{COMPOSE_PROJECT}-api"]
-    ) in body, "filed body must cite the manifest (expected) digest"
+    assert drift.expected_digest(drift.prod_containers()[f"{COMPOSE_PROJECT}-api"]) in body, (
+        "filed body must cite the manifest (expected) digest"
+    )
     assert drift.expected_digest(diverged[f"{COMPOSE_PROJECT}-api"]) in body, (
         "filed body must cite the live (actual) digest"
     )
@@ -159,40 +167,56 @@ def test_g4_record_then_drift_detect_at_canonical_path(
     assert "gh-runner:lwj04" in body
 
 
-def test_converged_state_stays_quiet_at_canonical_path(
-    fake_docker, stub_paperclip, tmp_path: Path
-):
+def test_converged_state_stays_quiet_at_canonical_path(fake_docker, stub_paperclip, tmp_path: Path):
     """No divergence ⇒ no issue — the composite must not cry wolf on the
     coherent path either (read-only regression for the filing side)."""
     fake_docker(drift.prod_containers())
     gate_var = tmp_path / "usr-local-var-nfm-g2"
     manifest = gate_var / "prod-deploy-manifest.json"
-    assert subprocess.run(
-        [
-            sys.executable, str(recorder.SCRIPT),
-            "--deploy-sha", DEPLOY_SHA,
-            "--actor", "deploy_prod.sh:testuser",
-        ],
-        capture_output=True, text=True, timeout=60,
-        env={
-            **os.environ,
-            "NFM_DEPLOY_MANIFEST": str(manifest),
-            "NFM_DEPLOY_MANIFEST_WORLD_READABLE": "1",
-        },
-    ).returncode == 0
+    assert (
+        subprocess.run(
+            [
+                sys.executable,
+                str(recorder.SCRIPT),
+                "--deploy-sha",
+                DEPLOY_SHA,
+                "--actor",
+                "deploy_prod.sh:testuser",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={
+                **os.environ,
+                "NFM_DEPLOY_MANIFEST": str(manifest),
+                "NFM_DEPLOY_MANIFEST_WORLD_READABLE": "1",
+            },
+        ).returncode
+        == 0
+    )
 
     checker = subprocess.run(
         [
-            sys.executable, str(drift.SCRIPT),
-            "--manifest", str(manifest),
-            "--lock", str(gate_var / "prod-deploy.lock"),
-            "--state", str(tmp_path / "drift-state.json"),
-            "--recheck-seconds", "0",
-            "--paperclip-url", stub_paperclip.url,
-            "--paperclip-key", "test-key",
-            "--company-id", drift.COMPANY_ID,
+            sys.executable,
+            str(drift.SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--lock",
+            str(gate_var / "prod-deploy.lock"),
+            "--state",
+            str(tmp_path / "drift-state.json"),
+            "--recheck-seconds",
+            "0",
+            "--paperclip-url",
+            stub_paperclip.url,
+            "--paperclip-key",
+            "test-key",
+            "--company-id",
+            drift.COMPANY_ID,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert checker.returncode == 0, checker.stdout + checker.stderr
     assert stub_paperclip.creates() == []
@@ -204,12 +228,12 @@ def test_converged_state_stays_quiet_at_canonical_path(
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET", "/containers/json"),                    # docker ps
-        ("GET", "/containers/{id}/json"),               # docker inspect
-        ("GET", "/containers/{id}/logs"),               # docker logs
-        ("GET", "/containers/{id}/stats"),              # docker stats
-        ("GET", "/images/json"),                        # docker images
-        ("GET", "/info"),                               # docker info / compose config ctx
+        ("GET", "/containers/json"),  # docker ps
+        ("GET", "/containers/{id}/json"),  # docker inspect
+        ("GET", "/containers/{id}/logs"),  # docker logs
+        ("GET", "/containers/{id}/stats"),  # docker stats
+        ("GET", "/images/json"),  # docker images
+        ("GET", "/info"),  # docker info / compose config ctx
     ],
 )
 def test_g2_policy_read_only_endpoints_stay_frictionless(method: str, path: str):
@@ -219,6 +243,7 @@ def test_g2_policy_read_only_endpoints_stay_frictionless(method: str, path: str)
     sys.path.insert(0, str(GATE_PACKAGE))
     try:
         import importlib
+
         policy = importlib.import_module("nfm_docker_gate.policy")
     finally:
         sys.path.pop(0)
@@ -235,9 +260,7 @@ def test_g2_policy_read_only_endpoints_stay_frictionless(method: str, path: str)
     assert decision.audit is False, f"{method} {path} must not audit-spam (AC-G2.2)"
 
 
-def test_drift_cron_only_issues_read_only_docker_verbs(
-    fake_docker, stub_paperclip, tmp_path: Path
-):
+def test_drift_cron_only_issues_read_only_docker_verbs(fake_docker, stub_paperclip, tmp_path: Path):
     """End-to-end: the checker's whole docker conversation is ps --filter +
     inspect — the exact verb set G2 passes frictionless. Proves the G4 alarm
     composes with the G2 wall rather than fighting it."""
@@ -246,9 +269,7 @@ def test_drift_cron_only_issues_read_only_docker_verbs(
     bin_dir = tmp_path / "wrapbin"
     bin_dir.mkdir()
     (bin_dir / "docker").write_text(
-        "#!/bin/bash\n"
-        f'printf \'%s\\n\' "$*" >> {calls_log}\n'
-        f'exec "{tmp_path}/bin/docker" "$@"\n',
+        f'#!/bin/bash\nprintf \'%s\\n\' "$*" >> {calls_log}\nexec "{tmp_path}/bin/docker" "$@"\n',
         encoding="utf-8",
     )
     (bin_dir / "docker").chmod(0o755)
@@ -264,16 +285,26 @@ def test_drift_cron_only_issues_read_only_docker_verbs(
 
     result = subprocess.run(
         [
-            sys.executable, str(drift.SCRIPT),
-            "--manifest", str(manifest),
-            "--lock", str(tmp_path / "absent.lock"),
-            "--state", str(tmp_path / "state.json"),
-            "--recheck-seconds", "0",
-            "--paperclip-url", stub_paperclip.url,
-            "--paperclip-key", "test-key",
-            "--company-id", drift.COMPANY_ID,
+            sys.executable,
+            str(drift.SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--lock",
+            str(tmp_path / "absent.lock"),
+            "--state",
+            str(tmp_path / "state.json"),
+            "--recheck-seconds",
+            "0",
+            "--paperclip-url",
+            stub_paperclip.url,
+            "--paperclip-key",
+            "test-key",
+            "--company-id",
+            drift.COMPANY_ID,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     argv_lines = [ln for ln in calls_log.read_text().splitlines() if ln.strip()]

@@ -65,12 +65,13 @@ resolves identically). Override with --manifest or NFM_DEPLOY_MANIFEST.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_COMPOSE_PROJECT = "nucpot-prod"
@@ -172,16 +173,14 @@ def build_manifest(
         "image_tags": {},
         "image_digests": {},
         "service_containers": {},
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "actor": actor,
     }
     for info in sorted(containers, key=_service_name):
         service = _service_name(info)
         container = _container_ref(info)
         if not service:
-            raise CollectError(
-                f"container {container}: missing {COMPOSE_SERVICE_LABEL} label"
-            )
+            raise CollectError(f"container {container}: missing {COMPOSE_SERVICE_LABEL} label")
         tag = _image_tag(info)
         digest = _image_digest(info)
         if not tag or not digest:
@@ -213,10 +212,9 @@ def _ensure_private_dir(directory: Path) -> None:
     if directory.is_dir():
         return
     directory.mkdir(parents=True, exist_ok=True)
-    try:
+    # best-effort; the file-level mode below is the hard guarantee
+    with contextlib.suppress(OSError):
         directory.chmod(0o755 if _world_readable() else 0o700)
-    except OSError:
-        pass  # best-effort; the file-level mode below is the hard guarantee
 
 
 def write_atomic(manifest_path: Path, manifest: dict) -> None:
@@ -257,16 +255,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--actor",
         required=True,
         help=(
-            "deploy path + execution identity, e.g. "
-            "'deploy_prod.sh:lwj04' or 'gh-runner:lwj04'."
+            "deploy path + execution identity, e.g. 'deploy_prod.sh:lwj04' or 'gh-runner:lwj04'."
         ),
     )
     parser.add_argument(
         "--manifest",
         default=os.environ.get("NFM_DEPLOY_MANIFEST")
         or str(Path.home() / ".nfmd" / "prod-deploy-manifest.json"),
-        help="manifest path (default: $NFM_DEPLOY_MANIFEST or "
-        "~/.nfmd/prod-deploy-manifest.json).",
+        help="manifest path (default: $NFM_DEPLOY_MANIFEST or ~/.nfmd/prod-deploy-manifest.json).",
     )
     parser.add_argument(
         "--compose-project",

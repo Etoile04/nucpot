@@ -16,8 +16,14 @@ only reachable through root-owned, sudoers-enumerated entry scripts.
 | --- | --- | --- |
 | `~/.docker/run/docker.sock` | 755, owner = you | group `prod-deploy`, mode `060` — **you cannot connect; root and `nfmdeploy` can** |
 | your `docker` CLI | hits the raw socket | context `nfm-ro` → read-only gate (reads + non-prod stacks still work) |
-| prod mutations | any shell | only via the five `run-*.sh` entries below |
+| prod mutations | any shell | only via the `run-*.sh` entries below |
 | evidence | none | `/var/log/nfm-g2/gate-ro.log` JSONL (identity + ts + verb + target) |
+
+A further sudoers-granted entry, `run-record-manifest.sh` (NFM-4273), is
+deploy-invoked rather than operator-facing: `deploy_prod.sh` re-records the
+G4a deploy manifest through it, and `run-recovery.sh rollback` re-records
+directly as `nfmdeploy`. See
+[prod-deploy.md §7](./prod-deploy.md) for the manifest contract.
 
 What still works unchanged through `nfm-ro`: `docker ps/inspect/logs/stats`,
 `docker compose config`, all staging/autovc/e2e/supabase stack operations,

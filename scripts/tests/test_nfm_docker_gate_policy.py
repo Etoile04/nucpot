@@ -17,12 +17,10 @@ GATE_DIR = Path(__file__).resolve().parents[1] / "host-prod-gate"
 sys.path.insert(0, str(GATE_DIR))
 
 from nfm_docker_gate.policy import (  # noqa: E402
-    Decision,
     ScopeConfig,
     TargetInfo,
     classify,
 )
-
 
 CFG = ScopeConfig()
 
@@ -102,7 +100,9 @@ def test_create_container_joining_prod_network_denied():
 
 
 def test_prod_network_create_connect_rm_denied():
-    assert not decide("POST", "/v1.43/networks/create", body={"Name": "nucpot-prod_default"}).allowed
+    assert not decide(
+        "POST", "/v1.43/networks/create", body={"Name": "nucpot-prod_default"}
+    ).allowed
     assert not decide("POST", "/v1.43/networks/nucpot-prod_default/connect", body={}).allowed
     assert not decide("DELETE", "/v1.43/networks/nucpot-prod_default").allowed
 
@@ -148,18 +148,22 @@ def test_create_mounting_prod_volume_via_binds_denied():
 
 
 def test_create_mounting_prod_volume_via_mounts_denied():
-    body = {"HostConfig": {"Mounts": [
-        {"Type": "volume", "Source": "nucpot-prod_pgdata", "Target": "/data"}
-    ]}}
+    body = {
+        "HostConfig": {
+            "Mounts": [{"Type": "volume", "Source": "nucpot-prod_pgdata", "Target": "/data"}]
+        }
+    }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert not result.allowed and result.scope == "prod"
 
 
 def test_create_mounting_nonprod_volume_allowed():
-    body = {"HostConfig": {
-        "Binds": ["nucpot-staging_cache:/cache"],
-        "Mounts": [{"Type": "volume", "Source": "dev_scratch", "Target": "/s"}],
-    }}
+    body = {
+        "HostConfig": {
+            "Binds": ["nucpot-staging_cache:/cache"],
+            "Mounts": [{"Type": "volume", "Source": "dev_scratch", "Target": "/s"}],
+        }
+    }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
 
@@ -167,8 +171,12 @@ def test_create_mounting_nonprod_volume_allowed():
 def test_bind_mount_paths_are_not_volume_refs():
     """Absolute bind sources are bind mounts (checked separately by
     _FORBIDDEN_BIND_RE) — they must not crash or pollute volume scoping."""
-    body = {"HostConfig": {"Binds": ["/tmp/scratch:/data"],
-                           "Mounts": [{"Type": "bind", "Source": "/Users/x", "Target": "/u"}]}}
+    body = {
+        "HostConfig": {
+            "Binds": ["/tmp/scratch:/data"],
+            "Mounts": [{"Type": "bind", "Source": "/Users/x", "Target": "/u"}],
+        }
+    }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
 
@@ -209,7 +217,13 @@ def test_network_actions_by_name_still_classified():
 def test_create_with_opaque_network_ref_denied_fail_closed():
     """Create joining a network by opaque id is the same hole as connect —
     deny (compose always references networks by name)."""
-    body = {"NetworkingConfig": {"EndpointsConfig": {"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef": {}}}}
+    body = {
+        "NetworkingConfig": {
+            "EndpointsConfig": {
+                "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef": {}
+            }
+        }
+    }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert not result.allowed and "fail-closed" in result.reason
 
@@ -254,10 +268,12 @@ def test_create_with_opaque_network_mode_container_ref_denied_fail_closed():
 
 
 def test_create_with_nonprod_container_refs_allowed():
-    body = {"HostConfig": {
-        "VolumesFrom": ["nucpot-staging-db-1:rw"],
-        "NetworkMode": "container:nucpot-staging-api-1",
-    }}
+    body = {
+        "HostConfig": {
+            "VolumesFrom": ["nucpot-staging-db-1:rw"],
+            "NetworkMode": "container:nucpot-staging-api-1",
+        }
+    }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
 
@@ -308,15 +324,17 @@ def test_create_built_in_network_modes_still_allowed():
 def test_network_connect_to_prod_container_denied():
     """``docker network connect rogue-net nucpot-prod-api-1`` — the network
     is non-prod but the CONNECT BODY's Container ref is a prod container."""
-    result = decide("POST", "/v1.43/networks/rogue-net/connect",
-                    body={"Container": "nucpot-prod-api-1"})
+    result = decide(
+        "POST", "/v1.43/networks/rogue-net/connect", body={"Container": "nucpot-prod-api-1"}
+    )
     assert not result.allowed and result.scope == "prod"
     assert "nucpot-prod-api-1" in result.reason
 
 
 def test_network_disconnect_prod_container_denied():
-    result = decide("POST", "/v1.43/networks/rogue-net/disconnect",
-                    body={"Container": "nucpot-prod-db-1"})
+    result = decide(
+        "POST", "/v1.43/networks/rogue-net/disconnect", body={"Container": "nucpot-prod-db-1"}
+    )
     assert not result.allowed and result.scope == "prod"
 
 
@@ -327,20 +345,26 @@ def test_network_connect_container_hex_ref_resolved_through_daemon():
         assert ident == prefix
         return TargetInfo(name="nucpot-prod-api", project="nucpot-prod")
 
-    result = decide("POST", "/v1.43/networks/rogue-net/connect",
-                    body={"Container": prefix}, resolver=resolver)
+    result = decide(
+        "POST", "/v1.43/networks/rogue-net/connect", body={"Container": prefix}, resolver=resolver
+    )
     assert not result.allowed and result.scope == "prod"
 
 
 def test_network_connect_container_hex_ref_unresolvable_fails_closed():
-    result = decide("POST", "/v1.43/networks/rogue-net/connect",
-                    body={"Container": "e" * 64}, resolver=lambda ident: None)
+    result = decide(
+        "POST",
+        "/v1.43/networks/rogue-net/connect",
+        body={"Container": "e" * 64},
+        resolver=lambda ident: None,
+    )
     assert not result.allowed and "fail-closed" in result.reason
 
 
 def test_network_connect_nonprod_container_allowed():
-    result = decide("POST", "/v1.43/networks/bridge/connect",
-                    body={"Container": "nucpot-staging-api-1"})
+    result = decide(
+        "POST", "/v1.43/networks/bridge/connect", body={"Container": "nucpot-staging-api-1"}
+    )
     assert result.allowed
 
 
@@ -350,8 +374,7 @@ def test_network_connect_nonprod_container_allowed():
 def test_opaque_id_resolver_failure_fails_closed():
     """A transient daemon failure on the resolver roundtrip must deny, not
     pass the prod container off as non-prod."""
-    result = decide("DELETE", f"/v1.43/containers/{'a' * 64}",
-                    resolver=lambda ident: None)
+    result = decide("DELETE", f"/v1.43/containers/{'a' * 64}", resolver=lambda ident: None)
     assert not result.allowed and result.audit
     assert "fail-closed" in result.reason
 
@@ -362,8 +385,9 @@ def test_opaque_id_without_resolver_fails_closed():
 
 
 def test_named_container_unaffected_by_resolver_failure():
-    result = decide("POST", "/v1.43/containers/nucpot-staging-api/stop",
-                    resolver=lambda ident: None)
+    result = decide(
+        "POST", "/v1.43/containers/nucpot-staging-api/stop", resolver=lambda ident: None
+    )
     assert result.allowed
 
 
@@ -461,8 +485,12 @@ def test_image_prune_allowed():
 
 
 def test_privileged_container_denied():
-    result = decide("POST", "/v1.43/containers/create", "name=harmless",
-                    body={"HostConfig": {"Privileged": True}})
+    result = decide(
+        "POST",
+        "/v1.43/containers/create",
+        "name=harmless",
+        body={"HostConfig": {"Privileged": True}},
+    )
     assert not result.allowed and "Privileged" in result.reason
 
 

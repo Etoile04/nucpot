@@ -21,13 +21,13 @@ those endpoints fails closed); everything else streams untouched.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import socket
 import threading
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .audit import AuditLog
 from .peercred import peer_identity
@@ -69,7 +69,7 @@ class UpstreamResolver:
     def __init__(self, upstream_path: str) -> None:
         self._upstream = upstream_path
 
-    def __call__(self, ident: str) -> Optional[TargetInfo]:
+    def __call__(self, ident: str) -> TargetInfo | None:
         # Names / short refs classify directly; opaque hex refs need a
         # daemon roundtrip to learn name + labels + networks. The daemon
         # accepts id PREFIXES of any unambiguous length, so any pure-hex
@@ -101,19 +101,19 @@ class UpstreamResolver:
             volumes=volumes,
         )
 
-    def _daemon_request(self, api_path: str) -> Optional[bytes]:
+    def _daemon_request(self, api_path: str) -> bytes | None:
         sock = None
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(10)
             sock.connect(self._upstream)
             request = (
-                "GET {path} HTTP/1.1\r\n"
+                f"GET {api_path} HTTP/1.1\r\n"
                 "Host: docker\r\n"
                 "User-Agent: nfm-g2-resolver\r\n"
                 "Content-Length: 0\r\n"
                 "Connection: close\r\n\r\n"
-            ).format(path=api_path)
+            )
             sock.sendall(request.encode())
             chunks = []
             while True:
@@ -125,10 +125,8 @@ class UpstreamResolver:
             return None
         finally:
             if sock is not None:
-                try:
+                with contextlib.suppress(OSError):
                     sock.close()
-                except OSError:
-                    pass
         raw = b"".join(chunks)
         header, _, body = raw.partition(b"\r\n\r\n")
         status_line = header.split(b"\r\n", 1)[0]
@@ -164,10 +162,10 @@ class DockerGateProxy:
         listen_path: str,
         upstream_path: str,
         audit_log: AuditLog,
-        scope: Optional[ScopeConfig] = None,
+        scope: ScopeConfig | None = None,
         full_mode: bool = False,
         socket_mode: int = 0o666,
-        socket_group: Optional[str] = None,
+        socket_group: str | None = None,
     ) -> None:
         self.listen_path = listen_path
         self.upstream_path = upstream_path
@@ -189,7 +187,7 @@ class DockerGateProxy:
                 probe.connect(self.listen_path)
                 probe.close()
                 raise SystemExit(f"nfm-g2: another instance is listening on {self.listen_path}")
-            except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
+            except (TimeoutError, ConnectionRefusedError, FileNotFoundError):
                 os.unlink(self.listen_path)
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -203,14 +201,16 @@ class DockerGateProxy:
         server.listen(64)
         server.settimeout(1.0)
         self.audit.write(
-            "startup", None,
-            listen=self.listen_path, upstream=self.upstream_path,
+            "startup",
+            None,
+            listen=self.listen_path,
+            upstream=self.upstream_path,
             mode="full" if self.full_mode else "ro",
         )
         while not self._shutdown.is_set():
             try:
                 conn, _ = server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 if self._shutdown.is_set():
@@ -236,27 +236,30 @@ class DockerGateProxy:
                 self._deny(conn, decision, identity, ctx)
                 return
             if decision.audit:
-                self.audit.write("allow", identity, method=ctx.method, target=ctx.target,
-                                 **decision.to_log_fields())
+                self.audit.write(
+                    "allow",
+                    identity,
+                    method=ctx.method,
+                    target=ctx.target,
+                    **decision.to_log_fields(),
+                )
             # Streaming from here on: no timeouts, pump until EOF.
             conn.settimeout(None)
             self._forward(conn, ctx)
         except OSError:
             pass  # client vanished mid-head; nothing to attribute yet
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 conn.close()
-            except OSError:
-                pass
 
-    def _read_head(self, conn: socket.socket) -> Optional[_ConnCtx]:
+    def _read_head(self, conn: socket.socket) -> _ConnCtx | None:
         buffer = b""
         while b"\r\n\r\n" not in buffer:
             if len(buffer) > _HEAD_LIMIT:
                 return None
             try:
                 chunk = conn.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 return None
             if not chunk:
                 return None
@@ -275,18 +278,26 @@ class DockerGateProxy:
 
     def _decide(self, conn: socket.socket, ctx: _ConnCtx) -> Decision:
         stripped = _strip_version(ctx.path).lstrip("/")
-        if ctx.method == "POST" and (stripped in _BODY_ENDPOINTS or _BODY_ENDPOINT_RE.match(stripped)):
+        if ctx.method == "POST" and (
+            stripped in _BODY_ENDPOINTS or _BODY_ENDPOINT_RE.match(stripped)
+        ):
             body = self._read_body(conn, ctx)
             if body is None:
-                return Decision(False, "oversized or unreadable JSON body (fail-closed)", audit=True)
+                return Decision(
+                    False, "oversized or unreadable JSON body (fail-closed)", audit=True
+                )
             ctx.body = body
         return classify(
-            ctx.method, ctx.path, ctx.query,
+            ctx.method,
+            ctx.path,
+            ctx.query,
             parse_json_object(ctx.body) if ctx.body else None,
-            self.resolver, self.scope, full_mode=self.full_mode,
+            self.resolver,
+            self.scope,
+            full_mode=self.full_mode,
         )
 
-    def _read_body(self, conn: socket.socket, ctx: _ConnCtx) -> Optional[bytes]:
+    def _read_body(self, conn: socket.socket, ctx: _ConnCtx) -> bytes | None:
         length = -1
         for name, value in ctx.headers:
             if name == "content-length":
@@ -306,17 +317,19 @@ class DockerGateProxy:
         while len(body) < length:
             try:
                 chunk = conn.recv(min(65536, length - len(body)))
-            except (socket.timeout, OSError):
+            except (TimeoutError, OSError):
                 return None
             if not chunk:
                 return None
             body += chunk
         return bytes(body[:length])
 
-    def _deny(self, conn: socket.socket, decision: Decision, identity: Optional[dict],
-              ctx: _ConnCtx) -> None:
-        self.audit.write("deny", identity, method=ctx.method, target=ctx.target,
-                         **decision.to_log_fields())
+    def _deny(
+        self, conn: socket.socket, decision: Decision, identity: dict | None, ctx: _ConnCtx
+    ) -> None:
+        self.audit.write(
+            "deny", identity, method=ctx.method, target=ctx.target, **decision.to_log_fields()
+        )
         message = f"{decision.reason}. {REFUSAL_HINT}"
         payload = json.dumps({"message": message}).encode()
         response = (
@@ -325,10 +338,8 @@ class DockerGateProxy:
             f"Content-Length: {len(payload)}\r\n"
             "Connection: close\r\n\r\n"
         ).encode() + payload
-        try:
+        with contextlib.suppress(OSError):
             conn.sendall(response)
-        except OSError:
-            pass
 
     def _forward(self, conn: socket.socket, ctx: _ConnCtx) -> None:
         lines = [f"{ctx.method} {ctx.target} HTTP/1.1"]
@@ -353,8 +364,7 @@ class DockerGateProxy:
             # chunked framing). Otherwise they are a pipelined second
             # request riding an already-allowed first one — dropped.
             declared_body = any(
-                (name == "content-length" and value not in ("", "0"))
-                or name == "transfer-encoding"
+                (name == "content-length" and value not in ("", "0")) or name == "transfer-encoding"
                 for name, value in ctx.headers
             )
             prefix = ctx.body + (ctx.rest if declared_body else b"")
@@ -373,10 +383,8 @@ class DockerGateProxy:
             f"Content-Length: {len(payload)}\r\n"
             "Connection: close\r\n\r\n"
         ).encode() + payload
-        try:
+        with contextlib.suppress(OSError):
             conn.sendall(response)
-        except OSError:
-            pass
 
     def _pump(self, client: socket.socket, upstream: socket.socket) -> None:
         """Relay both directions until either side reaches EOF."""
@@ -391,10 +399,8 @@ class DockerGateProxy:
             except OSError:
                 pass
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     destination.shutdown(socket.SHUT_WR)
-                except OSError:
-                    pass
 
         up_thread = threading.Thread(target=pipe, args=(upstream, client), daemon=True)
         down_thread = threading.Thread(target=pipe, args=(client, upstream), daemon=True)
@@ -403,7 +409,5 @@ class DockerGateProxy:
         up_thread.join()
         down_thread.join()
         for sock in (client, upstream):
-            try:
+            with contextlib.suppress(OSError):
                 sock.close()
-            except OSError:
-                pass

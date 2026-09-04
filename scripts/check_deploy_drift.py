@@ -88,7 +88,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_COMPOSE_PROJECT = "nucpot-prod"
@@ -169,8 +169,7 @@ def collect_live_state(project: str) -> dict[str, list[dict]]:
     label — the preview overlay shares the name prefix and is excluded) and
     map compose service → [{container, digest, tag}]."""
     listing = _docker(
-        ["ps", "--filter", f"label={COMPOSE_PROJECT_LABEL}={project}",
-         "--format", "{{.Names}}"]
+        ["ps", "--filter", f"label={COMPOSE_PROJECT_LABEL}={project}", "--format", "{{.Names}}"]
     )
     names = [name for name in listing.split() if name]
     live: dict[str, list[dict]] = {}
@@ -189,8 +188,11 @@ def collect_live_state(project: str) -> dict[str, list[dict]]:
         if not digest:
             raise OpsError(f"container {name}: no derivable image digest")
         live.setdefault(service, []).append(
-            {"container": container, "digest": digest,
-             "tag": str((info.get("Config") or {}).get("Image") or "")}
+            {
+                "container": container,
+                "digest": digest,
+                "tag": str((info.get("Config") or {}).get("Image") or ""),
+            }
         )
     return live
 
@@ -211,7 +213,9 @@ def load_manifest(path: Path) -> tuple[dict | None, Drift | None]:
     missing = [key for key in required if not isinstance(manifest.get(key), (dict, str))]
     if missing:
         return None, Drift(
-            "manifest_missing", "-", str(path),
+            "manifest_missing",
+            "-",
+            str(path),
             f"invalid: missing/empty key(s) {', '.join(missing)}",
         )
     return manifest, None
@@ -226,41 +230,61 @@ def diff(manifest: dict, live: dict[str, list[dict]]) -> list[Drift]:
         expected_digest = str(digests[service])
         running = live.get(service, [])
         if not running:
-            entries.append(Drift(
-                "missing_service", service,
-                f"running per manifest (digest {expected_digest}, "
-                f"container {containers.get(service, '?')})",
-                "no running container",
-            ))
+            entries.append(
+                Drift(
+                    "missing_service",
+                    service,
+                    f"running per manifest (digest {expected_digest}, "
+                    f"container {containers.get(service, '?')})",
+                    "no running container",
+                )
+            )
             continue
         live_digests = sorted({c["digest"] for c in running})
         if expected_digest not in live_digests:
-            entries.append(Drift(
-                "digest_mismatch", service, expected_digest, ", ".join(live_digests),
-            ))
+            entries.append(
+                Drift(
+                    "digest_mismatch",
+                    service,
+                    expected_digest,
+                    ", ".join(live_digests),
+                )
+            )
         expected_name = containers.get(service)
         live_names = sorted(c["container"] for c in running)
         if expected_name is not None and live_names != [expected_name]:
-            entries.append(Drift(
-                "container_mismatch", service, str(expected_name), ", ".join(live_names),
-            ))
+            entries.append(
+                Drift(
+                    "container_mismatch",
+                    service,
+                    str(expected_name),
+                    ", ".join(live_names),
+                )
+            )
     for service in sorted(live):
         if service in digests:
             continue
         running = live[service]
-        entries.append(Drift(
-            "extra_service", service, "not present in manifest",
-            f"{len(running)} running container(s) "
-            f"({', '.join(sorted({c['digest'] for c in running}))})",
-        ))
+        entries.append(
+            Drift(
+                "extra_service",
+                service,
+                "not present in manifest",
+                f"{len(running)} running container(s) "
+                f"({', '.join(sorted({c['digest'] for c in running}))})",
+            )
+        )
     return entries
 
 
 def signature(entries: list[Drift]) -> str:
     canonical = json.dumps(
-        [[e.kind, e.service, e.expected, e.actual]
-         for e in sorted(entries, key=lambda e: (e.kind, e.service, e.expected, e.actual))],
-        sort_keys=True, ensure_ascii=True,
+        [
+            [e.kind, e.service, e.expected, e.actual]
+            for e in sorted(entries, key=lambda e: (e.kind, e.service, e.expected, e.actual))
+        ],
+        sort_keys=True,
+        ensure_ascii=True,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -271,11 +295,14 @@ def _diverged_services(entries: list[Drift]) -> str:
 
 
 def render_title(entries: list[Drift], sig: str) -> str:
-    return f"{TITLE_PREFIX} {_diverged_services(entries)} diverge from deploy manifest (sig {sig[:8]})"
+    return (
+        f"{TITLE_PREFIX} {_diverged_services(entries)} diverge from deploy manifest (sig {sig[:8]})"
+    )
 
 
-def render_body(entries: list[Drift], sig: str, manifest: dict | None,
-                manifest_path: Path, first_seen: str) -> str:
+def render_body(
+    entries: list[Drift], sig: str, manifest: dict | None, manifest_path: Path, first_seen: str
+) -> str:
     lines = [
         f"{TITLE_PREFIX} alarm — live prod state diverges from the sanctioned",
         "deploy manifest (ADR-013 §2 G4b / NFM-4272). Auto-filed by",
@@ -308,7 +335,8 @@ def render_body(entries: list[Drift], sig: str, manifest: dict | None,
 def render_comment(entries: list[Drift], sig: str, manifest: dict | None, now: str) -> str:
     baseline = (
         f"deploy_sha={manifest.get('deploy_sha', '?')}, actor={manifest.get('actor', '?')}"
-        if manifest else "no readable manifest"
+        if manifest
+        else "no readable manifest"
     )
     return (
         f"still diverged (sig {sig[:8]}) at {now} — "
@@ -360,10 +388,15 @@ class PaperclipClient:
 
     def create_issue(self, title: str, description: str, assignee_agent_id: str) -> dict:
         result = self._request(
-            "POST", f"/companies/{self.company_id}/issues",
-            {"title": title, "description": description,
-             "assigneeAgentId": assignee_agent_id, "status": "todo",
-             "priority": "high"},
+            "POST",
+            f"/companies/{self.company_id}/issues",
+            {
+                "title": title,
+                "description": description,
+                "assigneeAgentId": assignee_agent_id,
+                "status": "todo",
+                "priority": "high",
+            },
         )
         if not isinstance(result, dict) or not result.get("id"):
             raise OpsError("Paperclip create returned no issue id")
@@ -432,7 +465,7 @@ def save_state(path: Path, state: dict) -> None:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def file_or_append(
@@ -452,14 +485,18 @@ def file_or_append(
         if issue is not None and str(issue.get("status")) in OPEN_STATUSES:
             comment = render_comment(entries, sig, manifest, _utc_now())
             if dry_run:
-                print(f"[DRY-RUN] would comment-append to "
-                      f"{entry.get('identifier', entry['issue_uuid'])}:\n{comment}")
+                print(
+                    f"[DRY-RUN] would comment-append to "
+                    f"{entry.get('identifier', entry['issue_uuid'])}:\n{comment}"
+                )
                 return
             client.add_comment(entry["issue_uuid"], comment)
             entry["last_append"] = _utc_now()
             save_state(state_path, state)
-            print(f"==> Drift persists — comment appended to "
-                  f"{entry.get('identifier', entry['issue_uuid'])} (sig {sig[:8]})")
+            print(
+                f"==> Drift persists — comment appended to "
+                f"{entry.get('identifier', entry['issue_uuid'])} (sig {sig[:8]})"
+            )
             return
         # Mapped issue is closed and the (same-signature) drift is back:
         # post-resolution regression — fall through and file a NEW issue.
@@ -474,21 +511,22 @@ def file_or_append(
             state["signatures"][sig] = {
                 "issue_uuid": str(adopted["id"]),
                 "identifier": str(adopted.get("identifier", "?")),
-                "first_seen": str((adopted.get("createdAt") or _utc_now())),
+                "first_seen": str(adopted.get("createdAt") or _utc_now()),
                 "last_append": _utc_now(),
                 "adopted_from_api": True,
             }
             save_state(state_path, state)
-            print(f"==> Drift persists — re-adopted OPEN issue "
-                  f"{adopted.get('identifier', adopted['id'])} and commented (sig {sig[:8]})")
+            print(
+                f"==> Drift persists — re-adopted OPEN issue "
+                f"{adopted.get('identifier', adopted['id'])} and commented (sig {sig[:8]})"
+            )
             return
 
     title = render_title(entries, sig)
     first_seen = _utc_now()
     body = render_body(entries, sig, manifest, manifest_path, first_seen)
     if dry_run or client is None:
-        print(f"[DRY-RUN] would file to SRE Monitor ({sre_agent_id}):\n"
-              f"title: {title}\n\n{body}")
+        print(f"[DRY-RUN] would file to SRE Monitor ({sre_agent_id}):\ntitle: {title}\n\n{body}")
         return
     issue = client.create_issue(title, body, sre_agent_id)
     state["signatures"][sig] = {
@@ -498,8 +536,10 @@ def file_or_append(
         "last_append": first_seen,
     }
     save_state(state_path, state)
-    print(f"==> DRIFT FILED: {issue.get('identifier', issue['id'])} assigned to SRE "
-          f"Monitor — {_diverged_services(entries)} (sig {sig[:8]})")
+    print(
+        f"==> DRIFT FILED: {issue.get('identifier', issue['id'])} assigned to SRE "
+        f"Monitor — {_diverged_services(entries)} (sig {sig[:8]})"
+    )
 
 
 # ------------------------------------------------------------------ check
@@ -540,24 +580,29 @@ def run_check(args: argparse.Namespace) -> int:
 
     # ADR-013 §4: a sanctioned deploy in progress must not file.
     if _lock_is_fresh(lock_path, args.max_lock_age):
-        print(f"==> divergence present but deploy lock is fresh "
-              f"({lock_path}) — sanctioned deploy in progress, not filing.")
+        print(
+            f"==> divergence present but deploy lock is fresh "
+            f"({lock_path}) — sanctioned deploy in progress, not filing."
+        )
         return 0
 
     if args.recheck_seconds > 0:
-        print(f"==> divergence detected; re-checking after "
-              f"{args.recheck_seconds}s (in-flight deploy tolerance)…")
+        print(
+            f"==> divergence detected; re-checking after "
+            f"{args.recheck_seconds}s (in-flight deploy tolerance)…"
+        )
         time.sleep(args.recheck_seconds)
         if _lock_is_fresh(lock_path, args.max_lock_age):
-            print("==> deploy lock appeared during re-check — sanctioned deploy "
-                  "in progress, not filing.")
+            print(
+                "==> deploy lock appeared during re-check — sanctioned deploy "
+                "in progress, not filing."
+            )
             return 0
         try:
             manifest2, live2, problem2 = one_pass()
             entries2 = problem2 if problem2 is not None else diff(manifest2, live2)
         except OpsError as exc:
-            print(f"check_deploy_drift: OPERATIONAL ERROR on re-check — {exc}",
-                  file=sys.stderr)
+            print(f"check_deploy_drift: OPERATIONAL ERROR on re-check — {exc}", file=sys.stderr)
             return 2
         if not entries2:
             print("==> divergence cleared during re-check window — not filing.")
@@ -567,27 +612,40 @@ def run_check(args: argparse.Namespace) -> int:
     sig = signature(entries)
     client = None
     if not args.dry_run:
-        missing = [name for name, value in (
-            ("--paperclip-url / $NFM_DRIFT_PAPERCLIP_URL", args.paperclip_url),
-            ("--paperclip-key / $NFM_DRIFT_PAPERCLIP_KEY", args.paperclip_key),
-        ) if not value]
+        missing = [
+            name
+            for name, value in (
+                ("--paperclip-url / $NFM_DRIFT_PAPERCLIP_URL", args.paperclip_url),
+                ("--paperclip-key / $NFM_DRIFT_PAPERCLIP_KEY", args.paperclip_key),
+            )
+            if not value
+        ]
         if missing:
-            print(f"check_deploy_drift: OPERATIONAL ERROR — drift detected but "
-                  f"{', '.join(missing)} unset; cannot file. The checker "
-                  f"deliberately does NOT read ambient PAPERCLIP_API_URL/"
-                  f"PAPERCLIP_API_KEY (2026-09-04 false alarm, NFM-4275): the "
-                  f"cron wrapper sets the NFM_DRIFT_* variables explicitly.",
-                  file=sys.stderr)
+            print(
+                f"check_deploy_drift: OPERATIONAL ERROR — drift detected but "
+                f"{', '.join(missing)} unset; cannot file. The checker "
+                f"deliberately does NOT read ambient PAPERCLIP_API_URL/"
+                f"PAPERCLIP_API_KEY (2026-09-04 false alarm, NFM-4275): the "
+                f"cron wrapper sets the NFM_DRIFT_* variables explicitly.",
+                file=sys.stderr,
+            )
             return 2
         client = PaperclipClient(args.paperclip_url, args.paperclip_key, args.company_id)
         print(f"==> filing target: {client.api} (company {args.company_id})")
 
     try:
-        file_or_append(entries, sig, manifest, manifest_path, state_path,
-                       client, args.sre_agent_id, args.dry_run)
+        file_or_append(
+            entries,
+            sig,
+            manifest,
+            manifest_path,
+            state_path,
+            client,
+            args.sre_agent_id,
+            args.dry_run,
+        )
     except OpsError as exc:
-        print(f"check_deploy_drift: OPERATIONAL ERROR while filing — {exc}",
-              file=sys.stderr)
+        print(f"check_deploy_drift: OPERATIONAL ERROR while filing — {exc}", file=sys.stderr)
         print("not filed; next cron interval retries.", file=sys.stderr)
         return 2
     return 1
@@ -599,14 +657,14 @@ def run_check(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="ADR-013 G4b deploy-drift alarm: diff live prod digests "
-                    "against the G4a deploy manifest, auto-file SRE issues (NFM-4272)."
+        "against the G4a deploy manifest, auto-file SRE issues (NFM-4272)."
     )
     parser.add_argument(
         "--manifest",
         default=_default_g4_path("NFM_DEPLOY_MANIFEST", "prod-deploy-manifest.json"),
         help="G4a manifest path (default: $NFM_DEPLOY_MANIFEST, else "
-             "/usr/local/var/nfm-g2/ when the gate is installed, else "
-             "~/.nfmd/prod-deploy-manifest.json — NFM-4273).",
+        "/usr/local/var/nfm-g2/ when the gate is installed, else "
+        "~/.nfmd/prod-deploy-manifest.json — NFM-4273).",
     )
     parser.add_argument(
         "--compose-project",
@@ -617,46 +675,64 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--lock",
         default=_default_g4_path("NFM_DEPLOY_LOCK", "prod-deploy.lock"),
         help="deploy lockfile held by deploy_prod.sh while a sanctioned "
-             "deploy runs (default: $NFM_DEPLOY_LOCK, else "
-             "/usr/local/var/nfm-g2/ when the gate is installed, else "
-             "~/.nfmd/prod-deploy.lock — NFM-4273).",
+        "deploy runs (default: $NFM_DEPLOY_LOCK, else "
+        "/usr/local/var/nfm-g2/ when the gate is installed, else "
+        "~/.nfmd/prod-deploy.lock — NFM-4273).",
     )
     parser.add_argument(
-        "--max-lock-age", type=int,
+        "--max-lock-age",
+        type=int,
         default=int(os.environ.get("NFM_DRIFT_MAX_LOCK_AGE") or DEFAULT_MAX_LOCK_AGE),
         help=f"locks older than this many seconds are stale/ignored "
-             f"(default: {DEFAULT_MAX_LOCK_AGE}).",
+        f"(default: {DEFAULT_MAX_LOCK_AGE}).",
     )
     parser.add_argument(
-        "--recheck-seconds", type=int,
+        "--recheck-seconds",
+        type=int,
         default=int(os.environ.get("NFM_DRIFT_RECHECK_SECONDS") or DEFAULT_RECHECK_SECONDS),
         help="re-check delay before filing, tolerating in-flight deploys "
-             f"(default: {DEFAULT_RECHECK_SECONDS}; 0 disables).",
+        f"(default: {DEFAULT_RECHECK_SECONDS}; 0 disables).",
     )
     parser.add_argument(
         "--state",
         default=os.environ.get("NFM_DRIFT_STATE")
         or str(Path.home() / ".nfmd" / "prod-deploy-drift-state.json"),
         help="checker state mapping divergence signatures to filed issues "
-             "(default: ~/.nfmd/prod-deploy-drift-state.json).",
+        "(default: ~/.nfmd/prod-deploy-drift-state.json).",
     )
-    parser.add_argument("--paperclip-url", default=os.environ.get("NFM_DRIFT_PAPERCLIP_URL"),
-                        help="Paperclip API root (default: $NFM_DRIFT_PAPERCLIP_URL — "
-                             "NOT the ambient $PAPERCLIP_API_URL; see runbook §8).")
-    parser.add_argument("--paperclip-key", default=os.environ.get("NFM_DRIFT_PAPERCLIP_KEY"),
-                        help="Paperclip API key (default: $NFM_DRIFT_PAPERCLIP_KEY — "
-                             "NOT the ambient $PAPERCLIP_API_KEY; see runbook §8).")
-    parser.add_argument("--company-id",
-                        default=os.environ.get("NFM_DRIFT_PAPERCLIP_COMPANY_ID")
-                        or DEFAULT_COMPANY_ID,
-                        help=f"Paperclip company id (default: {DEFAULT_COMPANY_ID}).")
-    parser.add_argument("--sre-agent-id", default=SRE_MONITOR_AGENT_ID,
-                        help="assignee for drift issues (default: SRE Monitor agent).")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="render the would-be issue/comment; no API calls, no state writes.")
-    parser.add_argument("--selftest", action="store_true",
-                        help="fabricate a divergence and verify end-to-end filing "
-                             "against an in-process stub target; touches nothing real.")
+    parser.add_argument(
+        "--paperclip-url",
+        default=os.environ.get("NFM_DRIFT_PAPERCLIP_URL"),
+        help="Paperclip API root (default: $NFM_DRIFT_PAPERCLIP_URL — "
+        "NOT the ambient $PAPERCLIP_API_URL; see runbook §8).",
+    )
+    parser.add_argument(
+        "--paperclip-key",
+        default=os.environ.get("NFM_DRIFT_PAPERCLIP_KEY"),
+        help="Paperclip API key (default: $NFM_DRIFT_PAPERCLIP_KEY — "
+        "NOT the ambient $PAPERCLIP_API_KEY; see runbook §8).",
+    )
+    parser.add_argument(
+        "--company-id",
+        default=os.environ.get("NFM_DRIFT_PAPERCLIP_COMPANY_ID") or DEFAULT_COMPANY_ID,
+        help=f"Paperclip company id (default: {DEFAULT_COMPANY_ID}).",
+    )
+    parser.add_argument(
+        "--sre-agent-id",
+        default=SRE_MONITOR_AGENT_ID,
+        help="assignee for drift issues (default: SRE Monitor agent).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render the would-be issue/comment; no API calls, no state writes.",
+    )
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="fabricate a divergence and verify end-to-end filing "
+        "against an in-process stub target; touches nothing real.",
+    )
     return parser.parse_args(argv)
 
 

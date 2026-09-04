@@ -12,7 +12,7 @@ import datetime
 import json
 import os
 import threading
-from typing import Any, Optional
+from typing import Any
 
 
 class AuditLog:
@@ -26,9 +26,9 @@ class AuditLog:
     def count(self) -> int:
         return self._count
 
-    def write(self, event: str, identity: Optional[dict[str, Any]], **fields: Any) -> None:
+    def write(self, event: str, identity: dict[str, Any] | None, **fields: Any) -> None:
         record = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds"),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds"),
             "event": event,  # "allow" | "deny" | "startup" | "drift"
             "mode": self._mode,
             "identity": identity or {"known": False},

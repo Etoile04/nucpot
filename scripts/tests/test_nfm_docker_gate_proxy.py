@@ -92,12 +92,10 @@ class FakeDaemon:
     def _stream_events(self, conn: socket.socket) -> None:
         """docker events-style streamed response: headers, then chunks."""
         conn.sendall(
-            (
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json\r\n"
-                "Transfer-Encoding: chunked\r\n"
-                "Connection: close\r\n\r\n"
-            ).encode()
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Transfer-Encoding: chunked\r\n"
+            b"Connection: close\r\n\r\n"
         )
         for index in range(3):
             time.sleep(0.05)
@@ -116,10 +114,14 @@ class FakeDaemon:
                     "Content-Type: application/json\r\n"
                     "Connection: close\r\n\r\n"
                 ).encode()
-            doc = self.inspect_payload if self.inspect_payload is not None else {
-                "Name": "/nucpot-prod-api",
-                "Config": {"Labels": {"com.docker.compose.project": "nucpot-prod"}},
-            }
+            doc = (
+                self.inspect_payload
+                if self.inspect_payload is not None
+                else {
+                    "Name": "/nucpot-prod-api",
+                    "Config": {"Labels": {"com.docker.compose.project": "nucpot-prod"}},
+                }
+            )
             payload = json.dumps(doc).encode()
         else:
             payload = json.dumps({"Id": "ok"}).encode()
@@ -187,7 +189,7 @@ class Harness:
                     if not chunk:
                         break
                     chunks.append(chunk)
-            except socket.timeout:
+            except TimeoutError:
                 pass
         conn.close()
         return b"".join(chunks)
@@ -281,8 +283,12 @@ def test_opaque_id_with_prod_volume_denied_via_resolver(ro):
         "Config": {"Labels": {}},
         "NetworkSettings": {"Networks": {"bridge": {}}},
         "Mounts": [
-            {"Type": "volume", "Name": "nucpot-prod_pgdata",
-             "Source": "/var/lib/docker/volumes/x/_data", "Destination": "/data"},
+            {
+                "Type": "volume",
+                "Name": "nucpot-prod_pgdata",
+                "Source": "/var/lib/docker/volumes/x/_data",
+                "Destination": "/data",
+            },
             {"Type": "bind", "Source": "/Users/x/proj", "Destination": "/p"},
         ],
     }
@@ -356,8 +362,13 @@ def test_staging_create_with_body_flows_through(ro):
 
 
 def test_build_flows_through(ro):
-    response = ro.request(http("POST", "/v1.43/build?t=nucpot-prod-api:candidate-1",
-                               extra="Transfer-Encoding: chunked\r\n"))
+    response = ro.request(
+        http(
+            "POST",
+            "/v1.43/build?t=nucpot-prod-api:candidate-1",
+            extra="Transfer-Encoding: chunked\r\n",
+        )
+    )
     assert response.startswith(b"HTTP/1.1 200")
     assert ro.daemon.seen("POST", "/build?t=nucpot-prod-api:candidate-1")
 
@@ -366,9 +377,8 @@ def test_build_flows_through(ro):
 
 
 def test_pipelined_mutation_after_allowed_get_is_dropped(ro):
-    smuggle = (
-        http("GET", "/v1.43/containers/json")
-        + http("DELETE", "/v1.43/containers/nucpot-prod-api")
+    smuggle = http("GET", "/v1.43/containers/json") + http(
+        "DELETE", "/v1.43/containers/nucpot-prod-api"
     )
     response = ro.request(smuggle)
     assert response.startswith(b"HTTP/1.1 200")  # first request answered
@@ -378,9 +388,8 @@ def test_pipelined_mutation_after_allowed_get_is_dropped(ro):
 
 def test_smuggle_behind_declared_body_is_dropped(ro):
     body = json.dumps({"Name": "nucpot-staging-x"}).encode()
-    smuggle = (
-        http("POST", "/v1.43/networks/create", body)
-        + http("DELETE", "/v1.43/containers/nucpot-prod-api")
+    smuggle = http("POST", "/v1.43/networks/create", body) + http(
+        "DELETE", "/v1.43/containers/nucpot-prod-api"
     )
     response = ro.request(smuggle)
     assert response.startswith(b"HTTP/1.1 200")
@@ -400,8 +409,9 @@ def test_chunked_create_body_fails_closed(ro):
     empty body while _forward streams the real chunked payload to the
     daemon — the create below attaches to the prod network."""
     payload = json.dumps({"HostConfig": {"NetworkMode": "nucpot-prod_default"}}).encode()
-    raw = http("POST", "/v1.43/containers/create?name=harmless",
-               extra="Transfer-Encoding: chunked\r\n") + _chunked(payload)
+    raw = http(
+        "POST", "/v1.43/containers/create?name=harmless", extra="Transfer-Encoding: chunked\r\n"
+    ) + _chunked(payload)
     response = ro.request(raw)
     assert response.startswith(b"HTTP/1.1 403")
     assert not ro.daemon.seen("POST", "containers/create")
@@ -410,8 +420,9 @@ def test_chunked_create_body_fails_closed(ro):
 def test_chunked_network_connect_body_fails_closed(ro):
     """Same smuggling maneuver against the E2 connect-body check."""
     payload = json.dumps({"Container": "nucpot-prod-api-1"}).encode()
-    raw = http("POST", "/v1.43/networks/rogue-net/connect",
-               extra="Transfer-Encoding: chunked\r\n") + _chunked(payload)
+    raw = http(
+        "POST", "/v1.43/networks/rogue-net/connect", extra="Transfer-Encoding: chunked\r\n"
+    ) + _chunked(payload)
     response = ro.request(raw)
     assert response.startswith(b"HTTP/1.1 403")
     assert not ro.daemon.seen("POST", "/connect")
@@ -422,10 +433,10 @@ def test_create_body_without_declared_length_fails_closed(ro):
     bytes happened to arrive with the head."""
     payload = json.dumps({"HostConfig": {"Binds": ["nucpot-prod_pgdata:/data"]}}).encode()
     head = (
-        "POST /v1.43/containers/create?name=harmless HTTP/1.1\r\n"
-        "Host: docker\r\n"
-        "User-Agent: Docker-Client/test\r\n\r\n"
-    ).encode()
+        b"POST /v1.43/containers/create?name=harmless HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n"
+    )
     response = ro.request(head + payload)
     assert response.startswith(b"HTTP/1.1 403")
     assert not ro.daemon.seen("POST", "containers/create")

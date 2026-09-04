@@ -51,6 +51,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `nfm_docker_gate_proxy.py` | launchd entry for either proxy mode |
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
 | `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion |
+| `entries/run-record-manifest.sh` | G4a deploy-manifest record as the deploy identity at the canonical G4 state dir (NFM-4273) |
 | `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` |
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |

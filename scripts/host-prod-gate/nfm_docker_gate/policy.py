@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 
 # Docker API paths arrive as /v1.43/containers/json or /containers/json.
 _VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
@@ -108,7 +109,7 @@ class ScopeConfig:
     prod_image_prefixes: tuple[str, ...] = ("nucpot-prod-",)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ScopeConfig":
+    def from_dict(cls, data: dict[str, Any]) -> ScopeConfig:
         known = {k: tuple(v) for k, v in data.items() if isinstance(v, list)}
         return cls(**known)  # type: ignore[arg-type]
 
@@ -121,7 +122,7 @@ class Decision:
     reason: str
     scope: str = "n/a"  # "prod" | "non-prod" | "image" | "n/a"
     audit: bool = False  # write an audit record (mutation seen)
-    target: Optional[str] = None  # best-effort human-readable target
+    target: str | None = None  # best-effort human-readable target
 
     def to_log_fields(self) -> dict[str, Any]:
         # NB: no "target" here — the proxy adds the request's own target;
@@ -138,8 +139,8 @@ class Decision:
 class TargetInfo:
     """Resolved identity of a mutation target (from CLI text or daemon)."""
 
-    name: Optional[str] = None
-    project: Optional[str] = None  # com.docker.compose.project label
+    name: str | None = None
+    project: str | None = None  # com.docker.compose.project label
     networks: tuple[str, ...] = field(default_factory=tuple)
     # Named volumes attached to the target (create body refs, or daemon
     # inspect Mounts[].Name). A rogue container with a prod-looking name
@@ -152,7 +153,7 @@ class TargetInfo:
     # as naming the container prod (NFM-4273 review R1).
     containers: tuple[str, ...] = field(default_factory=tuple)
 
-    def prod_violation(self, cfg: ScopeConfig) -> Optional[str]:
+    def prod_violation(self, cfg: ScopeConfig) -> str | None:
         if self.project and self.project in cfg.prod_projects:
             return f"compose project {self.project!r} is prod"
         if self.name and _matches(self.name, cfg.prod_name_prefixes):
@@ -169,7 +170,7 @@ class TargetInfo:
         return None
 
 
-Resolver = Callable[[str], Optional[TargetInfo]]
+Resolver = Callable[[str], TargetInfo | None]
 
 
 def _strip_version(path: str) -> str:
@@ -189,7 +190,7 @@ def parse_query(query: str) -> dict[str, list[str]]:
     return out
 
 
-def _container_config_flags(body: dict[str, Any]) -> Optional[str]:
+def _container_config_flags(body: dict[str, Any]) -> str | None:
     """Return a refusal reason if the container config is an escape hatch."""
     host_config = body.get("HostConfig") or {}
     if not isinstance(host_config, dict):
@@ -240,7 +241,7 @@ def _volume_refs(body: dict[str, Any]) -> tuple[str, ...]:
     return tuple(refs)
 
 
-def _opaque_ref(refs: tuple[str, ...]) -> Optional[str]:
+def _opaque_ref(refs: tuple[str, ...]) -> str | None:
     """First opaque (hex-id) entry in refs, if any — fails closed upstream."""
     for ref in refs:
         if _OPAQUE_ID_RE.match(ref.lower()):
@@ -268,7 +269,7 @@ def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
     for flag in ("NetworkMode", "PidMode", "IpcMode"):
         value = host_config.get(flag)
         if isinstance(value, str) and value.startswith("container:"):
-            refs.append(value[len("container:"):])
+            refs.append(value[len("container:") :])
     return tuple(refs)
 
 
@@ -278,11 +279,11 @@ def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     networks: tuple[str, ...] = tuple()
     endpoints = (body.get("NetworkingConfig") or {}).get("EndpointsConfig") or {}
     if isinstance(endpoints, dict):
-        networks = networks + tuple(str(k) for k in endpoints.keys())
+        networks = networks + tuple(str(k) for k in endpoints)
     host_config = body.get("HostConfig") or {}
     network_mode = host_config.get("NetworkMode") if isinstance(host_config, dict) else None
     if isinstance(network_mode, str) and network_mode and not network_mode.startswith("container:"):
-        networks = networks + (network_mode,)
+        networks = (*networks, network_mode)
     return TargetInfo(
         name=name or None,
         project=project,
@@ -296,8 +297,8 @@ def classify(
     method: str,
     raw_path: str,
     query: str,
-    body_json: Optional[dict[str, Any]],
-    resolver: Optional[Resolver],
+    body_json: dict[str, Any] | None,
+    resolver: Resolver | None,
     cfg: ScopeConfig,
     full_mode: bool = False,
 ) -> Decision:
@@ -329,7 +330,9 @@ def classify(
 
     if method == "POST" and path == "build":
         tags = params.get("t") or params.get("tag") or []
-        return Decision(True, "image-layer op", scope="image", audit=True, target=",".join(tags) or None)
+        return Decision(
+            True, "image-layer op", scope="image", audit=True, target=",".join(tags) or None
+        )
 
     if method == "POST" and path in ("images/create", "images/load", "images/prune"):
         ref = (params.get("fromImage") or params.get("ref") or [""])[0]
@@ -337,7 +340,10 @@ def classify(
 
     if path in ("containers/prune", "networks/prune", "volumes/prune", "build/prune"):
         return Decision(
-            False, f"{path} is daemon-wide and can remove prod state (fail-closed)", scope="prod", audit=True
+            False,
+            f"{path} is daemon-wide and can remove prod state (fail-closed)",
+            scope="prod",
+            audit=True,
         )
 
     image_action = _IMAGE_NAME_ACTION.match(path)
@@ -357,7 +363,7 @@ def classify(
             return Decision(True, "image push (non-prod)", scope="image", audit=True, target=name)
 
     if method == "DELETE" and path.startswith("images/"):
-        name = path[len("images/"):]
+        name = path[len("images/") :]
         return Decision(True, "image-layer op", scope="image", audit=True, target=name)
 
     # ---- container create --------------------------------------------------
@@ -367,12 +373,18 @@ def classify(
         danger = _container_config_flags(body)
         if danger:
             return Decision(
-                False, f"container config rejected: {danger}", scope="n/a", audit=True, target=name or None
+                False,
+                f"container config rejected: {danger}",
+                scope="n/a",
+                audit=True,
+                target=name or None,
             )
         target = _target_from_create(name, body)
         violation = target.prod_violation(cfg)
         if violation:
-            return Decision(False, violation, scope="prod", audit=True, target=name or target.project)
+            return Decision(
+                False, violation, scope="prod", audit=True, target=name or target.project
+            )
         # Opaque refs in EndpointsConfig / VolumesFrom / NetworkMode cannot
         # be scope-checked from text (networks have no resolver path; hex
         # container refs could be resolved but compose always uses names) —
@@ -386,10 +398,12 @@ def classify(
                 audit=True,
                 target=name or None,
             )
-        return Decision(True, "container create (non-prod)", scope="non-prod", audit=True, target=name or None)
+        return Decision(
+            True, "container create (non-prod)", scope="non-prod", audit=True, target=name or None
+        )
 
     # ---- container mutations by id or name ---------------------------------
-    def _resolve(ident: str) -> Optional[TargetInfo]:
+    def _resolve(ident: str) -> TargetInfo | None:
         local = TargetInfo(name=ident)
         if local.prod_violation(cfg) is not None:
             return local  # decisive from the CLI text; no daemon roundtrip
@@ -399,7 +413,7 @@ def classify(
             return None  # opaque id with nothing to consult — fail closed
         return resolver(ident)  # None back means unresolvable — fail closed
 
-    def _deny_if_prod(action_desc: str, ident: str) -> Optional[Decision]:
+    def _deny_if_prod(action_desc: str, ident: str) -> Decision | None:
         info = _resolve(ident)
         if info is None:
             return Decision(
@@ -411,7 +425,9 @@ def classify(
             )
         violation = info.prod_violation(cfg)
         if violation:
-            return Decision(False, f"{action_desc}: {violation}", scope="prod", audit=True, target=ident)
+            return Decision(
+                False, f"{action_desc}: {violation}", scope="prod", audit=True, target=ident
+            )
         return None
 
     match = _CONTAINER_MUTATION.match(path)
@@ -420,10 +436,12 @@ def classify(
         denied = _deny_if_prod(f"{action} on prod container", ident)
         if denied:
             return denied
-        return Decision(True, f"{action} (non-prod container)", scope="non-prod", audit=True, target=ident)
+        return Decision(
+            True, f"{action} (non-prod container)", scope="non-prod", audit=True, target=ident
+        )
 
     if method == "DELETE" and path.startswith("containers/"):
-        ident = path[len("containers/"):]
+        ident = path[len("containers/") :]
         denied = _deny_if_prod("rm on prod container", ident)
         if denied:
             return denied
@@ -441,8 +459,16 @@ def classify(
     if method == "POST" and path == "networks/create":
         name = str((body_json or {}).get("Name", ""))
         if _matches(name, cfg.prod_network_prefixes):
-            return Decision(False, f"network create {name!r} matches prod scope", scope="prod", audit=True, target=name)
-        return Decision(True, "network create (non-prod)", scope="non-prod", audit=True, target=name)
+            return Decision(
+                False,
+                f"network create {name!r} matches prod scope",
+                scope="prod",
+                audit=True,
+                target=name,
+            )
+        return Decision(
+            True, "network create (non-prod)", scope="non-prod", audit=True, target=name
+        )
 
     network_action = _NETWORK_ACTION.match(path)
     if method == "POST" and network_action:
@@ -469,12 +495,20 @@ def classify(
             denied = _deny_if_prod(f"network {action} on prod container", container)
             if denied:
                 return denied
-        return Decision(True, f"network {action} (non-prod)", scope="non-prod", audit=True, target=net_id)
+        return Decision(
+            True, f"network {action} (non-prod)", scope="non-prod", audit=True, target=net_id
+        )
 
     if method == "DELETE" and path.startswith("networks/"):
-        net_id = path[len("networks/"):]
+        net_id = path[len("networks/") :]
         if _matches(net_id, cfg.prod_network_prefixes):
-            return Decision(False, f"network rm {net_id!r} matches prod scope", scope="prod", audit=True, target=net_id)
+            return Decision(
+                False,
+                f"network rm {net_id!r} matches prod scope",
+                scope="prod",
+                audit=True,
+                target=net_id,
+            )
         if _OPAQUE_ID_RE.match(net_id.lower()):
             return Decision(
                 False,
@@ -489,13 +523,25 @@ def classify(
     if method == "POST" and path == "volumes/create":
         name = str((body_json or {}).get("Name", ""))
         if _matches(name, cfg.prod_volume_prefixes):
-            return Decision(False, f"volume create {name!r} matches prod scope", scope="prod", audit=True, target=name)
+            return Decision(
+                False,
+                f"volume create {name!r} matches prod scope",
+                scope="prod",
+                audit=True,
+                target=name,
+            )
         return Decision(True, "volume create (non-prod)", scope="non-prod", audit=True, target=name)
 
     if method == "DELETE" and path.startswith("volumes/"):
-        name = path[len("volumes/"):]
+        name = path[len("volumes/") :]
         if _matches(name, cfg.prod_volume_prefixes):
-            return Decision(False, f"volume rm {name!r} matches prod scope", scope="prod", audit=True, target=name)
+            return Decision(
+                False,
+                f"volume rm {name!r} matches prod scope",
+                scope="prod",
+                audit=True,
+                target=name,
+            )
         return Decision(True, "volume rm (non-prod)", scope="non-prod", audit=True, target=name)
 
     # ---- everything else that mutates: fail closed ------------------------------
@@ -505,7 +551,7 @@ def classify(
     return Decision(False, f"unrecognized request {method} /{path} (fail-closed)", audit=True)
 
 
-def parse_json_object(raw: Optional[bytes]) -> Optional[dict[str, Any]]:
+def parse_json_object(raw: bytes | None) -> dict[str, Any] | None:
     """Best-effort body parse; None for empty/invalid/non-object bodies."""
     if not raw:
         return None

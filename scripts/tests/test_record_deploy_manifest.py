@@ -37,15 +37,20 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
 COMPOSE_PROJECT = "nucpot-prod"
 DEPLOY_SHA = "8e29e906d1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"
 
-FAKE_DOCKER = """\
+FAKE_DOCKER = (
+    """\
 #!/usr/bin/env python3
-""" + '"""' + """Fake docker CLI for recorder tests (NFM-4271).
+"""
+    + '"""'
+    + """Fake docker CLI for recorder tests (NFM-4271).
 
 Implements only what scripts/record_deploy_manifest.py calls:
   ps --filter label=com.docker.compose.project=<p> --format {{.Names}}
   inspect <name>
 Container state comes from the FAKE_DOCKER_STATE JSON file.
-""" + '"""' + """
+"""
+    + '"""'
+    + """
 
 import json
 import os
@@ -106,6 +111,7 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 """
+)
 
 
 def prod_containers() -> dict:
@@ -116,6 +122,7 @@ def prod_containers() -> dict:
     with `docker build`). Plus one preview-overlay container that must NOT be
     recorded (different compose project).
     """
+
     def built(service: str, repo: str, image_id: str) -> dict:
         return {
             "Id": f"cid-{service}",
@@ -221,6 +228,7 @@ def read_manifest(manifest: Path) -> dict:
 # running prod service.
 # ---------------------------------------------------------------------------
 
+
 def test_success_records_all_running_services(fake_docker, tmp_path):
     fake_docker(prod_containers())
     manifest = tmp_path / "state" / "prod-deploy-manifest.json"
@@ -286,6 +294,7 @@ def test_preview_overlay_project_excluded(fake_docker, tmp_path):
 # AC-G4a.2 — both sanctioned paths record; actor distinguishes path+identity.
 # ---------------------------------------------------------------------------
 
+
 def test_actor_recorded_verbatim_gh_runner_shape(fake_docker, tmp_path):
     fake_docker(prod_containers())
     manifest = tmp_path / "m" / "prod-deploy-manifest.json"
@@ -303,11 +312,7 @@ def test_workflow_wires_recorder_outside_script():
     outside-script record goes through the root-owned gate entry so the
     write happens as the deploy identity at the canonical G4 path."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = [
-        step
-        for job in workflow["jobs"].values()
-        for step in job.get("steps") or []
-    ]
+    steps = [step for job in workflow["jobs"].values() for step in job.get("steps") or []]
     record_steps = [
         step for step in steps if "run-record-manifest.sh" in str(step.get("run") or "")
     ]
@@ -326,9 +331,19 @@ def test_world_readable_mode_writes_0644_in_0755_dir(fake_docker, tmp_path):
     manifest = tmp_path / "gate-var" / "prod-deploy-manifest.json"
 
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--manifest", str(manifest),
-         "--deploy-sha", DEPLOY_SHA, "--actor", "gh-runner:lwj04"],
-        capture_output=True, text=True, timeout=60,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--deploy-sha",
+            DEPLOY_SHA,
+            "--actor",
+            "gh-runner:lwj04",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
         env={**os.environ, "NFM_DEPLOY_MANIFEST_WORLD_READABLE": "1"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -351,6 +366,7 @@ def test_world_readable_default_stays_private(fake_docker, tmp_path):
 # AC-G4a.3 — digests match `docker inspect` of the deployed containers.
 # ---------------------------------------------------------------------------
 
+
 def test_digests_match_docker_inspect(fake_docker, tmp_path):
     """Pulled services record RepoDigests[0]; locally built services (empty
     RepoDigests — prod images are built on the host) record the immutable
@@ -362,7 +378,7 @@ def test_digests_match_docker_inspect(fake_docker, tmp_path):
     assert run_recorder(manifest=manifest).returncode == 0
     data = read_manifest(manifest)
 
-    for name, info in containers.items():
+    for _name, info in containers.items():
         if info["Config"]["Labels"]["com.docker.compose.project"] != COMPOSE_PROJECT:
             continue
         service = info["Config"]["Labels"]["com.docker.compose.service"]
@@ -377,13 +393,19 @@ def test_digests_match_docker_inspect(fake_docker, tmp_path):
 # AC-G4a.4 — overwritten per deploy, no history accumulation.
 # ---------------------------------------------------------------------------
 
+
 def test_manifest_overwritten_per_deploy(fake_docker, tmp_path):
-    state = fake_docker(prod_containers())
+    fake_docker(prod_containers())
     manifest = tmp_path / "m" / "prod-deploy-manifest.json"
 
-    assert run_recorder(manifest=manifest, deploy_sha="f" * 40, actor="deploy_prod.sh:one").returncode == 0
+    assert (
+        run_recorder(manifest=manifest, deploy_sha="f" * 40, actor="deploy_prod.sh:one").returncode
+        == 0
+    )
     new_sha = "0123456789abcdef0123456789abcdef01234567"
-    assert run_recorder(manifest=manifest, deploy_sha=new_sha, actor="gh-runner:two").returncode == 0
+    assert (
+        run_recorder(manifest=manifest, deploy_sha=new_sha, actor="gh-runner:two").returncode == 0
+    )
 
     raw = manifest.read_text(encoding="utf-8")
     assert raw.count('"deploy_sha"') == 1, "no history accumulation in the artifact"
@@ -397,8 +419,9 @@ def test_manifest_overwritten_per_deploy(fake_docker, tmp_path):
 # marked partial); never a silently-wrong manifest.
 # ---------------------------------------------------------------------------
 
+
 def test_collect_failure_leaves_previous_manifest_intact(fake_docker, tmp_path):
-    state = fake_docker(prod_containers())
+    fake_docker(prod_containers())
     manifest = tmp_path / "m" / "prod-deploy-manifest.json"
     assert run_recorder(manifest=manifest, deploy_sha="a" * 40).returncode == 0
     before = manifest.read_bytes()
@@ -442,6 +465,7 @@ def test_partial_state_explicitly_marked(fake_docker, tmp_path):
 # Scope: atomic write + deploy-identity-only permissions (tamper resistance).
 # ---------------------------------------------------------------------------
 
+
 def test_manifest_permissions_are_deploy_identity_only(fake_docker, tmp_path):
     fake_docker(prod_containers())
     manifest = tmp_path / "nfmd" / "prod-deploy-manifest.json"
@@ -452,7 +476,7 @@ def test_manifest_permissions_are_deploy_identity_only(fake_docker, tmp_path):
 
 
 def test_no_tmp_residue_success_and_failure(fake_docker, tmp_path):
-    state = fake_docker(prod_containers())
+    fake_docker(prod_containers())
     manifest = tmp_path / "nfmd" / "prod-deploy-manifest.json"
     manifest.parent.mkdir(parents=True)
 
@@ -471,10 +495,16 @@ def test_missing_required_args_fail_loudly(fake_docker, tmp_path):
     manifest = tmp_path / "m" / "manifest.json"
     for dropped in ("--deploy-sha", "--actor"):
         base = [
-            sys.executable, str(SCRIPT), "--deploy-sha", DEPLOY_SHA,
-            "--actor", "deploy_prod.sh:t", "--manifest", str(manifest),
+            sys.executable,
+            str(SCRIPT),
+            "--deploy-sha",
+            DEPLOY_SHA,
+            "--actor",
+            "deploy_prod.sh:t",
+            "--manifest",
+            str(manifest),
         ]
         idx = base.index(dropped)
-        proc = subprocess.run(base[:idx] + base[idx + 2:], capture_output=True, text=True)
+        proc = subprocess.run(base[:idx] + base[idx + 2 :], capture_output=True, text=True)
         assert proc.returncode != 0, f"{dropped} must be required"
         assert not manifest.exists()

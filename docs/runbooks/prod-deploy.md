@@ -559,6 +559,7 @@ reconstruct the migration timeline.
 - `apps/api/scripts/check_staging_revision.py` — the staging analog
   (NFM-4066). The prod guard follows the same shape but adds the
   permission gate.
+
 ## 7. Deploy manifest (NFM-4271 / ADR-013 §2 G4a)
 
 Every sanctioned deploy records ONE JSON manifest of what it left running.

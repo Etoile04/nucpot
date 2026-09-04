@@ -17,7 +17,7 @@ from __future__ import annotations
 import pwd
 import socket
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 # macOS: /usr/include/sys/un.h — SOL_LOCAL is 0 on Darwin.
 _SOL_LOCAL = 0
@@ -29,9 +29,9 @@ _SOL_SOCKET = 1
 _SO_PEERCRED = 17
 
 
-def _macos_creds(conn: socket.socket) -> Optional[dict[str, int]]:
-    pid: Optional[int] = None
-    uid: Optional[int] = None
+def _macos_creds(conn: socket.socket) -> dict[str, int] | None:
+    pid: int | None = None
+    uid: int | None = None
     try:
         raw = conn.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, 4)
         pid = int.from_bytes(raw, "little")
@@ -47,7 +47,7 @@ def _macos_creds(conn: socket.socket) -> Optional[dict[str, int]]:
     return {"pid": pid or 0, "uid": uid or 0}
 
 
-def _linux_creds(conn: socket.socket) -> Optional[dict[str, int]]:
+def _linux_creds(conn: socket.socket) -> dict[str, int] | None:
     try:
         raw = conn.getsockopt(_SOL_SOCKET, _SO_PEERCRED, 12)
     except OSError:
@@ -56,14 +56,14 @@ def _linux_creds(conn: socket.socket) -> Optional[dict[str, int]]:
     return {"pid": pid, "uid": uid}
 
 
-def _username(uid: int) -> Optional[str]:
+def _username(uid: int) -> str | None:
     try:
         return pwd.getpwuid(uid).pw_name
     except KeyError:
         return None
 
 
-def _command(pid: int) -> Optional[str]:
+def _command(pid: int) -> str | None:
     if pid <= 0:
         return None
     try:

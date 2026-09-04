@@ -49,9 +49,12 @@ DEPLOY_SHA = "4273a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9"  # hermetic deploy sha
 # ---------------------------------------------------------------- fixtures
 
 
-FAKE_DOCKER = """\
+FAKE_DOCKER = (
+    """\
 #!/usr/bin/env python3
-""" + '"""' + """Fake docker CLI for drift-checker tests (NFM-4272).
+"""
+    + '"""'
+    + """Fake docker CLI for drift-checker tests (NFM-4272).
 
 Implements only what scripts/check_deploy_drift.py calls (identical CLI
 surface to the G4a recorder's shim):
@@ -59,7 +62,9 @@ surface to the G4a recorder's shim):
   inspect <name>
 Container state comes from the FAKE_DOCKER_STATE JSON file; set
 "ps_fail": true or a container's "inspect_fail" to simulate CLI errors.
-""" + '"""' + """
+"""
+    + '"""'
+    + """
 
 import json
 import os
@@ -120,18 +125,24 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 """
+)
 
 
-DEPLOY_DOCKER = """\
+DEPLOY_DOCKER = (
+    """\
 #!/usr/bin/env python3
-""" + '"""' + """Deploy-capable fake docker for the hermetic deploy_prod.sh run (NFM-4273).
+"""
+    + '"""'
+    + """Deploy-capable fake docker for the hermetic deploy_prod.sh run (NFM-4273).
 
 Serves the drift/recorder CLI surface (ps --filter / inspect) from
 FAKE_DOCKER_STATE exactly like FAKE_DOCKER, and accepts every deploy-body
 verb (compose version, build, compose up -d, images, image rm) by logging
 argv to DEPLOY_DOCKER_CALLS and exiting 0 — recording whether the deploy
 lock was held when `compose up -d` mutated the stack.
-""" + '"""' + """
+"""
+    + '"""'
+    + """
 
 import json
 import os
@@ -205,11 +216,18 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 """
+)
 
 
-def _container(service: str, image_id: str, *, repo_digests: list[str] | None = None,
-               repo_tag: str | None = None, name: str | None = None,
-               project: str = COMPOSE_PROJECT) -> dict:
+def _container(
+    service: str,
+    image_id: str,
+    *,
+    repo_digests: list[str] | None = None,
+    repo_tag: str | None = None,
+    name: str | None = None,
+    project: str = COMPOSE_PROJECT,
+) -> dict:
     """One container in the real `docker inspect` shape (labels nested under
     Config.Labels — verified against the live prod daemon 2026-09-04)."""
     tag = repo_tag or f"nucpot-prod-{service}:{image_id[:7]}"
@@ -248,17 +266,21 @@ def prod_containers() -> dict:
         f"{COMPOSE_PROJECT}-web": _container("web", "b" * 64),
         f"{COMPOSE_PROJECT}-lightrag": _container("lightrag", "c" * 64),
         f"{COMPOSE_PROJECT}-db": _container(
-            "db", "e" * 64,
+            "db",
+            "e" * 64,
             repo_digests=["pgvector/pgvector@sha256:" + "d" * 64],
             repo_tag="pgvector/pgvector:pg16",
         ),
         f"{COMPOSE_PROJECT}-redis": _container(
-            "redis", "9" * 64,
+            "redis",
+            "9" * 64,
             repo_digests=["redis@sha256:" + "f" * 64],
             repo_tag="redis:7-alpine",
         ),
         f"{COMPOSE_PROJECT}-preview-api": _container(
-            "api", "7" * 64, project=f"{COMPOSE_PROJECT}-preview",
+            "api",
+            "7" * 64,
+            project=f"{COMPOSE_PROJECT}-preview",
             name=f"{COMPOSE_PROJECT}-preview-api",
         ),
     }
@@ -274,7 +296,7 @@ def manifest_from(containers: dict) -> dict:
         "timestamp": "2026-09-04T01:02:03+00:00",
         "actor": "deploy_prod.sh:testuser",
     }
-    for name, container in sorted(containers.items()):
+    for _name, container in sorted(containers.items()):
         service = container["Config"]["Labels"]["com.docker.compose.service"]
         if container["Config"]["Labels"]["com.docker.compose.project"] != COMPOSE_PROJECT:
             continue
@@ -321,9 +343,7 @@ class StubPaperclip:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length).decode() if length else "{}"
                 path = urlparse(self.path).path
-                outer.journal.append(
-                    {"method": "POST", "path": path, "body": json.loads(raw)}
-                )
+                outer.journal.append({"method": "POST", "path": path, "body": json.loads(raw)})
                 if path == f"/api/companies/{COMPANY_ID}/issues":
                     outer.seq += 1
                     issue = {
@@ -353,8 +373,7 @@ class StubPaperclip:
                 parts = path.strip("/").split("/")
                 if len(parts) == 3 and parts[0] == "api" and parts[1] == "issues":
                     issue = outer.issues.get(parts[2])
-                    self._send(issue if issue else {"error": "not found"},
-                               200 if issue else 404)
+                    self._send(issue if issue else {"error": "not found"}, 200 if issue else 404)
                     return
                 self._send({"error": "unsupported"}, 404)
 
@@ -364,12 +383,12 @@ class StubPaperclip:
         self.issues[uuid]["status"] = status
 
     def creates(self) -> list[dict]:
-        return [r for r in self.journal
-                if r["method"] == "POST" and r["path"].endswith("/issues")]
+        return [r for r in self.journal if r["method"] == "POST" and r["path"].endswith("/issues")]
 
     def comments(self) -> list[dict]:
-        return [r for r in self.journal
-                if r["method"] == "POST" and r["path"].endswith("/comments")]
+        return [
+            r for r in self.journal if r["method"] == "POST" and r["path"].endswith("/comments")
+        ]
 
     def close(self):
         self.server.shutdown()
@@ -396,9 +415,7 @@ def fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     def _load(containers: dict, **extra: object) -> Path:
-        state_path.write_text(
-            json.dumps({"containers": containers, **extra}), encoding="utf-8"
-        )
+        state_path.write_text(json.dumps({"containers": containers, **extra}), encoding="utf-8")
         monkeypatch.setenv("FAKE_DOCKER_STATE", str(state_path))
         return state_path
 
@@ -422,17 +439,27 @@ class DriftEnv:
     def run(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [
-                sys.executable, str(SCRIPT),
-                "--manifest", str(self.manifest),
-                "--state", str(self.state),
-                "--lock", str(self.lock),
-                "--recheck-seconds", "0",
-                "--paperclip-url", self.stub.url,
-                "--paperclip-key", "test-key",
-                "--company-id", COMPANY_ID,
+                sys.executable,
+                str(SCRIPT),
+                "--manifest",
+                str(self.manifest),
+                "--state",
+                str(self.state),
+                "--lock",
+                str(self.lock),
+                "--recheck-seconds",
+                "0",
+                "--paperclip-url",
+                self.stub.url,
+                "--paperclip-key",
+                "test-key",
+                "--company-id",
+                COMPANY_ID,
                 *extra,
             ],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
 
@@ -444,6 +471,7 @@ def env(tmp_path: Path, stub_paperclip: StubPaperclip) -> DriftEnv:
 
 
 # ------------------------------------------------------------ no-drift path
+
 
 def test_in_sync_exits_zero_without_filing(fake_docker, env: DriftEnv):
     fake_docker(prod_containers())
@@ -462,6 +490,7 @@ def test_preview_overlay_containers_are_ignored(fake_docker, env: DriftEnv):
 
 # ------------------------------------------------------- divergence filings
 
+
 def test_digest_mismatch_files_sre_issue(fake_docker, env: DriftEnv):
     # NFM-4264 replay: out-of-band `up -d --build api` mints a fresh image-ID
     # digest for api under the same tag.
@@ -479,12 +508,12 @@ def test_digest_mismatch_files_sre_issue(fake_docker, env: DriftEnv):
     assert payload["title"].startswith("[DEPLOY-DRIFT]")
     assert "api" in payload["title"]
     body = payload["description"]
-    assert "sha256:" + "a" * 64 in body          # expected digest
-    assert "sha256:" + "f" * 64 in body          # actual digest
-    assert "deploy_prod.sh:testuser" in body     # manifest actor
-    assert "2026-09-04T01:02:03" in body         # manifest timestamp
+    assert "sha256:" + "a" * 64 in body  # expected digest
+    assert "sha256:" + "f" * 64 in body  # actual digest
+    assert "deploy_prod.sh:testuser" in body  # manifest actor
+    assert "2026-09-04T01:02:03" in body  # manifest timestamp
     assert "first-seen:" in body
-    assert "signature: " in body                 # full sig for dedupe fallback
+    assert "signature: " in body  # full sig for dedupe fallback
 
 
 def test_digest_precedence_matches_recorder_rule(fake_docker, env: DriftEnv):
@@ -496,7 +525,8 @@ def test_digest_precedence_matches_recorder_rule(fake_docker, env: DriftEnv):
     containers = prod_containers()
     containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "0" * 64)
     containers[f"{COMPOSE_PROJECT}-db"] = _container(
-        "db", "z" * 64,
+        "db",
+        "z" * 64,
         repo_digests=["pgvector/pgvector@sha256:" + "d" * 64],
         repo_tag="pgvector/pgvector:pg16",
     )
@@ -505,8 +535,8 @@ def test_digest_precedence_matches_recorder_rule(fake_docker, env: DriftEnv):
     result = env.run()
     assert result.returncode == 1
     body = env.stub.creates()[0]["body"]["description"]
-    assert "service api" in body          # built image: .Image digest diverged
-    assert "service db" not in body       # pulled image: RepoDigest unchanged → in sync
+    assert "service api" in body  # built image: .Image digest diverged
+    assert "service db" not in body  # pulled image: RepoDigest unchanged → in sync
 
 
 def test_manifest_service_missing_from_live_state(fake_docker, env: DriftEnv):
@@ -543,6 +573,7 @@ def test_manifest_missing_files_baseline_alarm(fake_docker, env: DriftEnv, tmp_p
 
 
 # ------------------------------------------------------------------- dedupe
+
 
 def test_repeat_divergence_comment_appends_not_refiles(fake_docker, env: DriftEnv):
     containers = prod_containers()
@@ -607,6 +638,7 @@ def test_resolved_issue_regression_files_new_issue(fake_docker, env: DriftEnv):
 
 # ------------------------------------------------ deploy-in-flight tolerance
 
+
 def test_fresh_deploy_lock_suppresses_filing(fake_docker, env: DriftEnv):
     containers = prod_containers()
     containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
@@ -664,6 +696,7 @@ def test_diverged_then_converged_during_recheck_window(fake_docker, env: DriftEn
 
 # ------------------------------------------------------------ failure modes
 
+
 def test_docker_ps_failure_is_operational_error(fake_docker, env: DriftEnv, tmp_path):
     state_path = fake_docker(prod_containers())
     state = json.loads(state_path.read_text())
@@ -697,7 +730,8 @@ def test_paperclip_unreachable_is_operational_error(fake_docker, env: DriftEnv):
 
 
 def test_ambient_session_paperclip_env_is_refused(
-        fake_docker, env: DriftEnv, monkeypatch: pytest.MonkeyPatch):
+    fake_docker, env: DriftEnv, monkeypatch: pytest.MonkeyPatch
+):
     # Regression for the 2026-09-04 false alarm: a manual run in a developer
     # shell inherited ambient PAPERCLIP_API_URL/KEY and filed a fabricated
     # divergence against REAL Paperclip (NFM-4275). The checker must take its
@@ -732,16 +766,20 @@ def test_dry_run_renders_without_filing(fake_docker, env: DriftEnv):
 
 # ------------------------------------------------------------------ selftest
 
+
 def test_selftest_passes(tmp_path: Path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--selftest"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SELFTEST PASS" in result.stdout
 
 
 # ------------------------------------------------------------------- wiring
+
 
 def test_deploy_prod_sh_is_valid_bash_syntax():
     # The lock write/clear behavior itself is proven behaviorally by
@@ -758,6 +796,7 @@ def _load_checker():
     """Import scripts/check_deploy_drift.py as a module (no side effects at
     import time — everything lives under functions / the main guard)."""
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("check_deploy_drift_under_test", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     # dataclass @Drift resolves cls.__module__ through sys.modules — the
@@ -783,7 +822,9 @@ def test_default_paths_prefer_canonical_gate_dir(tmp_path: Path, monkeypatch: py
     assert str(args.lock) == str(gate_dir / "prod-deploy.lock")
 
 
-def test_default_paths_fall_back_to_nfmd_without_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_default_paths_fall_back_to_nfmd_without_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Pre-gate hosts keep the historical ~/.nfmd layout for both paths."""
     checker = _load_checker()
     monkeypatch.setattr(checker, "CANONICAL_G4_DIR", tmp_path / "absent-gate-var")
@@ -860,7 +901,9 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
         target.write_text(f"#!/bin/bash\n{body}\n", encoding="utf-8")
         target.chmod(0o755)
 
-    shim("git", f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{DEPLOY_SHA}"; exit 0; fi\nexit 1')
+    shim(
+        "git", f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{DEPLOY_SHA}"; exit 0; fi\nexit 1'
+    )
     shim("id", 'printf "nfmdeploy\\n"')  # the gated deploy identity branch
     shim("curl", "exit 0")
     shim("sleep", "exit 0")
@@ -879,7 +922,10 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     monkeypatch.setenv("NFM_G2_VAR_DIR", str(gate_var))
 
     result = subprocess.run(
-        ["bash", str(DEPLOY_PROD_SH)], capture_output=True, text=True, timeout=120,
+        ["bash", str(DEPLOY_PROD_SH)],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"DEPLOY_SCRIPT_COMPLETED_OK sha={DEPLOY_SHA}" in result.stdout
@@ -906,16 +952,26 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     # -- coherence: the REAL checker accepts this manifest as its baseline --
     checker = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--manifest", str(manifest),
-            "--lock", str(gate_var / "prod-deploy.lock"),
-            "--state", str(tmp_path / "drift-state.json"),
-            "--recheck-seconds", "0",
-            "--paperclip-url", stub_paperclip.url,
-            "--paperclip-key", "test-key",
-            "--company-id", COMPANY_ID,
+            sys.executable,
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            "--lock",
+            str(gate_var / "prod-deploy.lock"),
+            "--state",
+            str(tmp_path / "drift-state.json"),
+            "--recheck-seconds",
+            "0",
+            "--paperclip-url",
+            stub_paperclip.url,
+            "--paperclip-key",
+            "test-key",
+            "--company-id",
+            COMPANY_ID,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert checker.returncode == 0, checker.stdout + checker.stderr
     assert stub_paperclip.creates() == []
@@ -925,7 +981,10 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     # deploy_prod.sh: prefix + the running identity)
     monkeypatch.delenv("DEPLOY_ACTOR", raising=False)
     rerun = subprocess.run(
-        ["bash", str(DEPLOY_PROD_SH)], capture_output=True, text=True, timeout=120,
+        ["bash", str(DEPLOY_PROD_SH)],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
     rerecorded = json.loads(manifest.read_text(encoding="utf-8"))
@@ -952,4 +1011,3 @@ def test_state_file_written_0600(fake_docker, env: DriftEnv):
     assert env.run().returncode == 1
     mode = stat.S_IMODE(env.state.stat().st_mode)
     assert mode == 0o600
-

@@ -24,7 +24,6 @@ import os
 import stat
 import subprocess
 import time
-from typing import Optional
 
 from .audit import AuditLog
 
@@ -37,7 +36,7 @@ def check_once(path: str, group: str, mode: int, audit: AuditLog) -> bool:
     try:
         group_id = grp.getgrnam(group).gr_gid
     except KeyError:
-        raise SystemExit(f"nfm-g2 watchdog: group {group!r} does not exist")
+        raise SystemExit(f"nfm-g2 watchdog: group {group!r} does not exist") from None
     try:
         info = os.stat(path)
     except FileNotFoundError:
@@ -50,9 +49,11 @@ def check_once(path: str, group: str, mode: int, audit: AuditLog) -> bool:
     os.chown(path, -1, group_id)
     os.chmod(path, mode)
     audit.write(
-        "drift", {"known": False}, socket=path,
+        "drift",
+        {"known": False},
+        socket=path,
         detail=f"re-asserted group {group} mode {oct(mode)} "
-               f"(was gid={current_gid} mode={oct(current_mode)})",
+        f"(was gid={current_gid} mode={oct(current_mode)})",
     )
     return True
 
@@ -60,7 +61,9 @@ def check_once(path: str, group: str, mode: int, audit: AuditLog) -> bool:
 def _run_as(user: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [_SUDO, "-H", "-u", user, _DOCKER, *args],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
 
 
@@ -73,22 +76,33 @@ def assert_context(user: str, context: str, audit: AuditLog) -> None:
     try:
         probe = _run_as(user, ["context", "inspect", context])
         if probe.returncode != 0:
-            _run_as(user, ["context", "create", context,
-                           "--docker", "host=unix:///var/run/nfm-g2/docker-ro.sock"])
-            audit.write("drift", {"known": False},
-                        detail=f"recreated docker context {context!r} for {user}")
+            _run_as(
+                user,
+                [
+                    "context",
+                    "create",
+                    context,
+                    "--docker",
+                    "host=unix:///var/run/nfm-g2/docker-ro.sock",
+                ],
+            )
+            audit.write(
+                "drift", {"known": False}, detail=f"recreated docker context {context!r} for {user}"
+            )
         show = _run_as(user, ["context", "show"])
         current = show.stdout.strip()
         if current != context:
             _run_as(user, ["context", "use", context])
-            audit.write("drift", {"known": False},
-                        detail=f"re-asserted docker context {context!r} for {user} (was {current!r})")
+            audit.write(
+                "drift",
+                {"known": False},
+                detail=f"re-asserted docker context {context!r} for {user} (was {current!r})",
+            )
     except (OSError, subprocess.SubprocessError) as error:
-        audit.write("drift", {"known": False},
-                    detail=f"context assert failed for {user}: {error}")
+        audit.write("drift", {"known": False}, detail=f"context assert failed for {user}: {error}")
 
 
-def _parse_context(spec: str) -> Optional[tuple[str, str]]:
+def _parse_context(spec: str) -> tuple[str, str] | None:
     user, sep, context = spec.partition(":")
     if not sep or not user or not context:
         raise SystemExit("nfm-g2 watchdog: --assert-context expects user:context")
@@ -102,15 +116,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--mode", type=lambda value: int(value, 8), default=0o060)
     parser.add_argument("--log", required=True)
     parser.add_argument("--interval", type=float, default=5.0)
-    parser.add_argument("--assert-context", default=None,
-                        help="user:context — keep user's docker CLI on the ro gate context")
+    parser.add_argument(
+        "--assert-context",
+        default=None,
+        help="user:context — keep user's docker CLI on the ro gate context",
+    )
     args = parser.parse_args(argv)
 
     context_spec = _parse_context(args.assert_context) if args.assert_context else None
     audit = AuditLog(args.log, "watchdog")
-    audit.write("startup", {"known": False}, socket=args.socket, group=args.group,
-                mode=oct(args.mode), interval=args.interval,
-                assert_context=args.assert_context)
+    audit.write(
+        "startup",
+        {"known": False},
+        socket=args.socket,
+        group=args.group,
+        mode=oct(args.mode),
+        interval=args.interval,
+        assert_context=args.assert_context,
+    )
     while True:
         try:
             check_once(args.socket, args.group, args.mode, audit)

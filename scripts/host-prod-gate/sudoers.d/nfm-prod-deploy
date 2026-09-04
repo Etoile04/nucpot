@@ -1,7 +1,7 @@
 # NFM-4270 / ADR-013 G2 — sanctioned prod-mutation entrypoints (AC-G2.4).
 #
 # Command-enumerated ONLY: no wildcards, no arbitrary runas, no blanket ALL.
-# The four entry scripts are root-owned (installed by
+# The entry scripts are root-owned (installed by
 # scripts/host-prod-gate/host_setup.sh from the nucpot repo) and validate
 # their own arguments before touching docker. They run as the dedicated
 # deploy identity nfmdeploy — the only non-root identity that can connect

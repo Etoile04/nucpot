@@ -28,9 +28,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from nfm_docker_gate.audit import AuditLog  # noqa: E402
-from nfm_docker_gate.policy import ScopeConfig  # noqa: E402
-from nfm_docker_gate.proxy import DockerGateProxy  # noqa: E402
+from nfm_docker_gate.audit import AuditLog
+from nfm_docker_gate.policy import ScopeConfig
+from nfm_docker_gate.proxy import DockerGateProxy
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -40,10 +40,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--upstream", required=True, help="real daemon unix socket path")
     parser.add_argument("--log", required=True, help="JSONL audit log path")
     parser.add_argument("--config", help="scope config JSON (prod name prefixes)")
-    parser.add_argument("--socket-mode", type=lambda value: int(value, 8), default=None,
-                        help="mode for the gate socket (default 666 ro / 660 full)")
-    parser.add_argument("--socket-group", default=None,
-                        help="group owner for the gate socket (full mode: prod-deploy)")
+    parser.add_argument(
+        "--socket-mode",
+        type=lambda value: int(value, 8),
+        default=None,
+        help="mode for the gate socket (default 666 ro / 660 full)",
+    )
+    parser.add_argument(
+        "--socket-group",
+        default=None,
+        help="group owner for the gate socket (full mode: prod-deploy)",
+    )
     args = parser.parse_args(argv)
 
     scope = ScopeConfig()
