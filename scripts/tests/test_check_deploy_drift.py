@@ -20,6 +20,7 @@ server (the "test target" of the --selftest acceptance criterion): the same
 code path, real HTTP, canned responses.
 """
 
+import fcntl
 import json
 import os
 import shutil
@@ -313,6 +314,8 @@ class StubPaperclip:
     def __init__(self):
         self.journal: list[dict] = []
         self.issues: dict[str, dict] = {}
+        # synthetic rows served BEFORE real issues (CR F8 pagination test)
+        self.filler_issues: list[dict] = []
         self.seq = 9000
         handler = self._make_handler()
 
@@ -365,10 +368,16 @@ class StubPaperclip:
                 self._send({"error": "unsupported"}, 404)
 
             def do_GET(self):
+                query = urlparse(self.path).query
                 path = urlparse(self.path).path
                 outer.journal.append({"method": "GET", "path": path, "body": None})
                 if path == f"/api/companies/{COMPANY_ID}/issues":
-                    self._send(list(outer.issues.values()))
+                    # honor limit/offset like the real API (1000-row pages)
+                    params = dict(pair.split("=", 1) for pair in query.split("&") if "=" in pair)
+                    offset = int(params.get("offset", 0))
+                    limit = int(params.get("limit", 1000))
+                    rows = [*outer.filler_issues, *outer.issues.values()]
+                    self._send(rows[offset : offset + limit])
                     return
                 parts = path.strip("/").split("/")
                 if len(parts) == 3 and parts[0] == "api" and parts[1] == "issues":
@@ -381,6 +390,18 @@ class StubPaperclip:
 
     def set_status(self, uuid: str, status: str) -> None:
         self.issues[uuid]["status"] = status
+
+    def delete_issue(self, uuid: str) -> None:
+        """Simulate an SRE-side hard delete (CR F8: 404 on mapped issue)."""
+        self.issues.pop(uuid, None)
+
+    def pad_issue_listing(self, count: int) -> None:
+        """Synthetic non-drift rows served ahead of real issues so the drift
+        issue lands beyond the API's 1000-row page boundary."""
+        self.filler_issues = [
+            {"id": f"filler-{i}", "identifier": f"NFM-8{i:04d}", "status": "done", "title": "x"}
+            for i in range(count)
+        ]
 
     def creates(self) -> list[dict]:
         return [r for r in self.journal if r["method"] == "POST" and r["path"].endswith("/issues")]
@@ -603,19 +624,77 @@ def test_repeat_divergence_comment_appends_not_refiles(fake_docker, env: DriftEn
     assert len(state["signatures"]) == 1
 
 
-def test_new_signature_files_new_issue(fake_docker, env: DriftEnv):
+def test_widened_family_appends_to_open_issue(fake_docker, env: DriftEnv):
+    """CR F6 / NFM-4297: a partial rollback that WIDENS the affected service
+    set changes the exact signature but NOT the incident. The old behavior
+    (new sig → new issue while the old stays open) double-filed one incident
+    — the SRE-noise case. Same-family evolution must append with a delta."""
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+    assert len(env.stub.creates()) == 1
+    first_uuid = f"uuid-{env.stub.seq}"
+
+    # Divergence widens: web rebuilt too — family {api} → {api, web}.
+    containers[f"{COMPOSE_PROJECT}-web"] = _container("web", "6" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+
+    assert len(env.stub.creates()) == 1, "widened family must not file a second issue"
+    assert len(env.stub.comments()) == 1
+    comment = env.stub.comments()[0]["body"]["body"]
+    assert "web" in comment and "+" in comment  # delta names the widened service
+    commented = env.stub.comments()[0]["path"].split("/")[-2]
+    assert commented == first_uuid
+
+    # state re-pointed: ONE tracked signature for the evolving family
+    state = json.loads(env.state.read_text())
+    assert len(state["signatures"]) == 1
+    entry = next(iter(state["signatures"].values()))
+    assert sorted(entry["family"]) == ["api", "web"]
+
+
+def test_narrowed_family_appends_to_open_issue(fake_docker, env: DriftEnv):
+    """The mirror of widen: a service converging (family {api,web} → {api})
+    is the SAME incident healing partially — append with the delta."""
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    containers[f"{COMPOSE_PROJECT}-web"] = _container("web", "6" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+    assert len(env.stub.creates()) == 1
+
+    # web converges back to the manifest digest; api keeps diverging.
+    containers[f"{COMPOSE_PROJECT}-web"] = prod_containers()[f"{COMPOSE_PROJECT}-web"]
+    fake_docker(containers)
+    assert env.run().returncode == 1
+
+    assert len(env.stub.creates()) == 1, "narrowed family must not file a second issue"
+    assert len(env.stub.comments()) == 1
+    comment = env.stub.comments()[0]["body"]["body"]
+    assert "web" in comment and "-" in comment
+
+
+def test_disjoint_family_files_new_issue(fake_docker, env: DriftEnv):
+    """Genuinely separate incidents (disjoint service sets) still file
+    separately — family dedupe must not fuse unrelated drift."""
     containers = prod_containers()
     containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
     fake_docker(containers)
     assert env.run().returncode == 1
 
-    # Divergence WIDENS (web rebuilt too) → new fingerprint → new issue.
-    containers[f"{COMPOSE_PROJECT}-web"] = _container("web", "6" * 64)
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-db"] = _container(
+        "db", "7" * 64, repo_digests=["pgvector/pgvector@sha256:" + "7" * 64]
+    )
+    containers[f"{COMPOSE_PROJECT}-redis"] = _container(
+        "redis", "8" * 64, repo_digests=["redis@sha256:" + "8" * 64]
+    )
     fake_docker(containers)
     assert env.run().returncode == 1
 
     assert len(env.stub.creates()) == 2
-    assert "web" in env.stub.creates()[1]["body"]["title"]
     assert len(env.stub.comments()) == 0
 
 
@@ -636,6 +715,28 @@ def test_state_loss_reconstructs_dedupe_from_api(fake_docker, env: DriftEnv):
     assert commented == first_uuid
 
 
+def test_state_loss_family_adopt_from_api(fake_docker, env: DriftEnv):
+    """State loss + a WIDENED drift (exact sig gone from both state and API
+    bodies): the API fallback must still family-match via the `family:` line
+    embedded in filed bodies and append, not double-file (CR F6)."""
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+    first_uuid = f"uuid-{env.stub.seq}"
+    assert "family: api" in env.stub.creates()[0]["body"]["description"]
+
+    env.state.unlink()
+    containers[f"{COMPOSE_PROJECT}-web"] = _container("web", "6" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+
+    assert len(env.stub.creates()) == 1, "family adopt must not re-file after state loss"
+    assert len(env.stub.comments()) == 1
+    commented = env.stub.comments()[0]["path"].split("/")[-2]
+    assert commented == first_uuid
+
+
 def test_resolved_issue_regression_files_new_issue(fake_docker, env: DriftEnv):
     containers = prod_containers()
     containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
@@ -645,6 +746,223 @@ def test_resolved_issue_regression_files_new_issue(fake_docker, env: DriftEnv):
 
     assert env.run().returncode == 1  # same drift persists post-resolution
     assert len(env.stub.creates()) == 2  # → NEW issue, per spec
+
+
+# ------------------------------------ CR F6: per-container degradation (NFM-4297)
+
+
+def test_unlabeled_container_degrades_not_blinds(fake_docker, env: DriftEnv):
+    """CR F6: ONE prod-project container missing the service label used to
+    raise OpsError → exit 2 → NOTHING filed, forever — a single anomalous
+    container blinded the whole alarm. Degrade: file the anomaly itself as
+    its own drift entry AND keep checking every other service."""
+    containers = prod_containers()
+    bad = containers[f"{COMPOSE_PROJECT}-api"]
+    bad["Config"]["Labels"] = {"com.docker.compose.project": COMPOSE_PROJECT}  # service gone
+    # a SECOND, ordinary divergence must still be reported in the same pass
+    containers[f"{COMPOSE_PROJECT}-web"] = _container("web", "6" * 64)
+    fake_docker(containers)
+
+    result = env.run()
+    assert result.returncode == 1, result.stderr
+
+    creates = env.stub.creates()
+    assert len(creates) == 1
+    body = creates[0]["body"]["description"]
+    assert "container_anomaly" in body
+    assert f"{COMPOSE_PROJECT}-api" in body  # names the anomalous container
+    assert "service label" in body
+    # the alarm was not blinded: web's digest_mismatch is in the same filing
+    assert "sha256:" + "6" * 64 in body
+
+
+def test_underivable_digest_degrades_per_container(fake_docker, env: DriftEnv):
+    """CR F6 second shape: no derivable digest (RepoDigests empty AND .Image
+    empty) — anomaly entry, not a whole-alarm outage."""
+    containers = prod_containers()
+    bad = containers[f"{COMPOSE_PROJECT}-api"]
+    bad["RepoDigests"] = []
+    bad["Image"] = ""
+    fake_docker(containers)
+
+    result = env.run()
+    assert result.returncode == 1, result.stderr
+    body = env.stub.creates()[0]["body"]["description"]
+    assert "container_anomaly" in body
+    assert f"{COMPOSE_PROJECT}-api" in body
+    assert "digest" in body
+    # family identity is the SERVICE (api), not the container name — the
+    # anomaly shares family semantics with missing_service/digest_mismatch
+    assert "family: api" in body
+
+
+@pytest.mark.parametrize("bad_shape", ["sha256:not-a-list", {"0": "x"}, [42, "ok"]])
+def test_malformed_repo_digests_is_anomaly_not_garbage(fake_docker, env: DriftEnv, bad_shape):
+    """CR F8: a RepoDigests shape change (string / dict / non-str element)
+    used to index garbage — `RepoDigests[0]` on a string yields its first
+    CHAR, on a dict raises KeyError past every handler. Must classify as
+    underivable → anomaly entry, never a fabricated digest."""
+    containers = prod_containers()
+    bad = containers[f"{COMPOSE_PROJECT}-db"]
+    bad["RepoDigests"] = bad_shape
+    fake_docker(containers)
+
+    result = env.run()
+    assert result.returncode == 1, result.stderr
+    body = env.stub.creates()[0]["body"]["description"]
+    assert "container_anomaly" in body
+    assert f"{COMPOSE_PROJECT}-db" in body
+    assert "not-a-list" not in body  # garbage never reaches the filing
+
+
+def test_docker_cli_failure_is_still_operational_error(fake_docker, env: DriftEnv):
+    """F6 degrades DATA-shape anomalies only — a dead daemon (ps fails) stays
+    an operational error (exit 2, nothing filed) per the transient-retry
+    semantics the CR explicitly kept."""
+    fake_docker(prod_containers(), ps_fail=True)
+    result = env.run()
+    assert result.returncode == 2
+    assert env.stub.creates() == []
+
+
+# ------------------------------------------ CR F8: checker robustness (NFM-4297)
+
+
+def test_deleted_mapped_issue_refiles_not_retries(fake_docker, env: DriftEnv):
+    """CR F8: a mapped issue hard-deleted server-side (GET → 404) must
+    re-file, not retry the dead mapping forever (exit 2 every interval)."""
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+    env.stub.delete_issue(f"uuid-{env.stub.seq}")
+
+    result = env.run()
+    assert result.returncode == 1, result.stderr  # re-filed, not exit 2
+    assert len(env.stub.creates()) == 2
+
+
+def test_overlapping_run_stands_down(fake_docker, env: DriftEnv):
+    """CR F8: the 5-min cron interval vs a 300s recheck sleep lets two
+    checker instances overlap and double-file. A per-run exclusive lock on
+    <state>.runlock makes the second instance stand down (rc 0, no filing)."""
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    fake_docker(containers)
+
+    runlock = Path(str(env.state) + ".runlock")
+    runlock.parent.mkdir(parents=True, exist_ok=True)
+    # the hold must span the checker subprocess — no context manager
+    holder = open(runlock, "a+")  # noqa: SIM115
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = env.run()
+        assert result.returncode == 0, result.stderr
+        assert env.stub.creates() == []
+        assert "another" in result.stdout.lower()
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+
+    # holder released → the next interval proceeds normally
+    assert env.run().returncode == 1
+    assert len(env.stub.creates()) == 1
+
+
+def test_runlock_infra_error_fails_open_not_stand_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """CR F8 follow-up: only CONTENTION may stand the checker down. A flock
+    error that is not EWOULDBLOCK/EAGAIN (ENOLCK/EOPNOTSUPP on a flock-less
+    filesystem, a transient lock error) must proceed WITHOUT the lock — a
+    lock-infra failure that stands the alarm down forever (rc 0, nothing
+    filed) is the silent dead-alarm class CR F8 exists to kill."""
+    import errno
+
+    checker = _load_checker()
+    state = tmp_path / "drift-state.json"
+    runlock = Path(str(state) + checker.RUNLOCK_SUFFIX)
+
+    def raise_enolck(fd: object, op: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", raise_enolck)
+    fd, path = checker._acquire_runlock(state)
+    assert fd is None
+    assert path is None
+
+    def raise_busy(fd: object, op: int) -> None:
+        raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(fcntl, "flock", raise_busy)
+    fd, path = checker._acquire_runlock(state)
+    assert fd is None
+    assert path == runlock
+
+
+def test_dedupe_search_paginates_past_1000(fake_docker, env: DriftEnv):
+    """CR F8: the dedupe fallback assumed <1000 issues; the API silently
+    truncates at 1000 rows, so a drift issue beyond the first page was
+    invisible → double-file after state loss."""
+    env.stub.pad_issue_listing(1005)
+    containers = prod_containers()
+    containers[f"{COMPOSE_PROJECT}-api"] = _container("api", "f" * 64)
+    fake_docker(containers)
+    assert env.run().returncode == 1
+    first_uuid = f"uuid-{env.stub.seq}"
+    # the drift issue now sits BEYOND the 1000-row first page
+    assert env.stub.issues and first_uuid in env.stub.issues
+
+    env.state.unlink()
+    assert env.run().returncode == 1
+
+    assert len(env.stub.creates()) == 1, "pagination must reach the drifted issue"
+    assert len(env.stub.comments()) == 1
+    commented = env.stub.comments()[0]["path"].split("/")[-2]
+    assert commented == first_uuid
+
+
+OPS_TITLE = "[DEPLOY-DRIFT-OPS]"
+
+
+def test_persistent_ops_error_escalates_then_adopts(fake_docker, env: DriftEnv):
+    """CR F8: a persistent OpsError (dead daemon, unreachable API) used to
+    exit 2 silently forever — a dead alarm nobody can see. After N
+    consecutive failures the checker files an [DEPLOY-DRIFT-OPS] alarm to
+    SRE; later escalations ADOPT the open alarm instead of stacking."""
+    fake_docker(prod_containers(), ps_fail=True)
+    for _ in range(2):
+        assert env.run("--escalate-after-failures", "2").returncode == 2
+
+    ops_creates = [c for c in env.stub.creates() if c["body"]["title"].startswith(OPS_TITLE)]
+    assert len(ops_creates) == 1, "exactly one OPS escalation after threshold"
+    assert ops_creates[0]["body"]["assigneeAgentId"] == SRE_AGENT_ID
+    assert "2 consecutive" in ops_creates[0]["body"]["description"]
+
+    # two MORE failures → second escalation adopts the open OPS issue
+    for _ in range(2):
+        assert env.run("--escalate-after-failures", "2").returncode == 2
+    ops_creates = [c for c in env.stub.creates() if c["body"]["title"].startswith(OPS_TITLE)]
+    assert len(ops_creates) == 1, "re-escalation must adopt, not stack"
+    ops_uuid = next(
+        i["id"] for i in env.stub.issues.values() if str(i.get("title", "")).startswith(OPS_TITLE)
+    )
+    ops_comments = [c for c in env.stub.comments() if c["path"].endswith(f"/{ops_uuid}/comments")]
+    assert ops_comments, "re-escalation must comment-append to the open OPS issue"
+
+
+def test_ops_counter_resets_on_healthy_run(fake_docker, env: DriftEnv):
+    """A healthy pass resets the consecutive-failure counter — one flaky
+    interval inside a healthy cadence never escalates."""
+    fake_docker(prod_containers(), ps_fail=True)
+    assert env.run("--escalate-after-failures", "2").returncode == 2  # count 1
+
+    fake_docker(prod_containers())  # healthy pass resets
+    assert env.run().returncode == 0
+
+    fake_docker(prod_containers(), ps_fail=True)
+    assert env.run("--escalate-after-failures", "2").returncode == 2  # count 1 again
+    assert env.stub.creates() == []  # never crossed the threshold
 
 
 # ------------------------------------------------ deploy-in-flight tolerance
