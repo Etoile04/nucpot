@@ -835,3 +835,71 @@ def test_unknown_post_fail_closed():
     assert not decide("POST", "/v1.43/swarm/init").allowed
     assert not decide("POST", "/v1.43/plugins/pull").allowed
     assert not decide("PATCH", "/v1.43/whatever").allowed
+
+
+# ---- NFM-4297 CR F9: docker-cp-out + image-metadata GET surface --------------------
+
+
+def test_get_container_archive_plain_name_allowed():
+    """`docker cp <container>:/path -` is GET /containers/{id}/archive — a
+    legitimate non-prod developer flow. It used to be denied only by
+    falling through to unrecognized-GET (fail-closed by ACCIDENT); F9 adds
+    it to the catalogued read surface with the export-mirror guard."""
+    assert decide("GET", "/v1.43/containers/staging-toolbox/archive", "path=/etc/hostname").allowed
+
+
+def test_get_container_archive_prod_name_denied():
+    """The export guard, mirrored: copying a file OUT of a prod container is
+    exfiltration however read-only the verb."""
+    result = decide("GET", "/v1.43/containers/nucpot-prod-api/archive", "path=/app/.env")
+    assert not result.allowed and result.scope == "prod" and result.audit
+    assert "exfiltration" in result.reason
+    assert "unrecognized" not in result.reason  # guarded by design now
+
+
+def test_get_container_archive_opaque_hex_id_denied_fail_closed():
+    result = decide("GET", "/v1.43/containers/abc123/archive", "path=/x")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_get_image_inspect_json_non_prod_allowed():
+    assert decide("GET", "/v1.43/images/alpine/json").allowed
+
+
+def test_get_image_history_non_prod_allowed():
+    assert decide("GET", "/v1.43/images/staging-toolbox/history").allowed
+
+
+def test_get_image_inspect_prod_denied():
+    """images/{name}/json returns the image config — Env on prod images
+    carries DB credentials; metadata reads are an exfiltration surface like
+    images/get (F9)."""
+    result = decide("GET", "/v1.43/images/nucpot-prod-api/json")
+    assert not result.allowed and result.scope == "prod" and result.audit
+    assert "exfiltration" in result.reason
+
+
+def test_get_image_history_prod_denied():
+    result = decide("GET", "/v1.43/images/nucpot-prod-lightrag/history")
+    assert not result.allowed and result.scope == "prod"
+    assert "exfiltration" in result.reason
+
+
+def test_get_image_metadata_opaque_ref_denied_fail_closed():
+    """V1 rule on the metadata surface: an id/digest ref resolves to the
+    underlying image whatever its tags say — text scope checks don't apply."""
+    digest = "sha256:" + "b2" * 32
+    for path in (f"/v1.43/images/{digest}/json", f"/v1.43/images/{'a' * 64}/history"):
+        result = decide("GET", path)
+        assert not result.allowed and "fail-closed" in result.reason, path
+
+
+def test_post_exec_start_stays_fail_closed():
+    """The exec acceptance note (F9): POST /exec/{id}/start carries only an
+    opaque daemon id — unscope-checkable from text, so it stays
+    unrecognized-mutation deny; interactive exec belongs to the full gate
+    socket (ADR-013 G3 audits it there)."""
+    result = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
