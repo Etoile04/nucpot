@@ -48,6 +48,11 @@ docker compose -f docker-compose.prod.yml build <svc> && \
   docker compose -f docker-compose.prod.yml up -d <svc>
 ```
 
+**Run this from an operator shell only.** Hermes terminal sessions
+are denied prod-compose mutations by the prod-guard plugin
+(`tools/hermes-prod-guard/`, NFM-4269) — the NFM-4264 incident was
+exactly this command shape run from a Hermes desktop session.
+
 ### 2.1. Buildable services
 
 `docker-compose.prod.yml` defines six services. `db` and `redis`

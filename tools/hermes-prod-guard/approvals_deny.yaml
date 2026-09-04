@@ -1,0 +1,98 @@
+# approvals.deny belt for ADR-013 G1 (NFM-4269).
+#
+# Carve-outs are keyed on the canonical deploy-identity marker
+# (NFM-4268 comment aecb57d3, binding via NFM-4274): the in-session
+# sanctioned set is EMPTY by that definition, so this belt denies
+# EVERYTHING prod-mutating that can be typed into an agent terminal —
+# including `sudo -u <deploy-identity>` wrappers and env-marker
+# prefixes (no settable token exists or is honored).
+#
+# This is the SECOND enforcement layer, independent of the prod-guard
+# plugin: Hermes evaluates `approvals.deny` fnmatch globs against the
+# lowercased command BEFORE any yolo/approval bypass, in-process (no
+# tirith fail-open semantics apply), and the list live-reloads on
+# config mtime change. It exists so that even if the plugin is
+# unloaded, deleted, or its callback raises inside hook isolation, the
+# core incident class (NFM-4264) stays blocked.
+#
+# Deliberately coarse: the plugin is the precise layer; these globs
+# over-approximate the incident class (compose up/down on prod markers,
+# bare container verbs, file writes, plugin tampering). Read-only
+# commands (config/logs/ps/cat/grep) and sanctioned invocations
+# (deploy_prod.sh, staging stack) do NOT match — see
+# tests/tools/test_hermes_prod_guard.py::test_belt_allows_*.
+#
+# Merge shape for ~/.hermes/config.yaml:
+#   approvals:
+#     deny:
+#       - <entries below appended>
+
+approvals:
+  deny:
+    # --- docker compose <head> × <marker> × up -------------------------
+    - "*docker compose*.env.prod* up *"
+    - "*docker compose*.env.prod* up"
+    - "*docker compose*docker-compose.prod.yml* up *"
+    - "*docker compose*docker-compose.prod.yml* up"
+    - "*docker compose* up *.env.prod*"
+    - "*docker compose* up *docker-compose.prod.yml*"
+    # --- legacy docker-compose head × marker × up ----------------------
+    - "*docker-compose*.env.prod* up *"
+    - "*docker-compose*.env.prod* up"
+    - "*docker-compose*docker-compose.prod.yml* up *"
+    - "*docker-compose*docker-compose.prod.yml* up"
+    - "*docker-compose* up *.env.prod*"
+    - "*docker-compose* up *docker-compose.prod.yml*"
+    # --- down (same 12 shapes) -----------------------------------------
+    - "*docker compose*.env.prod* down *"
+    - "*docker compose*.env.prod* down"
+    - "*docker compose*docker-compose.prod.yml* down *"
+    - "*docker compose*docker-compose.prod.yml* down"
+    - "*docker compose* down *.env.prod*"
+    - "*docker compose* down *docker-compose.prod.yml*"
+    - "*docker-compose*.env.prod* down *"
+    - "*docker-compose*.env.prod* down"
+    - "*docker-compose*docker-compose.prod.yml* down *"
+    - "*docker-compose*docker-compose.prod.yml* down"
+    - "*docker-compose* down *.env.prod*"
+    - "*docker-compose* down *docker-compose.prod.yml*"
+    # --- project-name marker form (-p nucpot-prod) ----------------------
+    - "*docker compose*nucpot-prod* up *"
+    - "*docker compose*nucpot-prod* up"
+    - "*docker compose*nucpot-prod* down *"
+    - "*docker compose*nucpot-prod* down"
+    - "*docker-compose*nucpot-prod* up *"
+    - "*docker-compose*nucpot-prod* up"
+    - "*docker-compose*nucpot-prod* down *"
+    - "*docker-compose*nucpot-prod* down"
+    # --- bare docker container verbs on prod containers ----------------
+    # (trailing space after the verb keeps `docker rmi` from matching `docker rm `)
+    - "*docker stop *nucpot-prod*"
+    - "*docker rm *nucpot-prod*"
+    - "*docker restart *nucpot-prod*"
+    - "*docker kill *nucpot-prod*"
+    - "*docker exec *nucpot-prod*"
+    # `docker container <verb>` management spelling of the same mutations
+    - "*docker container stop *nucpot-prod*"
+    - "*docker container rm *nucpot-prod*"
+    - "*docker container restart *nucpot-prod*"
+    - "*docker container kill *nucpot-prod*"
+    - "*docker container exec *nucpot-prod*"
+    # --- terminal-vector writes to prod compose/env files --------------
+    - "*>*docker-compose.prod.yml*"
+    - "*>*.env.prod*"
+    - "*tee docker-compose.prod.yml*"
+    - "*tee *.env.prod*"
+    - "*sed -i*docker-compose.prod.yml*"
+    - "*sed -i*.env.prod*"
+    # cp/mv/install where the prod file is the DESTINATION (end-anchored:
+    # `cp docker-compose.prod.yml /tmp/backup.yml` — prod as SOURCE — stays allowed)
+    - "*cp *docker-compose.prod.yml"
+    - "*cp *.env.prod"
+    - "*mv *docker-compose.prod.yml"
+    - "*mv *.env.prod"
+    - "*install *docker-compose.prod.yml"
+    - "*install *.env.prod"
+    # --- plugin tamper guard (belt must survive plugin removal) --------
+    - "*rm *plugins/prod-guard*"
+    - "*mv *plugins/prod-guard*"
