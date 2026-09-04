@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-4270 (ADR-013 G2) — read-only docker gate proxy (desktop users).
+     Installed to /Library/LaunchDaemons by scripts/host-prod-gate/host_setup.sh.
+     Socket /var/run/nfm-g2/docker-ro.sock mode 666: everyone connects, the
+     proxy itself enforces the G2 policy (reads + non-prod mutations pass,
+     prod-scoped mutations denied with an attributable audit record). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.docker-ro</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/lib/nfm-g2/start-proxy.sh</string>
+        <string>ro</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/launchd-ro.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/launchd-ro.log</string>
+</dict>
+</plist>

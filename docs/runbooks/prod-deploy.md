@@ -1,5 +1,14 @@
 # Production Deployment Runbook
 
+> **NFM-4270 / ADR-013 G2 (prod compose gate):** once the host gate is
+> applied, bare `docker compose -f docker-compose.prod.yml ...` /
+> `docker exec nucpot-prod-*` commands from a desktop shell are DENIED with
+> a 403 by design. Use the sanctioned routes in
+> [prod-compose-gate.md](./prod-compose-gate.md) — deploy via
+> `run-deploy.sh`, restart/rollback via `run-recovery.sh`. This runbook's
+> inline `docker` commands remain the reference for WHAT runs; route them
+> through the entries (or the GH workflow, which already does).
+
 **Audience:** on-call operators handling the
 `wenjiedeMac-Studio` self-hosted production runner when
 `.github/workflows/production-deployment.yml` is blocked or a hot
@@ -550,3 +559,159 @@ reconstruct the migration timeline.
 - `apps/api/scripts/check_staging_revision.py` — the staging analog
   (NFM-4066). The prod guard follows the same shape but adds the
   permission gate.
+
+## 7. Deploy manifest (NFM-4271 / ADR-013 §2 G4a)
+
+Every sanctioned deploy records ONE JSON manifest of what it left running.
+The G4b drift alarm (sibling task) diffs live `docker inspect` state against
+it, bounding the dwell time of any out-of-band prod mutation (incident
+NFM-4264: 6h of attribution with zero audit trail).
+
+- **Recorder:** `scripts/record_deploy_manifest.py` (stdlib-only python3).
+- **Written by (all sanctioned paths, one copy):**
+  `scripts/deploy_prod.sh` (in-script, after the cutover assertion and health
+  gates), the `production-deployment.yml` deploy-prod job's outside-script
+  belt-and-braces step (NFM-3777 lesson: defenses that live only inside the
+  deploy body die with it), and — NFM-4273 — `run-recovery.sh rollback`,
+  which re-records after re-upping a previous tag (a rollback changes live
+  digests; without a re-record the next drift interval would false-alarm a
+  sanctioned rollback; `restart` does NOT re-record — it never changes
+  digests). The workflow injects `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
+  on-host runs default to `deploy_prod.sh:<user>`; rollback records
+  `run-recovery.sh:<sudo-user>`.
+- **Host path (NFM-4273 canonical layout):** with the host gate installed,
+  `/usr/local/var/nfm-g2/prod-deploy-manifest.json` — ONE canonical copy the
+  desktop-user drift cron reads. Under the gate the deploy body runs as
+  `nfmdeploy` (`$HOME=/var/lib/nfmdeploy`), so the pre-gate per-home
+  `~/.nfmd/prod-deploy-manifest.json` would fork into stale/alive copies and
+  false-alarm every gated deploy; both the writer
+  (`deploy_prod.sh` → `run-record-manifest.sh` entry) and the reader
+  (`check_deploy_drift.py`) resolve env override > canonical dir > `~/.nfmd`
+  identically. Pre-gate hosts keep `~/.nfmd` (override:
+  `--manifest` / `NFM_DEPLOY_MANIFEST`; the canonical dir is
+  env-overridable via `NFM_G2_VAR_DIR` for hermetic tests only — sudo
+  `env_reset` never passes it in production).
+- **Permissions:** gated (canonical) layout — file `0644` inside the
+  nfmdeploy-owned `0755` `/usr/local/var/nfm-g2` dir: world-readable because
+  the drift cron runs as the desktop user. Writes are identity-separated —
+  the root-owned `run-record-manifest.sh` entry running as the deploy
+  identity is the sole sanctioned write route — but this is separation, not
+  tamper resistance (`%admin` can invoke the entry as `nfmdeploy` too;
+  ADR-013 §3 disclaims adversarial resistance — the drift alarm covers that
+  residual). Pre-gate hosts keep file `0600` in a `0700` dir created by the
+  recorder — there the same-user residual is the drift alarm's job.
+- **Write semantics:** collect-everything-then-write, tmp file + `fsync` +
+  atomic `os.replace`. A failed collection aborts non-zero and leaves the
+  previous manifest byte-identical — never a silently-wrong manifest. A
+  knowingly-incomplete deploy can pass `--partial "<reason>"` to record an
+  explicitly-marked partial state.
+- **Schema (field names frozen for the G4b sibling):**
+  `{deploy_sha, image_tags, image_digests, service_containers, timestamp,
+  actor}` — keyed by compose service of project `nucpot-prod`
+  (db/redis/api/lightrag/worker/web).
+- **Digest precedence (the drift alarm must recompute identically):**
+  `RepoDigests[0]` when non-empty, else the container's image-ID digest
+  (`docker inspect --format '{{.Image}}'`). Prod images are built on the host,
+  so most entries are image-ID digests — still immutable, still
+  inspect-derivable, and a fresh rebuild of the same tag mints a new one
+  (exactly the NFM-4264 detection signal).
+- **Verification:** `python3 -m pytest scripts/tests/test_record_deploy_manifest.py -v`
+  (runs in CI: batch1 scripts-tests job + the production workflow's
+  pre-deploy-assert-smoke unit-test step).
+
+## 8. Deploy-drift alarm (NFM-4272 / ADR-013 §2 G4b)
+
+§7 (deploy manifest, NFM-4271) is the baseline; this section is the alarm
+that consumes it. ADR-013's residual argument: every path-based control can
+be bypassed by a host-user-level actor, so a periodic state diff bounds the
+dwell time of any future bypass (incident NFM-4264: 6h of attribution with
+zero audit trail).
+
+- **Checker:** `scripts/check_deploy_drift.py` (stdlib-only python3).
+  Diffs live `docker inspect` digests of compose project `nucpot-prod`
+  against the manifest's `image_digests`, recomputing digests with the
+  FROZEN precedence (`RepoDigests[0]` else `.Image` — identical to the
+  recorder). Flags: digest mismatch, manifest service missing from live
+  state, live prod container absent from the manifest, container-set
+  mismatch (unsanctioned scale-up/rename), and a missing/unreadable
+  baseline manifest.
+- **Alarm routing:** divergence auto-files a Paperclip issue assigned to
+  the SRE Monitor agent, title prefix `[DEPLOY-DRIFT]`, body with
+  per-service expected vs actual, first-seen timestamp, and the manifest's
+  deploy_sha/actor/timestamp. One OPEN issue per divergence signature
+  (sha256 of the entry fingerprint, embedded in the body); repeat
+  intervals comment-append; a new signature — including post-resolution
+  regression — files a new issue. Dedupe survives state-file loss by
+  searching OPEN `[DEPLOY-DRIFT]` issues for the signature line.
+- **No-noise during sanctioned deploys (AC-G4b.2):** (1) `deploy_prod.sh`
+  holds the deploy lock for the whole deploy (trap-removed on ANY exit — a
+  crashed deploy must alarm); the checker stands down while the lock is
+  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build). Lock location
+  mirrors the manifest (NFM-4273): `/usr/local/var/nfm-g2/prod-deploy.lock`
+  when the canonical gate dir exists, else `~/.nfmd/prod-deploy.lock` —
+  same env > canonical > `~/.nfmd` resolution as the writer, so the cron
+  always sees the lock of the deploy actually running.
+  (2) Before filing, the checker re-checks after `--recheck-seconds`
+  (default 300) and re-reads the manifest — a deploy that finishes during
+  the window rewrites the manifest and clears the divergence. (A rollback's
+  `compose up -d` → manifest re-record gap is inside this same window.)
+- **Exit codes:** 0 = in sync / tolerated; 1 = divergence (issue filed);
+  2 = operational error (docker/API unavailable) — never files, so a
+  transient failure cannot cry wolf.
+
+### Cron registration (Release Engineer)
+
+Follows the Hermes cron pattern (NFM-3195 precedent — same infra as the
+CI Monitor cron; scripts live in `~/.hermes/scripts/` by convention):
+
+1. Copy nothing — run from the prod-host checkout:
+
+   ```bash
+   # ~/.hermes/scripts/prod-deploy-drift-check.sh  (host-side, not repo code)
+   #!/usr/bin/env bash
+   # NFM-4272 / ADR-013 G4b: prod drift alarm (runbook prod-deploy.md §8).
+   set -uo pipefail
+   CREDS="$HOME/.hermes/paperclip-credentials.json"
+   [ -f "$CREDS" ] || { echo "[DEPLOY-DRIFT] credentials missing: $CREDS"; exit 0; }
+   export NFM_DRIFT_PAPERCLIP_URL="http://127.0.0.1:3101"
+   export NFM_DRIFT_PAPERCLIP_KEY="$(python3 -c "import json;print(json.load(open('$CREDS'))['PAPERCLIP_BOARD_API_KEY'])")"
+   cd "$HOME/Projects/nucpot" && python3 scripts/check_deploy_drift.py
+   exit $?   # 0 silent; 1/2 deliver the checker's stdout to the cron channel
+   ```
+
+2. Register a Hermes cron job: script `prod-deploy-drift-check.sh`,
+   `no_agent: true`, **interval 15 minutes** (dwell-time bound per
+   AC-G4: an out-of-band recreate is detected within one interval; raise
+   to 30m only if ops data shows noise, lower to 5m during incident
+   response windows).
+
+   **Register AFTER the first post-merge deploy completes** — the manifest
+   only exists once §7's recorder has run once; before that the checker
+   would (correctly, but noisily) file `manifest_missing`.
+
+3. **Filing-target safety (2026-09-04 false alarm, NFM-4275):** the
+   checker deliberately does NOT read ambient `PAPERCLIP_API_URL` /
+   `PAPERCLIP_API_KEY` — a manual run from a developer shell must exit 2
+   (operational error), never file. The cron wrapper sets
+   `NFM_DRIFT_PAPERCLIP_URL` / `NFM_DRIFT_PAPERCLIP_KEY` explicitly. The
+   checker also prints its filing target URL on every filing, and connects
+   directly (no HTTP proxy) since the API is localhost.
+
+4. **Self-test (AC-G4b.3):** `python3 scripts/check_deploy_drift.py
+   --selftest` fabricates a divergence against a fixture manifest and
+   verifies filing + dedupe end-to-end against an in-process stub
+   Paperclip server (touches nothing real). Also wired into CI
+   (batch1 `scripts/tests/` + the production workflow's
+   pre-deploy-assert-smoke unit-test step).
+
+5. **Manual dry-run:** `python3 scripts/check_deploy_drift.py --dry-run`
+   renders the would-be issue without any API call or state write.
+
+### Residual (documented, by design)
+
+A `--force-recreate` of the same image keeps both digest and the
+compose-stable container name — invisible to a manifest diff. G3 (full
+command-text logging for prod-touching commands, NFM-4267) is the
+compensating control for that vector. The pre-existing
+`prod-drift-watchdog.sh` (NFM-3777 phantom-cutover heuristic) is
+orthogonal and may stay or be retired at SRE's discretion.
