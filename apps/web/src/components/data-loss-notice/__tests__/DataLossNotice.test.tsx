@@ -32,6 +32,7 @@ import { useState } from "react"
 import type { JSX } from "react"
 
 import { DataLossNotice, DataLossNoticeGate, DataLossNoticeProvider } from "../index"
+import { computePopoverPlacement } from "../DataLossNotice"
 import { FEATURE_FLAG_NAME, setRuntimeOverride } from "../feature-flag"
 import {
   subscribeDataLossEvents,
@@ -124,6 +125,43 @@ describe("DataLossNotice", (): void => {
     const trigger = screen.getByTestId("data-loss-notice-trigger")
     expect(trigger).toBeInTheDocument()
     expect(trigger.textContent).toContain("2026-09-02")
+    // NFM-4262 D1 invariant — the split into headline/date spans MUST
+    // keep the visible label byte-identical to the composed
+    // `messages.inlineLabel(createdAt)` string (" · " separator
+    // included), and the aria-label still carries the same single
+    // composed value. (The trigger's raw textContent also contains the
+    // icon's SVG <title> — "Source attribution disclosure" — which the
+    // label-scope assertion below deliberately excludes.)
+    const label = document.querySelector(".data-loss-notice__label")
+    expect(label?.textContent).toBe("Source attribution lost · 2026-09-02")
+    expect(trigger.getAttribute("aria-label")).toBe("Source attribution lost · 2026-09-02")
+  })
+
+  // NFM-4262 D1 — structured truncation. The label renders two spans
+  // (headline never shrinks; date is the only ellipsis victim) so the
+  // cell's truncation context reaches the chip. The DOM structure is
+  // pinned here so a refactor cannot silently re-merge the spans.
+  it("splits the trigger label into headline + date spans (NFM-4262 D1)", (): void => {
+    setRuntimeOverride(true)
+    render(
+      <ProviderWrapper forceEnabled={true}>
+        <DataLossNotice
+          variant="inline"
+          measurementId="m-1"
+          attribution={LOST_ATTR}
+          surface="property-detail"
+        />
+      </ProviderWrapper>,
+    )
+    const headline = document.querySelector(".data-loss-notice__label-headline")
+    const date = document.querySelector(".data-loss-notice__label-date")
+    expect(headline).not.toBeNull()
+    expect(date).not.toBeNull()
+    expect(headline?.textContent).toBe("Source attribution lost")
+    expect(date?.textContent).toBe(" · 2026-09-02")
+    // testids unchanged (§5.2 contract matrix).
+    expect(screen.getByTestId("data-loss-notice-trigger")).toBeInTheDocument()
+    expect(screen.getByTestId("data-loss-notice")).toBeInTheDocument()
   })
 
   it("opens the popover on click and dismisses on button click", (): void => {
@@ -480,5 +518,63 @@ describe("DataLossNotice", (): void => {
       },
       { timeout: 5000 },
     )
+  })
+})
+
+// NFM-4262 D3 — popover gutter symmetry. When horizontal clamping
+// engages (trigger too close to either viewport edge), the popover
+// centers in the viewport instead of hugging the clamp edge, giving
+// equal left/right gutters (acceptance: |left − right| ≤ 1px, both
+// ≥ 12px). Direct unit coverage of `computePopoverPlacement` for the
+// left-overflow, right-overflow, and fits-no-clamp cases.
+describe("computePopoverPlacement (NFM-4262 D3 center-on-clamp)", (): void => {
+  const VIEWPORT_W = 400
+  const VIEWPORT_H = 800
+  const POPOVER_W = 300
+  const POPOVER_H = 200
+  const MARGIN = 12
+
+  function makeRect(left: number): DOMRect {
+    return {
+      x: left,
+      y: 300,
+      width: 80,
+      height: 20,
+      top: 300,
+      bottom: 320,
+      left,
+      right: left + 80,
+      toJSON: (): Record<string, never> => ({}),
+    } as DOMRect
+  }
+
+  beforeEach((): void => {
+    window.innerWidth = VIEWPORT_W
+    window.innerHeight = VIEWPORT_H
+  })
+
+  it("centers when the trigger overflows the LEFT edge", (): void => {
+    const { left, top } = computePopoverPlacement(makeRect(0), "top", POPOVER_W, POPOVER_H)
+    // Clamp engages (0 < MARGIN) → centered, not pushed to `margin`.
+    expect(left).toBe(Math.round((VIEWPORT_W - POPOVER_W) / 2))
+    // Vertical math unchanged: above the trigger with margin gap.
+    expect(top).toBe(300 - POPOVER_H - MARGIN)
+    // Gutter symmetry (the acceptance measurement).
+    expect(left - MARGIN >= 0).toBe(true)
+    expect(Math.abs(left - (VIEWPORT_W - POPOVER_W - left)) <= 1).toBe(true)
+  })
+
+  it("centers when the trigger overflows the RIGHT edge", (): void => {
+    const { left } = computePopoverPlacement(makeRect(VIEWPORT_W - 40), "top", POPOVER_W, POPOVER_H)
+    // maxLeft = 400 − 300 − 12 = 88; trigger.left = 360 > 88 → clamp
+    // engages → centered instead of `maxLeft`.
+    expect(left).toBe(Math.round((VIEWPORT_W - POPOVER_W) / 2))
+    expect(left).not.toBe(VIEWPORT_W - POPOVER_W - MARGIN)
+  })
+
+  it("keeps the trigger-aligned left when the popover fits (no clamp)", (): void => {
+    const { left } = computePopoverPlacement(makeRect(50), "top", POPOVER_W, POPOVER_H)
+    // 50 ≥ MARGIN and 50 ≤ maxLeft(88) → no clamp, left unchanged.
+    expect(left).toBe(50)
   })
 })

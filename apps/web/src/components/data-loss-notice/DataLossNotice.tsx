@@ -56,9 +56,12 @@ const DEFAULT_LOCALE: DataLossLocale = "en"
 // in `useEffect` on the server to keep the console clean.
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect
 
-// Viewport margin kept clear around the fixed popover (matches the 8px
-// offset the old absolute CSS used between trigger and popover).
-const POPOVER_VIEWPORT_MARGIN = 8
+// Viewport margin kept clear around the fixed popover. NFM-4262 D3
+// raised this from 8 — which was inherited from the pre-portal
+// trigger-offset gap, not a token — to 12, the origin-spec §1 gutter
+// floor (space-3), so a clamped popover breathes symmetrically
+// against the viewport edge.
+const POPOVER_VIEWPORT_MARGIN = 12
 
 // Popover box dimensions — read from CSS (max-width: 360px) so the JS
 // clamp knows the actual rendered size without measuring on every
@@ -81,7 +84,7 @@ interface PopoverPlacement {
  * `--bottom`) became inert when the popover moved to a portal — this
  * function replaces them.
  */
-function computePopoverPlacement(
+export function computePopoverPlacement(
   trigger: DOMRect,
   placement: "top" | "right" | "bottom",
   popoverWidth: number,
@@ -111,9 +114,17 @@ function computePopoverPlacement(
   }
 
   // Clamp horizontally so the popover stays inside the viewport.
+  // NFM-4262 D3 — when clamping engages on EITHER side, center the
+  // popover in the viewport instead of pushing it to the clamp edge.
+  // Pushing to `maxLeft` left the popover hugging one edge with a
+  // lopsided gutter (the right gutter collapsed to the 12px margin
+  // while the left kept a wide asymmetric gap); centering yields
+  // equal gutters, which the acceptance criteria measure to ≤1px.
+  // Vertical clamping is unchanged.
   const maxLeft = Math.max(margin, viewportWidth - popoverWidth - margin)
-  if (left < margin) left = margin
-  if (left > maxLeft) left = maxLeft
+  if (left < margin || left > maxLeft) {
+    left = Math.round((viewportWidth - popoverWidth) / 2)
+  }
 
   // Clamp vertically — the "top" placement can otherwise overflow when
   // the trigger sits near the top of the viewport; the "right"
@@ -422,7 +433,22 @@ export function DataLossNotice(props: DataLossNoticeProps): JSX.Element | null {
         onClick={onTriggerClick}
       >
         <DataLossNoticeIcon size={14} />
-        <span className="data-loss-notice__label">{interpolated.inlineLabel}</span>
+        {/* NFM-4262 D1 — structured truncation. The visible label is
+            split into a headline span (never shrinks) and a date span
+            (the only ellipsis victim) so the cell's
+            `td.ant-table-cell-ellipsis` truncation context finally
+            reaches the chip: ≥768 the date ellipsises first; <768 the
+            CSS wrap-below rule moves the date to a second line. The
+            two spans compose from the SAME i18n pieces that build
+            `messages.inlineLabel(createdAt)` (`messages.headline` +
+            the formatted date) — the composed string is NOT forked:
+            the trigger's `aria-label` still carries the single
+            `interpolated.inlineLabel` value and the concatenated
+            textContent stays byte-identical ("headline · date"). */}
+        <span className="data-loss-notice__label">
+          <span className="data-loss-notice__label-headline">{messages.headline}</span>
+          <span className="data-loss-notice__label-date">{` · ${createdAt}`}</span>
+        </span>
       </button>
 
       {popover}

@@ -27,6 +27,16 @@
  * excluded from the CI live-E2E job
  * (`NFMD_SPEC_PATTERN`) because prod has no lost rows and the flag is
  * off there until the NFM-4177 rollout.
+ *
+ * NFM-4263 — local-run note: under `fullyParallel` against a single
+ * `next dev` instance, saturated workers can starve the flag-gated
+ * chip mount past the test wall clock (the failing test varies run to
+ * run; it is always "trigger count 0", never a layout assertion). That
+ * is dev-server contention, not a product race — serial runs are 100%
+ * green. Run this spec as:
+ *   PORT=3263 pnpm exec playwright test e2e/data-loss-notice.spec.ts \
+ *     --project=chromium --workers=1
+ * against a pre-warmed dev server (curl the route once first).
  */
 
 import { expect, test } from "@playwright/test"
@@ -39,6 +49,10 @@ import { MOCK_LOST_MEASUREMENT_ID } from "./fixtures/data-loss-notice-mock-data"
 const PROPERTY_DETAIL_URL = "/materials/FeCrAl/properties"
 
 test.describe("DataLossNotice backstop (spec §7)", (): void => {
+  // Every test here waits on the flag-gated chip mount; see the
+  // NFM-4263 local-run note in the file header for why the budget is
+  // tripled rather than the default 30s.
+  test.slow()
   test.beforeEach(async ({ page }): Promise<void> => {
     await setupDataLossMocks(page)
   })
@@ -142,5 +156,196 @@ test.describe("DataLossNotice backstop (spec §7)", (): void => {
       (e): boolean => e.name === "dataloss_notice_shown",
     )
     expect(shown?.props.measurementId).toBe(MOCK_LOST_MEASUREMENT_ID)
+  })
+})
+
+// ── NFM-4262 — narrow-viewport source-cell acceptance (D1/D2/D3) ───────
+//
+// Pixel-truth gate for the ratified NFM-4262 spec §6 AC-2:
+//   • 390: no horizontal clip on the trigger or the stacked line; the
+//     date reads in full without opening the popover.
+//   • 390, popover open: |left gutter − right gutter| ≤ 1px, both ≥ 12.
+//   • 767 vs 768 boundary: 来源 column header absent at 767, present
+//     at 768.
+//   • Single-mount invariant at BOTH regimes: trigger count === cohort
+//     row count (the fixture seeds exactly one lost row).
+//   • 320 floor: popover never wider than 100vw − 24px; no page-level
+//     horizontal scrollbar.
+test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
+  // Scope-level: every test asserts on the flag-gated chip, so every
+  // test inherits the contention headroom (see file header note).
+  test.slow()
+  test.beforeEach(async ({ page }): Promise<void> => {
+    await setupDataLossMocks(page)
+  })
+
+  async function waitForCohort(page: import("@playwright/test").Page): Promise<void> {
+    await expect(page.locator('tr[data-attribution-status="lost"]')).toHaveCount(
+      1,
+      { timeout: 30_000 },
+    )
+  }
+
+  // The chip mounts only after the (mocked) flag evaluation resolves and
+  // re-renders the provider tree. `test.slow()` above only raises the
+  // test budget — each expect() still defaults to 5s, which a contended
+  // dev server can outlast, so every chip await goes through here with
+  // an explicit timeout instead.
+  async function waitForTrigger(
+    page: import("@playwright/test").Page,
+    count = 1,
+  ): Promise<void> {
+    await expect(
+      page.locator('[data-testid="data-loss-notice-trigger"]'),
+    ).toHaveCount(count, { timeout: 30_000 })
+  }
+
+  test("1440: one trigger per cohort row (column mount) and 来源 header present", async ({
+    page,
+  }): Promise<void> => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(PROPERTY_DETAIL_URL)
+    await waitForCohort(page)
+    // Single-mount invariant at ≥768: the column cell owns the chip.
+    await waitForTrigger(page)
+    // `getByRole("columnheader")` avoids antd's hidden measure cell
+    // (`tbody th.ant-table-measure-cell`), which mirrors the column
+    // title text and would break strict-mode locators.
+    await expect(
+      page.getByRole("columnheader", { name: "来源" }),
+    ).toBeVisible()
+  })
+
+  test("390: stacked line owns the chip; no horizontal clip; date fully readable", async ({
+    page,
+  }): Promise<void> => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(PROPERTY_DETAIL_URL)
+    await waitForCohort(page)
+    // Single-mount invariant at <768: antd unmounted the 来源 column,
+    // the stacked SourceMetaLine owns the (only) chip.
+    await waitForTrigger(page)
+    await expect(
+      page.locator('[data-testid="source-meta-line"]'),
+    ).toHaveCount(5)
+    await expect(
+      page.locator(
+        '[data-testid="source-meta-line"] [data-testid="data-loss-notice-trigger"]',
+      ),
+    ).toHaveCount(1, { timeout: 30_000 })
+
+    // Pixel assertion (not eyeball): neither the trigger nor the
+    // stacked line may overflow its own box.
+    const clips = await page.evaluate((): boolean => {
+      const trigger = document.querySelector(
+        ".data-loss-notice__trigger",
+      ) as HTMLElement | null
+      const line = document.querySelector(
+        '[data-testid="source-meta-line"]',
+      ) as HTMLElement | null
+      const triggerClips =
+        trigger !== null && trigger.scrollWidth > trigger.clientWidth + 1
+      const lineClips =
+        line !== null && line.scrollWidth > line.clientWidth + 1
+      return triggerClips || lineClips
+    })
+    expect(clips).toBe(false)
+
+    // The date is fully visible without opening the popover: the
+    // wrap-below rule puts it on its own line and the ellipsis
+    // backstop never engages (no truncation → scrollWidth fits).
+    const date = page.locator(".data-loss-notice__label-date")
+    await expect(date).toBeVisible()
+    await expect(date).toHaveText(/^ · 2026-08-01$/)
+    const dateClips = await page.evaluate((): boolean => {
+      const el = document.querySelector(
+        ".data-loss-notice__label-date",
+      ) as HTMLElement | null
+      return el !== null && el.scrollWidth > el.clientWidth + 1
+    })
+    expect(dateClips).toBe(false)
+  })
+
+  test("390 popover open: gutters symmetric (≤1px delta, both ≥12px)", async ({
+    page,
+  }): Promise<void> => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(PROPERTY_DETAIL_URL)
+    await waitForCohort(page)
+    const trigger = page
+      .locator('[data-testid="data-loss-notice-trigger"]')
+      .first()
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await trigger.click()
+    const popover = page.locator('[data-testid="data-loss-notice-popover"]')
+    await expect(popover).toBeVisible()
+    const gutters = await page.evaluate((): {
+      left: number
+      right: number
+    } => {
+      const el = document.querySelector(
+        '[data-testid="data-loss-notice-popover"]',
+      ) as HTMLElement | null
+      if (el === null) return { left: -1, right: -1 }
+      const rect = el.getBoundingClientRect()
+      return { left: rect.left, right: window.innerWidth - rect.right }
+    })
+    expect(Math.abs(gutters.left - gutters.right)).toBeLessThanOrEqual(1)
+    expect(gutters.left).toBeGreaterThanOrEqual(12)
+    expect(gutters.right).toBeGreaterThanOrEqual(12)
+  })
+
+  test("767→768 boundary: 来源 column header absent then present", async ({
+    page,
+  }): Promise<void> => {
+    await page.setViewportSize({ width: 767, height: 1024 })
+    await page.goto(PROPERTY_DETAIL_URL)
+    await waitForCohort(page)
+    await expect(
+      page.getByRole("columnheader", { name: "来源" }),
+    ).toHaveCount(0)
+    await waitForTrigger(page)
+
+    // Cross the boundary in-place: antd's responsive listener remounts
+    // the column (and the stacked chip unmounts via useIsBelowMd). The
+    // retrying expect() covers the async matchMedia transition; the
+    // count assertions re-check the single-mount invariant on the far
+    // side of the boundary.
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await expect(
+      page.getByRole("columnheader", { name: "来源" }),
+    ).toHaveCount(1)
+    await waitForTrigger(page)
+  })
+
+  test("320 floor: popover ≤ 100vw − 24px and no page-level horizontal scrollbar", async ({
+    page,
+  }): Promise<void> => {
+    await page.setViewportSize({ width: 320, height: 844 })
+    await page.goto(PROPERTY_DETAIL_URL)
+    await waitForCohort(page)
+    const trigger = page
+      .locator('[data-testid="data-loss-notice-trigger"]')
+      .first()
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await trigger.click()
+    await expect(
+      page.locator('[data-testid="data-loss-notice-popover"]'),
+    ).toBeVisible()
+    const widths = await page.evaluate((): {
+      popover: number
+      pageScrolls: boolean
+    } => {
+      const el = document.querySelector(
+        '[data-testid="data-loss-notice-popover"]',
+      ) as HTMLElement | null
+      const doc = document.documentElement
+      return {
+        popover: el?.offsetWidth ?? 0,
+        pageScrolls: doc.scrollWidth > doc.clientWidth + 1,
+      }
+    })
+    expect(widths.popover).toBeLessThanOrEqual(320 - 24)
+    expect(widths.pageScrolls).toBe(false)
   })
 })
