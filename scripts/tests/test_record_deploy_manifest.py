@@ -308,11 +308,42 @@ def test_deploy_prod_sh_wires_recorder_with_manual_actor_default():
 def test_workflow_wires_recorder_outside_script():
     """production-deployment.yml must pass a gh-runner actor into the deploy
     AND record the manifest from the job context (NFM-3777 lesson: defenses
-    that live only inside the deploy body die with it)."""
+    that live only inside the deploy body die with it). NFM-4273: the
+    outside-script record goes through the root-owned gate entry so the
+    write happens as the deploy identity at the canonical G4 path."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "record_deploy_manifest.py" in text
+    assert "run-record-manifest.sh" in text, "must record via the G2 gate entry (NFM-4273)"
     assert "gh-runner:" in text
     assert "NFM-4271" in text
+
+
+def test_world_readable_mode_writes_0644_in_0755_dir(fake_docker, tmp_path):
+    """NFM-4273: at the canonical gate path the manifest must be readable by
+    the desktop-user drift cron (0644 in a 0755 dir); deploy-identity-only
+    writability comes from the dir owner + the sudo entry, not file mode."""
+    fake_docker(prod_containers())
+    manifest = tmp_path / "gate-var" / "prod-deploy-manifest.json"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--manifest", str(manifest),
+         "--deploy-sha", DEPLOY_SHA, "--actor", "gh-runner:lwj04"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "NFM_DEPLOY_MANIFEST_WORLD_READABLE": "1"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stat.S_IMODE(manifest.stat().st_mode) == 0o644
+    assert stat.S_IMODE(manifest.parent.stat().st_mode) == 0o755
+
+
+def test_world_readable_default_stays_private(fake_docker, tmp_path):
+    """Without the env flag the recorder keeps the 0600/0700 private layout —
+    the flag only widens, never narrows (pre-gate manual runs unchanged)."""
+    fake_docker(prod_containers())
+    manifest = tmp_path / "nfmd" / "prod-deploy-manifest.json"
+
+    assert run_recorder(manifest=manifest).returncode == 0
+    assert stat.S_IMODE(manifest.stat().st_mode) == 0o600
+    assert stat.S_IMODE(manifest.parent.stat().st_mode) == 0o700
 
 
 # ---------------------------------------------------------------------------

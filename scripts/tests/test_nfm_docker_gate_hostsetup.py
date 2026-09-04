@@ -35,6 +35,7 @@ SANCTIONED = [
     "run-recovery.sh",
     "run-worker-inspect.sh",
     "run-sql.sh",
+    "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
 ]
 
 
@@ -254,6 +255,88 @@ def test_run_sql_rejects_absolute_and_traversal_paths(entry):
 
 def test_run_sql_rejects_bad_db_names(entry):
     assert entry.run("run-sql.sh", "--db-name", "x; rm -rf /", "a.sql").returncode == 64
+
+
+# ---- run-record-manifest.sh (NFM-4273: G4a via the gate) --------------------------
+
+
+class RecorderSpy:
+    """Stubs python3 for run-record-manifest.sh: records env + argv."""
+
+    def __init__(self, harness):
+        self.calls = harness.repo / "recorder-calls.log"
+        harness._write_executable(
+            "python3",
+            f'printf "%s\\n" "$*" >> {self.calls}\n'
+            f'printf "manifest=%s world=%s\\n" "$NFM_DEPLOY_MANIFEST" '
+            f'"$NFM_DEPLOY_MANIFEST_WORLD_READABLE" >> {self.calls}\nexit 0\n',
+        )
+
+
+def test_run_record_manifest_rejects_non_hex_sha(entry):
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "zz-not-hex",
+                     "--actor", "gh-runner:lwj04").returncode == 64
+
+
+def test_run_record_manifest_rejects_short_and_oversized_sha(entry):
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "abc123",
+                     "--actor", "gh-runner:lwj04").returncode == 64
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 41,
+                     "--actor", "gh-runner:lwj04").returncode == 64
+
+
+def test_run_record_manifest_rejects_shell_metacharacters_in_actor(entry):
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
+                     "--actor", "gh-runner:$(id)").returncode == 64
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
+                     "--actor", "path:user; rm -rf /").returncode == 64
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7,
+                     "--actor", "").returncode == 64
+
+
+def test_run_record_manifest_requires_both_args(entry):
+    assert entry.run("run-record-manifest.sh").returncode == 64
+    assert entry.run("run-record-manifest.sh", "--deploy-sha", "a" * 7).returncode == 64
+    assert entry.run("run-record-manifest.sh", "--actor", "gh-runner:x").returncode == 64
+
+
+def test_run_record_manifest_invokes_recorder_at_canonical_path(entry):
+    """The exec'd recorder must see the canonical G4 manifest path + the
+    world-readable flag, with sha/actor forwarded verbatim (NFM-4273)."""
+    RecorderSpy(entry)
+    result = entry.run("run-record-manifest.sh",
+                       "--deploy-sha", "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+                       "--actor", "gh-runner:lwj04")
+    assert result.returncode == 0, result.stderr
+    log = (entry.repo / "recorder-calls.log").read_text()
+    assert "--deploy-sha 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" in log
+    assert "--actor gh-runner:lwj04" in log
+    assert "manifest=/usr/local/var/nfm-g2/prod-deploy-manifest.json" in log
+    assert "world=1" in log
+
+
+def test_run_record_manifest_accepts_short_sha(entry):
+    """git short sha (7 hex) is the documented minimum — must pass through."""
+    RecorderSpy(entry)
+    result = entry.run("run-record-manifest.sh", "--deploy-sha", "1a2b3c4",
+                       "--actor", "deploy_prod.sh:lwj04")
+    assert result.returncode == 0, result.stderr
+
+
+def test_host_setup_installs_record_manifest_entry_and_canonical_dir():
+    """host_setup.sh must install the G4a entry root-owned AND create the
+    canonical shared G4 state dir the drift cron reads (NFM-4273)."""
+    text = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
+    assert "run-record-manifest" in text
+    assert "/usr/local/var/nfm-g2" in text
+    assert text.index("mkdir -p /usr/local/var/nfm-g2") < text.index('chmod 0755 /usr/local/var/nfm-g2')
+    # sudoers must grant the entry and keep DEPLOY_ACTOR riding env_keep
+    sudoers = (GATE_DIR / "sudoers.d" / "nfm-prod-deploy").read_text(encoding="utf-8")
+    assert "/usr/local/lib/nfm-g2/run-record-manifest.sh" in sudoers
+    assert 'env_keep += "DEPLOY_SHA PROXY_PORT DEPLOY_ACTOR"' in sudoers
+    # the deploy entry forwards DEPLOY_ACTOR into the deploy body
+    run_deploy = (GATE_DIR / "entries" / "run-deploy.sh").read_text(encoding="utf-8")
+    assert "DEPLOY_ACTOR" in run_deploy
 
 
 # ---- watchdog context assertion ----------------------------------------------------

@@ -11,7 +11,12 @@
 #   * group prod-deploy + user nfmdeploy (dedicated deploy identity)
 #   * /usr/local/lib/nfm-g2/  — gate proxy package, config, root-owned
 #     sanctioned entry scripts (run-deploy / run-pre-deploy-assert /
-#     run-recovery / run-worker-inspect) + launchd start scripts
+#     run-recovery / run-worker-inspect / run-record-manifest) + launchd
+#     start scripts
+#   * /usr/local/var/nfm-g2/  — NFM-4273 canonical shared G4 state dir
+#     (deploy manifest + deploy lock): deploy-identity-writable,
+#     world-readable so the desktop-user drift cron (G4b) reads the same
+#     single copy the gated deploy body writes — no per-home fork
 #   * /etc/sudoers.d/nfm-prod-deploy — command-enumerated NOPASSWD grants
 #     (AC-G2.4: no wildcards, no blanket)
 #   * LaunchDaemons: ro gate proxy (666 socket), full gate proxy (660
@@ -149,9 +154,22 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql start-proxy start-watchdog; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest start-proxy start-watchdog; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
+# NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place
+# the gated deploy body (as nfmdeploy) and the desktop-user drift cron
+# (G4b) agree on. nfmdeploy-owned so only the deploy identity can write
+# the manifest/lock; 0755 so the cron can read them. Pre-existing dirs are
+# left exactly as installed (idempotent — perms are only set at creation).
+if [ ! -d /usr/local/var/nfm-g2 ]; then
+  mkdir -p /usr/local/var/nfm-g2
+  chown "${DEPLOY_USER}:wheel" /usr/local/var/nfm-g2
+  chmod 0755 /usr/local/var/nfm-g2
+  log "created canonical G4 state dir /usr/local/var/nfm-g2 (${DEPLOY_USER}:wheel 0755)"
+else
+  log "canonical G4 state dir /usr/local/var/nfm-g2 already present"
+fi
 # 0644: the probe (unprivileged) reads the socket path for the bypass test.
 printf '%s\n' "${RAW_SOCK}" > "${G2}/upstream.conf"
 chmod 0644 "${G2}/upstream.conf"
@@ -241,4 +259,6 @@ log "done. Sanctioned prod paths are now:"
 log "  deploy:   DEPLOY_SHA=<sha> sudo -n -u ${DEPLOY_USER} ${G2}/run-deploy.sh"
 log "  recovery: sudo -n -u ${DEPLOY_USER} ${G2}/run-recovery.sh restart <api|web|worker|lightrag|db>"
 log "            sudo -n -u ${DEPLOY_USER} ${G2}/run-recovery.sh rollback --tag <last-good-sha>"
+log "  manifest: sudo -n -u ${DEPLOY_USER} ${G2}/run-record-manifest.sh --deploy-sha <sha> --actor gh-runner:<actor>"
+log "            (G4a manifest + deploy lock land in /usr/local/var/nfm-g2/, the one path the G4b drift cron reads)"
 log "audit log: ${LOG_DIR}/gate-ro.log (+ gate-full.log, watchdog.log)"

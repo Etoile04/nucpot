@@ -38,7 +38,11 @@ fi
 
 : "${DEPLOY_SHA:?DEPLOY_SHA not provided — run via: DEPLOY_SHA=<github.sha> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh}"
 PROXY_PORT="${PROXY_PORT:-7897}"
+# NFM-4273: DEPLOY_ACTOR rides env_keep too (see sudoers.d) so the GH
+# workflow's gh-runner:<actor> provenance reaches the in-script G4a
+# manifest recorder; unset for manual runs — deploy_prod.sh defaults it.
 export PROXY_PORT DEPLOY_SHA
+export DEPLOY_ACTOR="${DEPLOY_ACTOR:-}"
 
 # Inherited PATH first: under sudo env_reset it is the secure path, so this
 # changes nothing in production — but hermetic tests can prepend a fake

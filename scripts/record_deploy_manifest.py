@@ -50,9 +50,16 @@ so an out-of-band mutator running as a DIFFERENT user cannot refresh it to
 cover its tracks. A same-user actor can still defeat this; detecting that
 residual is G4b's job (the alarm re-derives digests from live containers).
 
+NFM-4273 (G2 x G4a integration) canonical path: under the host gate the deploy
+identity (nfmdeploy) writes ``/usr/local/var/nfm-g2/prod-deploy-manifest.json``
+— the ONE location the desktop-user drift cron reads — with the file 0644 so
+that cron can diff against it. Deploy-identity-only writability (via the
+root-owned sudo entry) replaces 0600-privacy as the tamper resistance there:
+set ``NFM_DEPLOY_MANIFEST_WORLD_READABLE=1`` for 0644 files in 0755 dirs.
+
 Default manifest path: ``$HOME/.nfmd/prod-deploy-manifest.json`` (both
-sanctioned paths execute as the same host user via ssh, so $HOME resolves
-identically). Override with --manifest or NFM_DEPLOY_MANIFEST.
+pre-gate sanctioned paths execute as the same host user via ssh, so $HOME
+resolves identically). Override with --manifest or NFM_DEPLOY_MANIFEST.
 """
 
 from __future__ import annotations
@@ -192,15 +199,24 @@ def build_manifest(
     return manifest
 
 
+def _world_readable() -> bool:
+    """NFM-4273: canonical gate path is world-readable for the drift cron."""
+    return os.environ.get("NFM_DEPLOY_MANIFEST_WORLD_READABLE", "") in ("1", "true", "yes")
+
+
 def _ensure_private_dir(directory: Path) -> None:
-    """Create the manifest directory 0700 — only tighten dirs we create."""
+    """Create the manifest directory 0700 (0755 world-readable mode).
+
+    Only tightens dirs we create — host_setup.sh owns the canonical
+    /usr/local/var/nfm-g2 dir and its permissions.
+    """
     if directory.is_dir():
         return
     directory.mkdir(parents=True, exist_ok=True)
     try:
-        directory.chmod(0o700)
+        directory.chmod(0o755 if _world_readable() else 0o700)
     except OSError:
-        pass  # best-effort; the file-level 0600 below is the hard guarantee
+        pass  # best-effort; the file-level mode below is the hard guarantee
 
 
 def write_atomic(manifest_path: Path, manifest: dict) -> None:
@@ -221,7 +237,7 @@ def write_atomic(manifest_path: Path, manifest: dict) -> None:
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
-        os.chmod(tmp_path, 0o600)
+        os.chmod(tmp_path, 0o644 if _world_readable() else 0o600)
         os.replace(tmp_path, manifest_path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)

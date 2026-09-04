@@ -665,6 +665,79 @@ def test_deploy_prod_sh_writes_and_clears_deploy_lock():
     assert proc.returncode == 0, proc.stderr
 
 
+# ------------------------------------------------- NFM-4273 canonical G4 dir
+
+
+def _load_checker():
+    """Import scripts/check_deploy_drift.py as a module (no side effects at
+    import time — everything lives under functions / the main guard)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_deploy_drift_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    # dataclass @Drift resolves cls.__module__ through sys.modules — the
+    # module must be registered before exec_module runs the decorators.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_default_paths_prefer_canonical_gate_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """NFM-4273: when the host gate's canonical G4 state dir exists, BOTH the
+    manifest and the lock resolve there — even before the first manifest
+    exists (a stale ~/.nfmd copy would mask exactly the fork this prevents)."""
+    checker = _load_checker()
+    gate_dir = tmp_path / "gate-var"
+    gate_dir.mkdir()
+    monkeypatch.setattr(checker, "CANONICAL_G4_DIR", gate_dir)
+    monkeypatch.delenv("NFM_DEPLOY_MANIFEST", raising=False)
+    monkeypatch.delenv("NFM_DEPLOY_LOCK", raising=False)
+
+    args = checker.parse_args([])
+    assert str(args.manifest) == str(gate_dir / "prod-deploy-manifest.json")
+    assert str(args.lock) == str(gate_dir / "prod-deploy.lock")
+
+
+def test_default_paths_fall_back_to_nfmd_without_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Pre-gate hosts keep the historical ~/.nfmd layout for both paths."""
+    checker = _load_checker()
+    monkeypatch.setattr(checker, "CANONICAL_G4_DIR", tmp_path / "absent-gate-var")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("NFM_DEPLOY_MANIFEST", raising=False)
+    monkeypatch.delenv("NFM_DEPLOY_LOCK", raising=False)
+
+    args = checker.parse_args([])
+    assert str(args.manifest) == str(tmp_path / "home" / ".nfmd" / "prod-deploy-manifest.json")
+    assert str(args.lock) == str(tmp_path / "home" / ".nfmd" / "prod-deploy.lock")
+
+
+def test_env_override_beats_canonical_and_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """$NFM_DEPLOY_MANIFEST / $NFM_DEPLOY_LOCK win over both default layers
+    (the cron's explicit config stays authoritative)."""
+    checker = _load_checker()
+    gate_dir = tmp_path / "gate-var"
+    gate_dir.mkdir()
+    monkeypatch.setattr(checker, "CANONICAL_G4_DIR", gate_dir)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("NFM_DEPLOY_MANIFEST", str(tmp_path / "explicit-manifest.json"))
+    monkeypatch.setenv("NFM_DEPLOY_LOCK", str(tmp_path / "explicit.lock"))
+
+    args = checker.parse_args([])
+    assert str(args.manifest) == str(tmp_path / "explicit-manifest.json")
+    assert str(args.lock) == str(tmp_path / "explicit.lock")
+
+
+def test_deploy_prod_sh_and_checker_agree_on_g4_paths():
+    """Coherence contract (the NFM-4273 integration bug this fixes): the
+    writer (deploy_prod.sh) and the reader (this checker) must resolve the
+    lock AND manifest through the SAME canonical-dir preference."""
+    deploy_sh = DEPLOY_PROD_SH.read_text(encoding="utf-8")
+    assert "/usr/local/var/nfm-g2" in deploy_sh, "deploy lock must prefer the canonical G4 dir"
+    assert "run-record-manifest.sh" in deploy_sh, "gated manifest record must go through the entry"
+    assert "NFM_DEPLOY_MANIFEST_WORLD_READABLE" in deploy_sh
+    # under the gate the deploy body itself writes the canonical path
+    assert "NFM_DEPLOY_MANIFEST=/usr/local/var/nfm-g2/prod-deploy-manifest.json" in deploy_sh
+
+
 def test_workflow_runs_checker_tests_before_deploy():
     source = WORKFLOW.read_text(encoding="utf-8")
     assert "scripts/tests/test_check_deploy_drift.py" in source

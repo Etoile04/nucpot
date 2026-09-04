@@ -43,7 +43,20 @@ export PATH="/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:$PATH"
 # ANY exit including failures: a crashed deploy left prod diverged and that
 # MUST alarm. A lock orphaned by a host crash goes stale and is ignored by
 # the checker after --max-lock-age (default 2h; cold build is ~30 min).
-NFM_DEPLOY_LOCK="${NFM_DEPLOY_LOCK:-$HOME/.nfmd/prod-deploy.lock}"
+#
+# NFM-4273 (G2×G4 coherence): under the host gate this script runs as
+# nfmdeploy, whose $HOME is NOT the desktop user's — a per-home lock would
+# fork away from the one the desktop-user drift cron reads (false alarms on
+# every gated deploy). When the gate's canonical G4 state dir exists, both
+# the lock and the manifest live there: deploy-identity-writable,
+# world-readable. check_deploy_drift.py mirrors this exact preference.
+if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
+  if [ -d /usr/local/var/nfm-g2 ]; then
+    NFM_DEPLOY_LOCK=/usr/local/var/nfm-g2/prod-deploy.lock
+  else
+    NFM_DEPLOY_LOCK="$HOME/.nfmd/prod-deploy.lock"
+  fi
+fi
 mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
 printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
@@ -225,17 +238,39 @@ curl -f http://localhost:3000/ || exit 1
 
 # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest now that cutover and
 # health gates have passed. The manifest (one JSON artifact, overwritten per
-# deploy, written atomically 0600 to ~/.nfmd/prod-deploy-manifest.json) is the
-# G4b drift alarm's baseline: {deploy_sha, image_tags, image_digests,
-# service_containers, timestamp, actor}. DEPLOY_ACTOR distinguishes the deploy
-# path — the GH workflow injects gh-runner:<actor>; a manual on-host run
-# defaults to deploy_prod.sh:<user>. Failure aborts the deploy ON PURPOSE: a
-# deploy that cannot record its manifest must not count as sanctioned (the
-# previous manifest survives and the drift alarm flags the divergence).
+# deploy, written atomically) is the G4b drift alarm's baseline:
+# {deploy_sha, image_tags, image_digests, service_containers, timestamp,
+# actor}. DEPLOY_ACTOR distinguishes the deploy path — the GH workflow
+# injects gh-runner:<actor>; a manual on-host run defaults to
+# deploy_prod.sh:<user>. Failure aborts the deploy ON PURPOSE: a deploy that
+# cannot record its manifest must not count as sanctioned (the previous
+# manifest survives and the drift alarm flags the divergence).
+#
+# NFM-4273 (G2×G4a coherence): under the host gate this body runs as
+# nfmdeploy — $HOME/.nfmd would fork away from the desktop user's copy the
+# drift cron reads. With the gate installed, the manifest ALWAYS lands at
+# the canonical /usr/local/var/nfm-g2 path: directly when we already run
+# as the deploy identity (inside run-deploy.sh — sudo-to-self is not
+# granted), otherwise via the root-owned sudo entry so only the deploy
+# identity ever writes it. Pre-gate hosts keep the original direct call.
 echo "==> Recording deploy manifest (NFM-4271 / ADR-013 G4a)"
-python3 scripts/record_deploy_manifest.py \
-  --deploy-sha "${DEPLOY_SHA}" \
-  --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
+if [ -d /usr/local/var/nfm-g2 ]; then
+  if [ "$(id -un)" = "nfmdeploy" ]; then
+    NFM_DEPLOY_MANIFEST=/usr/local/var/nfm-g2/prod-deploy-manifest.json \
+    NFM_DEPLOY_MANIFEST_WORLD_READABLE=1 \
+    python3 scripts/record_deploy_manifest.py \
+      --deploy-sha "${DEPLOY_SHA}" \
+      --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
+  else
+    sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-record-manifest.sh \
+      --deploy-sha "${DEPLOY_SHA}" \
+      --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
+  fi
+else
+  python3 scripts/record_deploy_manifest.py \
+    --deploy-sha "${DEPLOY_SHA}" \
+    --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
+fi
 
 # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent 10
 # nucpot-prod-* tags per repository in the local daemon. The new SHA we just

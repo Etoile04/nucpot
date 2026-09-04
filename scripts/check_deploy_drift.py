@@ -41,10 +41,13 @@ is embedded in the issue body (``signature: <hex>``) so dedupe survives
 state-file loss.
 
 In-flight deploy tolerance (ADR-013 §4 "drift alarm noise" row):
-  1. deploy_prod.sh holds ``~/.nfmd/prod-deploy.lock`` for the whole
-     sanctioned deploy (trap-removed on ANY exit) — a fresh lock suppresses
-     filing. A stale lock (crashed deploy) does NOT: a half-deployed prod
-     is genuine drift.
+  1. deploy_prod.sh holds a deploy lock for the whole sanctioned deploy
+     (trap-removed on ANY exit) — a fresh lock suppresses filing. A stale
+     lock (crashed deploy) does NOT: a half-deployed prod is genuine drift.
+     NFM-4273: under the host gate the lock is
+     ``/usr/local/var/nfm-g2/prod-deploy.lock`` (canonical shared G4 dir);
+     pre-gate hosts keep ``~/.nfmd/prod-deploy.lock`` — the default
+     resolution here mirrors deploy_prod.sh exactly.
   2. Before filing, re-check after ``--recheck-seconds`` (default 300): a
      divergence that converges — or a manifest rewritten by a finishing
      deploy — during the window is tolerated.
@@ -98,6 +101,27 @@ TITLE_PREFIX = "[DEPLOY-DRIFT]"
 OPEN_STATUSES = {"todo", "in_progress", "in_review", "blocked"}
 DEFAULT_MAX_LOCK_AGE = 7200  # 2h — cold build is ~30 min; crashed locks go stale
 DEFAULT_RECHECK_SECONDS = 300
+
+# NFM-4273 (G2 x G4 coherence): under the host gate the deploy body runs as
+# nfmdeploy, whose $HOME is not the desktop user's. When the gate's
+# canonical G4 state dir exists, BOTH the manifest and the deploy lock live
+# there — deploy-identity-writable, world-readable — so this desktop-user
+# cron and the gated deploy body always agree on ONE copy per artifact.
+# Pre-gate hosts (and NFM_DEPLOY_MANIFEST / --manifest overrides) keep the
+# historical ~/.nfmd layout. Mirrors deploy_prod.sh's NFM_DEPLOY_LOCK logic.
+CANONICAL_G4_DIR = Path("/usr/local/var/nfm-g2")
+
+
+def _default_g4_path(env_var: str, filename: str) -> str:
+    """Resolve a G4 artifact path: $env > canonical gate dir > ~/.nfmd."""
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    if CANONICAL_G4_DIR.is_dir():
+        # Prefer canonical even before the first manifest exists: a stale
+        # ~/.nfmd copy would mask exactly the fork this resolution prevents.
+        return str(CANONICAL_G4_DIR / filename)
+    return str(Path.home() / ".nfmd" / filename)
 
 
 class OpsError(RuntimeError):
@@ -579,10 +603,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--manifest",
-        default=os.environ.get("NFM_DEPLOY_MANIFEST")
-        or str(Path.home() / ".nfmd" / "prod-deploy-manifest.json"),
-        help="G4a manifest path (default: $NFM_DEPLOY_MANIFEST or "
-             "~/.nfmd/prod-deploy-manifest.json).",
+        default=_default_g4_path("NFM_DEPLOY_MANIFEST", "prod-deploy-manifest.json"),
+        help="G4a manifest path (default: $NFM_DEPLOY_MANIFEST, else "
+             "/usr/local/var/nfm-g2/ when the gate is installed, else "
+             "~/.nfmd/prod-deploy-manifest.json — NFM-4273).",
     )
     parser.add_argument(
         "--compose-project",
@@ -591,10 +615,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--lock",
-        default=os.environ.get("NFM_DEPLOY_LOCK")
-        or str(Path.home() / ".nfmd" / "prod-deploy.lock"),
+        default=_default_g4_path("NFM_DEPLOY_LOCK", "prod-deploy.lock"),
         help="deploy lockfile held by deploy_prod.sh while a sanctioned "
-             "deploy runs (default: ~/.nfmd/prod-deploy.lock).",
+             "deploy runs (default: $NFM_DEPLOY_LOCK, else "
+             "/usr/local/var/nfm-g2/ when the gate is installed, else "
+             "~/.nfmd/prod-deploy.lock — NFM-4273).",
     )
     parser.add_argument(
         "--max-lock-age", type=int,
