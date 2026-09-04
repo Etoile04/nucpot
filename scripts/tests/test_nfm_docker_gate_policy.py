@@ -195,8 +195,8 @@ def test_bind_mount_paths_are_not_volume_refs():
     Benign sources only; the forbidden-source pins live in the CR R2 tests."""
     body = {
         "HostConfig": {
-            "Binds": ["/tmp/scratch:/data"],
-            "Mounts": [{"Type": "bind", "Source": "/opt/toolbox", "Target": "/u"}],
+            "Binds": ["/srv/scratch:/data"],
+            "Mounts": [{"Type": "bind", "Source": "/mnt/toolbox", "Target": "/u"}],
         }
     }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
@@ -296,6 +296,34 @@ def test_create_with_nonprod_container_refs_allowed():
             "NetworkMode": "container:nucpot-staging-api-1",
         }
     }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert result.allowed
+
+
+def test_create_link_prod_container_denied():
+    """--link nucpot-prod-db-1:db embeds a prod container reference in the
+    create body (NFM-4273 review V3)."""
+    body = {"HostConfig": {"Links": ["nucpot-prod-db-1:db"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod-db-1" in result.reason
+
+
+def test_create_link_prod_container_inspect_spelling_denied():
+    # The daemon's inspect spelling of a link is /name/alias — same ref.
+    body = {"HostConfig": {"Links": ["/nucpot-prod-db-1/db"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_create_link_opaque_ref_denied_fail_closed():
+    body = {"HostConfig": {"Links": ["a1b2c3d4e5f67890:db"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_create_link_nonprod_allowed():
+    body = {"HostConfig": {"Links": ["nucpot-staging-db-1:db"]}}
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
 
@@ -507,6 +535,27 @@ def test_prod_image_rm_denied():
     assert not result.allowed and result.scope == "prod"
 
 
+def test_image_rm_by_id_or_digest_denied_fail_closed():
+    """V1: `docker rmi sha256:<id>` (or a bare hex prefix) reaches the prod
+    image whatever its repo tags say — opaque refs fail closed."""
+    digest = "sha256:" + "a1" * 32
+    for name in (digest, "a1b2c3d4e5f67890"):
+        result = decide("DELETE", f"/v1.43/images/{name}")
+        assert not result.allowed and "fail-closed" in result.reason, name
+
+
+def test_retag_by_opaque_image_id_denied_fail_closed():
+    """V1: `docker tag <prod-image-id> innocent:latest` launders the image
+    past the push guard when the id bypasses the name check."""
+    result = decide("POST", "/v1.43/images/a1b2c3d4e5f67890/tag")
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_push_by_digest_denied_fail_closed():
+    result = decide("POST", f"/v1.43/images/sha256:{'a1' * 32}/push")
+    assert not result.allowed and "fail-closed" in result.reason
+
+
 def test_push_prod_image_denied_exfiltration_guard():
     result = decide("POST", "/v1.43/images/nucpot-prod-api/push")
     assert not result.allowed
@@ -573,9 +622,27 @@ def test_users_home_bind_denied():
 
 
 def test_workspace_scoped_bind_allowed():
-    body = {"HostConfig": {"Binds": ["/tmp/scratch:/data"]}}
+    body = {"HostConfig": {"Binds": ["/workspace/scratch:/data"]}}
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
+
+
+def test_tmp_volumes_opt_binds_denied():
+    """V2: /tmp is the symlink spelling of the already-denied /private/tmp
+    and hosts the deploy tooling's own host state (the health-gate marker,
+    cutover snapshot dirs, the deploy DOCKER_CONFIG); /Volumes (external
+    disks) and /opt (homebrew toolchain) are same-class takeover roots."""
+    for source in (
+        "/tmp",
+        "/tmp/scratch",
+        "/private/tmp/x",
+        "/Volumes/Backup",
+        "/opt/toolbox",
+        "/opt/homebrew/bin",
+    ):
+        body = {"HostConfig": {"Binds": [f"{source}:/data"]}}
+        result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+        assert not result.allowed, source
 
 
 # ---- CR R2: HostConfig.Mounts bind-collection bypass shapes ----------------------
@@ -727,6 +794,15 @@ def test_images_get_without_names_denied():
     """A bare images/get tars EVERY image on the daemon, prod included."""
     result = decide("GET", "/v1.43/images/get")
     assert not result.allowed and result.audit
+
+
+def test_images_get_opaque_id_or_digest_denied_fail_closed():
+    """V1: `docker save sha256:<prod-image-id>` exports prod layers while
+    the name check sees only the digest — opaque refs fail closed."""
+    digest = "sha256:" + "a1" * 32
+    for names in (f"names={digest}", f"names={digest}&names=alpine:latest"):
+        result = decide("GET", "/v1.43/images/get", names)
+        assert not result.allowed and "fail-closed" in result.reason, names
 
 
 # ---- CR F4: opaque volume ids -------------------------------------------------------

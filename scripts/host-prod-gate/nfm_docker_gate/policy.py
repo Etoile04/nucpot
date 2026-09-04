@@ -74,7 +74,8 @@ _GET_ALLOW_PREFIX = (
 # and /VAR/RUN identically (NFM-4273 CR R2).
 _FORBIDDEN_BIND_RE = re.compile(
     r"(^|/)docker\.sock$|(^|/)podman\.sock$"
-    r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/))",
+    r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/)"
+    r"|tmp($|/)|opt($|/)|Volumes($|/))",
     re.IGNORECASE,
 )
 
@@ -84,6 +85,12 @@ _FORBIDDEN_BIND_RE = re.compile(
 # the request fails closed rather than guessing (same philosophy as
 # unrecognized paths).
 _OPAQUE_ID_RE = re.compile(r"^[0-9a-f]+$")
+
+# Image references shaped like an image ID or digest (bare hex of any
+# length, or sha256:<hex>) — the daemon resolves both to the underlying
+# image regardless of its repo tags, so text-only prefix scope checks do
+# not apply (NFM-4273 review V1).
+_OPAQUE_IMAGE_REF_RE = re.compile(r"^sha256:[0-9a-f]+$|^[0-9a-f]+$", re.IGNORECASE)
 
 REFUSAL_HINT = (
     "nfm-g2 (NFM-4270 / ADR-013 G5): prod mutations route via GH Actions "
@@ -285,8 +292,9 @@ def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
     (incl. prod volumes) into the new container; ``--network
     container:nucpot-prod-api-1`` shares a prod container's network
     namespace, and ``--pid``/``--ipc container:<ref>`` share its process
-    and IPC namespaces. None of these touch Binds/Mounts/EndpointsConfig,
-    so they are scope-checked here instead (NFM-4273 reviews R1, E1).
+    and IPC namespaces; ``--link nucpot-prod-db-1:db`` embeds a prod
+    container reference. None of these touch Binds/Mounts/EndpointsConfig,
+    so they are scope-checked here instead (NFM-4273 reviews R1, E1, V3).
     """
     host_config = body.get("HostConfig") or {}
     if not isinstance(host_config, dict):
@@ -295,6 +303,13 @@ def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
     for entry in host_config.get("VolumesFrom") or []:
         if isinstance(entry, str):
             refs.append(entry.split(":", 1)[0])
+    for entry in host_config.get("Links") or []:
+        if isinstance(entry, str):
+            target = entry.split(":", 1)[0]
+            if target.startswith("/"):
+                target = target.lstrip("/").split("/", 1)[0]
+            if target:
+                refs.append(target)
     for flag in ("NetworkMode", "PidMode", "IpcMode"):
         value = host_config.get(flag)
         if isinstance(value, str) and value.startswith("container:"):
@@ -369,6 +384,13 @@ def classify(
                         False,
                         "percent-encoded image name cannot be scope-checked (fail-closed)",
                         audit=True,
+                    )
+                if _OPAQUE_IMAGE_REF_RE.match(name.lower()):
+                    return Decision(
+                        False,
+                        f"opaque image ref {name!r} cannot be scope-checked (fail-closed)",
+                        audit=True,
+                        target=name,
                     )
                 if name.startswith(cfg.prod_image_prefixes):
                     return Decision(
@@ -445,6 +467,17 @@ def classify(
     image_action = _IMAGE_NAME_ACTION.match(path)
     if image_action:
         action, name = image_action.group("action"), image_action.group("name")
+        if _OPAQUE_IMAGE_REF_RE.match(name.lower()):
+            # IDs/digests resolve to the underlying image whatever its repo
+            # tags say — an id-based tag or push launders prod past the
+            # name guards, so opaque refs fail closed (NFM-4273 review V1).
+            return Decision(
+                False,
+                f"opaque image ref {name!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=name,
+            )
         if action == "tag" and method == "POST":
             if name.startswith(cfg.prod_image_prefixes):
                 # Re-tagging prod to an innocent name launders it past the
@@ -470,6 +503,14 @@ def classify(
 
     if method == "DELETE" and path.startswith("images/"):
         name = path[len("images/") :]
+        if _OPAQUE_IMAGE_REF_RE.match(name.lower()):
+            return Decision(
+                False,
+                f"opaque image ref {name!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=name,
+            )
         if name.startswith(cfg.prod_image_prefixes):
             # Prod images are rollback generations — deleting them from a
             # bare terminal is a prod mutation (NFM-4273 CR F3).
