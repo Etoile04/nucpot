@@ -228,6 +228,34 @@ BLOCK_CASES = [
      "echo 'X=1' | tee docker/.env\\.prod"),
     ("N1: escaped cp destination (write vector)",
      "cp /tmp/fixed.yml docker-compose\\.prod\\.yml"),
+    # NFM-4284 N1 (scope-pin 860a0d88) — backslash+LF continuation family
+    # from the CR REJECT repro table: an unquoted `\`+LF is a bash line
+    # continuation (bash drops BOTH characters before tokenization), so
+    # these execute the exact NFM-4264 mutation while today's splitter
+    # keeps the `\`+LF verbatim and shlex swallows the LF into the word
+    # (verb becomes literal "\nup" → verb check fails; a continuation
+    # before `docker` masks word 0 as "\ndocker").
+    ("N1: cont row 1 — LF before compose verb (NFM-4264 shape)",
+     "docker compose --env-file docker/.env.prod \\\nup -d --build api web"),
+    ("N1: cont row 2 — LF after && before docker",
+     "echo deploying && \\\ndocker compose --env-file docker/.env.prod up -d"),
+    ("N1: cont row 3 — LF after cd-chain, indented continuation",
+     "cd ~/Projects/nucpot && \\\n  docker compose -f docker-compose.prod.yml "
+     "up -d"),
+    ("N1: cont row 4 — LF after sudo, bare container verb",
+     "sudo \\\n docker stop nucpot-prod-api"),
+    ("N1: escaped marker + LF continuation (combined obfuscation)",
+     "docker compose -f docker-compose\\.prod\\.yml \\\nup -d"),
+    ("N1: escaped env marker + LF continuation",
+     "docker compose --env-file docker/.env\\.prod \\\nup -d"),
+    # Direct consequences of dropping `\`+LF at the character-walk level:
+    # a continuation INSIDE the marker fuses it back together in bash
+    # (`docker/.env.\<LF>prod` argv-names docker/.env.prod), and one
+    # between `docker` and a bare verb still yields the mutation words.
+    ("N1: LF continuation inside the marker (bash fuses marker)",
+     "docker compose --env-file docker/.env.\\\nprod up -d"),
+    ("N1: LF continuation between docker and bare verb",
+     "docker \\\nstop nucpot-prod-api"),
 ]
 
 
@@ -311,6 +339,17 @@ ALLOW_CASES = [
      "docker compose -f 'docker-compose\\.prod\\.yml' config"),
     ("N1: escaped staging marker stays allowed",
      "docker compose -f docker-compose\\.staging\\.yml up -d --build"),
+    # NFM-4284 N1 — line continuations alone are not obfuscation: bash
+    # drops `\`+LF for EVERY command, so read-only renders, the staging
+    # stack, and quote-literal backslash spellings must stay allowed when
+    # split across a continuation.
+    ("N1: readonly compose config across LF continuation",
+     "docker compose -f docker-compose.prod.yml \\\nconfig"),
+    ("N1: staging stack up across LF continuation",
+     "docker compose -f docker-compose.staging.yml --env-file "
+     "docker/.env.staging \\\nup -d --build api web"),
+    ("N1: quote-literal escaped marker cat (RE allow probe)",
+     "cat \"docker-compose\\.prod\\.yml\""),
     ("empty command", ""),
     ("plain ls", "ls -la"),
 ]
@@ -584,6 +623,17 @@ def test_belt_blocks_incident_command():
     "docker\\-compose -f docker-compose.prod.yml up -d",
     "docker compose -f docker-compose.prod.yml u\\p -d",
     "docker compose -p nucpot-pro\\d up -d",
+    # NFM-4284 N1 (scope-pin 860a0d88) — backslash+LF continuation family:
+    # row 1 (continuation immediately before the verb) defeats the
+    # space-anchored verb globs above, so the belt needs its own
+    # continuation entries; rows 2–4 place the continuation elsewhere and
+    # are already caught by the leading `*` of the plain entries.
+    "docker compose --env-file docker/.env.prod \\\nup -d --build api web",
+    "echo deploying && \\\ndocker compose --env-file docker/.env.prod up -d",
+    "cd ~/projects/nucpot && \\\n  docker compose -f docker-compose.prod.yml "
+    "up -d",
+    "sudo \\\n docker stop nucpot-prod-api",
+    "docker compose -f docker-compose\\.prod\\.yml \\\nup -d",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -609,6 +659,12 @@ def test_belt_blocks_high_risk_variants(command):
     "docker compose -f docker-compose\\.staging\\.yml up -d --build",
     "docker start nucpot-prod-api-1",
     "docker build -f docker/prod-api.Dockerfile -t nucpot-prod-api:latest .",
+    # NFM-4284 N1 — the belt's continuation entries pin the verb as the
+    # first word of the continued line, so continued read-only renders and
+    # the staging stack stay allowed.
+    "docker compose -f docker-compose.prod.yml \\\nconfig",
+    "docker compose -f docker-compose.staging.yml --env-file docker/.env."
+    "staging \\\nup -d --build api web",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
     hits = [pat for pat in _belt_patterns()

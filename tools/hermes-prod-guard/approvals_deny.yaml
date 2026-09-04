@@ -144,3 +144,40 @@ approvals:
     - '*mv *.env[.\]*prod'
     - '*install *docker-compose[.\]*prod[.\]*yml'
     - '*install *.env[.\]*prod'
+    # --- NFM-4284 N1: backslash+LF line-continuation family (860a0d88) ----
+    # An unquoted `\`+LF is a bash line continuation: bash drops both
+    # characters, so `docker compose --env-file docker/.env.prod \`+LF+`up
+    # -d` executes the exact NFM-4264 mutation while the raw string never
+    # contains the ` up` (space, u, p) that every verb anchor above
+    # requires — the continuation sits exactly where that space would be.
+    # These entries anchor on the continuation itself: `*` (absorbs the
+    # spaces before the backslash) + `\` + LF + `*` (absorbs the continued
+    # line's indentation) + the verb. fnmatch character classes take no
+    # quantifier (`[ ]*` is one-space-then-wildcard, NOT zero-or-more
+    # spaces), so plain `*` is the only spelling for those absorbers —
+    # which also means an `up`/`down` substring anywhere after a
+    # continuation matches; that over-approximation is belt-charter
+    # coarseness (same idiom as the `u*p*` entries above) and errs safe:
+    # these entries can only fire on commands that contain a literal
+    # `\`+LF, a prod marker, and up/down past the continuation. Read-only
+    # continuations (`\<LF>config`, `\<LF>logs`, `\<LF>ps`) and the
+    # staging stack carry none of the three and stay allowed. Marker/verb
+    # order, the three markers, and the escape-absorbing `[.\]*`/
+    # `[ .\-]*` classes mirror the in-line N1 entries above, so combined
+    # obfuscation (escaped marker + continuation) is caught by the same
+    # entry. Entries are DOUBLE-quoted because the pattern needs a
+    # literal LF, which YAML only spells in double-quoted scalars (`\\`
+    # is one backslash, `\n` is the LF); in a single-quoted scalar a raw
+    # LF would break the entry across lines.
+    - "*docker[ .\\-]*compose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*up*"
+    - "*docker[ .\\-]*compose*.env[.\\]*p*r*o*d*\\\n*up*"
+    - "*docker[ .\\-]*compose*nucpot[.\\-]*p*r*o*d*\\\n*up*"
+    - "*docker[ .\\-]*compose*\\\n*up *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*docker[ .\\-]*compose*\\\n*up *.env[.\\]*p*r*o*d*"
+    - "*docker[ .\\-]*compose*\\\n*up *nucpot[.\\-]*p*r*o*d*"
+    - "*docker[ .\\-]*compose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*down*"
+    - "*docker[ .\\-]*compose*.env[.\\]*p*r*o*d*\\\n*down*"
+    - "*docker[ .\\-]*compose*nucpot[.\\-]*p*r*o*d*\\\n*down*"
+    - "*docker[ .\\-]*compose*\\\n*down *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*docker[ .\\-]*compose*\\\n*down *.env[.\\]*p*r*o*d*"
+    - "*docker[ .\\-]*compose*\\\n*down *nucpot[.\\-]*p*r*o*d*"

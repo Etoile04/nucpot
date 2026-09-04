@@ -10,7 +10,10 @@ Scope (ADR-013 §2 G1, NFM-4269):
   Markers are detected on the raw segment text AND on the shlex-unescaped
   words, so unquoted backslash-escape obfuscation
   (``docker-compose\\.prod\\.yml``) is caught (NFM-4284 N1); quoted-literal
-  backslashes name a different file and correctly do not match.
+  backslashes name a different file and correctly do not match. Unquoted
+  ``\\``+LF line continuations are dropped before tokenization exactly as
+  bash drops them, so a continuation before the verb, before the head, or
+  inside a marker cannot mask the mutation words.
 * BLOCK bare ``docker stop|rm|restart|kill|exec`` targeting prod containers
   (``nucpot-prod*``), including the ``docker container <verb>`` spelling.
 * BLOCK terminal-vector writes (redirect/append, ``tee``, ``sed -i``,
@@ -171,6 +174,16 @@ def _split_top_level(command: str) -> list[str]:
             i += 1
             continue
         if ch == "\\" and i + 1 < n:
+            if command[i + 1] == "\n":
+                # Unquoted `\`+LF is a bash line continuation: bash drops
+                # BOTH characters before tokenization (NFM-4284 N1,
+                # scope-pin 860a0d88). Keeping it verbatim would let shlex
+                # swallow the LF into the word (verb becomes "\nup", head
+                # becomes "\ndocker") and mask every head/verb check.
+                # `\`+CR+LF is NOT a continuation (escaped CR, then a real
+                # newline separator) and keeps the split below.
+                i += 2
+                continue
             buf.append(ch)
             buf.append(command[i + 1])
             i += 2
