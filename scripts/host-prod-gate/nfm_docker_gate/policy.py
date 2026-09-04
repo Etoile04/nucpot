@@ -122,7 +122,7 @@ class ScopeConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ScopeConfig:
         known = {k: tuple(v) for k, v in data.items() if isinstance(v, list)}
-        return cls(**known)  # type: ignore[arg-type]
+        return cls(**known)
 
 
 @dataclass(frozen=True)
@@ -244,9 +244,7 @@ def _container_config_flags(body: dict[str, Any]) -> str | None:
     for src in sources:
         # normpath collapses /./, //, trailing /., and ../ segments — the
         # same string the daemon's mount resolver will end up opening.
-        if _FORBIDDEN_BIND_RE.search(src) or _FORBIDDEN_BIND_RE.search(
-            posixpath.normpath(src)
-        ):
+        if _FORBIDDEN_BIND_RE.search(src) or _FORBIDDEN_BIND_RE.search(posixpath.normpath(src)):
             return f"forbidden bind source {src!r}"
     return None
 
@@ -456,7 +454,13 @@ def classify(
         ref = (params.get("fromImage") or params.get("ref") or [""])[0]
         return Decision(True, "image-layer op", scope="image", audit=True, target=ref or path)
 
-    if path in ("containers/prune", "networks/prune", "volumes/prune", "build/prune", "images/prune"):
+    if path in (
+        "containers/prune",
+        "networks/prune",
+        "volumes/prune",
+        "build/prune",
+        "images/prune",
+    ):
         return Decision(
             False,
             f"{path} is daemon-wide and can remove prod state (fail-closed)",

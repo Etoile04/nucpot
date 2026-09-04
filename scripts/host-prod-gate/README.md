@@ -30,9 +30,11 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 * **ro gate** — the desktop user's default docker context (`nfm-ro`): `ps`,
   `inspect`, `logs`, `stats`, `compose config` frictionless; staging/autovc/
   e2e stacks keep mutating freely; anything prod-scoped (names, compose
-  project labels, networks, volumes) is denied 403 with the sanctioned-path
-  message; daemon-wide prunes and container escape hatches (privileged,
-  docker.sock mounts, root binds) are denied regardless of scope.
+  project labels, networks, volumes, prod images — delete/re-tag/push/export,
+  incl. opaque id refs) is denied 403 with the sanctioned-path message;
+  daemon-wide prunes and container escape hatches (privileged, docker.sock
+  mounts, forbidden-path binds incl. `/tmp` `/opt` `/Volumes`, host
+  networking, host device requests) are denied regardless of scope.
 * **full gate** — reachable only by `nfmdeploy` (socket 660 group
   `prod-deploy`) through root-owned sudoers-enumerated entry scripts.
 * **Audit** — JSONL at `/var/log/nfm-g2/gate-{ro,full}.log`; every deny

@@ -58,7 +58,7 @@ def check_once(path: str, group: str, mode: int, audit: AuditLog) -> bool:
     return True
 
 
-def _run_as(user: str, args: list[str]) -> subprocess.CompletedProcess:
+def _run_as(user: str, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [_SUDO, "-H", "-u", user, _DOCKER, *args],
         capture_output=True,

@@ -29,6 +29,7 @@ import socket
 import sys
 import threading
 from dataclasses import dataclass, field
+from typing import Any
 
 from .audit import AuditLog
 from .peercred import peer_identity
@@ -307,9 +308,7 @@ class DockerGateProxy:
             name_s, value_s = name.strip().lower(), value.strip()
             if any(c in name_s + value_s for c in "\r\n"):
                 if ctx.smuggle is None:
-                    ctx.smuggle = (
-                        "header name/value contains CR/LF (request smuggling)"
-                    )
+                    ctx.smuggle = "header name/value contains CR/LF (request smuggling)"
                 continue  # keep the head parseable for the audit record only
             ctx.headers.append((name_s, value_s))
         return ctx
@@ -363,7 +362,11 @@ class DockerGateProxy:
         return bytes(body[:length])
 
     def _deny(
-        self, conn: socket.socket, decision: Decision, identity: dict | None, ctx: _ConnCtx
+        self,
+        conn: socket.socket,
+        decision: Decision,
+        identity: dict[str, Any] | None,
+        ctx: _ConnCtx,
     ) -> None:
         # F5: the 403 is the security boundary — an audit-write failure
         # must never suppress it. Record loudly and refuse anyway.

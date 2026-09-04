@@ -27,11 +27,14 @@ directly as `nfmdeploy`. See
 
 What still works unchanged through `nfm-ro`: `docker ps/inspect/logs/stats`,
 `docker compose config`, all staging/autovc/e2e/supabase stack operations,
-image builds/tags/pulls (candidate builds in CI), `docker image prune`
-(dangling-image cleanup cron). What now gets a 403: anything touching
-`nucpot-prod-*` containers/networks/volumes, `docker exec` into prod,
-daemon-wide prunes, and container escape hatches (privileged, docker.sock
-mounts, root binds).
+and image builds/pulls (candidate builds in CI). What now gets a 403:
+anything touching `nucpot-prod-*` containers/networks/volumes/images
+(delete/re-tag/push/export of prod images, incl. by image id), `docker exec`
+into prod, daemon-wide prunes (incl. `docker image prune` — the dangling-
+image cleanup cron must move to a sanctioned entry or the retention script),
+and container escape hatches (privileged, docker.sock mounts, forbidden-path
+binds — `/Users` `/private` `/etc` `/var` `/usr` `/tmp` `/opt` `/Volumes` —
+host networking, host device requests).
 
 ## Install (Release Engineer, once + after Docker Desktop upgrades)
 

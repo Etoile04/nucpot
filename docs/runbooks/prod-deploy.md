@@ -593,10 +593,12 @@ NFM-4264: 6h of attribution with zero audit trail).
   `env_reset` never passes it in production).
 - **Permissions:** gated (canonical) layout — file `0644` inside the
   nfmdeploy-owned `0755` `/usr/local/var/nfm-g2` dir: world-readable because
-  the drift cron runs as the desktop user, and tamper-resistant because only
-  the deploy identity can write it (stronger than the pre-gate same-user
-  model: the root-owned `run-record-manifest.sh` entry is the sole write
-  route). Pre-gate hosts keep file `0600` in a `0700` dir created by the
+  the drift cron runs as the desktop user. Writes are identity-separated —
+  the root-owned `run-record-manifest.sh` entry running as the deploy
+  identity is the sole sanctioned write route — but this is separation, not
+  tamper resistance (`%admin` can invoke the entry as `nfmdeploy` too;
+  ADR-013 §3 disclaims adversarial resistance — the drift alarm covers that
+  residual). Pre-gate hosts keep file `0600` in a `0700` dir created by the
   recorder — there the same-user residual is the drift alarm's job.
 - **Write semantics:** collect-everything-then-write, tmp file + `fsync` +
   atomic `os.replace`. A failed collection aborts non-zero and leaves the

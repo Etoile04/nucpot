@@ -521,7 +521,7 @@ def test_lf_in_request_target_smuggle_denied(ro):
 
 
 def test_non_alpha_method_token_denied(ro):
-    """"P0ST" / "POST " tricks produce a method token the daemon may parse
+    """ "P0ST" / "POST " tricks produce a method token the daemon may parse
     differently than the gate — non-alpha methods are smuggle-shaped."""
     raw = (
         b"P0ST /v1.43/containers/nucpot-prod-api/stop HTTP/1.1\r\n"

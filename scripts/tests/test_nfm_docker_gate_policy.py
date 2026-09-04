@@ -655,9 +655,7 @@ def test_hostconfig_mounts_type_bind_docker_sock_denied():
     dead loop read) — must deny exactly like the Binds spelling."""
     body = {
         "HostConfig": {
-            "Mounts": [
-                {"Type": "bind", "Source": "/var/run/docker.sock", "Target": "/x"}
-            ]
+            "Mounts": [{"Type": "bind", "Source": "/var/run/docker.sock", "Target": "/x"}]
         }
     }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
@@ -670,9 +668,7 @@ def test_hostconfig_mounts_absolute_source_despite_volume_type_denied():
     spelling produced it — the type label is client-controlled text."""
     body = {
         "HostConfig": {
-            "Mounts": [
-                {"Type": "volume", "Source": "/var/run/docker.sock", "Target": "/x"}
-            ]
+            "Mounts": [{"Type": "volume", "Source": "/var/run/docker.sock", "Target": "/x"}]
         }
     }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
@@ -688,9 +684,7 @@ def test_hostconfig_mounts_dot_segment_normalization_denied():
         "/var/run/docker.sock/.",
         "/var/run/../var/run/docker.sock",
     ):
-        body = {
-            "HostConfig": {"Mounts": [{"Type": "bind", "Source": source, "Target": "/x"}]}
-        }
+        body = {"HostConfig": {"Mounts": [{"Type": "bind", "Source": source, "Target": "/x"}]}}
         result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
         assert not result.allowed, source
 
@@ -765,12 +759,14 @@ def test_percent_encoded_scope_query_value_denied():
 def test_percent_encoded_read_filter_still_allowed():
     """Legitimate %-encoding in NON-scope read params (filters) is not
     collateral damage — reads stay frictionless."""
-    result = decide("GET", "/v1.43/containers/json", "filters=%7B%22status%22%3A%5B%22running%22%5D%7D")
+    result = decide(
+        "GET", "/v1.43/containers/json", "filters=%7B%22status%22%3A%5B%22running%22%5D%7D"
+    )
     assert result.allowed
 
 
 def test_percent_encoded_name_in_read_query_denied():
-    """"name" is a scope key even on reads (docker inspect --filter by name
+    """ "name" is a scope key even on reads (docker inspect --filter by name
     reaches /containers/json?filters=… — but images/get?names= is the
     pinned exfiltration channel; the key list is shared)."""
     result = decide("GET", "/v1.43/images/get", "names=nucpot%2Dprod-api")
