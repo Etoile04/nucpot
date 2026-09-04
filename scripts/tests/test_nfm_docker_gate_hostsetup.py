@@ -76,10 +76,20 @@ def test_sudoers_every_grant_is_an_enumerated_g2_entry():
 
 
 def test_sudoers_no_wildcards_or_blanket_all():
+    grants = [line for line in _sudoers_lines() if "NOPASSWD" in line]
+    assert grants, "expected enumerated sudo grants"
     for line in _sudoers_lines():
         assert "*" not in line
-        assert "NOPASSWD: ALL" not in line
-        assert not line.rstrip().endswith(" ALL") or line.startswith("%admin")
+    for line in grants:
+        # CR F10: the old `endswith(" ALL") or startswith("%admin")` check
+        # was vacuous (every grant line starts with %admin). Pin the real
+        # properties: run-as exactly the deploy identity, never (ALL);
+        # command field is one absolute entry-script path.
+        assert "NOPASSWD: ALL" not in line, line
+        assert "(nfmdeploy)" in line, line
+        assert "(ALL)" not in line, line
+        assert not line.rstrip().endswith(" ALL"), line
+        assert line.rstrip().split()[-1].startswith("/usr/local/lib/nfm-g2/"), line
 
 
 def test_sudoers_defaults_are_command_scoped():

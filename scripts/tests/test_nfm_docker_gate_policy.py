@@ -37,8 +37,29 @@ def test_get_containers_json_allowed():
 
 
 def test_get_container_inspect_logs_stats_allowed():
-    for sub in ("json", "logs", "stats", "top", "changes", "export", "ports"):
+    for sub in ("json", "logs", "stats", "top", "changes", "ports"):
         assert decide("GET", f"/v1.43/containers/abc123/{sub}").allowed, sub
+
+
+def test_get_container_export_by_plain_name_allowed():
+    # export is read-only in verb; a NON-prod, NON-opaque name stays allowed
+    # (the deny applies to prod names and opaque hex ids — CR F1).
+    assert decide("GET", "/v1.43/containers/staging-toolbox/export").allowed
+
+
+def test_get_container_export_opaque_hex_id_denied_fail_closed():
+    """CR F1: `abc123`-style all-hex ids are daemon ids (or unambiguous
+    prefixes) — an export of an unknown container is an exfiltration
+    channel, so opaque ids fail closed like every other opaque ref."""
+    result = decide("GET", "/v1.43/containers/abc123/export")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_get_container_export_prod_name_denied():
+    result = decide("GET", "/v1.43/containers/nucpot-prod-api/export")
+    assert not result.allowed and result.scope == "prod"
+    assert "exfiltration" in result.reason
 
 
 def test_get_version_ping_info_events_df_allowed():
@@ -170,11 +191,12 @@ def test_create_mounting_nonprod_volume_allowed():
 
 def test_bind_mount_paths_are_not_volume_refs():
     """Absolute bind sources are bind mounts (checked separately by
-    _FORBIDDEN_BIND_RE) — they must not crash or pollute volume scoping."""
+    _FORBIDDEN_BIND_RE) — they must not crash or pollute volume scoping.
+    Benign sources only; the forbidden-source pins live in the CR R2 tests."""
     body = {
         "HostConfig": {
             "Binds": ["/tmp/scratch:/data"],
-            "Mounts": [{"Type": "bind", "Source": "/Users/x", "Target": "/u"}],
+            "Mounts": [{"Type": "bind", "Source": "/opt/toolbox", "Target": "/u"}],
         }
     }
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
@@ -312,10 +334,21 @@ def test_create_ipc_mode_container_prod_denied():
 
 
 def test_create_built_in_network_modes_still_allowed():
-    for mode in ("default", "bridge", "none", "host", "nucpot-staging_default"):
+    # "host" deliberately absent: it reaches every local service inside
+    # the VM — denied below (NFM-4273 CR F2).
+    for mode in ("default", "bridge", "none", "nucpot-staging_default"):
         body = {"HostConfig": {"NetworkMode": mode}}
         result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
         assert result.allowed, mode
+
+
+def test_create_network_mode_host_denied():
+    """CR F2: --network host reaches every local service inside the Docker
+    VM — an escape hatch asymmetric with the per-network scope checks."""
+    body = {"HostConfig": {"NetworkMode": "host"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+    assert "NetworkMode=host" in result.reason
 
 
 # ---- network connect/disconnect body container ref (NFM-4273 review E2) --------
@@ -451,12 +484,27 @@ def test_build_allowed_with_tags_in_audit_target():
 
 
 def test_pull_and_tag_allowed():
-    assert decide("POST", "/v1.43/images/create", "fromImage=nucpot-prod-api&tag=x").allowed
-    assert decide("POST", "/v1.43/images/nucpot-prod-api%3Alatest/tag").allowed
+    assert decide("POST", "/v1.43/images/create", "fromImage=alpine&tag=x").allowed
+    assert decide("POST", "/v1.43/images/candidate-build:latest/tag").allowed
+
+
+def test_retag_of_prod_image_denied():
+    """CR F1: re-tagging a prod image to an innocent name launders it past
+    the push guard — same exfiltration class as push itself."""
+    result = decide("POST", "/v1.43/images/nucpot-prod-api:latest/tag")
+    assert not result.allowed and result.scope == "prod"
+    assert "exfiltration" in result.reason
 
 
 def test_image_rm_allowed():
-    assert decide("DELETE", "/v1.43/images/nucpot-prod-api:latest").allowed
+    assert decide("DELETE", "/v1.43/images/alpine:latest").allowed
+
+
+def test_prod_image_rm_denied():
+    """CR F3: prod images are rollback generations — removing one from a
+    bare terminal is a prod mutation."""
+    result = decide("DELETE", "/v1.43/images/nucpot-prod-api:latest")
+    assert not result.allowed and result.scope == "prod"
 
 
 def test_push_prod_image_denied_exfiltration_guard():
@@ -472,13 +520,17 @@ def test_push_non_prod_image_allowed():
 
 
 def test_prunes_denied():
-    for path in ("containers/prune", "networks/prune", "volumes/prune", "build/prune"):
+    # images/prune included since CR F3: an unfiltered image prune can
+    # delete prod rollback generations.
+    for path in (
+        "containers/prune",
+        "networks/prune",
+        "volumes/prune",
+        "build/prune",
+        "images/prune",
+    ):
         result = decide("POST", f"/v1.43/{path}")
         assert not result.allowed, path
-
-
-def test_image_prune_allowed():
-    assert decide("POST", "/v1.43/images/prune").allowed
 
 
 # ---- escape-hatch configs denied regardless of scope --------------------------
@@ -501,8 +553,10 @@ def test_docker_sock_mount_denied():
 
 
 def test_root_path_bind_denied():
+    # HostConfig.Mounts is the live key (CR R2): the daemon ignores the
+    # top-level Mounts this test used to pin — that path was dead logic.
     for source in ("/", "/Users", "/private/var/db", "/etc"):
-        body = {"Mounts": [{"Source": source, "Target": "/x"}]}
+        body = {"HostConfig": {"Mounts": [{"Type": "bind", "Source": source, "Target": "/x"}]}}
         result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
         assert not result.allowed, source
 
@@ -522,6 +576,172 @@ def test_workspace_scoped_bind_allowed():
     body = {"HostConfig": {"Binds": ["/tmp/scratch:/data"]}}
     result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
     assert result.allowed
+
+
+# ---- CR R2: HostConfig.Mounts bind-collection bypass shapes ----------------------
+
+
+def test_hostconfig_mounts_type_bind_docker_sock_denied():
+    """CR R2 executable bypass: `docker run --mount
+    type=bind,source=/var/run/docker.sock,target=/x` lands in
+    HostConfig.Mounts (the daemon IGNORES the top-level Mounts key the old
+    dead loop read) — must deny exactly like the Binds spelling."""
+    body = {
+        "HostConfig": {
+            "Mounts": [
+                {"Type": "bind", "Source": "/var/run/docker.sock", "Target": "/x"}
+            ]
+        }
+    }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+    assert "forbidden bind source" in result.reason
+
+
+def test_hostconfig_mounts_absolute_source_despite_volume_type_denied():
+    """Declared Type "volume" with an ABSOLUTE Source is a bind by whatever
+    spelling produced it — the type label is client-controlled text."""
+    body = {
+        "HostConfig": {
+            "Mounts": [
+                {"Type": "volume", "Source": "/var/run/docker.sock", "Target": "/x"}
+            ]
+        }
+    }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+
+
+def test_hostconfig_mounts_dot_segment_normalization_denied():
+    """/var/run/./docker.sock collapses to the forbidden path under
+    posixpath.normpath — the same string the daemon's mount resolver opens."""
+    for source in (
+        "/var/run/./docker.sock",
+        "/var/run//docker.sock",
+        "/var/run/docker.sock/.",
+        "/var/run/../var/run/docker.sock",
+    ):
+        body = {
+            "HostConfig": {"Mounts": [{"Type": "bind", "Source": source, "Target": "/x"}]}
+        }
+        result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+        assert not result.allowed, source
+
+
+def test_hostconfig_mounts_case_variant_sock_denied():
+    """APFS is case-insensitive: Docker.SOCK resolves to docker.sock."""
+    body = {
+        "HostConfig": {
+            "Mounts": [{"Type": "bind", "Source": "/VAR/RUN/Docker.SOCK", "Target": "/x"}]
+        }
+    }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+
+
+def test_hostconfig_devices_path_on_host_docker_sock_denied():
+    """--device /var/run/docker.sock:/dev/dsock is a character-device bind
+    of the daemon socket — PathOnHost joins the same forbidden regex."""
+    body = {
+        "HostConfig": {
+            "Devices": [{"PathOnHost": "/var/run/docker.sock", "PathInContainer": "/dev/dsock"}]
+        }
+    }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+    assert "forbidden bind source" in result.reason
+
+
+def test_hostconfig_device_requests_fail_closed():
+    """--gpus / DeviceRequests grant host device nodes by capability — not a
+    path the bind regex can interpret, so presence itself denies."""
+    body = {
+        "HostConfig": {
+            "Devices": [],
+            "DeviceRequests": [{"Driver": "", "Count": -1, "Capabilities": [["gpu"]]}],
+        }
+    }
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed
+    assert "DeviceRequests" in result.reason
+
+
+# ---- CR R3: percent-encoding scope mismatch ---------------------------------------
+
+
+def test_percent_encoded_path_denied():
+    """%2F, %2E, %3A … in the path decode server-side into different segment
+    boundaries than the gate scope-checked — never forward."""
+    for path in (
+        "/v1.43/containers/nucpot%2Dprod-api/stop",
+        "/v1.43/images/nucpot-prod-api%3Alatest/tag",
+        "/v1.43/containers/nucpot-prod-api%2Fstop",
+    ):
+        result = decide("POST", path)
+        assert not result.allowed, path
+        assert "percent-encoding in path" in result.reason
+
+
+def test_percent_encoded_scope_query_value_denied():
+    """The scope keys are checked as SENT: %2D decodes to '-' server-side,
+    so `nucpot%2Dprod-x` would scope-check innocent and land as prod."""
+    for query in (
+        "name=nucpot%2Dprod-api-1",  # containers/create
+        "fromImage=nucpot%2Dprod-api",  # images/create
+        "fromSrc=nucpot%2Dprod",  # build
+    ):
+        result = decide("POST", "/v1.43/containers/create", query, body={})
+        assert not result.allowed, query
+        assert "cannot be scope-checked" in result.reason
+
+
+def test_percent_encoded_read_filter_still_allowed():
+    """Legitimate %-encoding in NON-scope read params (filters) is not
+    collateral damage — reads stay frictionless."""
+    result = decide("GET", "/v1.43/containers/json", "filters=%7B%22status%22%3A%5B%22running%22%5D%7D")
+    assert result.allowed
+
+
+def test_percent_encoded_name_in_read_query_denied():
+    """"name" is a scope key even on reads (docker inspect --filter by name
+    reaches /containers/json?filters=… — but images/get?names= is the
+    pinned exfiltration channel; the key list is shared)."""
+    result = decide("GET", "/v1.43/images/get", "names=nucpot%2Dprod-api")
+    assert not result.allowed
+
+
+# ---- CR F1: image exfiltration guards ----------------------------------------------
+
+
+def test_images_get_prod_name_denied():
+    result = decide("GET", "/v1.43/images/get", "names=nucpot-prod-api:latest")
+    assert not result.allowed and result.scope == "prod"
+    assert "exfiltration" in result.reason
+
+
+def test_images_get_non_prod_name_allowed():
+    assert decide("GET", "/v1.43/images/get", "names=alpine:latest").allowed
+
+
+def test_images_get_without_names_denied():
+    """A bare images/get tars EVERY image on the daemon, prod included."""
+    result = decide("GET", "/v1.43/images/get")
+    assert not result.allowed and result.audit
+
+
+# ---- CR F4: opaque volume ids -------------------------------------------------------
+
+
+def test_opaque_hex_volume_rm_denied_fail_closed():
+    """Anonymous volume names are 64-hex — text-indistinguishable from a prod
+    anonymous volume; deny rather than guess."""
+    result = decide("DELETE", f"/v1.43/volumes/{'c' * 64}")
+    assert not result.allowed
+    assert "fail-closed" in result.reason
+
+
+def test_plain_volume_rm_still_allowed():
+    assert decide("DELETE", "/v1.43/volumes/dev_scratch").allowed
 
 
 # ---- full (sanctioned) mode ----------------------------------------------------

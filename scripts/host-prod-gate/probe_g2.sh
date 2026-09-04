@@ -93,8 +93,11 @@ fi
 for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh; do
   INFO="$(stat -f '%u %Lp' "${G2}/${ENTRY}" 2>/dev/null || true)"
   OWNER="${INFO%% *}"; PERMS="${INFO##* }"
+  # %Lp is octal (e.g. 755); the write bit sits in digits {2,3,6,7}. The
+  # old `cut -c2 != "w"` compared an octal digit to the letter w — dead
+  # logic, always true (CR F10).
   if [ "${OWNER}" = "0" ] && [ "${#PERMS}" -eq 3 ] \
-     && [ "$(printf '%s' "${PERMS}" | cut -c2)" != "w" ] && [ "$(printf '%s' "${PERMS}" | cut -c3)" != "w" ]; then
+     && ! printf '%s' "${PERMS}" | cut -c2,3 | grep -q '[2367]'; then
     ok "G2.3 ${ENTRY} root-owned ${PERMS}"
   else
     bad "G2.3 ${ENTRY} wrong ownership/perms: owner=${OWNER:-missing} perms=${PERMS:-?} (want root, no group/other write)"

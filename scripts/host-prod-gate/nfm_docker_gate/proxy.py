@@ -26,6 +26,7 @@ import json
 import os
 import re
 import socket
+import sys
 import threading
 from dataclasses import dataclass, field
 
@@ -61,6 +62,11 @@ class _ConnCtx:
     headers: list[tuple[str, str]] = field(default_factory=list)
     rest: bytes = b""  # bytes already read beyond the head
     body: bytes = b""  # classified body bytes (only for _BODY_ENDPOINTS)
+    # Set when the request head carries CR/LF inside a header name/value
+    # or the request line: the proxy would re-serialize it as a REAL
+    # header upstream (request smuggling) — denied before classification
+    # (NFM-4273 CR R1).
+    smuggle: str | None = None
 
 
 class UpstreamResolver:
@@ -231,18 +237,34 @@ class DockerGateProxy:
             if ctx is None:
                 return
             identity = peer_identity(conn)
+            if ctx.smuggle:
+                # R1: refuse before classification — the classification
+                # would read a different request than the daemon.
+                self._deny(conn, Decision(False, ctx.smuggle, audit=True), identity, ctx)
+                return
             decision = self._decide(conn, ctx)
             if not decision.allowed:
                 self._deny(conn, decision, identity, ctx)
                 return
             if decision.audit:
-                self.audit.write(
-                    "allow",
-                    identity,
-                    method=ctx.method,
-                    target=ctx.target,
-                    **decision.to_log_fields(),
-                )
+                # F5: never forward a mutation the audit trail failed to
+                # record — fail loud, fail closed (AC-G2.6).
+                try:
+                    self.audit.write(
+                        "allow",
+                        identity,
+                        method=ctx.method,
+                        target=ctx.target,
+                        **decision.to_log_fields(),
+                    )
+                except OSError as error:
+                    print(
+                        f"nfm-g2: AUDIT WRITE FAILED, aborting allow: {error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    self._bad_gateway(conn, "nfm-g2: audit log unavailable (fail-closed)")
+                    return
             # Streaming from here on: no timeouts, pump until EOF.
             conn.settimeout(None)
             self._forward(conn, ctx)
@@ -271,9 +293,25 @@ class DockerGateProxy:
             return None
         ctx = _ConnCtx(method=parts[0].upper(), target=parts[1], rest=rest)
         ctx.path, _, ctx.query = parts[1].partition("?")
+        # R1: the head is split on CRLF only, so a bare LF/CR inside a
+        # request-line token or header name/value stays embedded in ONE
+        # parsed line here — but _forward re-serializes it as a SEPARATE
+        # line upstream. `X-A: foo\nTransfer-Encoding: chunked` is one
+        # header to the gate and two to the daemon: the daemon dechunks a
+        # body the gate classified under Content-Length. Any CR/LF before
+        # the wire boundary is smuggling — deny, never forward.
+        if not parts[0].isalpha() or any(c in ctx.target for c in "\r\n"):
+            ctx.smuggle = "request line contains CR/LF or non-alpha method (request smuggling)"
         for line in lines[1:]:
             name, _, value = line.partition(":")
-            ctx.headers.append((name.strip().lower(), value.strip()))
+            name_s, value_s = name.strip().lower(), value.strip()
+            if any(c in name_s + value_s for c in "\r\n"):
+                if ctx.smuggle is None:
+                    ctx.smuggle = (
+                        "header name/value contains CR/LF (request smuggling)"
+                    )
+                continue  # keep the head parseable for the audit record only
+            ctx.headers.append((name_s, value_s))
         return ctx
 
     def _decide(self, conn: socket.socket, ctx: _ConnCtx) -> Decision:
@@ -327,9 +365,18 @@ class DockerGateProxy:
     def _deny(
         self, conn: socket.socket, decision: Decision, identity: dict | None, ctx: _ConnCtx
     ) -> None:
-        self.audit.write(
-            "deny", identity, method=ctx.method, target=ctx.target, **decision.to_log_fields()
-        )
+        # F5: the 403 is the security boundary — an audit-write failure
+        # must never suppress it. Record loudly and refuse anyway.
+        try:
+            self.audit.write(
+                "deny", identity, method=ctx.method, target=ctx.target, **decision.to_log_fields()
+            )
+        except OSError as error:
+            print(
+                f"nfm-g2: AUDIT WRITE FAILED on deny (still refusing): {error}",
+                file=sys.stderr,
+                flush=True,
+            )
         message = f"{decision.reason}. {REFUSAL_HINT}"
         payload = json.dumps({"message": message}).encode()
         response = (

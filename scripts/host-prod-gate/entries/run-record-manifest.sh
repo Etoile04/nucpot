@@ -13,9 +13,12 @@
 # ~/.nfmd — under the NFM-4270 gate the deploy body runs as nfmdeploy, so a
 # per-home manifest would fork into two stale/alive copies (integration bug:
 # every gated deploy would trip a false drift alarm). All sanctioned manifest
-# writes therefore go through the deploy identity at the canonical path;
-# the desktop user can read the result (alarm) but never write it (tamper
-# resistance — stronger than NFM-4271's same-user model).
+# writes therefore go through the deploy identity at the canonical path.
+# NB (CR F7): this is identity SEPARATION, not tamper resistance — the
+# desktop user is %admin and sudoers lets them invoke this entry as
+# nfmdeploy too. ADR-013 explicitly disclaims adversarial resistance here;
+# hardening (deploy-lock / SHA binding, pinned interpreter paths) is a
+# follow-up.
 #
 # The GH workflow calls this from the job context AFTER cutover-assert, so the
 # NFM-3777 outside-script property (survives a deploy body that dies early)

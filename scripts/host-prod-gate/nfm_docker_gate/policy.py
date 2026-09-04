@@ -30,6 +30,7 @@ exercised by scripts/tests/test_nfm_docker_gate_policy.py.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -69,9 +70,12 @@ _GET_ALLOW_PREFIX = (
 )
 
 # Bind-mount sources that turn an arbitrary container into a host takeover.
+# Case-insensitive: the prod host filesystem (APFS) resolves Docker.SOCK
+# and /VAR/RUN identically (NFM-4273 CR R2).
 _FORBIDDEN_BIND_RE = re.compile(
     r"(^|/)docker\.sock$|(^|/)podman\.sock$"
-    r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/))"
+    r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/))",
+    re.IGNORECASE,
 )
 
 # Opaque daemon ids (container/network hex ids AND their unambiguous
@@ -199,18 +203,43 @@ def _container_config_flags(body: dict[str, Any]) -> str | None:
         return "Privileged=true"
     if host_config.get("PidMode") == "host":
         return "PidMode=host"
+    if host_config.get("NetworkMode") == "host":
+        # Asymmetric with the per-network scope checks: "host" networking
+        # reaches every local service inside the VM (NFM-4273 CR F2).
+        return "NetworkMode=host"
     caps = host_config.get("CapAdd") or []
     if isinstance(caps, list) and {"SYS_ADMIN", "SYS_PTRACE"} & set(caps):
         return f"CapAdd={caps}"
+    device_requests = host_config.get("DeviceRequests") or []
+    if isinstance(device_requests, list) and device_requests:
+        # Requests grant host device nodes by capability — not a path the
+        # bind regex can interpret, so presence itself fails closed
+        # (NFM-4273 CR R2).
+        return "DeviceRequests grants host devices (fail-closed)"
     sources: list[str] = []
     binds = host_config.get("Binds") or []
     for bind in binds if isinstance(binds, list) else []:
         sources.append(str(bind).split(":")[0])
-    for mount in body.get("Mounts") or []:
+    # The daemon honors HostConfig.Mounts (what `docker run --mount`
+    # produces), NOT the top-level Mounts key the old dead loop read
+    # (NFM-4273 CR R2). Any absolute Source is a bind by some spelling,
+    # whatever the declared Type.
+    mounts = host_config.get("Mounts") or []
+    for mount in mounts if isinstance(mounts, list) else []:
         if isinstance(mount, dict) and mount.get("Source"):
-            sources.append(str(mount["Source"]))
+            src = str(mount["Source"])
+            if mount.get("Type") == "bind" or src.startswith("/"):
+                sources.append(src)
+    devices = host_config.get("Devices") or []
+    for device in devices if isinstance(devices, list) else []:
+        if isinstance(device, dict) and device.get("PathOnHost"):
+            sources.append(str(device["PathOnHost"]))
     for src in sources:
-        if _FORBIDDEN_BIND_RE.search(src):
+        # normpath collapses /./, //, trailing /., and ../ segments — the
+        # same string the daemon's mount resolver will end up opening.
+        if _FORBIDDEN_BIND_RE.search(src) or _FORBIDDEN_BIND_RE.search(
+            posixpath.normpath(src)
+        ):
             return f"forbidden bind source {src!r}"
     return None
 
@@ -306,16 +335,71 @@ def classify(
     path = _strip_version(raw_path)
     method = method.upper()
 
+    # R3 (fail-closed): the gate scope-checks the raw request text; the
+    # daemon percent-decodes path segments and query values server-side.
+    # A %-escape anywhere in the PATH means the gate and the daemon may
+    # be looking at different targets — never forward what cannot be
+    # interpreted identically to the protected service. (Query params are
+    # checked per-key below: read-only diagnostics like filters= use
+    # %-encoding legitimately.)
+    if "%" in path:
+        return Decision(
+            False,
+            f"percent-encoding in path {path!r} cannot be scope-checked (fail-closed)",
+            audit=True,
+        )
+
     # ---- reads -----------------------------------------------------------
     if method in ("GET", "HEAD"):
         if path.endswith("/attach/ws"):
             return Decision(False, "websocket attach is interactive, not read-only", audit=True)
+        if path == "images/get":
+            # Bulk image tar — an exfiltration channel for prod image
+            # layers; scope-check the requested names (NFM-4273 CR F1).
+            names = parse_query(query).get("names") or []
+            if not names:
+                # `docker save` always sends explicit names; a bare
+                # images/get would tar every image on the daemon.
+                return Decision(
+                    False, "images/get without explicit names denied (fail-closed)", audit=True
+                )
+            for name in names:
+                if "%" in name:
+                    return Decision(
+                        False,
+                        "percent-encoded image name cannot be scope-checked (fail-closed)",
+                        audit=True,
+                    )
+                if name.startswith(cfg.prod_image_prefixes):
+                    return Decision(
+                        False,
+                        f"export of prod image {name!r} denied (exfiltration guard)",
+                        scope="prod",
+                        audit=True,
+                        target=name,
+                    )
+            return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")
         if any(path.startswith(prefix) for prefix in _GET_ALLOW_PREFIX):
             return Decision(True, "read-only endpoint")
         match = _CONTAINER_SUB.match(path)
         if match:
+            if match.group("action") == "export":
+                # A prod container's whole filesystem as a tar — read-only
+                # in verb but exfiltration in effect; opaque ids fail
+                # closed alongside (NFM-4273 CR F1).
+                ident = match.group("id")
+                violation = TargetInfo(name=ident).prod_violation(cfg)
+                if violation or _OPAQUE_ID_RE.match(ident.lower()):
+                    return Decision(
+                        False,
+                        f"export denied ({violation or 'opaque id fail-closed'})"
+                        " (exfiltration guard)",
+                        scope="prod" if violation else "n/a",
+                        audit=True,
+                        target=ident,
+                    )
             return Decision(True, "read-only endpoint")
         return Decision(False, f"unrecognized GET endpoint {path!r} (fail-closed)", audit=True)
 
@@ -328,17 +412,29 @@ def classify(
     # ---- ro mode mutations -------------------------------------------------
     params = parse_query(query)
 
+    # R3 (fail-closed): scope-relevant query values must be readable as
+    # sent — the daemon percent-decodes them server-side, so an encoded
+    # name could scope-check as innocent here and resolve as prod there.
+    for key in ("name", "fromImage", "fromSrc", "ref", "repo", "tag", "names"):
+        for value in params.get(key, []):
+            if "%" in value:
+                return Decision(
+                    False,
+                    f"percent-encoded {key!r} value cannot be scope-checked (fail-closed)",
+                    audit=True,
+                )
+
     if method == "POST" and path == "build":
         tags = params.get("t") or params.get("tag") or []
         return Decision(
             True, "image-layer op", scope="image", audit=True, target=",".join(tags) or None
         )
 
-    if method == "POST" and path in ("images/create", "images/load", "images/prune"):
+    if method == "POST" and path in ("images/create", "images/load"):
         ref = (params.get("fromImage") or params.get("ref") or [""])[0]
         return Decision(True, "image-layer op", scope="image", audit=True, target=ref or path)
 
-    if path in ("containers/prune", "networks/prune", "volumes/prune", "build/prune"):
+    if path in ("containers/prune", "networks/prune", "volumes/prune", "build/prune", "images/prune"):
         return Decision(
             False,
             f"{path} is daemon-wide and can remove prod state (fail-closed)",
@@ -350,6 +446,16 @@ def classify(
     if image_action:
         action, name = image_action.group("action"), image_action.group("name")
         if action == "tag" and method == "POST":
+            if name.startswith(cfg.prod_image_prefixes):
+                # Re-tagging prod to an innocent name launders it past the
+                # push guard — same exfiltration guard as push (CR F1).
+                return Decision(
+                    False,
+                    f"re-tag of prod image {name!r} denied (exfiltration guard)",
+                    scope="prod",
+                    audit=True,
+                    target=name,
+                )
             return Decision(True, "image-layer op", scope="image", audit=True, target=name)
         if action == "push" and method == "POST":
             if name.startswith(cfg.prod_image_prefixes):
@@ -364,6 +470,16 @@ def classify(
 
     if method == "DELETE" and path.startswith("images/"):
         name = path[len("images/") :]
+        if name.startswith(cfg.prod_image_prefixes):
+            # Prod images are rollback generations — deleting them from a
+            # bare terminal is a prod mutation (NFM-4273 CR F3).
+            return Decision(
+                False,
+                f"delete of prod image {name!r} denied",
+                scope="prod",
+                audit=True,
+                target=name,
+            )
         return Decision(True, "image-layer op", scope="image", audit=True, target=name)
 
     # ---- container create --------------------------------------------------
@@ -539,6 +655,17 @@ def classify(
                 False,
                 f"volume rm {name!r} matches prod scope",
                 scope="prod",
+                audit=True,
+                target=name,
+            )
+        # Anonymous volume names are 64-hex — opaque, exactly like network
+        # ids; a prod volume's anonymous name cannot be text-distinguished
+        # (NFM-4273 CR F4).
+        if _OPAQUE_ID_RE.match(name.lower()):
+            return Decision(
+                False,
+                f"opaque volume id {name!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
                 audit=True,
                 target=name,
             )

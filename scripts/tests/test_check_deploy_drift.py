@@ -482,6 +482,17 @@ def test_in_sync_exits_zero_without_filing(fake_docker, env: DriftEnv):
 
 
 def test_preview_overlay_containers_are_ignored(fake_docker, env: DriftEnv):
+    # prod_containers() deliberately carries one preview-overlay container
+    # (compose project nucpot-prod-preview). Guard the fixture itself: if
+    # that container is ever dropped, this test and the no-drift test
+    # become byte-identical duplicates and the exclusion property goes
+    # untested (CR F10).
+    overlay = [
+        c
+        for c in prod_containers().values()
+        if c["Config"]["Labels"]["com.docker.compose.project"] != COMPOSE_PROJECT
+    ]
+    assert overlay, "fixture lost its preview-overlay container"
     fake_docker(prod_containers())
     result = env.run()
     assert result.returncode == 0

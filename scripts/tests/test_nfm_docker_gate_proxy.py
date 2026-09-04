@@ -458,6 +458,118 @@ def test_conflicting_content_length_headers_fail_closed(ro):
     assert not ro.daemon.seen("POST", "containers/create")
 
 
+# ---- NFM-4273 CR R1: LF-smuggled headers never forwarded --------------------------
+
+
+def test_lf_in_header_value_smuggle_denied_never_forwarded(ro):
+    """CR R1 executable bypass: ``X-A: foo\\nTransfer-Encoding: chunked`` is
+    ONE header to the gate's CRLF-split parser but TWO to the daemon — the
+    daemon would dechunk a body the gate classified under Content-Length.
+    The proxy must 403 BEFORE classification and forward nothing."""
+    raw = (
+        b"POST /v1.43/containers/create?name=harmless HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"Content-Length: 2\r\n"
+        b"X-A: value\nTransfer-Encoding: chunked\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n{}"
+    )
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert b"smuggling" in response
+    assert not ro.daemon.seen("POST", "containers/create")  # never forwarded
+    denies = ro.audit_records("deny")
+    assert denies and "smuggling" in denies[-1]["reason"]
+
+
+def test_cr_in_header_value_smuggle_denied(ro):
+    """Bare CR is the same smuggling vector (differential parsers treat
+    bare CR as a line terminator or fold it away)."""
+    raw = (
+        b"GET /v1.43/containers/json HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"X-A: value\rTransfer-Encoding: chunked\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n"
+    )
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("GET", "/containers/json")
+
+
+def test_lf_in_header_name_smuggle_denied(ro):
+    raw = (
+        b"GET /v1.43/containers/json HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"X-Foo\nBar: value\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n"
+    )
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("GET", "/containers/json")
+
+
+def test_lf_in_request_target_smuggle_denied(ro):
+    """A request-line token carrying an embedded LF re-serializes as extra
+    lines upstream — same class, refused at the same wall."""
+    raw = (
+        b"GET /v1.43/containers/json\nX-Smuggled: y HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n"
+    )
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("GET")
+
+
+def test_non_alpha_method_token_denied(ro):
+    """"P0ST" / "POST " tricks produce a method token the daemon may parse
+    differently than the gate — non-alpha methods are smuggle-shaped."""
+    raw = (
+        b"P0ST /v1.43/containers/nucpot-prod-api/stop HTTP/1.1\r\n"
+        b"Host: docker\r\n"
+        b"User-Agent: Docker-Client/test\r\n\r\n"
+    )
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("P0ST")
+
+
+# ---- NFM-4273 CR F5: audit failure fails loud, never silent -----------------------
+
+
+@pytest.fixture()
+def broken_audit(ro, tmp_path):
+    """Point the audit log at a directory: every AuditLog.write raises
+    IsADirectoryError (an OSError) — the real on-disk failure mode."""
+    blocked = tmp_path / "blocked-audit-dir"
+    blocked.mkdir()
+    ro.proxy.audit._path = str(blocked)
+    return ro
+
+
+def test_allow_with_broken_audit_aborts_before_daemon(broken_audit):
+    """F5: a mutation the audit trail failed to record must NOT be
+    forwarded — 502, daemon never sees it."""
+    response = broken_audit.request(http("POST", "/v1.43/containers/nucpot-staging-api/stop"))
+    assert response.startswith(b"HTTP/1.1 502")
+    assert not broken_audit.daemon.seen("POST", "/stop")
+
+
+def test_read_with_broken_audit_still_flows(broken_audit):
+    """Reads carry no audit record by design — a broken log must not take
+    down frictionless reads (AC-G2.2)."""
+    response = broken_audit.request(http("GET", "/v1.43/containers/json"))
+    assert response.startswith(b"HTTP/1.1 200")
+    assert broken_audit.daemon.seen("GET", "/containers/json")
+
+
+def test_deny_with_broken_audit_still_sends_403(broken_audit):
+    """F5: the 403 IS the security boundary — an audit failure must never
+    suppress it (and still never forward the mutation)."""
+    response = broken_audit.request(http("DELETE", "/v1.43/containers/nucpot-prod-api"))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not broken_audit.daemon.seen("DELETE")
+
+
 # ---- AC-G2.6: attributable deny records ----------------------------------------
 
 
