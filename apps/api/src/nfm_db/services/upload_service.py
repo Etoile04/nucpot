@@ -86,13 +86,29 @@ _UPLOAD_DIR_OVERRIDE: Path | None = None
 
 
 def _default_upload_dir() -> Path:
-    """Resolve the default upload directory: <repo-root>/apps/web/public/uploads."""
+    """Resolve the default upload directory: <repo-root>/apps/web/public/uploads.
+
+    Falls back to a container-safe path when the file sits at (or near)
+    the filesystem root — the production API image copies the package to
+    /app/src/nfm_db/..., so ``parents[5]`` exceeds the path and raises
+    IndexError (BUG-06 hotfix follow-up, NFM-4087).
+    """
     this_file = Path(__file__).resolve()  # .../apps/api/src/nfm_db/services/upload_service.py
     # Walk up to the repo root (5 levels above this file).
-    repo_root = this_file.parents[
-        5
-    ]  # [0]=services, [1]=nfm_db, [2]=src, [3]=api, [4]=apps, [5]=root
-    return repo_root / "apps" / "web" / "public" / "uploads"
+    if len(this_file.parents) > 5:
+        repo_root = this_file.parents[
+            5
+        ]  # [0]=services, [1]=nfm_db, [2]=src, [3]=api, [4]=apps, [5]=root
+        candidate = repo_root / "apps" / "web" / "public" / "uploads"
+    else:
+        # Container layout: /app/src/nfm_db/services/upload_service.py
+        # → parents[2] == /app (repo root inside the image). The
+        # prod-uploads volume is mounted at /app/uploads (shared with the
+        # web container) — write there, NOT to a stray /uploads dir.
+        repo_root = this_file.parents[len(this_file.parents) - 1]
+        candidate = repo_root / "uploads"
+    candidate.mkdir(parents=True, exist_ok=True)
+    return candidate
 
 
 def get_upload_dir() -> Path:

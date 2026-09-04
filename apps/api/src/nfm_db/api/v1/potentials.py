@@ -111,9 +111,19 @@ async def upload_potential_file(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Potential not found")
 
-    allowed = {".eam", ".alloy", ".fs", ".meam", ".repram", ".json", ".yaml", ".txt", ".dat", ".pot"}
+    # NFM-4087 (BUG-06): align with upload_service.ALLOWED_EXTENSIONS —
+    # tersoff/sw/bop/mtp etc. are legitimate potential formats that the
+    # service layer already allows but this endpoint's narrower list 400'd.
+    allowed = {
+        ".eam", ".eam.alloy", ".eam.fs", ".alloy", ".fs", ".meam",
+        ".repram", ".json", ".yaml", ".txt", ".dat", ".pot", ".setfl",
+        ".param", ".table", ".mtp", ".snap", ".zip", ".tar.gz", ".gz",
+        ".reaxff", ".tersoff", ".sw", ".bop", ".comb", ".lj", ".adp",
+        ".spt", ".pb", ".pth",
+    }
     ext = Path(file.filename).suffix.lower() if file.filename else ""
-    if ext not in allowed:
+    lower_name = (file.filename or "").lower()
+    if not any(lower_name.endswith(a) for a in allowed):
         raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
 
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +133,26 @@ async def upload_potential_file(
         raise HTTPException(status_code=400, detail="File is empty")
     dest.write_bytes(content)
 
-    return ApiResponse(success=True, data={"file_path": str(dest), "file_name": file.filename})
+    # NFM-4087 (BUG-06): persist the URL so the row's file_url stops being
+    # NULL — previously the endpoint only wrote bytes to disk and the DB
+    # never learned the file existed (详情页仍显示"缺少文件").
+    import hashlib
+
+    from sqlalchemy import update as sa_update
+
+    web_path = f"/uploads/{potential_id}{ext}"
+    await db.execute(
+        sa_update(Potential)
+        .where(Potential.id == potential_id)
+        .values(
+            file_url=web_path,
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+        )
+    )
+    await db.commit()
+
+    return ApiResponse(success=True, data={"file_path": web_path, "file_name": file.filename})
 
 
 @router.patch(

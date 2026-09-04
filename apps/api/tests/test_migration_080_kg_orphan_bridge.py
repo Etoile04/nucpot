@@ -91,15 +91,17 @@ class TestMigration080Chain:
         )
 
     def test_080_is_single_head(self, script_directory: ScriptDirectory) -> None:
-        """Exactly one head exists — 081 (NFM-4180) chained after 080 is it.
+        """Exactly one head exists — 082 (BUG-08) chained after 081 is it.
 
         080 was the head until 081_create_feature_flags_table (NFM-4180,
         backend feature-flag service for the DataLossNotice rollout)
-        extended the chain. This keeps asserting "exactly one head" so a
-        future bad down_revision still fails loudly here.
+        extended the chain; 082_blog_role_domain_expert (BUG-08,
+        blog_role_enum + CHECK for the domain_expert role) extends it
+        again. This keeps asserting "exactly one head" so a future bad
+        down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "081_create_feature_flags_table"
+        current_head = "082_blog_role_domain_expert"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
