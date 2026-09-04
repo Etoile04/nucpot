@@ -67,17 +67,17 @@ approvals:
     - "*docker-compose*nucpot-prod* down"
     # --- bare docker container verbs on prod containers ----------------
     # (trailing space after the verb keeps `docker rmi` from matching `docker rm `)
-    - "*docker stop *nucpot-prod*"
-    - "*docker rm *nucpot-prod*"
-    - "*docker restart *nucpot-prod*"
-    - "*docker kill *nucpot-prod*"
-    - "*docker exec *nucpot-prod*"
+    - '*doc*ker[ .\]*s*t*o*p *nucpot-prod*'
+    - '*doc*ker[ .\]*r*m *nucpot-prod*'
+    - '*doc*ker[ .\]*r*e*s*t*a*r*t *nucpot-prod*'
+    - '*doc*ker[ .\]*k*i*l*l *nucpot-prod*'
+    - '*doc*ker[ .\]*exec *nucpot-prod*'
     # `docker container <verb>` management spelling of the same mutations
-    - "*docker container stop *nucpot-prod*"
-    - "*docker container rm *nucpot-prod*"
-    - "*docker container restart *nucpot-prod*"
-    - "*docker container kill *nucpot-prod*"
-    - "*docker container exec *nucpot-prod*"
+    - '*doc*ker[ .\]*container[ .\]*s*t*o*p *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*r*m *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*r*e*s*t*a*r*t *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*k*i*l*l *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*exec *nucpot-prod*'
     # --- terminal-vector writes to prod compose/env files --------------
     - "*>*docker-compose.prod.yml*"
     - "*>*.env.prod*"
@@ -106,7 +106,7 @@ approvals:
     # segments absorbs the optional backslash before each dot (`[.\]`
     # eats the bare dot OR the backslash, `*` eats the escaped dot's
     # mate). In the unanchored compose entries `p*r*o*d` and `u*p`/
-    # `d*own` additionally absorb a backslash before any letter of the
+    # `d*o*w*n` additionally absorb a backslash before any letter of the
     # marker/verb (`pro\d`, `u\p`); the end-anchored cp/mv/install
     # entries keep `prod` literal so a prod file as SOURCE (`cp
     # docker-compose.prod.yml /tmp/backup.yml`) can never match.
@@ -123,12 +123,12 @@ approvals:
     - '*doc*ker[ .\-]*com*pose* u*p *.env[.\]*p*r*o*d*'
     - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* u*p*'
     - '*doc*ker[ .\-]*com*pose* u*p *nucpot[.\-]*p*r*o*d*'
-    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* d*own*'
-    - '*doc*ker[ .\-]*com*pose* d*own *docker-compose[.\]*p*r*o*d[.\]*yml*'
-    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* d*own*'
-    - '*doc*ker[ .\-]*com*pose* d*own *.env[.\]*p*r*o*d*'
-    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* d*own*'
-    - '*doc*ker[ .\-]*com*pose* d*own *nucpot[.\-]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *docker-compose[.\]*p*r*o*d[.\]*yml*'
+    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *.env[.\]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *nucpot[.\-]*p*r*o*d*'
     # escaped write vectors — the shell unescapes every target spelling
     # below, so each writes the real prod file (`> docker-compose\.prod\.yml`,
     # `echo 'X=1' | tee docker/.env\.prod`, `cp /tmp/f docker-compose\.prod\.yml`).
@@ -175,9 +175,9 @@ approvals:
     - "*doc*ker[ .\\-]*com*pose*\\\n*up *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
     - "*doc*ker[ .\\-]*com*pose*\\\n*up *.env[.\\]*p*r*o*d*"
     - "*doc*ker[ .\\-]*com*pose*\\\n*up *nucpot[.\\-]*p*r*o*d*"
-    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*down*"
-    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*down*"
-    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*down*"
-    - "*doc*ker[ .\\-]*com*pose*\\\n*down *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
-    - "*doc*ker[ .\\-]*com*pose*\\\n*down *.env[.\\]*p*r*o*d*"
-    - "*doc*ker[ .\\-]*com*pose*\\\n*down *nucpot[.\\-]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *nucpot[.\\-]*p*r*o*d*"

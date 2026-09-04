@@ -651,6 +651,14 @@ def test_belt_blocks_incident_command():
     "doc\\\nker compose --env-file docker/.env.prod up -d",
     "docker com\\\npose -f docker-compose.prod.yml up -d",
     "doc\\\nker compose -f docker-compose.prod.yml \\\nup -d",
+    # A continuation INSIDE the down/up verb or around the bare container
+    # verbs fuses back into the mutation in bash, so the belt floor must
+    # absorb intra-verb splits the way the u*p idiom already does.
+    "docker compose --env-file docker/.env.prod do\\\nwn",
+    "docker compose -f docker-compose.prod.yml dow\\\nn",
+    "docker \\\nstop nucpot-prod-api",
+    "docker st\\\nop nucpot-prod-api",
+    "docker rest\\\nart nucpot-prod-api",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -683,6 +691,9 @@ def test_belt_blocks_high_risk_variants(command):
     "docker compose -f docker-compose.staging.yml --env-file docker/.env."
     "staging \\\nup -d --build api web",
     "doc\\\nker compose -f docker-compose.prod.yml \\\nconfig",
+    "docker \\\nlogs nucpot-prod-api",
+    "docker \\\nstart nucpot-prod-api-1",
+    "docker container \\\ninspect nucpot-prod-api",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
     hits = [pat for pat in _belt_patterns()
