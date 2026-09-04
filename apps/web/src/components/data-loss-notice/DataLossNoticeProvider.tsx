@@ -23,10 +23,7 @@ import {
   type ReactNode,
 } from "react"
 
-import {
-  resolveFeatureFlag,
-  setRuntimeOverride,
-} from "./feature-flag"
+import { resolveFeatureFlag, setRuntimeOverride } from "./feature-flag"
 import type { DataLossNoticeContextValue } from "./types"
 
 const STORAGE_PREFIX = "nfmd.dataloss.dismissed."
@@ -73,10 +70,7 @@ function safeReadStorage(): Record<string, DismissedRecord> {
 function safeWriteRecord(key: string, record: DismissedRecord): void {
   if (typeof window === "undefined") return
   try {
-    window.localStorage.setItem(
-      `${STORAGE_PREFIX}${key}`,
-      JSON.stringify(record),
-    )
+    window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(record))
   } catch {
     // Quota or disabled — best-effort, never throw.
   }
@@ -114,9 +108,9 @@ export function DataLossNoticeProvider({
   forceEnabled = null,
   children,
 }: DataLossNoticeProviderProps): JSX.Element {
-  // Sync the runtime override as a side-effect so consumers of
-  // `resolveFeatureFlag()` (the component itself) see the provider's
-  // value without prop-drilling.
+  // Sync the runtime override as a side-effect so imperative readers of
+  // `resolveFeatureFlag()` (e.g. the component's no-provider fallback,
+  // NFM-4253) see the provider's value without prop-drilling.
   useEffect((): (() => void) => {
     setRuntimeOverride(forceEnabled)
     return (): void => {
@@ -181,9 +175,5 @@ export function DataLossNoticeProvider({
     [snapshot.enabled, isDismissed, dismiss, clearAllDismissed],
   )
 
-  return (
-    <DataLossNoticeContext.Provider value={value}>
-      {children}
-    </DataLossNoticeContext.Provider>
-  )
+  return <DataLossNoticeContext.Provider value={value}>{children}</DataLossNoticeContext.Provider>
 }

@@ -1,0 +1,166 @@
+{
+  "run_tag": "v3.1-groupedcv-NFM-3989",
+  "n_samples": 2909,
+  "n_features": 12,
+  "n_groups": 68,
+  "n_splits": 5,
+  "random_state": 42,
+  "feature_names": [
+    "mo_equivalent",
+    "allen_chi_diff",
+    "config_entropy",
+    "bv_ratio",
+    "u_density",
+    "mixing_enthalpy",
+    "lattice_distortion",
+    "avg_allen_chi",
+    "avg_atomic_volume",
+    "avg_d_electron",
+    "avg_work_function",
+    "avg_bulk_modulus"
+  ],
+  "per_fold": [
+    {
+      "fold_index": 0,
+      "n_train": 2328,
+      "n_test": 581,
+      "n_test_groups": 13,
+      "r2": 0.6425,
+      "rmse": 0.293645,
+      "mae": 0.203852
+    },
+    {
+      "fold_index": 1,
+      "n_train": 2326,
+      "n_test": 583,
+      "n_test_groups": 14,
+      "r2": -0.5541,
+      "rmse": 0.264908,
+      "mae": 0.158842
+    },
+    {
+      "fold_index": 2,
+      "n_train": 2328,
+      "n_test": 581,
+      "n_test_groups": 13,
+      "r2": 0.6354,
+      "rmse": 0.259205,
+      "mae": 0.147381
+    },
+    {
+      "fold_index": 3,
+      "n_train": 2327,
+      "n_test": 582,
+      "n_test_groups": 14,
+      "r2": -0.1225,
+      "rmse": 0.179144,
+      "mae": 0.114625
+    },
+    {
+      "fold_index": 4,
+      "n_train": 2327,
+      "n_test": 582,
+      "n_test_groups": 14,
+      "r2": 0.6977,
+      "rmse": 0.584394,
+      "mae": 0.452475
+    }
+  ],
+  "r2_mean": 0.2598,
+  "r2_std": 0.5075,
+  "rmse_mean": 0.316259,
+  "mae_mean": 0.215435,
+  "decision_bucket": "no_ship",
+  "decision_message": "BUCKET no_ship (R\u00b2 < 0.60): do NOT ship. Open follow-up issue against NFM-3955.",
+  "group_heterogeneity": {
+    "n_unique_groups": 68,
+    "min_group_size": 2,
+    "max_group_size": 237,
+    "median_group_size": 17.5,
+    "groups_with_fewer_than_n_split_members": 6
+  },
+  "delta_grouped_vs_random_kfold": -0.6883,
+  "reference_random_kfold_cv": {
+    "cv_strategy": "random_kfold",
+    "n_splits": 5,
+    "random_state": 42,
+    "r2_mean": 0.9481,
+    "r2_std": 0.0157,
+    "per_fold": [
+      {
+        "fold_index": 0,
+        "n_train": 2327,
+        "n_test": 582,
+        "n_test_groups": -1,
+        "r2": 0.9618,
+        "rmse": 0.12728,
+        "mae": 0.061042
+      },
+      {
+        "fold_index": 1,
+        "n_train": 2327,
+        "n_test": 582,
+        "n_test_groups": -1,
+        "r2": 0.9492,
+        "rmse": 0.152938,
+        "mae": 0.073644
+      },
+      {
+        "fold_index": 2,
+        "n_train": 2327,
+        "n_test": 582,
+        "n_test_groups": -1,
+        "r2": 0.9634,
+        "rmse": 0.114323,
+        "mae": 0.058705
+      },
+      {
+        "fold_index": 3,
+        "n_train": 2327,
+        "n_test": 582,
+        "n_test_groups": -1,
+        "r2": 0.9197,
+        "rmse": 0.171124,
+        "mae": 0.068787
+      },
+      {
+        "fold_index": 4,
+        "n_train": 2328,
+        "n_test": 581,
+        "n_test_groups": -1,
+        "r2": 0.9462,
+        "rmse": 0.129751,
+        "mae": 0.061734
+      }
+    ],
+    "single_variable_delta_note": "Same dataset, same XGB_PARAMS, same seed; only the splitter and (vs. v3.0) feature set differ. \u0394 vs grouped figure is attributable to feature-set change alone, not data drift."
+  },
+  "v30_grouped_cv_context": {
+    "v30_groupedcv_r2_mean": 0.3111,
+    "v30_groupedcv_r2_std": 0.4777,
+    "v30_random_kfold_r2_mean": 0.9678,
+    "v30_random_kfold_r2_std": 0.0102,
+    "interpretation": "v3.1's random-KFold figure must be in the same regime as v3.0's (\u22650.93); the grouped figure is the confirmatory headline."
+  },
+  "protocol_locked": {
+    "splitter": "GroupKFold",
+    "n_splits_declared": 5,
+    "n_splits_effective": 5,
+    "grouping_key": "element_system (sorted non-U elements)",
+    "group_label_source": "group_kfold_cv.build_group_labels_from_json (per PREREG \u00a75)",
+    "feature_set": "energy_features_v31 (12D aggregates-only, locked)",
+    "feature_names_source": "nfm_db.ml.energy_features_v31.ENERGY_V31_FEATURE_NAMES",
+    "xgb_params_locked_to": "XGB_PARAMS in train_energy_v31.py:160-172 (verbatim from train_energy_v30.py:149-161)",
+    "seed": 42,
+    "single_variable_delta": "feature set only (v3.0 20D \u2192 v3.1 12D aggregates-only); splitter is the same locked protocol.",
+    "preregistration": "NFM-3958 PREREG \u00a75-\u00a76",
+    "rd2_label": "CONFIRMATORY"
+  },
+  "ac_compliance": {
+    "AC-B1": "PASS \u2014 sidecar JSON written at /Users/lwj04/.paperclip/instances/default/workspaces/98fc3168-be45-4673-808e-22238b366352/nucpot/apps/api/models/energy_predictor_v3.1_groupedcv_metrics.json with locked schema.",
+    "AC-B2": "PASS \u2014 grouped R\u00b2 mean + std + per-fold values recorded (see per_fold and r2_mean/r2_std).",
+    "AC-B3": "PASS \u2014 reference random-CV figures in reference_random_kfold_cv.",
+    "AC-B4": "PASS \u2014 n_groups=68 recorded (expected 68; matches.)",
+    "AC-B5": "PASS \u2014 compute_energy_features_v31() from NFM-3988 used verbatim (no inlined feature logic)."
+  }
+}

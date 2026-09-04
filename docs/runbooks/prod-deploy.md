@@ -48,6 +48,11 @@ docker compose -f docker-compose.prod.yml build <svc> && \
   docker compose -f docker-compose.prod.yml up -d <svc>
 ```
 
+**Run this from an operator shell only.** Hermes terminal sessions
+are denied prod-compose mutations by the prod-guard plugin
+(`tools/hermes-prod-guard/`, NFM-4269) — the NFM-4264 incident was
+exactly this command shape run from a Hermes desktop session.
+
 ### 2.1. Buildable services
 
 `docker-compose.prod.yml` defines six services. `db` and `redis`
@@ -85,6 +90,25 @@ PROD_IMAGE_TAG="$(git rev-parse origin/main)" docker compose \
 
 Always read `origin/main`, not `HEAD` — a local branch ahead of
 `origin/main` is what `pre-deploy-assert` is designed to catch.
+
+> **⚠️ WARNING — never pin a SHA in `docker/.env.prod` (NFM-4264/NFM-4265,
+> 2026-09-04).** The env-file's `PROD_IMAGE_TAG` is silently inherited by
+> any host-side `docker compose -f docker-compose.prod.yml --env-file
+> docker/.env.prod up -d --build` that does not pass the tag inline. On
+> 2026-09-04 a leftover `PROD_IMAGE_TAG=dce00e626…` (Sep-2 SHA) caused
+> exactly that: prod was re-tagged to the Sep-2 SHA while building
+> current-tree content — a nominal 34h/79-commit rollback with zero audit
+> trail. The env-file must hold `latest` (or omit the line — compose falls
+> back to `latest`). SHA tags are always passed **inline**
+> (`PROD_IMAGE_TAG=<sha> docker compose …`), which overrides the env-file.
+> `scripts/check_prod_image_tag.py` (wired into `deploy_prod.sh` after the
+> `origin/main` reset) aborts any deploy where the env-file pins a 40-hex
+> SHA or the effective tag is a stale SHA; run it manually before ad-hoc
+> host-side compose invocations:
+>
+> ```bash
+> python3 scripts/check_prod_image_tag.py --env-file docker/.env.prod
+> ```
 
 ### 2.3. Preserve compose labels for the cost dashboard
 

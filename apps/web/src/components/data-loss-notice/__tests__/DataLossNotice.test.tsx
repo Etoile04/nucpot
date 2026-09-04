@@ -26,22 +26,32 @@
  *       placement prop (top/right/bottom) for tests / e2e selectors.
  */
 
-import { act, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useState } from "react"
 import type { JSX } from "react"
 
-import {
-  DataLossNotice,
-  DataLossNoticeProvider,
-} from "../index"
+import { DataLossNotice, DataLossNoticeGate, DataLossNoticeProvider } from "../index"
 import { computePopoverPlacement } from "../DataLossNotice"
-import { setRuntimeOverride } from "../feature-flag"
+import { FEATURE_FLAG_NAME, setRuntimeOverride } from "../feature-flag"
 import {
   subscribeDataLossEvents,
   type DataLossEventName,
   type DataLossEventProps,
 } from "../analytics"
+
+// NFM-4253 — the gate calls `refreshFeatureFlag()` → `evaluateFlag()`.
+// Mock the flag-service so the gate's async fetch resolves under our
+// control instead of touching the real backend.
+vi.mock("@/lib/flag-service", () => ({
+  evaluateFlag: vi.fn(),
+  getCachedEvaluation: vi.fn().mockReturnValue(undefined),
+}))
+
+import { evaluateFlag, getCachedEvaluation } from "@/lib/flag-service"
+
+const mockedEvaluate = vi.mocked(evaluateFlag)
+const mockedGetCached = vi.mocked(getCachedEvaluation)
 
 interface EventCapture {
   name: DataLossEventName
@@ -64,9 +74,7 @@ function ProviderWrapper({
   children: React.ReactNode
 }): JSX.Element {
   return (
-    <DataLossNoticeProvider forceEnabled={forceEnabled ?? null}>
-      {children}
-    </DataLossNoticeProvider>
+    <DataLossNoticeProvider forceEnabled={forceEnabled ?? null}>{children}</DataLossNoticeProvider>
   )
 }
 
@@ -74,6 +82,8 @@ describe("DataLossNotice", (): void => {
   beforeEach((): void => {
     window.localStorage.clear()
     setRuntimeOverride(null)
+    mockedEvaluate.mockReset()
+    mockedGetCached.mockReturnValue(undefined)
   })
 
   afterEach((): void => {
@@ -84,11 +94,7 @@ describe("DataLossNotice", (): void => {
     setRuntimeOverride(false)
     const { container } = render(
       <ProviderWrapper forceEnabled={false}>
-        <DataLossNotice
-          variant="inline"
-          measurementId="m-1"
-          attribution={LOST_ATTR}
-        />
+        <DataLossNotice variant="inline" measurementId="m-1" attribution={LOST_ATTR} />
       </ProviderWrapper>,
     )
     expect(container.firstChild).toBeNull()
@@ -98,11 +104,7 @@ describe("DataLossNotice", (): void => {
     setRuntimeOverride(true)
     const { container } = render(
       <ProviderWrapper forceEnabled={true}>
-        <DataLossNotice
-          variant="inline"
-          measurementId="m-1"
-          attribution={INTACT_ATTR}
-        />
+        <DataLossNotice variant="inline" measurementId="m-1" attribution={INTACT_ATTR} />
       </ProviderWrapper>,
     )
     expect(container.firstChild).toBeNull()
@@ -131,12 +133,8 @@ describe("DataLossNotice", (): void => {
     // icon's SVG <title> — "Source attribution disclosure" — which the
     // label-scope assertion below deliberately excludes.)
     const label = document.querySelector(".data-loss-notice__label")
-    expect(label?.textContent).toBe(
-      "Source attribution lost · 2026-09-02",
-    )
-    expect(trigger.getAttribute("aria-label")).toBe(
-      "Source attribution lost · 2026-09-02",
-    )
+    expect(label?.textContent).toBe("Source attribution lost · 2026-09-02")
+    expect(trigger.getAttribute("aria-label")).toBe("Source attribution lost · 2026-09-02")
   })
 
   // NFM-4262 D1 — structured truncation. The label renders two spans
@@ -155,18 +153,14 @@ describe("DataLossNotice", (): void => {
         />
       </ProviderWrapper>,
     )
-    const headline = document.querySelector(
-      ".data-loss-notice__label-headline",
-    )
+    const headline = document.querySelector(".data-loss-notice__label-headline")
     const date = document.querySelector(".data-loss-notice__label-date")
     expect(headline).not.toBeNull()
     expect(date).not.toBeNull()
     expect(headline?.textContent).toBe("Source attribution lost")
     expect(date?.textContent).toBe(" · 2026-09-02")
     // testids unchanged (§5.2 contract matrix).
-    expect(
-      screen.getByTestId("data-loss-notice-trigger"),
-    ).toBeInTheDocument()
+    expect(screen.getByTestId("data-loss-notice-trigger")).toBeInTheDocument()
     expect(screen.getByTestId("data-loss-notice")).toBeInTheDocument()
   })
 
@@ -192,19 +186,13 @@ describe("DataLossNotice", (): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
     expect(screen.getByTestId("data-loss-notice-popover")).toBeInTheDocument()
-    expect(
-      captured.some((e): boolean => e.name === "dataloss_notice_shown"),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_shown")).toBe(true)
 
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-dismiss"))
     })
 
-    expect(
-      captured.some(
-        (e): boolean => e.name === "dataloss_notice_dismissed",
-      ),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_dismissed")).toBe(true)
 
     unsubscribe()
   })
@@ -234,12 +222,9 @@ describe("DataLossNotice", (): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-learn-more"))
     })
 
-    expect(
-      captured.some(
-        (e): boolean =>
-          e.name === "dataloss_notice_learn_more_clicked",
-      ),
-    ).toBe(true)
+    expect(captured.some((e): boolean => e.name === "dataloss_notice_learn_more_clicked")).toBe(
+      true,
+    )
 
     unsubscribe()
   })
@@ -256,9 +241,7 @@ describe("DataLossNotice", (): void => {
         />
       </ProviderWrapper>,
     )
-    expect(
-      screen.getByTestId("data-loss-notice-trigger").textContent,
-    ).toContain("来源信息缺失")
+    expect(screen.getByTestId("data-loss-notice-trigger").textContent).toContain("来源信息缺失")
   })
 
   it("substitutes {siblingPlaceholderCount} from the attribution payload", (): void => {
@@ -279,9 +262,7 @@ describe("DataLossNotice", (): void => {
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
-    expect(
-      screen.getByTestId("data-loss-notice-popover").textContent,
-    ).toContain("7")
+    expect(screen.getByTestId("data-loss-notice-popover").textContent).toContain("7")
   })
 
   it("shows the previously-dismissed affordance after dismissal", (): void => {
@@ -296,10 +277,7 @@ describe("DataLossNotice", (): void => {
             attribution={LOST_ATTR}
             key={String(version)}
           />
-          <button
-            data-testid="rerender"
-            onClick={(): void => setVersion((v) => v + 1)}
-          >
+          <button data-testid="rerender" onClick={(): void => setVersion((v) => v + 1)}>
             rerender
           </button>
         </ProviderWrapper>
@@ -318,9 +296,9 @@ describe("DataLossNotice", (): void => {
     act((): void => {
       fireEvent.click(screen.getByTestId("data-loss-notice-trigger"))
     })
-    expect(
-      screen.getByTestId("data-loss-notice-popover").textContent,
-    ).toContain("previously dismissed")
+    expect(screen.getByTestId("data-loss-notice-popover").textContent).toContain(
+      "previously dismissed",
+    )
   })
 
   // NFM-4238 — P1 fix (CPO-authorized): the popover used to mount at
@@ -459,9 +437,7 @@ describe("DataLossNotice", (): void => {
       </ProviderWrapper>,
     )
 
-    const trigger = screen.getByTestId(
-      "data-loss-notice-trigger",
-    ) as HTMLElement
+    const trigger = screen.getByTestId("data-loss-notice-trigger") as HTMLElement
     act((): void => {
       fireEvent.click(trigger)
     })
@@ -492,6 +468,56 @@ describe("DataLossNotice", (): void => {
     })
     const popover = screen.getByTestId("data-loss-notice-popover")
     expect(popover.getAttribute("data-placement")).toBe("bottom")
+  })
+
+  // NFM-4253 — first-paint render race. The component used to read
+  // `resolveFeatureFlag()` imperatively; the provider's `setRuntimeOverride`
+  // side-effect (which feeds the imperative path) runs AFTER the render
+  // commits, so the first paint saw `{ enabled: false, source: "default-off" }`
+  // and the chip stayed dormant until any benign re-render (page-size,
+  // sort, filter). The fix subscribes the component to the provider's
+  // context so the gate's resolved value re-renders the chip
+  // automatically — no user interaction required.
+  it("renders the chip after the gate's flag-fetch resolves without user re-render (NFM-4253 first-paint race)", async (): Promise<void> => {
+    mockedEvaluate.mockResolvedValue({
+      key: FEATURE_FLAG_NAME,
+      enabled: true,
+      rollout_percentage: 100,
+      value: true,
+      bucket: 7,
+    })
+
+    function Tree(): JSX.Element {
+      return (
+        <DataLossNoticeGate>
+          <DataLossNotice
+            variant="inline"
+            measurementId="m-1"
+            attribution={LOST_ATTR}
+            surface="property-detail"
+          />
+        </DataLossNoticeGate>
+      )
+    }
+
+    render(<Tree />)
+
+    // Before the gate's async flag-fetch resolves the gate holds
+    // `flagEnabled=false`; the chip MUST stay dormant. (A naive fix
+    // that always renders would pass this assertion trivially and fail
+    // the next one.)
+    expect(screen.queryByTestId("data-loss-notice-trigger")).toBeNull()
+
+    // After the fetch resolves, the gate commits the resolved value to
+    // the provider, the provider re-renders with `forceEnabled=true`,
+    // the context value updates, and the component MUST re-render to
+    // show the chip — without any user-triggered re-render.
+    await waitFor(
+      (): void => {
+        expect(screen.getByTestId("data-loss-notice-trigger")).toBeInTheDocument()
+      },
+      { timeout: 5000 },
+    )
   })
 })
 
@@ -528,12 +554,7 @@ describe("computePopoverPlacement (NFM-4262 D3 center-on-clamp)", (): void => {
   })
 
   it("centers when the trigger overflows the LEFT edge", (): void => {
-    const { left, top } = computePopoverPlacement(
-      makeRect(0),
-      "top",
-      POPOVER_W,
-      POPOVER_H,
-    )
+    const { left, top } = computePopoverPlacement(makeRect(0), "top", POPOVER_W, POPOVER_H)
     // Clamp engages (0 < MARGIN) → centered, not pushed to `margin`.
     expect(left).toBe(Math.round((VIEWPORT_W - POPOVER_W) / 2))
     // Vertical math unchanged: above the trigger with margin gap.
@@ -544,12 +565,7 @@ describe("computePopoverPlacement (NFM-4262 D3 center-on-clamp)", (): void => {
   })
 
   it("centers when the trigger overflows the RIGHT edge", (): void => {
-    const { left } = computePopoverPlacement(
-      makeRect(VIEWPORT_W - 40),
-      "top",
-      POPOVER_W,
-      POPOVER_H,
-    )
+    const { left } = computePopoverPlacement(makeRect(VIEWPORT_W - 40), "top", POPOVER_W, POPOVER_H)
     // maxLeft = 400 − 300 − 12 = 88; trigger.left = 360 > 88 → clamp
     // engages → centered instead of `maxLeft`.
     expect(left).toBe(Math.round((VIEWPORT_W - POPOVER_W) / 2))
@@ -557,12 +573,7 @@ describe("computePopoverPlacement (NFM-4262 D3 center-on-clamp)", (): void => {
   })
 
   it("keeps the trigger-aligned left when the popover fits (no clamp)", (): void => {
-    const { left } = computePopoverPlacement(
-      makeRect(50),
-      "top",
-      POPOVER_W,
-      POPOVER_H,
-    )
+    const { left } = computePopoverPlacement(makeRect(50), "top", POPOVER_W, POPOVER_H)
     // 50 ≥ MARGIN and 50 ≤ maxLeft(88) → no clamp, left unchanged.
     expect(left).toBe(50)
   })
