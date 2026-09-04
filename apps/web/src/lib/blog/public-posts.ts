@@ -41,17 +41,32 @@ function toPost(p: PublicPostDto): BlogPost {
   return { slug: p.slug, frontmatter: toMeta(p), content: p.content ?? '' }
 }
 
+/**
+ * During `next build` no API is reachable, and a relative-URL fetch against
+ * nothing can stall past the 60s per-page build timeout (every /blog page
+ * then fails after 3 retries). Serve the FS seeds at build time; ISR picks
+ * up live DB content on the first runtime revalidation.
+ */
+function isProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === 'phase-production-build'
+}
+
+/** Upper bound for one public-blog API call (ISR revalidation included). */
+const FETCH_TIMEOUT_MS = 10_000
+
 /** Fetch published posts from the public API; fall back to FS seed posts. */
 export async function getPublishedPosts(): Promise<readonly BlogPostMeta[]> {
-  try {
-    const res = await request<{ success: boolean; data: PublicPostDto[] }>(
-      '/api/v1/blog/public',
-      { next: { revalidate: 60 } } as never,
-    )
-    const items = (res.data ?? []).map(toMeta)
-    if (items.length > 0) return items
-  } catch {
-    // API unavailable → fall through to the FS seed posts below.
+  if (!isProductionBuild()) {
+    try {
+      const res = await request<{ success: boolean; data: PublicPostDto[] }>(
+        '/api/v1/blog/public',
+        { next: { revalidate: 60 }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) } as never,
+      )
+      const items = (res.data ?? []).map(toMeta)
+      if (items.length > 0) return items
+    } catch {
+      // API unavailable → fall through to the FS seed posts below.
+    }
   }
   // Legacy fallback: build-time markdown seeds (no dynamic import cycle).
   const { getAllPosts } = await import('./posts')
@@ -62,14 +77,16 @@ export async function getPublishedPosts(): Promise<readonly BlogPostMeta[]> {
 export async function getPublishedPost(
   slug: string,
 ): Promise<BlogPost | null> {
-  try {
-    const res = await request<{ success: boolean; data: PublicPostDto }>(
-      `/api/v1/blog/public/${encodeURIComponent(slug)}`,
-      { next: { revalidate: 60 } } as never,
-    )
-    if (res.data?.slug) return toPost(res.data)
-  } catch {
-    // fall through to legacy seeds
+  if (!isProductionBuild()) {
+    try {
+      const res = await request<{ success: boolean; data: PublicPostDto }>(
+        `/api/v1/blog/public/${encodeURIComponent(slug)}`,
+        { next: { revalidate: 60 }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) } as never,
+      )
+      if (res.data?.slug) return toPost(res.data)
+    } catch {
+      // fall through to legacy seeds
+    }
   }
   const { getPostBySlug } = await import('./posts')
   const legacy = getPostBySlug(slug)
