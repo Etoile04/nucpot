@@ -27,6 +27,16 @@
  * excluded from the CI live-E2E job
  * (`NFMD_SPEC_PATTERN`) because prod has no lost rows and the flag is
  * off there until the NFM-4177 rollout.
+ *
+ * NFM-4263 — local-run note: under `fullyParallel` against a single
+ * `next dev` instance, saturated workers can starve the flag-gated
+ * chip mount past the test wall clock (the failing test varies run to
+ * run; it is always "trigger count 0", never a layout assertion). That
+ * is dev-server contention, not a product race — serial runs are 100%
+ * green. Run this spec as:
+ *   PORT=3263 pnpm exec playwright test e2e/data-loss-notice.spec.ts \
+ *     --project=chromium --workers=1
+ * against a pre-warmed dev server (curl the route once first).
  */
 
 import { expect, test } from "@playwright/test"
@@ -39,6 +49,10 @@ import { MOCK_LOST_MEASUREMENT_ID } from "./fixtures/data-loss-notice-mock-data"
 const PROPERTY_DETAIL_URL = "/materials/FeCrAl/properties"
 
 test.describe("DataLossNotice backstop (spec §7)", (): void => {
+  // Every test here waits on the flag-gated chip mount; see the
+  // NFM-4263 local-run note in the file header for why the budget is
+  // tripled rather than the default 30s.
+  test.slow()
   test.beforeEach(async ({ page }): Promise<void> => {
     await setupDataLossMocks(page)
   })
@@ -158,14 +172,32 @@ test.describe("DataLossNotice backstop (spec §7)", (): void => {
 //   • 320 floor: popover never wider than 100vw − 24px; no page-level
 //     horizontal scrollbar.
 test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
+  // Scope-level: every test asserts on the flag-gated chip, so every
+  // test inherits the contention headroom (see file header note).
+  test.slow()
   test.beforeEach(async ({ page }): Promise<void> => {
     await setupDataLossMocks(page)
   })
 
   async function waitForCohort(page: import("@playwright/test").Page): Promise<void> {
+    await expect(page.locator('tr[data-attribution-status="lost"]')).toHaveCount(
+      1,
+      { timeout: 30_000 },
+    )
+  }
+
+  // The chip mounts only after the (mocked) flag evaluation resolves and
+  // re-renders the provider tree. `test.slow()` above only raises the
+  // test budget — each expect() still defaults to 5s, which a contended
+  // dev server can outlast, so every chip await goes through here with
+  // an explicit timeout instead.
+  async function waitForTrigger(
+    page: import("@playwright/test").Page,
+    count = 1,
+  ): Promise<void> {
     await expect(
-      page.locator('tr[data-attribution-status="lost"]'),
-    ).toHaveCount(1)
+      page.locator('[data-testid="data-loss-notice-trigger"]'),
+    ).toHaveCount(count, { timeout: 30_000 })
   }
 
   test("1440: one trigger per cohort row (column mount) and 来源 header present", async ({
@@ -175,9 +207,7 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await page.goto(PROPERTY_DETAIL_URL)
     await waitForCohort(page)
     // Single-mount invariant at ≥768: the column cell owns the chip.
-    await expect(
-      page.locator('[data-testid="data-loss-notice-trigger"]'),
-    ).toHaveCount(1)
+    await waitForTrigger(page)
     // `getByRole("columnheader")` avoids antd's hidden measure cell
     // (`tbody th.ant-table-measure-cell`), which mirrors the column
     // title text and would break strict-mode locators.
@@ -194,15 +224,15 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await waitForCohort(page)
     // Single-mount invariant at <768: antd unmounted the 来源 column,
     // the stacked SourceMetaLine owns the (only) chip.
-    await expect(
-      page.locator('[data-testid="data-loss-notice-trigger"]'),
-    ).toHaveCount(1)
+    await waitForTrigger(page)
     await expect(
       page.locator('[data-testid="source-meta-line"]'),
     ).toHaveCount(5)
     await expect(
-      page.locator('[data-testid="source-meta-line"] [data-testid="data-loss-notice-trigger"]'),
-    ).toHaveCount(1)
+      page.locator(
+        '[data-testid="source-meta-line"] [data-testid="data-loss-notice-trigger"]',
+      ),
+    ).toHaveCount(1, { timeout: 30_000 })
 
     // Pixel assertion (not eyeball): neither the trigger nor the
     // stacked line may overflow its own box.
@@ -242,7 +272,11 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(PROPERTY_DETAIL_URL)
     await waitForCohort(page)
-    await page.locator('[data-testid="data-loss-notice-trigger"]').first().click()
+    const trigger = page
+      .locator('[data-testid="data-loss-notice-trigger"]')
+      .first()
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await trigger.click()
     const popover = page.locator('[data-testid="data-loss-notice-popover"]')
     await expect(popover).toBeVisible()
     const gutters = await page.evaluate((): {
@@ -270,9 +304,7 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await expect(
       page.getByRole("columnheader", { name: "来源" }),
     ).toHaveCount(0)
-    await expect(
-      page.locator('[data-testid="data-loss-notice-trigger"]'),
-    ).toHaveCount(1)
+    await waitForTrigger(page)
 
     // Cross the boundary in-place: antd's responsive listener remounts
     // the column (and the stacked chip unmounts via useIsBelowMd). The
@@ -283,9 +315,7 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await expect(
       page.getByRole("columnheader", { name: "来源" }),
     ).toHaveCount(1)
-    await expect(
-      page.locator('[data-testid="data-loss-notice-trigger"]'),
-    ).toHaveCount(1)
+    await waitForTrigger(page)
   })
 
   test("320 floor: popover ≤ 100vw − 24px and no page-level horizontal scrollbar", async ({
@@ -294,7 +324,11 @@ test.describe("NFM-4262 narrow-viewport source-cell (D1/D2/D3)", (): void => {
     await page.setViewportSize({ width: 320, height: 844 })
     await page.goto(PROPERTY_DETAIL_URL)
     await waitForCohort(page)
-    await page.locator('[data-testid="data-loss-notice-trigger"]').first().click()
+    const trigger = page
+      .locator('[data-testid="data-loss-notice-trigger"]')
+      .first()
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await trigger.click()
     await expect(
       page.locator('[data-testid="data-loss-notice-popover"]'),
     ).toBeVisible()
