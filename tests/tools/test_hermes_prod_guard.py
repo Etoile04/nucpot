@@ -262,6 +262,21 @@ BLOCK_CASES = [
      "doc\\\nker compose --env-file docker/.env.prod up -d"),
     ("N1: LF continuation inside the compose head word",
      "docker com\\\npose -f docker-compose.prod.yml up -d"),
+    # Inside DOUBLE quotes bash also drops `\`+LF (argv fuses back), so a
+    # verb or marker fragmented in double quotes executes the exact
+    # NFM-4264 mutation; single quotes keep the pair literal.
+    ("N1: double-quoted LF continuation splits the up verb",
+     "docker compose -f docker-compose.prod.yml \"u\\\np\" -d"),
+    ("N1: double-quoted LF continuation splits the down verb",
+     "docker compose --env-file docker/.env.prod \"do\\\nwn\""),
+    ("N1: double-quoted LF continuation splits the verb, verb first",
+     "docker compose \"u\\\np\" -d -f docker-compose.prod.yml"),
+    ("N1: double-quoted LF continuation inside the marker",
+     "docker compose -f \"docker-compose.prod.\\\nyml\" up -d"),
+    ("N1: double-quoted LF continuation inside the project name",
+     "docker compose -p \"nucpot-\\\nprod\" up -d"),
+    ("N1: double-quoted LF continuation inside the env marker",
+     "docker compose --env-file \"docker/.env.\\\nprod\" up -d"),
 ]
 
 
@@ -356,6 +371,14 @@ ALLOW_CASES = [
      "docker/.env.staging \\\nup -d --build api web"),
     ("N1: quote-literal escaped marker cat (RE allow probe)",
      "cat \"docker-compose\\.prod\\.yml\""),
+    # N1 double-quote boundary: a `\`+LF inside double quotes fuses the
+    # token in bash (readonly render of the REAL prod file stays allowed),
+    # while single quotes keep the pair literal — a different argv that
+    # names no prod stack and must also stay allowed.
+    ("N1: double-quoted LF continuation with a read-only verb",
+     "docker compose -f \"docker-compose.prod.\\\nyml\" config"),
+    ("N1: single-quoted LF continuation stays literal (different file)",
+     "docker compose -f 'docker-compose.prod.\\\nyml' config"),
     ("empty command", ""),
     ("plain ls", "ls -la"),
 ]
@@ -416,6 +439,10 @@ def test_write_target_allowed(pg, path):
     # N1: a `\`+LF inside a marker fuses it back together in bash, so the
     # read-only success still names the real prod file and must be logged.
     ("cat docker-compose.prod.\\\nyml", True),
+    # N1: a `\`+LF inside DOUBLE quotes also fuses the marker in bash, so
+    # the read-only success still names the real prod file.
+    ("cat \"docker-compose.prod.\\\nyml\"", True),
+    ("docker compose -f \"docker-compose.staging.\\\nyml\" config", False),
     ("docker compose --env-file docker/.env.\\\nprod config", True),
     ("docker compose -f docker-compose.staging.yml \\\nconfig", False),
     ("docker compose -f docker-compose\\.staging\\.yml config", False),
@@ -659,6 +686,12 @@ def test_belt_blocks_incident_command():
     "docker \\\nstop nucpot-prod-api",
     "docker st\\\nop nucpot-prod-api",
     "docker rest\\\nart nucpot-prod-api",
+    # N1 — a `\`+LF inside DOUBLE quotes also fuses the verb back together
+    # in bash (`"u\<LF>p"` → argv `up`), so the belt needs entries anchored
+    # on the quoted continuation itself.
+    "docker compose -f docker-compose.prod.yml \"u\\\np\" -d",
+    "docker compose --env-file docker/.env.prod \"do\\\nwn\"",
+    "docker compose \"u\\\np\" -d -f docker-compose.prod.yml",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -694,6 +727,8 @@ def test_belt_blocks_high_risk_variants(command):
     "docker \\\nlogs nucpot-prod-api",
     "docker \\\nstart nucpot-prod-api-1",
     "docker container \\\ninspect nucpot-prod-api",
+    "docker compose -f \"docker-compose.prod.\\\nyml\" config",
+    "docker compose -f 'docker-compose.prod.\\\nyml' config",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
     hits = [pat for pat in _belt_patterns()

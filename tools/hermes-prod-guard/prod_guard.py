@@ -10,9 +10,10 @@ Scope (ADR-013 §2 G1, NFM-4269):
   Markers are detected on the raw segment text AND on the shlex-unescaped
   words, so unquoted backslash-escape obfuscation
   (``docker-compose\\.prod\\.yml``) is caught (NFM-4284 N1); quoted-literal
-  backslashes name a different file and correctly do not match. Unquoted
-  ``\\``+LF line continuations are dropped before tokenization exactly as
-  bash drops them, so a continuation before the verb, before the head, or
+  backslashes name a different file and correctly do not match. ``\\``+LF
+  line continuations — unquoted or inside double quotes — are dropped
+  before tokenization exactly as bash drops them (single quotes keep the
+  pair literal), so a continuation before the verb, before the head, or
   inside a marker cannot mask the mutation words.
 * BLOCK bare ``docker stop|rm|restart|kill|exec`` targeting prod containers
   (``nucpot-prod*``), including the ``docker container <verb>`` spelling.
@@ -160,12 +161,21 @@ def _split_top_level(command: str) -> list[str]:
     while i < n:
         ch = command[i]
         if quote:
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                if command[i + 1] == "\n":
+                    # `\`+LF is a bash line continuation inside double
+                    # quotes too: bash drops BOTH characters (single quotes
+                    # keep the pair literal, preserving quoted-literal
+                    # precision). Every other `\` sequence stays verbatim.
+                    i += 2
+                    continue
+                buf.append(ch)
+                buf.append(command[i + 1])
+                i += 2
+                continue
             buf.append(ch)
             if ch == quote:
                 quote = None
-            elif ch == "\\" and quote == '"' and i + 1 < n:
-                buf.append(command[i + 1])
-                i += 1
             i += 1
             continue
         if ch in ("'", '"'):

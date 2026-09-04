@@ -181,3 +181,19 @@ approvals:
     - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
     - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *.env[.\\]*p*r*o*d*"
     - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *nucpot[.\\-]*p*r*o*d*"
+    # --- NFM-4284 N1: double-quoted `\`+LF split-verb family ---------------
+    # Inside DOUBLE quotes bash also drops `\`+LF, so a verb fragmented in
+    # quotes (`"u\<LF>p"` → argv `up`) runs the mutation while every entry
+    # above needs a space- or continuation-adjacent contiguous verb
+    # spelling. These anchor on the quoted continuation itself: head +
+    # marker (either order, same three markers) + `"`…`\`+LF…`"`. Single
+    # quotes keep `\`+LF literal (a different argv, not the prod stack),
+    # and read-only continuations carry no quoted `\`+LF token, so the
+    # pinned allow matrix stays clean. Same double-quoted YAML spelling as
+    # the unquoted continuation block above (`\\` one backslash, `\n` LF).
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*nucpot[.\\-]*p*r*o*d*"
