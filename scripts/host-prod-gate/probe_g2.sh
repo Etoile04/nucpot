@@ -42,24 +42,24 @@ if [ "${CTX}" = "nfm-ro" ]; then ok "current docker context is nfm-ro"; else
   bad "current docker context is '${CTX:-<none>}' (want nfm-ro)"; fi
 
 # ---- AC-G2: the wall (deny probes; zero side effects) -----------------------
-deny_probe() { # desc cmd...
-  local desc="$1"; shift
+deny_probe() { # desc expect-substring cmd...
+  local desc="$1" expect="$2"; shift 2
   local out rc
   out="$("$@" 2>&1)"; rc=$?
-  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "matches prod scope" \
+  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "$expect" \
                    && printf '%s' "$out" | grep -q "nfm-g2"; then
     ok "${desc}"
   else
     bad "${desc} — got: $(printf '%s' "$out" | head -1)"
   fi
 }
-deny_probe "G2  docker rm -f prod-named container DENIED"      docker rm -f nucpot-prod-g2probe
-deny_probe "G2  docker stop prod-named container DENIED"       docker stop nucpot-prod-g2probe
-deny_probe "G2  docker restart prod-named container DENIED"    docker restart nucpot-prod-g2probe
-deny_probe "G2  docker exec into prod-db DENIED"               docker exec nucpot-prod-db true
-deny_probe "G2  docker network rm prod network DENIED"         docker network rm nucpot-prod_default
-deny_probe "G2  docker volume rm prod volume DENIED"           docker volume rm nucpot-prod_pgdata
-deny_probe "G2  docker container prune DENIED (daemon-wide)"   docker container prune --force
+deny_probe "G2  docker rm -f prod-named container DENIED"      "matches prod scope" docker rm -f nucpot-prod-g2probe
+deny_probe "G2  docker stop prod-named container DENIED"       "matches prod scope" docker stop nucpot-prod-g2probe
+deny_probe "G2  docker restart prod-named container DENIED"    "matches prod scope" docker restart nucpot-prod-g2probe
+deny_probe "G2  docker exec into prod-db DENIED"               "matches prod scope" docker exec nucpot-prod-db true
+deny_probe "G2  docker network rm prod network DENIED"         "matches prod scope" docker network rm nucpot-prod_default
+deny_probe "G2  docker volume rm prod volume DENIED"           "matches prod scope" docker volume rm nucpot-prod_pgdata
+deny_probe "G2  docker container prune DENIED (daemon-wide)"   "daemon-wide"        docker container prune --force
 
 # The wall itself: the raw daemon socket must refuse a direct connect from
 # this user (docker binary, curl, anything — they all land on this socket).

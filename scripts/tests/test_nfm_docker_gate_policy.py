@@ -214,6 +214,79 @@ def test_create_with_opaque_network_ref_denied_fail_closed():
     assert not result.allowed and "fail-closed" in result.reason
 
 
+# ---- container refs embedded in create bodies (NFM-4273 review R1) ---------------
+
+
+def test_create_volumes_from_prod_container_denied():
+    """--volumes-from nucpot-prod-db-1 copies prod mounts (incl. the prod
+    data volume) into a rogue container — a prod mutation by reference."""
+    body = {"HostConfig": {"VolumesFrom": ["nucpot-prod-db-1"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod-db-1" in result.reason
+
+
+def test_create_volumes_from_prod_container_with_mode_suffix_denied():
+    body = {"HostConfig": {"VolumesFrom": ["nucpot-prod-db-1:ro"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_create_network_mode_container_prod_denied():
+    """--network container:nucpot-prod-api-1 shares a prod container's
+    network namespace without touching Binds/EndpointsConfig."""
+    body = {"HostConfig": {"NetworkMode": "container:nucpot-prod-api-1"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod-api-1" in result.reason
+
+
+def test_create_with_opaque_volumes_from_ref_denied_fail_closed():
+    body = {"HostConfig": {"VolumesFrom": ["a1b2c3d4e5f67890"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_create_with_opaque_network_mode_container_ref_denied_fail_closed():
+    body = {"HostConfig": {"NetworkMode": "container:a1b2c3d4e5f67890"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_create_with_nonprod_container_refs_allowed():
+    body = {"HostConfig": {
+        "VolumesFrom": ["nucpot-staging-db-1:rw"],
+        "NetworkMode": "container:nucpot-staging-api-1",
+    }}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert result.allowed
+
+
+# ---- hex id prefixes of ANY length are opaque (NFM-4273 review R2) ---------------
+
+
+def test_short_hex_network_id_prefix_fails_closed():
+    """The daemon accepts id prefixes of any unambiguous length — an 11-hex
+    prefix is as opaque as the full 64-hex id (networks have no resolver)."""
+    prefix = "a1b2c3d4e5f"
+    assert not decide("DELETE", f"/v1.43/networks/{prefix}").allowed
+    assert not decide("POST", f"/v1.43/networks/{prefix}/connect", body={}).allowed
+    assert not decide("POST", f"/v1.43/networks/{prefix}/disconnect", body={}).allowed
+
+
+def test_short_hex_container_id_prefix_resolved_through_daemon():
+    """Container ids DO resolve: a short-hex prefix must be treated as an
+    id and roundtripped through the resolver, not passed as a 'name'."""
+    prefix = "b1c2d3e4f5a"
+
+    def resolver(ident):
+        assert ident == prefix
+        return TargetInfo(name="nucpot-prod-api", project="nucpot-prod")
+
+    result = decide("POST", f"/v1.43/containers/{prefix}/restart", resolver=resolver)
+    assert not result.allowed and result.scope == "prod"
+
+
 def test_named_ref_skips_resolver():
     def resolver(ident):  # pragma: no cover - must not be called
         raise AssertionError("resolver must not be called for named refs")

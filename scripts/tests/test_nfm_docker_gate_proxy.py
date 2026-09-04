@@ -252,6 +252,17 @@ def test_opaque_hex_container_id_resolved_and_denied(ro):
     assert not ro.daemon.seen("DELETE")
 
 
+def test_short_hex_id_prefix_resolved_and_denied(ro):
+    """NFM-4273 review R2: the daemon accepts id prefixes of any unambiguous
+    length — an 11-hex prefix must still get a resolver roundtrip instead of
+    a free pass as a non-prod 'name'."""
+    prefix = "b" * 11
+    response = ro.request(http("DELETE", f"/v1.43/containers/{prefix}"))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert ro.daemon.seen("GET", f"/containers/{prefix}/json")  # resolver consulted
+    assert not ro.daemon.seen("DELETE")
+
+
 def test_opaque_id_with_prod_volume_denied_via_resolver(ro):
     """NFM-4273 review F1 at the proxy layer: the resolver's daemon inspect
     surfaces attached named volumes — a mutation against an innocent-named

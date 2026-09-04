@@ -73,10 +73,12 @@ _FORBIDDEN_BIND_RE = re.compile(
     r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/))"
 )
 
-# Opaque daemon ids (container/network 64-hex). A name matching this shape is
-# scope-uncheckable from text alone; without a resolver verdict the request
-# fails closed rather than guessing (same philosophy as unrecognized paths).
-_OPAQUE_ID_RE = re.compile(r"^[0-9a-f]{12,}$")
+# Opaque daemon ids (container/network hex ids AND their unambiguous
+# prefixes, which the daemon accepts at any length). A name matching this
+# shape is scope-uncheckable from text alone; without a resolver verdict
+# the request fails closed rather than guessing (same philosophy as
+# unrecognized paths).
+_OPAQUE_ID_RE = re.compile(r"^[0-9a-f]+$")
 
 REFUSAL_HINT = (
     "nfm-g2 (NFM-4270 / ADR-013 G5): prod mutations route via GH Actions "
@@ -144,6 +146,11 @@ class TargetInfo:
     # alone is already caught; one MOUNTING prod state (nucpot-prod_pgdata)
     # is equally a prod mutation (NFM-4273 review F1).
     volumes: tuple[str, ...] = field(default_factory=tuple)
+    # Container references embedded in a create body (HostConfig.VolumesFrom
+    # entries, NetworkMode "container:<ref>"). Copying mounts from a prod
+    # container or sharing its network namespace is as much a prod mutation
+    # as naming the container prod (NFM-4273 review R1).
+    containers: tuple[str, ...] = field(default_factory=tuple)
 
     def prod_violation(self, cfg: ScopeConfig) -> Optional[str]:
         if self.project and self.project in cfg.prod_projects:
@@ -156,6 +163,9 @@ class TargetInfo:
         for vol in self.volumes:
             if _matches(vol, cfg.prod_volume_prefixes):
                 return f"volume {vol!r} matches prod scope"
+        for ref in self.containers:
+            if _matches(ref, cfg.prod_name_prefixes):
+                return f"container ref {ref!r} matches prod scope"
         return None
 
 
@@ -238,6 +248,28 @@ def _opaque_ref(refs: tuple[str, ...]) -> Optional[str]:
     return None
 
 
+def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
+    """Container references embedded in a create body.
+
+    ``--volumes-from nucpot-prod-db-1`` copies a prod container's mounts
+    (incl. prod volumes) into the new container; ``--network
+    container:nucpot-prod-api-1`` shares a prod container's network
+    namespace. Neither touches Binds/Mounts/EndpointsConfig, so they are
+    scope-checked here instead (NFM-4273 review R1).
+    """
+    host_config = body.get("HostConfig") or {}
+    if not isinstance(host_config, dict):
+        return tuple()
+    refs: list[str] = []
+    for entry in host_config.get("VolumesFrom") or []:
+        if isinstance(entry, str):
+            refs.append(entry.split(":", 1)[0])
+    network_mode = host_config.get("NetworkMode")
+    if isinstance(network_mode, str) and network_mode.startswith("container:"):
+        refs.append(network_mode[len("container:"):])
+    return tuple(refs)
+
+
 def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     labels = body.get("Labels")
     project = labels.get("com.docker.compose.project") if isinstance(labels, dict) else None
@@ -246,7 +278,11 @@ def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     if isinstance(endpoints, dict):
         networks = tuple(str(k) for k in endpoints.keys())
     return TargetInfo(
-        name=name or None, project=project, networks=networks, volumes=_volume_refs(body)
+        name=name or None,
+        project=project,
+        networks=networks,
+        volumes=_volume_refs(body),
+        containers=_container_refs(body),
     )
 
 
@@ -331,14 +367,15 @@ def classify(
         violation = target.prod_violation(cfg)
         if violation:
             return Decision(False, violation, scope="prod", audit=True, target=name or target.project)
-        # An opaque network id in EndpointsConfig cannot be scope-checked
-        # from text (the resolver resolves containers, not networks) — deny
-        # rather than allow an unverifiable network attachment.
-        opaque = _opaque_ref(target.networks)
+        # Opaque refs in EndpointsConfig / VolumesFrom / NetworkMode cannot
+        # be scope-checked from text (networks have no resolver path; hex
+        # container refs could be resolved but compose always uses names) —
+        # deny rather than allow an unverifiable prod attachment.
+        opaque = _opaque_ref(target.networks + target.containers)
         if opaque:
             return Decision(
                 False,
-                f"opaque network id {opaque!r} cannot be scope-checked (fail-closed)",
+                f"opaque reference {opaque!r} cannot be scope-checked (fail-closed)",
                 scope="n/a",
                 audit=True,
                 target=name or None,

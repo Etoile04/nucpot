@@ -68,9 +68,11 @@ class UpstreamResolver:
         self._upstream = upstream_path
 
     def __call__(self, ident: str) -> Optional[TargetInfo]:
-        # Names / short refs classify directly; only opaque hex ids need
-        # a daemon roundtrip to learn name + labels + networks.
-        if not (len(ident) >= 12 and set(ident.lower()) <= _HEX):
+        # Names / short refs classify directly; opaque hex refs need a
+        # daemon roundtrip to learn name + labels + networks. The daemon
+        # accepts id PREFIXES of any unambiguous length, so any pure-hex
+        # ident (even a few chars) is treated as opaque (NFM-4273 review R2).
+        if not ident or not set(ident.lower()) <= _HEX:
             return TargetInfo(name=ident)
         raw = self._daemon_request(f"/containers/{ident}/json")
         if raw is None:

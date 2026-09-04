@@ -31,7 +31,6 @@ TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = TESTS_DIR.parent
 REPO_ROOT = SCRIPTS_DIR.parent
 SCRIPT = SCRIPTS_DIR / "record_deploy_manifest.py"
-DEPLOY_PROD_SH = SCRIPTS_DIR / "deploy_prod.sh"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
 
 COMPOSE_PROJECT = "nucpot-prod"
@@ -294,15 +293,6 @@ def test_actor_recorded_verbatim_gh_runner_shape(fake_docker, tmp_path):
 
     assert proc.returncode == 0, proc.stderr
     assert read_manifest(manifest)["actor"] == "gh-runner:lwj04"
-
-
-def test_deploy_prod_sh_wires_recorder_with_manual_actor_default():
-    """deploy_prod.sh must call the recorder and default the actor to its own
-    path (the GH workflow overrides DEPLOY_ACTOR with gh-runner:<actor>)."""
-    text = DEPLOY_PROD_SH.read_text(encoding="utf-8")
-    assert "record_deploy_manifest.py" in text, "deploy_prod.sh must invoke the recorder"
-    assert "deploy_prod.sh:" in text, "manual-run actor must identify the deploy path"
-    assert "DEPLOY_ACTOR" in text, "GH-runner deploys must inject their actor"
 
 
 def test_workflow_wires_recorder_outside_script():

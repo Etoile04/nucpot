@@ -743,11 +743,10 @@ def test_selftest_passes(tmp_path: Path):
 
 # ------------------------------------------------------------------- wiring
 
-def test_deploy_prod_sh_writes_and_clears_deploy_lock():
-    source = DEPLOY_PROD_SH.read_text(encoding="utf-8")
-    assert "prod-deploy.lock" in source
-    assert 'trap' in source and 'rm -f' in source
-    # Syntax-check the modified script.
+def test_deploy_prod_sh_is_valid_bash_syntax():
+    # The lock write/clear behavior itself is proven behaviorally by
+    # test_deploy_prod_sh_and_checker_agree_on_g4_paths (lock_present=True
+    # during compose up + trap-removed assert).
     proc = subprocess.run(["bash", "-n", str(DEPLOY_PROD_SH)], capture_output=True)
     assert proc.returncode == 0, proc.stderr
 
@@ -921,10 +920,29 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     assert checker.returncode == 0, checker.stdout + checker.stderr
     assert stub_paperclip.creates() == []
 
+    # -- manual run: no DEPLOY_ACTOR -> deploy_prod.sh's own path default --
+    # (the fake `id` reports nfmdeploy, so the recorded actor must carry the
+    # deploy_prod.sh: prefix + the running identity)
+    monkeypatch.delenv("DEPLOY_ACTOR", raising=False)
+    rerun = subprocess.run(
+        ["bash", str(DEPLOY_PROD_SH)], capture_output=True, text=True, timeout=120,
+    )
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    rerecorded = json.loads(manifest.read_text(encoding="utf-8"))
+    assert rerecorded["actor"] == "deploy_prod.sh:nfmdeploy"
+
 
 def test_workflow_runs_checker_tests_before_deploy():
-    source = WORKFLOW.read_text(encoding="utf-8")
-    assert "scripts/tests/test_check_deploy_drift.py" in source
+    """Semantic workflow parse (no source greps): some job step actually
+    EXECUTES the checker test module via pytest before it ships."""
+    import yaml
+
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = [step for job in doc["jobs"].values() for step in job.get("steps", [])]
+    invoked = {token for step in steps for token in (step.get("run") or "").split()}
+    assert "scripts/tests/test_check_deploy_drift.py" in invoked, (
+        "the workflow must execute the drift-checker test suite"
+    )
 
 
 def test_state_file_written_0600(fake_docker, env: DriftEnv):

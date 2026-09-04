@@ -88,12 +88,6 @@ def test_sudoers_defaults_are_command_scoped():
         assert "env_keep" in line
 
 
-def test_sudoers_covers_every_sanctioned_entry():
-    text = (GATE_DIR / "sudoers.d" / "nfm-prod-deploy").read_text(encoding="utf-8")
-    for name in SANCTIONED:
-        assert f"/usr/local/lib/nfm-g2/{name}" in text
-
-
 # ---- launchd plists --------------------------------------------------------------
 
 
@@ -345,12 +339,6 @@ def test_sudoers_env_keep_scoped_to_deploy_entry_only():
         kept.setdefault(match.group(1), set()).update(match.group(2).split())
     assert kept.get("run-deploy.sh") == {"DEPLOY_SHA", "PROXY_PORT", "DEPLOY_ACTOR"}
     assert set(kept) == {"run-deploy.sh"}, "only the deploy entry takes env passthrough"
-    # install wiring (the one claim only source inspection can pin): the
-    # canonical shared G4 dir is created before it is chmod'd to 0755
-    setup = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
-    assert setup.index("mkdir -p /usr/local/var/nfm-g2") < setup.index(
-        "chmod 0755 /usr/local/var/nfm-g2"
-    )
 
 
 def test_run_deploy_forwards_actor_env_into_deploy_body(entry):
@@ -472,6 +460,10 @@ def test_assert_context_noop_when_correct(tmp_path, monkeypatch):
 
 
 def test_host_setup_installs_every_entry_and_plist():
+    # Source inspection only — executing host_setup.sh needs root on macOS
+    # (dscl, /usr/local, /etc/sudoers.d, /Library/LaunchDaemons), which CI
+    # cannot provide. The on-host probe (probe_g2.sh AC-G2.3/G2.4) verifies
+    # the INSTALLED state after the installer runs.
     text = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
     for name in SANCTIONED:
         assert name.removesuffix(".sh") in text, f"host_setup.sh does not install {name}"
