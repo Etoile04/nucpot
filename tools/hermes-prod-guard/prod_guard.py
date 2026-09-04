@@ -7,6 +7,14 @@ Scope (ADR-013 §2 G1, NFM-4269):
   when the invocation references a prod marker — ``docker-compose.prod.yml``,
   ``docker/.env.prod`` (any ``--env-file``/``-f`` spelling), or the prod
   project name ``nucpot-prod`` (``-p``/``--project-name``/``COMPOSE_PROJECT_NAME``).
+  Markers are detected on the raw segment text AND on the shlex-unescaped
+  words, so unquoted backslash-escape obfuscation
+  (``docker-compose\\.prod\\.yml``) is caught (NFM-4284 N1); quoted-literal
+  backslashes name a different file and correctly do not match. ``\\``+LF
+  line continuations — unquoted or inside double quotes — are dropped
+  before tokenization exactly as bash drops them (single quotes keep the
+  pair literal), so a continuation before the verb, before the head, or
+  inside a marker cannot mask the mutation words.
 * BLOCK bare ``docker stop|rm|restart|kill|exec`` targeting prod containers
   (``nucpot-prod*``), including the ``docker container <verb>`` spelling.
 * BLOCK terminal-vector writes (redirect/append, ``tee``, ``sed -i``,
@@ -153,12 +161,21 @@ def _split_top_level(command: str) -> list[str]:
     while i < n:
         ch = command[i]
         if quote:
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                if command[i + 1] == "\n":
+                    # `\`+LF is a bash line continuation inside double
+                    # quotes too: bash drops BOTH characters (single quotes
+                    # keep the pair literal, preserving quoted-literal
+                    # precision). Every other `\` sequence stays verbatim.
+                    i += 2
+                    continue
+                buf.append(ch)
+                buf.append(command[i + 1])
+                i += 2
+                continue
             buf.append(ch)
             if ch == quote:
                 quote = None
-            elif ch == "\\" and quote == '"' and i + 1 < n:
-                buf.append(command[i + 1])
-                i += 1
             i += 1
             continue
         if ch in ("'", '"'):
@@ -167,6 +184,16 @@ def _split_top_level(command: str) -> list[str]:
             i += 1
             continue
         if ch == "\\" and i + 1 < n:
+            if command[i + 1] == "\n":
+                # Unquoted `\`+LF is a bash line continuation: bash drops
+                # BOTH characters before tokenization (NFM-4284 N1,
+                # scope-pin 860a0d88). Keeping it verbatim would let shlex
+                # swallow the LF into the word (verb becomes "\nup", head
+                # becomes "\ndocker") and mask every head/verb check.
+                # `\`+CR+LF is NOT a continuation (escaped CR, then a real
+                # newline separator) and keeps the split below.
+                i += 2
+                continue
             buf.append(ch)
             buf.append(command[i + 1])
             i += 2
@@ -325,10 +352,22 @@ def _find_subcommand(words: Sequence[str], start: int,
 # wrapper assignments, flag values, or any argument position)
 # ---------------------------------------------------------------------------
 
-def _segment_has_prod_marker(segment_lower: str) -> bool:
+def _segment_has_prod_marker(segment_lower: str,
+                             words_lower: Sequence[str] = ()) -> bool:
     if PROD_PROJECT_NAME in segment_lower:
         return True
-    return any(marker in segment_lower for marker in PROD_FILE_MARKERS)
+    if any(marker in segment_lower for marker in PROD_FILE_MARKERS):
+        return True
+    # NFM-4284 N1: an unquoted backslash-escaped marker
+    # (docker-compose\.prod\.yml) never appears as a raw substring, but
+    # shlex has already unescaped it in the segment words — scan those too.
+    # Quote-literal backslashes survive shlex and correctly do NOT match:
+    # that argv names a different (nonexistent) file, not the prod stack.
+    for word in words_lower:
+        if (PROD_PROJECT_NAME in word
+                or any(marker in word for marker in PROD_FILE_MARKERS)):
+            return True
+    return False
 
 
 def _hits_prod_file_marker(word: str) -> bool:
@@ -394,7 +433,8 @@ def _evaluate_segment(segment: str) -> BlockVerdict | None:
             words_lower, compose_head_at + 1, _COMPOSE_VALUE_FLAGS)
         if (sub_at is not None
                 and words_lower[sub_at] in COMPOSE_MUTATION_VERBS
-                and _segment_has_prod_marker(segment_lower)):
+                and _segment_has_prod_marker(
+                    segment_lower, [w.lower() for w in words])):
             return _verdict(
                 "prod_compose_mutation",
                 f"'docker compose {words_lower[sub_at]}' targets the "
@@ -518,8 +558,17 @@ def is_prod_touching(command: str) -> bool:
     (mutations AND read-only touches)? Bounds the success-path log."""
     if not isinstance(command, str) or not command.strip():
         return False
-    lowered = command.lower()
-    if (any(marker in lowered for marker in PROD_FILE_MARKERS)
-            or PROD_CONTAINER_PREFIX in lowered):
-        return True
-    return any(is_prod_touching(p) for p in _subshell_payloads(command))
+    for payload in _subshell_payloads(command):
+        if is_prod_touching(payload):
+            return True
+    for segment in _split_top_level(command):
+        # NFM-4284 N1: the shared boundary drops `\`+LF continuations the
+        # way bash does, and the shlex-unescaped segment words reveal
+        # escaped markers, so read-only successes like `cat
+        # docker-compose\.prod\.yml` or `cat docker-compose.prod.\<LF>yml`
+        # still bound the G3 log.
+        lowered = segment.lower()
+        if _segment_has_prod_marker(
+                lowered, [w.lower() for w in _words(segment)]):
+            return True
+    return False

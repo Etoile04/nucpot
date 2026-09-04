@@ -67,17 +67,17 @@ approvals:
     - "*docker-compose*nucpot-prod* down"
     # --- bare docker container verbs on prod containers ----------------
     # (trailing space after the verb keeps `docker rmi` from matching `docker rm `)
-    - "*docker stop *nucpot-prod*"
-    - "*docker rm *nucpot-prod*"
-    - "*docker restart *nucpot-prod*"
-    - "*docker kill *nucpot-prod*"
-    - "*docker exec *nucpot-prod*"
+    - '*doc*ker[ .\]*s*t*o*p *nucpot-prod*'
+    - '*doc*ker[ .\]*r*m *nucpot-prod*'
+    - '*doc*ker[ .\]*r*e*s*t*a*r*t *nucpot-prod*'
+    - '*doc*ker[ .\]*k*i*l*l *nucpot-prod*'
+    - '*doc*ker[ .\]*exec *nucpot-prod*'
     # `docker container <verb>` management spelling of the same mutations
-    - "*docker container stop *nucpot-prod*"
-    - "*docker container rm *nucpot-prod*"
-    - "*docker container restart *nucpot-prod*"
-    - "*docker container kill *nucpot-prod*"
-    - "*docker container exec *nucpot-prod*"
+    - '*doc*ker[ .\]*container[ .\]*s*t*o*p *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*r*m *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*r*e*s*t*a*r*t *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*k*i*l*l *nucpot-prod*'
+    - '*doc*ker[ .\]*container[ .\]*exec *nucpot-prod*'
     # --- terminal-vector writes to prod compose/env files --------------
     - "*>*docker-compose.prod.yml*"
     - "*>*.env.prod*"
@@ -96,3 +96,104 @@ approvals:
     # --- plugin tamper guard (belt must survive plugin removal) --------
     - "*rm *plugins/prod-guard*"
     - "*mv *plugins/prod-guard*"
+    # --- NFM-4284 N1: backslash-escape obfuscation of the markers --------
+    # The belt fnmatches the RAW lowercased command, so an unquoted escape
+    # (`docker compose -f docker-compose\.prod\.yml up -d`, CR bb0bbb95 on
+    # NFM-4269) hides the literal marker from every entry above. Character
+    # classes neutralize the obfuscation: `[ .\-]*` matches the head
+    # separator in its space/hyphen/escaped spellings INCLUDING the
+    # two-char `docker\-compose` form, and `[.\]*` around the marker
+    # segments absorbs the optional backslash before each dot (`[.\]`
+    # eats the bare dot OR the backslash, `*` eats the escaped dot's
+    # mate). In the unanchored compose entries `p*r*o*d` and `u*p`/
+    # `d*o*w*n` additionally absorb a backslash before any letter of the
+    # marker/verb (`pro\d`, `u\p`); the end-anchored cp/mv/install
+    # entries keep `prod` literal so a prod file as SOURCE (`cp
+    # docker-compose.prod.yml /tmp/backup.yml`) can never match.
+    # Quoted-literal backslashes name a different (nonexistent) file and
+    # are deliberately not matched. Entries are single-quoted because
+    # `\` is an escape char in YAML double-quoted scalars. Verb anchoring
+    # mirrors the entries above, so read-only verbs (config/logs/ps) and
+    # the staging/dev stacks stay allowed — belt-verified in
+    # test_hermes_prod_guard.py::test_belt_blocks_* and
+    # test_belt_allows_*.
+    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *docker-compose[.\]*p*r*o*d[.\]*yml*'
+    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *.env[.\]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *nucpot[.\-]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *docker-compose[.\]*p*r*o*d[.\]*yml*'
+    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *.env[.\]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* d*o*w*n*'
+    - '*doc*ker[ .\-]*com*pose* d*o*w*n *nucpot[.\-]*p*r*o*d*'
+    # escaped write vectors — the shell unescapes every target spelling
+    # below, so each writes the real prod file (`> docker-compose\.prod\.yml`,
+    # `echo 'X=1' | tee docker/.env\.prod`, `cp /tmp/f docker-compose\.prod\.yml`).
+    - '*>*docker-compose[.\]*prod[.\]*yml*'
+    - '*>*.env[.\]*prod*'
+    - '*tee *docker-compose[.\]*prod[.\]*yml*'
+    - '*tee *.env[.\]*prod*'
+    - '*sed -i*docker-compose[.\]*prod[.\]*yml*'
+    - '*sed -i*.env[.\]*prod*'
+    - '*cp *docker-compose[.\]*prod[.\]*yml'
+    - '*cp *.env[.\]*prod'
+    - '*mv *docker-compose[.\]*prod[.\]*yml'
+    - '*mv *.env[.\]*prod'
+    - '*install *docker-compose[.\]*prod[.\]*yml'
+    - '*install *.env[.\]*prod'
+    # --- NFM-4284 N1: backslash+LF line-continuation family (860a0d88) ----
+    # An unquoted `\`+LF is a bash line continuation: bash drops both
+    # characters, so `docker compose --env-file docker/.env.prod \`+LF+`up
+    # -d` executes the exact NFM-4264 mutation while the raw string never
+    # contains the ` up` (space, u, p) that every verb anchor above
+    # requires — the continuation sits exactly where that space would be.
+    # These entries anchor on the continuation itself: `*` (absorbs the
+    # spaces before the backslash) + `\` + LF + `*` (absorbs the continued
+    # line's indentation) + the verb. fnmatch character classes take no
+    # quantifier (`[ ]*` is one-space-then-wildcard, NOT zero-or-more
+    # spaces), so plain `*` is the only spelling for those absorbers —
+    # which also means an `up`/`down` substring anywhere after a
+    # continuation matches; that over-approximation is belt-charter
+    # coarseness (same idiom as the `u*p*` entries above) and errs safe:
+    # these entries can only fire on commands that contain a literal
+    # `\`+LF, a prod marker, and up/down past the continuation. Read-only
+    # continuations (`\<LF>config`, `\<LF>logs`, `\<LF>ps`) and the
+    # staging stack carry none of the three and stay allowed. Marker/verb
+    # order, the three markers, and the escape-absorbing `[.\]*`/
+    # `[ .\-]*` classes mirror the in-line N1 entries above, so combined
+    # obfuscation (escaped marker + continuation) is caught by the same
+    # entry. Entries are DOUBLE-quoted because the pattern needs a
+    # literal LF, which YAML only spells in double-quoted scalars (`\\`
+    # is one backslash, `\n` is the LF); in a single-quoted scalar a raw
+    # LF would break the entry across lines.
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *nucpot[.\\-]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*d*o*w*n*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*d*o*w*n *nucpot[.\\-]*p*r*o*d*"
+    # --- NFM-4284 N1: double-quoted `\`+LF split-verb family ---------------
+    # Inside DOUBLE quotes bash also drops `\`+LF, so a verb fragmented in
+    # quotes (`"u\<LF>p"` → argv `up`) runs the mutation while every entry
+    # above needs a space- or continuation-adjacent contiguous verb
+    # spelling. These anchor on the quoted continuation itself: head +
+    # marker (either order, same three markers) + `"`…`\`+LF…`"`. Single
+    # quotes keep `\`+LF literal (a different argv, not the prod stack),
+    # and read-only continuations carry no quoted `\`+LF token, so the
+    # pinned allow matrix stays clean. Same double-quoted YAML spelling as
+    # the unquoted continuation block above (`\\` one backslash, `\n` LF).
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\"*\\\n*\"*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\"*\\\n*\"*nucpot[.\\-]*p*r*o*d*"

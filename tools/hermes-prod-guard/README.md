@@ -41,6 +41,23 @@ read-only ops are not (tested).
 - terminal writes to the prod files: `>`/`>>` redirects (any head command —
   including `docker compose config > docker-compose.prod.yml`), `tee`,
   `sed -i`, `cp`/`mv`/`install` with a prod destination
+- backslash-escape obfuscation of any marker (NFM-4284 N1):
+  `docker compose -f docker-compose\.prod\.yml up -d` is blocked in BOTH
+  layers — the plugin detects markers on the shlex-unescaped words (so an
+  unquoted escape cannot hide one), and the belt carries `[ .\-]*`/`[.\]*`
+  character-class globs that absorb the optional backslash before each
+  dot/hyphen, before letters of the marker/verb (`pro\d`, `u\p`), in the
+  two-char head separator (`docker\-compose`), and across the write
+  vectors (redirect/`tee`/`sed -i`/`cp`/`mv`/`install` destinations).
+  Quote-literal escapes (`'docker-compose\.prod\.yml'`) name a
+  different, nonexistent file and correctly stay allowed
+- `\`+LF line continuations (NFM-4284 N1): bash drops the pair —
+  unquoted AND inside double quotes — so the plugin drops it before
+  tokenization the same way (single quotes keep the pair literal) and
+  a continuation before the verb, before the head, or inside a marker
+  cannot mask the mutation words; the belt carries
+  continuation-anchored entries for the compose verbs, the bare
+  container verbs, and the double-quoted split-verb spelling
 - agent `write_file`/`patch` with `path` on either prod file
 
 ## Never blocked (verified)
@@ -49,7 +66,10 @@ read-only ops are not (tested).
 `docker compose config` (render-only), `docker build` of prod images, the
 staging stack (`docker-compose.staging.yml`/`.env.staging`/`nucpot-staging`),
 `docker image prune` (NFM-4257 cron), non-prod containers, reads *from* prod
-files redirected *to* tmp, `docker/.env.prod.example`.
+files redirected *to* tmp, `docker/.env.prod.example`, and bare
+`docker start nucpot-prod-api-1` (NFM-1664 AC3 recovery carve-out —
+`start` is not a bare-docker container verb; pinned by NFM-4284 N2 so a
+verb-scope change cannot silently break recovery).
 
 ## Carve-outs (keyed on the aecb57d3 deploy-identity marker, per NFM-4274)
 
@@ -99,13 +119,19 @@ refuses agent writes to `config.yaml`, by design.
 cd apps/api && uv run pytest ../../tests/tools/test_hermes_prod_guard.py -q
 ```
 
-156 cases: the exact NFM-4264 command, 60 block variants (including the
+247 cases: the exact NFM-4264 command, 92 block variants (including the
 aecb57d3 marker-contract cases — `sudo -u <deploy-identity>` and env-marker
-prefixes stay blocked), 37 allow
-cases (every read-only/sanctioned surface above), write-target gating, G3
-log content + secret redaction + blocked-skip, fail-closed behavior, and
-the belt matrix (blocks the incident class, no false positives on
-read-only/sanctioned).
+prefixes stay blocked — and the NFM-4284 N1 backslash-escape matrix:
+escaped file markers, escaped project name, partially-escaped markers,
+escaped head/verb/redirect/tee/cp spellings, and the `\`+LF continuation
+family — unquoted, bare-container-verb, and double-quoted split-verb
+spellings), 48 allow
+cases (every read-only/sanctioned surface above, plus the NFM-1664 bare
+`docker start` recovery carve-out pinned by NFM-4284 N2), write-target
+gating, G3 log content + secret redaction + blocked-skip, fail-closed
+behavior, and the belt matrix (blocks the incident class and its escaped
+spellings — markers, head separator, verbs, and write-vector destinations —
+no false positives on read-only/sanctioned).
 
 ## Files
 

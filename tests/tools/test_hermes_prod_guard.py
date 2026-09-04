@@ -198,6 +198,85 @@ BLOCK_CASES = [
      "echo 'services: {}' >! docker-compose.prod.yml"),
     ("fd clobber-redirect (2>|) compose file",
      "docker compose config 2>| docker-compose.prod.yml"),
+    # NFM-4284 N1 — backslash-escape obfuscation (CR bb0bbb95): an
+    # unquoted escape (docker-compose\.prod\.yml) hides the marker from
+    # raw-substring detection; shlex has already unescaped the segment
+    # words, so marker detection must scan those words too.
+    ("N1: CR probe — escaped compose marker",
+     "docker compose -f docker-compose\\.prod\\.yml up -d"),
+    ("N1: escaped marker, verb before marker",
+     "docker compose up -d --build -f docker-compose\\.prod\\.yml"),
+    ("N1: escaped marker, legacy docker-compose head",
+     "docker-compose -f docker-compose\\.prod\\.yml up -d --build"),
+    ("N1: partially escaped marker (first dot)",
+     "docker compose -f docker-compose\\.prod.yml up -d"),
+    ("N1: partially escaped marker (second dot)",
+     "docker compose -f docker-compose.prod\\.yml down"),
+    ("N1: escaped env-file marker",
+     "docker compose --env-file docker/.env\\.prod up -d --build api web"),
+    ("N1: escaped project name",
+     "docker compose -p nucpot\\-prod up -d"),
+    ("N1: escaped head spelling",
+     "docker\\-compose -f docker-compose.prod.yml up -d"),
+    ("N1: escaped head word",
+     "\\docker compose -f docker-compose.prod.yml up -d"),
+    ("N1: escaped verb (shlex unescapes; finite verb set)",
+     "docker compose -f docker-compose.prod.yml u\\p -d"),
+    ("N1: escaped redirect target (write vector)",
+     "echo 'services: {}' > docker-compose\\.prod\\.yml"),
+    ("N1: escaped tee target (write vector)",
+     "echo 'X=1' | tee docker/.env\\.prod"),
+    ("N1: escaped cp destination (write vector)",
+     "cp /tmp/fixed.yml docker-compose\\.prod\\.yml"),
+    # NFM-4284 N1 (scope-pin 860a0d88) — backslash+LF continuation family
+    # from the CR REJECT repro table: an unquoted `\`+LF is a bash line
+    # continuation (bash drops BOTH characters before tokenization), so
+    # these execute the exact NFM-4264 mutation while today's splitter
+    # keeps the `\`+LF verbatim and shlex swallows the LF into the word
+    # (verb becomes literal "\nup" → verb check fails; a continuation
+    # before `docker` masks word 0 as "\ndocker").
+    ("N1: cont row 1 — LF before compose verb (NFM-4264 shape)",
+     "docker compose --env-file docker/.env.prod \\\nup -d --build api web"),
+    ("N1: cont row 2 — LF after && before docker",
+     "echo deploying && \\\ndocker compose --env-file docker/.env.prod up -d"),
+    ("N1: cont row 3 — LF after cd-chain, indented continuation",
+     "cd ~/Projects/nucpot && \\\n  docker compose -f docker-compose.prod.yml "
+     "up -d"),
+    ("N1: cont row 4 — LF after sudo, bare container verb",
+     "sudo \\\n docker stop nucpot-prod-api"),
+    ("N1: escaped marker + LF continuation (combined obfuscation)",
+     "docker compose -f docker-compose\\.prod\\.yml \\\nup -d"),
+    ("N1: escaped env marker + LF continuation",
+     "docker compose --env-file docker/.env\\.prod \\\nup -d"),
+    # Direct consequences of dropping `\`+LF at the character-walk level:
+    # a continuation INSIDE the marker fuses it back together in bash
+    # (`docker/.env.\<LF>prod` argv-names docker/.env.prod), and one
+    # between `docker` and a bare verb still yields the mutation words.
+    ("N1: LF continuation inside the marker (bash fuses marker)",
+     "docker compose --env-file docker/.env.\\\nprod up -d"),
+    ("N1: LF continuation between docker and bare verb",
+     "docker \\\nstop nucpot-prod-api"),
+    # A continuation INSIDE the head words fuses back into `docker compose`
+    # in bash, executing the exact NFM-4264 mutation.
+    ("N1: LF continuation inside the docker head word",
+     "doc\\\nker compose --env-file docker/.env.prod up -d"),
+    ("N1: LF continuation inside the compose head word",
+     "docker com\\\npose -f docker-compose.prod.yml up -d"),
+    # Inside DOUBLE quotes bash also drops `\`+LF (argv fuses back), so a
+    # verb or marker fragmented in double quotes executes the exact
+    # NFM-4264 mutation; single quotes keep the pair literal.
+    ("N1: double-quoted LF continuation splits the up verb",
+     "docker compose -f docker-compose.prod.yml \"u\\\np\" -d"),
+    ("N1: double-quoted LF continuation splits the down verb",
+     "docker compose --env-file docker/.env.prod \"do\\\nwn\""),
+    ("N1: double-quoted LF continuation splits the verb, verb first",
+     "docker compose \"u\\\np\" -d -f docker-compose.prod.yml"),
+    ("N1: double-quoted LF continuation inside the marker",
+     "docker compose -f \"docker-compose.prod.\\\nyml\" up -d"),
+    ("N1: double-quoted LF continuation inside the project name",
+     "docker compose -p \"nucpot-\\\nprod\" up -d"),
+    ("N1: double-quoted LF continuation inside the env marker",
+     "docker compose --env-file \"docker/.env.\\\nprod\" up -d"),
 ]
 
 
@@ -268,6 +347,38 @@ ALLOW_CASES = [
     ("git log on prod compose file", "git log -3 -- docker-compose.prod.yml"),
     ("watchdog script invocation (reads only)",
      "bash ~/.hermes/scripts/prod-drift-watchdog.sh"),
+    # NFM-4284 N2 — NFM-1664 AC3 recovery carve-out: bare `docker start` on
+    # a prod container is allowed (`start` is a compose mutation verb but
+    # not a bare-docker container verb); pin it so a future verb-scope
+    # change cannot silently break the recovery path.
+    ("N2/NFM-1664 AC3: bare docker start on prod container",
+     "docker start nucpot-prod-api-1"),
+    # NFM-4284 N1 — quote-literal backslashes name a DIFFERENT (nonexistent)
+    # file: the argv keeps the backslashes, so this is not the prod stack
+    # and must stay allowed (shell-accurate precision boundary).
+    ("N1: quoted-literal escaped marker names a different file",
+     "docker compose -f 'docker-compose\\.prod\\.yml' config"),
+    ("N1: escaped staging marker stays allowed",
+     "docker compose -f docker-compose\\.staging\\.yml up -d --build"),
+    # NFM-4284 N1 — line continuations alone are not obfuscation: bash
+    # drops `\`+LF for EVERY command, so read-only renders, the staging
+    # stack, and quote-literal backslash spellings must stay allowed when
+    # split across a continuation.
+    ("N1: readonly compose config across LF continuation",
+     "docker compose -f docker-compose.prod.yml \\\nconfig"),
+    ("N1: staging stack up across LF continuation",
+     "docker compose -f docker-compose.staging.yml --env-file "
+     "docker/.env.staging \\\nup -d --build api web"),
+    ("N1: quote-literal escaped marker cat (RE allow probe)",
+     "cat \"docker-compose\\.prod\\.yml\""),
+    # N1 double-quote boundary: a `\`+LF inside double quotes fuses the
+    # token in bash (readonly render of the REAL prod file stays allowed),
+    # while single quotes keep the pair literal — a different argv that
+    # names no prod stack and must also stay allowed.
+    ("N1: double-quoted LF continuation with a read-only verb",
+     "docker compose -f \"docker-compose.prod.\\\nyml\" config"),
+    ("N1: single-quoted LF continuation stays literal (different file)",
+     "docker compose -f 'docker-compose.prod.\\\nyml' config"),
     ("empty command", ""),
     ("plain ls", "ls -la"),
 ]
@@ -322,6 +433,19 @@ def test_write_target_allowed(pg, path):
     ("cat docker/.env.prod", True),
     (INCIDENT_COMMAND, True),
     ("docker compose -f docker-compose.staging.yml config", False),
+    # NFM-4284 N1: escaped markers bound the G3 success log too (read-only
+    # successes like `cat docker-compose\.prod\.yml` must be logged).
+    ("cat docker-compose\\.prod\\.yml", True),
+    # N1: a `\`+LF inside a marker fuses it back together in bash, so the
+    # read-only success still names the real prod file and must be logged.
+    ("cat docker-compose.prod.\\\nyml", True),
+    # N1: a `\`+LF inside DOUBLE quotes also fuses the marker in bash, so
+    # the read-only success still names the real prod file.
+    ("cat \"docker-compose.prod.\\\nyml\"", True),
+    ("docker compose -f \"docker-compose.staging.\\\nyml\" config", False),
+    ("docker compose --env-file docker/.env.\\\nprod config", True),
+    ("docker compose -f docker-compose.staging.yml \\\nconfig", False),
+    ("docker compose -f docker-compose\\.staging\\.yml config", False),
     ("cat /etc/hosts", False),
     ("", False),
 ])
@@ -515,6 +639,59 @@ def test_belt_blocks_incident_command():
     "NFM_SANCTIONED=1 docker compose --env-file docker/.env.prod up -d",
     "echo 'services: {}' > docker-compose.prod.yml",
     "echo 'X=1' | tee -a docker/.env.prod",
+    # NFM-4284 N1 — escape-obfuscated markers must hit the belt floor too
+    # (the belt survives plugin loss/tampering, so it needs its own
+    # escape-tolerant globs, not just the plugin's shlex unescaping).
+    "docker compose -f docker-compose\\.prod\\.yml up -d",
+    "docker-compose --env-file docker/.env\\.prod up -d --build api web",
+    "docker compose -f docker-compose\\.prod.yml down",
+    "docker compose -p nucpot\\-prod up -d",
+    "docker compose up -d -f docker-compose\\.prod\\.yml",
+    "echo 'services: {}' > docker-compose\\.prod\\.yml",
+    "echo 'X=1' >> docker/.env\\.prod",
+    # Belt-floor hardening — the same escape matrix the plugin carries,
+    # so the belt alone (plugin removed/tampered) still blocks: escaped
+    # write-vector destinations, the two-char escaped head separator,
+    # and letter-escaped verb/marker spellings.
+    "echo 'X=1' | tee docker/.env\\.prod",
+    "cp /tmp/f docker-compose\\.prod\\.yml",
+    "mv /tmp/backup.yml docker/.env\\.prod",
+    "sed -i 's/image: old/image: new/' docker-compose\\.prod\\.yml",
+    "install -m 644 /tmp/f docker/.env\\.prod",
+    "docker\\-compose -f docker-compose.prod.yml up -d",
+    "docker compose -f docker-compose.prod.yml u\\p -d",
+    "docker compose -p nucpot-pro\\d up -d",
+    # NFM-4284 N1 (scope-pin 860a0d88) — backslash+LF continuation family:
+    # row 1 (continuation immediately before the verb) defeats the
+    # space-anchored verb globs above, so the belt needs its own
+    # continuation entries; rows 2-4 place the continuation elsewhere and
+    # are already caught by the leading `*` of the plain entries.
+    "docker compose --env-file docker/.env.prod \\\nup -d --build api web",
+    "echo deploying && \\\ndocker compose --env-file docker/.env.prod up -d",
+    "cd ~/projects/nucpot && \\\n  docker compose -f docker-compose.prod.yml "
+    "up -d",
+    "sudo \\\n docker stop nucpot-prod-api",
+    "docker compose -f docker-compose\\.prod\\.yml \\\nup -d",
+    # A continuation inside the head words (`doc\<LF>ker`, `com\<LF>pose`)
+    # fuses back into docker compose in bash, so the belt floor must not
+    # require a contiguous head spelling.
+    "doc\\\nker compose --env-file docker/.env.prod up -d",
+    "docker com\\\npose -f docker-compose.prod.yml up -d",
+    "doc\\\nker compose -f docker-compose.prod.yml \\\nup -d",
+    # A continuation INSIDE the down/up verb or around the bare container
+    # verbs fuses back into the mutation in bash, so the belt floor must
+    # absorb intra-verb splits the way the u*p idiom already does.
+    "docker compose --env-file docker/.env.prod do\\\nwn",
+    "docker compose -f docker-compose.prod.yml dow\\\nn",
+    "docker \\\nstop nucpot-prod-api",
+    "docker st\\\nop nucpot-prod-api",
+    "docker rest\\\nart nucpot-prod-api",
+    # N1 — a `\`+LF inside DOUBLE quotes also fuses the verb back together
+    # in bash (`"u\<LF>p"` → argv `up`), so the belt needs entries anchored
+    # on the quoted continuation itself.
+    "docker compose -f docker-compose.prod.yml \"u\\\np\" -d",
+    "docker compose --env-file docker/.env.prod \"do\\\nwn\"",
+    "docker compose \"u\\\np\" -d -f docker-compose.prod.yml",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -535,7 +712,23 @@ def test_belt_blocks_high_risk_variants(command):
     "docker exec nucpot-staging-api ls",
     "bash scripts/deploy_prod.sh",
     "docker compose -f docker-compose.staging.yml up -d --build",
+    # NFM-4284: escaped non-prod markers and the NFM-1664 recovery carve-out
+    # stay allowed at the belt layer as well.
+    "docker compose -f docker-compose\\.staging\\.yml up -d --build",
+    "docker start nucpot-prod-api-1",
     "docker build -f docker/prod-api.Dockerfile -t nucpot-prod-api:latest .",
+    # NFM-4284 N1 — the belt's continuation entries pin the verb as the
+    # first word of the continued line, so continued read-only renders and
+    # the staging stack stay allowed.
+    "docker compose -f docker-compose.prod.yml \\\nconfig",
+    "docker compose -f docker-compose.staging.yml --env-file docker/.env."
+    "staging \\\nup -d --build api web",
+    "doc\\\nker compose -f docker-compose.prod.yml \\\nconfig",
+    "docker \\\nlogs nucpot-prod-api",
+    "docker \\\nstart nucpot-prod-api-1",
+    "docker container \\\ninspect nucpot-prod-api",
+    "docker compose -f \"docker-compose.prod.\\\nyml\" config",
+    "docker compose -f 'docker-compose.prod.\\\nyml' config",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
     hits = [pat for pat in _belt_patterns()
