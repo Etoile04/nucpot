@@ -78,6 +78,15 @@ if ! dscl . -read "/Groups/${DEPLOY_GROUP}" >/dev/null 2>&1; then
   dscl . -create "/Groups/${DEPLOY_GROUP}"
   dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
 else
+  # Record exists — but a bare/partial record (e.g. created by an earlier
+  # interrupted run: dscl -create succeeded, property writes didn't) lacks
+  # PrimaryGroupID, which later chgrp/chown steps need. Backfill it.
+  # (eDSRecordAlreadyExists on the raw -create killed set -e here before.)
+  if ! dscl . -read "/Groups/${DEPLOY_GROUP}" PrimaryGroupID >/dev/null 2>&1; then
+    GID="$(next_id /Groups PrimaryGroupID 400)"
+    log "backfilling PrimaryGroupID=${GID} on partial ${DEPLOY_GROUP} record"
+    dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
+  fi
   log "group ${DEPLOY_GROUP} already exists"
 fi
 
@@ -96,7 +105,8 @@ else
 fi
 
 if ! dscl . -read "/Groups/${DEPLOY_GROUP}" GroupMembership 2>/dev/null | tr ' ' '\n' | grep -qx "${DEPLOY_USER}"; then
-  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}"
+  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}" 2>/dev/null \
+    || log "GroupMembership append returned nonzero (likely already a member) — continuing"
 fi
 
 # =============================================================================
