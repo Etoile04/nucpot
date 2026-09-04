@@ -198,6 +198,36 @@ BLOCK_CASES = [
      "echo 'services: {}' >! docker-compose.prod.yml"),
     ("fd clobber-redirect (2>|) compose file",
      "docker compose config 2>| docker-compose.prod.yml"),
+    # NFM-4284 N1 — backslash-escape obfuscation (CR bb0bbb95): an
+    # unquoted escape (docker-compose\.prod\.yml) hides the marker from
+    # raw-substring detection; shlex has already unescaped the segment
+    # words, so marker detection must scan those words too.
+    ("N1: CR probe — escaped compose marker",
+     "docker compose -f docker-compose\\.prod\\.yml up -d"),
+    ("N1: escaped marker, verb before marker",
+     "docker compose up -d --build -f docker-compose\\.prod\\.yml"),
+    ("N1: escaped marker, legacy docker-compose head",
+     "docker-compose -f docker-compose\\.prod\\.yml up -d --build"),
+    ("N1: partially escaped marker (first dot)",
+     "docker compose -f docker-compose\\.prod.yml up -d"),
+    ("N1: partially escaped marker (second dot)",
+     "docker compose -f docker-compose.prod\\.yml down"),
+    ("N1: escaped env-file marker",
+     "docker compose --env-file docker/.env\\.prod up -d --build api web"),
+    ("N1: escaped project name",
+     "docker compose -p nucpot\\-prod up -d"),
+    ("N1: escaped head spelling",
+     "docker\\-compose -f docker-compose.prod.yml up -d"),
+    ("N1: escaped head word",
+     "\\docker compose -f docker-compose.prod.yml up -d"),
+    ("N1: escaped verb (shlex unescapes; finite verb set)",
+     "docker compose -f docker-compose.prod.yml u\\p -d"),
+    ("N1: escaped redirect target (write vector)",
+     "echo 'services: {}' > docker-compose\\.prod\\.yml"),
+    ("N1: escaped tee target (write vector)",
+     "echo 'X=1' | tee docker/.env\\.prod"),
+    ("N1: escaped cp destination (write vector)",
+     "cp /tmp/fixed.yml docker-compose\\.prod\\.yml"),
 ]
 
 
@@ -268,6 +298,19 @@ ALLOW_CASES = [
     ("git log on prod compose file", "git log -3 -- docker-compose.prod.yml"),
     ("watchdog script invocation (reads only)",
      "bash ~/.hermes/scripts/prod-drift-watchdog.sh"),
+    # NFM-4284 N2 — NFM-1664 AC3 recovery carve-out: bare `docker start` on
+    # a prod container is allowed (`start` is a compose mutation verb but
+    # not a bare-docker container verb); pin it so a future verb-scope
+    # change cannot silently break the recovery path.
+    ("N2/NFM-1664 AC3: bare docker start on prod container",
+     "docker start nucpot-prod-api-1"),
+    # NFM-4284 N1 — quote-literal backslashes name a DIFFERENT (nonexistent)
+    # file: the argv keeps the backslashes, so this is not the prod stack
+    # and must stay allowed (shell-accurate precision boundary).
+    ("N1: quoted-literal escaped marker names a different file",
+     "docker compose -f 'docker-compose\\.prod\\.yml' config"),
+    ("N1: escaped staging marker stays allowed",
+     "docker compose -f docker-compose\\.staging\\.yml up -d --build"),
     ("empty command", ""),
     ("plain ls", "ls -la"),
 ]
@@ -322,6 +365,10 @@ def test_write_target_allowed(pg, path):
     ("cat docker/.env.prod", True),
     (INCIDENT_COMMAND, True),
     ("docker compose -f docker-compose.staging.yml config", False),
+    # NFM-4284 N1: escaped markers bound the G3 success log too (read-only
+    # successes like `cat docker-compose\.prod\.yml` must be logged).
+    ("cat docker-compose\\.prod\\.yml", True),
+    ("docker compose -f docker-compose\\.staging\\.yml config", False),
     ("cat /etc/hosts", False),
     ("", False),
 ])
@@ -515,6 +562,28 @@ def test_belt_blocks_incident_command():
     "NFM_SANCTIONED=1 docker compose --env-file docker/.env.prod up -d",
     "echo 'services: {}' > docker-compose.prod.yml",
     "echo 'X=1' | tee -a docker/.env.prod",
+    # NFM-4284 N1 — escape-obfuscated markers must hit the belt floor too
+    # (the belt survives plugin loss/tampering, so it needs its own
+    # escape-tolerant globs, not just the plugin's shlex unescaping).
+    "docker compose -f docker-compose\\.prod\\.yml up -d",
+    "docker-compose --env-file docker/.env\\.prod up -d --build api web",
+    "docker compose -f docker-compose\\.prod.yml down",
+    "docker compose -p nucpot\\-prod up -d",
+    "docker compose up -d -f docker-compose\\.prod\\.yml",
+    "echo 'services: {}' > docker-compose\\.prod\\.yml",
+    "echo 'X=1' >> docker/.env\\.prod",
+    # Belt-floor hardening — the same escape matrix the plugin carries,
+    # so the belt alone (plugin removed/tampered) still blocks: escaped
+    # write-vector destinations, the two-char escaped head separator,
+    # and letter-escaped verb/marker spellings.
+    "echo 'X=1' | tee docker/.env\\.prod",
+    "cp /tmp/f docker-compose\\.prod\\.yml",
+    "mv /tmp/backup.yml docker/.env\\.prod",
+    "sed -i 's/image: old/image: new/' docker-compose\\.prod\\.yml",
+    "install -m 644 /tmp/f docker/.env\\.prod",
+    "docker\\-compose -f docker-compose.prod.yml up -d",
+    "docker compose -f docker-compose.prod.yml u\\p -d",
+    "docker compose -p nucpot-pro\\d up -d",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -535,6 +604,10 @@ def test_belt_blocks_high_risk_variants(command):
     "docker exec nucpot-staging-api ls",
     "bash scripts/deploy_prod.sh",
     "docker compose -f docker-compose.staging.yml up -d --build",
+    # NFM-4284: escaped non-prod markers and the NFM-1664 recovery carve-out
+    # stay allowed at the belt layer as well.
+    "docker compose -f docker-compose\\.staging\\.yml up -d --build",
+    "docker start nucpot-prod-api-1",
     "docker build -f docker/prod-api.Dockerfile -t nucpot-prod-api:latest .",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
