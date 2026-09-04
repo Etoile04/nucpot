@@ -15,12 +15,13 @@ is classified here BEFORE any byte is forwarded upstream:
   * daemon-wide prunes, swarm/plugin control, exec/attach into prod,
     escape-hatch container configs -> DENY regardless of scope
 
-"prod-scoped" is a name/label/network match, not a docker-compose file
-match: the proxy never sees which -f/--env-file the CLI was invoked with,
-so scope is resolved from what the daemon itself knows (container name,
-``com.docker.compose.project`` label, network/volume names). Opaque ids
-are resolved through an injected resolver callback that asks the daemon
-(read-only GET) who the target actually is.
+"prod-scoped" is a name/label/network/volume match, not a docker-compose
+file match: the proxy never sees which -f/--env-file the CLI was invoked
+with, so scope is resolved from what the daemon itself knows (container
+name, ``com.docker.compose.project`` label, network/volume names, attached
+volume names). Opaque ids are resolved through an injected resolver
+callback that asks the daemon (read-only GET) who the target actually is;
+network ids have no resolver path, so opaque ones fail closed.
 
 This module is pure logic: no sockets, no I/O. Everything here is
 exercised by scripts/tests/test_nfm_docker_gate_policy.py.
@@ -71,6 +72,11 @@ _FORBIDDEN_BIND_RE = re.compile(
     r"(^|/)docker\.sock$|(^|/)podman\.sock$"
     r"|^/($|Users($|/)|private($|/)|etc($|/)|var($|/)|usr($|/)|bin($|/)|sbin($|/)|System($|/)|Library($|/))"
 )
+
+# Opaque daemon ids (container/network 64-hex). A name matching this shape is
+# scope-uncheckable from text alone; without a resolver verdict the request
+# fails closed rather than guessing (same philosophy as unrecognized paths).
+_OPAQUE_ID_RE = re.compile(r"^[0-9a-f]{12,}$")
 
 REFUSAL_HINT = (
     "nfm-g2 (NFM-4270 / ADR-013 G5): prod mutations route via GH Actions "
@@ -133,6 +139,11 @@ class TargetInfo:
     name: Optional[str] = None
     project: Optional[str] = None  # com.docker.compose.project label
     networks: tuple[str, ...] = field(default_factory=tuple)
+    # Named volumes attached to the target (create body refs, or daemon
+    # inspect Mounts[].Name). A rogue container with a prod-looking name
+    # alone is already caught; one MOUNTING prod state (nucpot-prod_pgdata)
+    # is equally a prod mutation (NFM-4273 review F1).
+    volumes: tuple[str, ...] = field(default_factory=tuple)
 
     def prod_violation(self, cfg: ScopeConfig) -> Optional[str]:
         if self.project and self.project in cfg.prod_projects:
@@ -142,6 +153,9 @@ class TargetInfo:
         for net in self.networks:
             if _matches(net, cfg.prod_network_prefixes):
                 return f"network {net!r} matches prod scope"
+        for vol in self.volumes:
+            if _matches(vol, cfg.prod_volume_prefixes):
+                return f"volume {vol!r} matches prod scope"
         return None
 
 
@@ -190,6 +204,40 @@ def _container_config_flags(body: dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _volume_refs(body: dict[str, Any]) -> tuple[str, ...]:
+    """Named-volume references from a container-create body.
+
+    Binds entries are ``[name:]container-path[:opts]`` — a source with no
+    leading ``/`` is a named volume; a leading ``/`` is a bind mount (already
+    covered by _FORBIDDEN_BIND_RE). HostConfig.Mounts entries carry the
+    volume name in ``Source`` when ``Type == "volume"``.
+    """
+    refs: list[str] = []
+    host_config = body.get("HostConfig") or {}
+    if not isinstance(host_config, dict):
+        return tuple(refs)
+    binds = host_config.get("Binds") or []
+    for bind in binds if isinstance(binds, list) else []:
+        source = str(bind).split(":")[0]
+        if source and not source.startswith("/"):
+            refs.append(source)
+    mounts = host_config.get("Mounts") or []
+    for mount in mounts if isinstance(mounts, list) else []:
+        if isinstance(mount, dict) and mount.get("Type") == "volume":
+            name = str(mount.get("Source") or "")
+            if name and not name.startswith("/"):
+                refs.append(name)
+    return tuple(refs)
+
+
+def _opaque_ref(refs: tuple[str, ...]) -> Optional[str]:
+    """First opaque (hex-id) entry in refs, if any — fails closed upstream."""
+    for ref in refs:
+        if _OPAQUE_ID_RE.match(ref.lower()):
+            return ref
+    return None
+
+
 def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     labels = body.get("Labels")
     project = labels.get("com.docker.compose.project") if isinstance(labels, dict) else None
@@ -197,7 +245,9 @@ def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     endpoints = (body.get("NetworkingConfig") or {}).get("EndpointsConfig") or {}
     if isinstance(endpoints, dict):
         networks = tuple(str(k) for k in endpoints.keys())
-    return TargetInfo(name=name or None, project=project, networks=networks)
+    return TargetInfo(
+        name=name or None, project=project, networks=networks, volumes=_volume_refs(body)
+    )
 
 
 def classify(
@@ -281,6 +331,18 @@ def classify(
         violation = target.prod_violation(cfg)
         if violation:
             return Decision(False, violation, scope="prod", audit=True, target=name or target.project)
+        # An opaque network id in EndpointsConfig cannot be scope-checked
+        # from text (the resolver resolves containers, not networks) — deny
+        # rather than allow an unverifiable network attachment.
+        opaque = _opaque_ref(target.networks)
+        if opaque:
+            return Decision(
+                False,
+                f"opaque network id {opaque!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=name or None,
+            )
         return Decision(True, "container create (non-prod)", scope="non-prod", audit=True, target=name or None)
 
     # ---- container mutations by id or name ---------------------------------
@@ -334,12 +396,28 @@ def classify(
                 audit=True,
                 target=net_id,
             )
+        if _OPAQUE_ID_RE.match(net_id.lower()):
+            return Decision(
+                False,
+                f"opaque network id {net_id!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=net_id,
+            )
         return Decision(True, "network connect (non-prod)", scope="non-prod", audit=True, target=net_id)
 
     if method == "DELETE" and path.startswith("networks/"):
         net_id = path[len("networks/"):]
         if _matches(net_id, cfg.prod_network_prefixes):
             return Decision(False, f"network rm {net_id!r} matches prod scope", scope="prod", audit=True, target=net_id)
+        if _OPAQUE_ID_RE.match(net_id.lower()):
+            return Decision(
+                False,
+                f"opaque network id {net_id!r} cannot be scope-checked (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=net_id,
+            )
         return Decision(True, "network rm (non-prod)", scope="non-prod", audit=True, target=net_id)
 
     # ---- volumes --------------------------------------------------------------

@@ -14,7 +14,10 @@
 #
 #   run-recovery.sh rollback --tag <sha>
 #       NFM-2148 / ADR-NFM-2139 §5 D1 SHA-tagged rollback — re-up the
-#       compose stack pinned to a previously-deployed image tag (no rebuild).
+#       compose stack pinned to a previously-deployed image tag (no rebuild),
+#       then re-record the G4a deploy manifest (NFM-4273: a rollback changes
+#       live digests; without a re-record the next drift-cron interval would
+#       false-alarm the sanctioned rollback).
 #
 # Anything else exits 64 (EX_USAGE) before touching docker. This is the
 # ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
@@ -56,6 +59,8 @@ case "${1:-}" in
       api|web|worker|lightrag|db) : ;;
       *) echo "unknown service '$2' (api|web|worker|lightrag|db)" >&2; exit 64 ;;
     esac
+    # No manifest re-record: a restart never changes image digests, so the
+    # last deploy's manifest remains the correct drift baseline.
     echo "[nfm-g2] sanctioned recovery: restart nucpot-prod-$2 identity=$(id -un)"
     exec docker restart "nucpot-prod-$2"
     ;;
@@ -68,8 +73,22 @@ case "${1:-}" in
     [ "${#TAG}" -ge 7 ] || { echo "tag too short to be a deploy SHA" >&2; exit 64; }
     cd "${REPO}"
     export PROD_IMAGE_TAG="${TAG}"
-    echo "[nfm-g2] sanctioned recovery: rollback to ${TAG} identity=$(id -un)"
-    exec docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
+    # NFM-4273: NOT exec'd — the rollback must re-record the G4a manifest
+    # after compose up so the drift alarm's baseline matches live state.
+    # Same canonical path + world-readable contract as deploy_prod.sh and
+    # run-record-manifest.sh: the ONE copy the desktop drift cron reads.
+    # NFM_G2_VAR_DIR is a test hook; sudo env_reset never passes it in
+    # production. A failed record exits non-zero ON PURPOSE (set -e): a
+    # rollback that cannot update its baseline must be visible, not silent.
+    G2_VAR_DIR="${NFM_G2_VAR_DIR:-/usr/local/var/nfm-g2}"
+    ACTOR="run-recovery.sh:${SUDO_USER:-nfmdeploy}"
+    echo "[nfm-g2] sanctioned recovery: rollback to ${TAG} identity=$(id -un) actor=${ACTOR}"
+    docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d
+    NFM_DEPLOY_MANIFEST="${G2_VAR_DIR}/prod-deploy-manifest.json" \
+    NFM_DEPLOY_MANIFEST_WORLD_READABLE=1 \
+    python3 scripts/record_deploy_manifest.py \
+      --deploy-sha "${TAG}" \
+      --actor "${ACTOR}"
     ;;
   -h|--help) usage; exit 0 ;;
   "")         usage; exit 64 ;;

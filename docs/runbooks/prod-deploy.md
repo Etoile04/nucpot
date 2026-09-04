@@ -567,20 +567,36 @@ it, bounding the dwell time of any out-of-band prod mutation (incident
 NFM-4264: 6h of attribution with zero audit trail).
 
 - **Recorder:** `scripts/record_deploy_manifest.py` (stdlib-only python3).
-- **Written by:** `scripts/deploy_prod.sh` (in-script, after the cutover
-  assertion and health gates) AND `production-deployment.yml` deploy-prod job
-  (outside-script belt-and-braces step — NFM-3777 lesson: defenses that live
-  only inside the deploy body die with it). The workflow injects
-  `DEPLOY_ACTOR='gh-runner:<actor>'`; manual on-host runs default to
-  `deploy_prod.sh:<user>`.
-- **Host path:** `~/.nfmd/prod-deploy-manifest.json` (override:
-  `--manifest` / `NFM_DEPLOY_MANIFEST`). Both sanctioned paths execute as the
-  same host user, so `~` resolves identically.
-- **Permissions:** file `0600` inside a `0700` directory created by the
-  recorder — best-effort tamper resistance (an out-of-band mutator running as
-  another user cannot refresh the manifest to cover its tracks). A same-user
-  actor can still defeat this; detecting that residual is the drift alarm's
-  job.
+- **Written by (all sanctioned paths, one copy):**
+  `scripts/deploy_prod.sh` (in-script, after the cutover assertion and health
+  gates), the `production-deployment.yml` deploy-prod job's outside-script
+  belt-and-braces step (NFM-3777 lesson: defenses that live only inside the
+  deploy body die with it), and — NFM-4273 — `run-recovery.sh rollback`,
+  which re-records after re-upping a previous tag (a rollback changes live
+  digests; without a re-record the next drift interval would false-alarm a
+  sanctioned rollback; `restart` does NOT re-record — it never changes
+  digests). The workflow injects `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
+  on-host runs default to `deploy_prod.sh:<user>`; rollback records
+  `run-recovery.sh:<sudo-user>`.
+- **Host path (NFM-4273 canonical layout):** with the host gate installed,
+  `/usr/local/var/nfm-g2/prod-deploy-manifest.json` — ONE canonical copy the
+  desktop-user drift cron reads. Under the gate the deploy body runs as
+  `nfmdeploy` (`$HOME=/var/lib/nfmdeploy`), so the pre-gate per-home
+  `~/.nfmd/prod-deploy-manifest.json` would fork into stale/alive copies and
+  false-alarm every gated deploy; both the writer
+  (`deploy_prod.sh` → `run-record-manifest.sh` entry) and the reader
+  (`check_deploy_drift.py`) resolve env override > canonical dir > `~/.nfmd`
+  identically. Pre-gate hosts keep `~/.nfmd` (override:
+  `--manifest` / `NFM_DEPLOY_MANIFEST`; the canonical dir is
+  env-overridable via `NFM_G2_VAR_DIR` for hermetic tests only — sudo
+  `env_reset` never passes it in production).
+- **Permissions:** gated (canonical) layout — file `0644` inside the
+  nfmdeploy-owned `0755` `/usr/local/var/nfm-g2` dir: world-readable because
+  the drift cron runs as the desktop user, and tamper-resistant because only
+  the deploy identity can write it (stronger than the pre-gate same-user
+  model: the root-owned `run-record-manifest.sh` entry is the sole write
+  route). Pre-gate hosts keep file `0600` in a `0700` dir created by the
+  recorder — there the same-user residual is the drift alarm's job.
 - **Write semantics:** collect-everything-then-write, tmp file + `fsync` +
   atomic `os.replace`. A failed collection aborts non-zero and leaves the
   previous manifest byte-identical — never a silently-wrong manifest. A
@@ -625,12 +641,17 @@ zero audit trail).
   regression — files a new issue. Dedupe survives state-file loss by
   searching OPEN `[DEPLOY-DRIFT]` issues for the signature line.
 - **No-noise during sanctioned deploys (AC-G4b.2):** (1) `deploy_prod.sh`
-  holds `~/.nfmd/prod-deploy.lock` for the whole deploy (trap-removed on
-  ANY exit — a crashed deploy must alarm); the checker stands down while
-  the lock is fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build).
+  holds the deploy lock for the whole deploy (trap-removed on ANY exit — a
+  crashed deploy must alarm); the checker stands down while the lock is
+  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build). Lock location
+  mirrors the manifest (NFM-4273): `/usr/local/var/nfm-g2/prod-deploy.lock`
+  when the canonical gate dir exists, else `~/.nfmd/prod-deploy.lock` —
+  same env > canonical > `~/.nfmd` resolution as the writer, so the cron
+  always sees the lock of the deploy actually running.
   (2) Before filing, the checker re-checks after `--recheck-seconds`
   (default 300) and re-reads the manifest — a deploy that finishes during
-  the window rewrites the manifest and clears the divergence.
+  the window rewrites the manifest and clears the divergence. (A rollback's
+  `compose up -d` → manifest re-record gap is inside this same window.)
 - **Exit codes:** 0 = in sync / tolerated; 1 = divergence (issue filed);
   2 = operational error (docker/API unavailable) — never files, so a
   transient failure cannot cry wolf.

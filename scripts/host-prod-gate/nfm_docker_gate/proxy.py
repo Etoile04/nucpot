@@ -82,10 +82,19 @@ class UpstreamResolver:
         config = doc.get("Config") or {}
         labels = config.get("Labels") or {}
         networks = tuple(((doc.get("NetworkSettings") or {}).get("Networks") or {}).keys())
+        # Named volumes attached to the container (inspect Mounts entries
+        # carry the volume name in "Name"; bind mounts have none) — a
+        # rogue container MOUNTING prod state is a prod mutation too.
+        volumes = tuple(
+            str(mount["Name"])
+            for mount in doc.get("Mounts") or []
+            if isinstance(mount, dict) and mount.get("Type") == "volume" and mount.get("Name")
+        )
         return TargetInfo(
             name=(doc.get("Name") or "").lstrip("/") or ident,
             project=labels.get("com.docker.compose.project"),
             networks=tuple(networks),
+            volumes=volumes,
         )
 
     def _daemon_request(self, api_path: str) -> Optional[bytes]:

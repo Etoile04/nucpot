@@ -851,8 +851,10 @@ jobs:
       # at the canonical /usr/local/var/nfm-g2 path — the ONE copy the G4b
       # drift cron reads (no per-home fork) and the only identity allowed to
       # write it. The overwrite-per-deploy contract makes the double write
-      # (in-script + this step) idempotent; the entry re-verifies HEAD ==
-      # DEPLOY_SHA in the repo checkout it runs from.
+      # (in-script + this step) idempotent. The entry itself only validates
+      # arg shapes (sha hex, actor charset) and records — the HEAD ==
+      # DEPLOY_SHA check lives in run-deploy.sh before the deploy body runs,
+      # and the workflow has already reset the checkout to github.sha.
       - name: Record deploy manifest (outside-script, NFM-4271 G4a via NFM-4273 gate entry)
         run: |
           set -euo pipefail

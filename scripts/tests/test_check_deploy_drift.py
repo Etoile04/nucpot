@@ -22,6 +22,7 @@ code path, real HTTP, canned responses.
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -43,6 +44,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
 COMPOSE_PROJECT = "nucpot-prod"
 SRE_AGENT_ID = "2ee2415b-e43e-4806-888f-c231e60facaf"
 COMPANY_ID = "ec7c0ded-0000-4002-8d0c-672597244875"
+DEPLOY_SHA = "4273a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9"  # hermetic deploy sha
 
 # ---------------------------------------------------------------- fixtures
 
@@ -113,6 +115,91 @@ def main() -> int:
 
     print(f"fake-docker: unsupported invocation: {args}", file=sys.stderr)
     return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+"""
+
+
+DEPLOY_DOCKER = """\
+#!/usr/bin/env python3
+""" + '"""' + """Deploy-capable fake docker for the hermetic deploy_prod.sh run (NFM-4273).
+
+Serves the drift/recorder CLI surface (ps --filter / inspect) from
+FAKE_DOCKER_STATE exactly like FAKE_DOCKER, and accepts every deploy-body
+verb (compose version, build, compose up -d, images, image rm) by logging
+argv to DEPLOY_DOCKER_CALLS and exiting 0 — recording whether the deploy
+lock was held when `compose up -d` mutated the stack.
+""" + '"""' + """
+
+import json
+import os
+import sys
+
+
+def log(line):
+    path = os.environ.get("DEPLOY_DOCKER_CALLS")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\\n")
+
+
+def main() -> int:
+    args = sys.argv[1:]
+
+    if args[:1] == ["ps"]:
+        with open(os.environ["FAKE_DOCKER_STATE"], encoding="utf-8") as fh:
+            state = json.load(fh)
+        label_filter = None
+        has_names_format = False
+        rest = iter(args[1:])
+        for arg in rest:
+            if arg == "--filter":
+                label_filter = next(rest, "")
+            elif arg.startswith("--filter="):
+                label_filter = arg.split("=", 1)[1]
+            elif arg in ("--format",) or arg.startswith("--format="):
+                has_names_format = True
+                if arg == "--format":
+                    next(rest, None)
+        if not label_filter or not has_names_format:
+            print(f"deploy-docker: unsupported ps invocation: {args}", file=sys.stderr)
+            return 64
+        _, _, label_value = label_filter.partition("=")
+        _, _, project = label_value.partition("=")
+        for name, container in sorted(state["containers"].items()):
+            labels = (container.get("Config") or {}).get("Labels") or {}
+            if labels.get("com.docker.compose.project") == project:
+                print(name)
+        return 0
+
+    if args[:1] == ["inspect"]:
+        with open(os.environ["FAKE_DOCKER_STATE"], encoding="utf-8") as fh:
+            state = json.load(fh)
+        container = state["containers"].get(args[1])
+        if container is None:
+            print(f"Error: No such object: {args[1]}", file=sys.stderr)
+            return 1
+        print(json.dumps([container]))
+        return 0
+
+    log("docker " + " ".join(args))
+    if args[:1] == ["compose"] and "up" in args:
+        var_dir = os.environ.get("NFM_G2_VAR_DIR", "")
+        lock = os.path.join(var_dir, "prod-deploy.lock") if var_dir else ""
+        log(f"lock_present={os.path.exists(lock) if lock else 'unknown'}")
+    if args[:1] == ["images"]:
+        # one line per prod repo keeps the prune pipeline (grep -c / tail)
+        # on its happy path — a fully empty daemon would die on set -e
+        repos = ("nucpot-prod-api", "nucpot-prod-lightrag", "nucpot-prod-web")
+        if "{{.Repository}}:{{.Tag}}" in args:
+            for repo in repos:
+                print(f"{repo}:latest")
+        else:
+            for repo in repos:
+                print(f"{repo}|latest|abc123def456|2026-09-04T00:00:00Z")
+    return 0
 
 
 if __name__ == "__main__":
@@ -726,16 +813,113 @@ def test_env_override_beats_canonical_and_home(tmp_path: Path, monkeypatch: pyte
     assert str(args.lock) == str(tmp_path / "explicit.lock")
 
 
-def test_deploy_prod_sh_and_checker_agree_on_g4_paths():
-    """Coherence contract (the NFM-4273 integration bug this fixes): the
-    writer (deploy_prod.sh) and the reader (this checker) must resolve the
-    lock AND manifest through the SAME canonical-dir preference."""
-    deploy_sh = DEPLOY_PROD_SH.read_text(encoding="utf-8")
-    assert "/usr/local/var/nfm-g2" in deploy_sh, "deploy lock must prefer the canonical G4 dir"
-    assert "run-record-manifest.sh" in deploy_sh, "gated manifest record must go through the entry"
-    assert "NFM_DEPLOY_MANIFEST_WORLD_READABLE" in deploy_sh
-    # under the gate the deploy body itself writes the canonical path
-    assert "NFM_DEPLOY_MANIFEST=/usr/local/var/nfm-g2/prod-deploy-manifest.json" in deploy_sh
+def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_paperclip: "StubPaperclip"
+):
+    """Hermetic deploy run (replaces the source-grep coherence test): the
+    REAL deploy_prod.sh runs end-to-end against a deploy-capable fake docker
+    and the canonical G2 dir (NFM_G2_VAR_DIR), then the REAL checker treats
+    its manifest as an in-sync baseline — the writer/reader coherence the
+    NFM-4273 integration bug was about, proven behaviorally.
+
+    Fake identity: `id` reports nfmdeploy (the gated deploy identity), so
+    the manifest records DIRECTLY at the canonical path in world-readable
+    mode — the exact branch run-deploy.sh drives in production.
+    """
+    # -- the fake host: HOME/Projects/nucpot with the real recorder/guard --
+    home = tmp_path / "home"
+    repo = home / "Projects" / "nucpot"
+    (repo / "docker").mkdir(parents=True)
+    (repo / "tools" / "post-deploy-cutover-assert").mkdir(parents=True)
+    (repo / "tools" / "prod-tag-retention").mkdir(parents=True)
+    (repo / "scripts").mkdir()
+    shutil.copy(SCRIPTS_DIR / "record_deploy_manifest.py", repo / "scripts")
+    shutil.copy(SCRIPTS_DIR / "check_prod_image_tag.py", repo / "scripts")
+    (repo / "scripts" / "prod_migrate.sh").write_text("#!/bin/bash\nexit 0\n")
+    (repo / "scripts" / "prod_migrate.sh").chmod(0o755)
+    for stub_path in (
+        repo / "tools" / "post-deploy-cutover-assert" / "assert.sh",
+        repo / "tools" / "prod-tag-retention" / "prune.sh",
+    ):
+        stub_path.write_text("#!/bin/bash\nexit 0\n")
+        stub_path.chmod(0o755)
+    (repo / "docker" / ".env.prod").write_text("PROD_IMAGE_TAG=latest\n")
+    (repo / "docker-compose.prod.yml").write_text("# hermetic stub\n")
+
+    gate_var = tmp_path / "gate-var"
+    gate_var.mkdir()
+    calls_log = tmp_path / "deploy-docker-calls.log"
+
+    bin_dir = tmp_path / "deploybin"
+    bin_dir.mkdir()
+    docker_shim = bin_dir / "docker"
+    docker_shim.write_text(DEPLOY_DOCKER, encoding="utf-8")
+    docker_shim.chmod(0o755)
+
+    def shim(name: str, body: str) -> None:
+        target = bin_dir / name
+        target.write_text(f"#!/bin/bash\n{body}\n", encoding="utf-8")
+        target.chmod(0o755)
+
+    shim("git", f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{DEPLOY_SHA}"; exit 0; fi\nexit 1')
+    shim("id", 'printf "nfmdeploy\\n"')  # the gated deploy identity branch
+    shim("curl", "exit 0")
+    shim("sleep", "exit 0")
+
+    state_path = tmp_path / "deploy-state.json"
+    state_path.write_text(json.dumps({"containers": prod_containers()}), encoding="utf-8")
+
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_DOCKER_STATE", str(state_path))
+    monkeypatch.setenv("DEPLOY_DOCKER_CALLS", str(calls_log))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("DEPLOY_SHA", DEPLOY_SHA)
+    monkeypatch.setenv("PROXY_PORT", "7897")
+    monkeypatch.setenv("DEPLOY_ACTOR", "gh-runner:lwj04")
+    monkeypatch.setenv("NFM_G2_DEPLOY_IDENTITY", "1")
+    monkeypatch.setenv("NFM_G2_VAR_DIR", str(gate_var))
+
+    result = subprocess.run(
+        ["bash", str(DEPLOY_PROD_SH)], capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"DEPLOY_SCRIPT_COMPLETED_OK sha={DEPLOY_SHA}" in result.stdout
+
+    # -- the manifest: canonical path, world-readable, real-recorder shape --
+    manifest = gate_var / "prod-deploy-manifest.json"
+    assert manifest.is_file(), "gated deploy must record at the canonical G2 dir"
+    assert stat.S_IMODE(manifest.stat().st_mode) == 0o644
+    recorded = json.loads(manifest.read_text(encoding="utf-8"))
+    assert recorded["deploy_sha"] == DEPLOY_SHA
+    assert recorded["actor"] == "gh-runner:lwj04"
+    expected_services = {
+        container["Config"]["Labels"]["com.docker.compose.service"]
+        for container in prod_containers().values()
+        if container["Config"]["Labels"]["com.docker.compose.project"] == COMPOSE_PROJECT
+    }
+    assert set(recorded["service_containers"]) == expected_services
+
+    # -- the lock: held while compose mutates, cleared after any exit ------
+    calls = calls_log.read_text(encoding="utf-8")
+    assert "lock_present=True" in calls, "deploy lock must cover the compose cutover"
+    assert not (gate_var / "prod-deploy.lock").exists(), "lock must be trap-removed"
+
+    # -- coherence: the REAL checker accepts this manifest as its baseline --
+    checker = subprocess.run(
+        [
+            sys.executable, str(SCRIPT),
+            "--manifest", str(manifest),
+            "--lock", str(gate_var / "prod-deploy.lock"),
+            "--state", str(tmp_path / "drift-state.json"),
+            "--recheck-seconds", "0",
+            "--paperclip-url", stub_paperclip.url,
+            "--paperclip-key", "test-key",
+            "--company-id", COMPANY_ID,
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert checker.returncode == 0, checker.stdout + checker.stderr
+    assert stub_paperclip.creates() == []
 
 
 def test_workflow_runs_checker_tests_before_deploy():

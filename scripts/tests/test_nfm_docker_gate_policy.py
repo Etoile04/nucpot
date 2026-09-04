@@ -123,6 +123,97 @@ def test_opaque_hex_id_resolved_through_daemon():
     assert not result.allowed and result.scope == "prod"
 
 
+def test_opaque_hex_id_with_prod_volume_resolved_through_daemon():
+    """NFM-4273 review F1: a rogue container with an innocent name but prod
+    state MOUNTED is still a prod mutation — the resolver surfaces attached
+    volumes from daemon inspect and the violation fires on the volume."""
+    opaque = "c" * 64
+
+    def resolver(ident):
+        return TargetInfo(name="innocent-toolbox", volumes=("nucpot-prod_pgdata",))
+
+    result = decide("DELETE", f"/v1.43/containers/{opaque}", resolver=resolver)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod_pgdata" in result.reason
+
+
+# ---- volumes in scope (NFM-4273 review F1) -------------------------------------
+
+
+def test_create_mounting_prod_volume_via_binds_denied():
+    body = {"HostConfig": {"Binds": ["nucpot-prod_pgdata:/var/lib/postgresql/data"]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod_pgdata" in result.reason
+
+
+def test_create_mounting_prod_volume_via_mounts_denied():
+    body = {"HostConfig": {"Mounts": [
+        {"Type": "volume", "Source": "nucpot-prod_pgdata", "Target": "/data"}
+    ]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_create_mounting_nonprod_volume_allowed():
+    body = {"HostConfig": {
+        "Binds": ["nucpot-staging_cache:/cache"],
+        "Mounts": [{"Type": "volume", "Source": "dev_scratch", "Target": "/s"}],
+    }}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert result.allowed
+
+
+def test_bind_mount_paths_are_not_volume_refs():
+    """Absolute bind sources are bind mounts (checked separately by
+    _FORBIDDEN_BIND_RE) — they must not crash or pollute volume scoping."""
+    body = {"HostConfig": {"Binds": ["/tmp/scratch:/data"],
+                           "Mounts": [{"Type": "bind", "Source": "/Users/x", "Target": "/u"}]}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert result.allowed
+
+
+def test_target_info_prod_violation_on_volume_alone():
+    assert TargetInfo(volumes=("nucpot-prod_pgdata",)).prod_violation(CFG)
+    assert TargetInfo(volumes=("unrelated",)).prod_violation(CFG) is None
+
+
+# ---- opaque network ids fail closed (NFM-4273 review F2) ------------------------
+
+
+def test_network_connect_opaque_id_denied_fail_closed():
+    """Network ids have no resolver path — a hex id cannot be scope-checked
+    from text, so it must fail closed rather than pass as 'non-prod'."""
+    opaque = "d" * 64
+    result = decide("POST", f"/v1.43/networks/{opaque}/connect", body={})
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_network_disconnect_opaque_id_denied_fail_closed():
+    result = decide("POST", f"/v1.43/networks/{'e' * 64}/disconnect", body={})
+    assert not result.allowed
+
+
+def test_network_rm_opaque_id_denied_fail_closed():
+    result = decide("DELETE", f"/v1.43/networks/{'f' * 64}")
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_network_actions_by_name_still_classified():
+    """Named networks keep the original behavior both ways."""
+    assert not decide("POST", "/v1.43/networks/nucpot-prod_default/connect").allowed
+    assert decide("POST", "/v1.43/networks/bridge/connect").allowed
+
+
+def test_create_with_opaque_network_ref_denied_fail_closed():
+    """Create joining a network by opaque id is the same hole as connect —
+    deny (compose always references networks by name)."""
+    body = {"NetworkingConfig": {"EndpointsConfig": {"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef": {}}}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
 def test_named_ref_skips_resolver():
     def resolver(ident):  # pragma: no cover - must not be called
         raise AssertionError("resolver must not be called for named refs")

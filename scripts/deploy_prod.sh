@@ -27,7 +27,10 @@ set -euo pipefail
 # ssh host "cmd" runs a NON-LOGIN zsh: only /etc/zshenv + ~/.zshenv are
 # sourced, so /usr/local/bin (docker) is missing from PATH. The old heredoc
 # transport accidentally worked because a login shell sources .zprofile.
-export PATH="/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:$PATH"
+# Inherited PATH first (the gate entries' pattern): in production ssh
+# inherits an empty-ish PATH so the pinned dirs still supply docker — but
+# hermetic tests can prepend a fake docker that then wins.
+export PATH="${PATH:+${PATH}:}/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # --- Input validation (empty variable = loud failure, never a mangled cmd) --
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
@@ -50,9 +53,12 @@ export PATH="/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:$PATH"
 # every gated deploy). When the gate's canonical G4 state dir exists, both
 # the lock and the manifest live there: deploy-identity-writable,
 # world-readable. check_deploy_drift.py mirrors this exact preference.
+# NFM_G2_VAR_DIR is a test hook; sudo env_reset never passes it in
+# production.
+G2_VAR_DIR="${NFM_G2_VAR_DIR:-/usr/local/var/nfm-g2}"
 if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
-  if [ -d /usr/local/var/nfm-g2 ]; then
-    NFM_DEPLOY_LOCK=/usr/local/var/nfm-g2/prod-deploy.lock
+  if [ -d "${G2_VAR_DIR}" ]; then
+    NFM_DEPLOY_LOCK="${G2_VAR_DIR}/prod-deploy.lock"
   else
     NFM_DEPLOY_LOCK="$HOME/.nfmd/prod-deploy.lock"
   fi
@@ -249,14 +255,14 @@ curl -f http://localhost:3000/ || exit 1
 # NFM-4273 (G2×G4a coherence): under the host gate this body runs as
 # nfmdeploy — $HOME/.nfmd would fork away from the desktop user's copy the
 # drift cron reads. With the gate installed, the manifest ALWAYS lands at
-# the canonical /usr/local/var/nfm-g2 path: directly when we already run
-# as the deploy identity (inside run-deploy.sh — sudo-to-self is not
-# granted), otherwise via the root-owned sudo entry so only the deploy
-# identity ever writes it. Pre-gate hosts keep the original direct call.
+# the canonical G2_VAR_DIR path: directly when we already run as the
+# deploy identity (inside run-deploy.sh — sudo-to-self is not granted),
+# otherwise via the root-owned sudo entry so only the deploy identity ever
+# writes it. Pre-gate hosts keep the original direct call.
 echo "==> Recording deploy manifest (NFM-4271 / ADR-013 G4a)"
-if [ -d /usr/local/var/nfm-g2 ]; then
+if [ -d "${G2_VAR_DIR}" ]; then
   if [ "$(id -un)" = "nfmdeploy" ]; then
-    NFM_DEPLOY_MANIFEST=/usr/local/var/nfm-g2/prod-deploy-manifest.json \
+    NFM_DEPLOY_MANIFEST="${G2_VAR_DIR}/prod-deploy-manifest.json" \
     NFM_DEPLOY_MANIFEST_WORLD_READABLE=1 \
     python3 scripts/record_deploy_manifest.py \
       --deploy-sha "${DEPLOY_SHA}" \

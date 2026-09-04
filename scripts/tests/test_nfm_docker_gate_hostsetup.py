@@ -323,20 +323,100 @@ def test_run_record_manifest_accepts_short_sha(entry):
     assert result.returncode == 0, result.stderr
 
 
-def test_host_setup_installs_record_manifest_entry_and_canonical_dir():
-    """host_setup.sh must install the G4a entry root-owned AND create the
-    canonical shared G4 state dir the drift cron reads (NFM-4273)."""
-    text = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
-    assert "run-record-manifest" in text
-    assert "/usr/local/var/nfm-g2" in text
-    assert text.index("mkdir -p /usr/local/var/nfm-g2") < text.index('chmod 0755 /usr/local/var/nfm-g2')
-    # sudoers must grant the entry and keep DEPLOY_ACTOR riding env_keep
-    sudoers = (GATE_DIR / "sudoers.d" / "nfm-prod-deploy").read_text(encoding="utf-8")
-    assert "/usr/local/lib/nfm-g2/run-record-manifest.sh" in sudoers
-    assert 'env_keep += "DEPLOY_SHA PROXY_PORT DEPLOY_ACTOR"' in sudoers
-    # the deploy entry forwards DEPLOY_ACTOR into the deploy body
-    run_deploy = (GATE_DIR / "entries" / "run-deploy.sh").read_text(encoding="utf-8")
-    assert "DEPLOY_ACTOR" in run_deploy
+# ---- NFM-4273 wiring: semantic sudoers parse + behavioral forwarding ----------
+
+_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+
+
+def test_sudoers_env_keep_scoped_to_deploy_entry_only():
+    """Semantic parse (replaces a source-grep): env passthrough belongs to
+    the deploy entry EXACTLY — the trio incl. DEPLOY_ACTOR (NFM-4273 B2),
+    and no other entry takes env through env_reset (args-not-env)."""
+    import re
+
+    kept: dict[str, set[str]] = {}
+    for line in _sudoers_lines():
+        if not line.startswith("Defaults!"):
+            continue
+        match = re.match(
+            r'Defaults!/usr/local/lib/nfm-g2/(\S+) env_keep \+= "([^"]*)"', line
+        )
+        assert match, f"unrecognized Defaults line: {line}"
+        kept.setdefault(match.group(1), set()).update(match.group(2).split())
+    assert kept.get("run-deploy.sh") == {"DEPLOY_SHA", "PROXY_PORT", "DEPLOY_ACTOR"}
+    assert set(kept) == {"run-deploy.sh"}, "only the deploy entry takes env passthrough"
+    # install wiring (the one claim only source inspection can pin): the
+    # canonical shared G4 dir is created before it is chmod'd to 0755
+    setup = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
+    assert setup.index("mkdir -p /usr/local/var/nfm-g2") < setup.index(
+        "chmod 0755 /usr/local/var/nfm-g2"
+    )
+
+
+def test_run_deploy_forwards_actor_env_into_deploy_body(entry):
+    """Behavioral (NFM-4273 B2): the caller's DEPLOY_ACTOR must reach the
+    exec'd deploy body — gh-runner provenance survives the entry (a fake
+    `bash` stands in for the deploy body and records what it inherited)."""
+    entry._write_executable(
+        "git",
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\nexit 1\n',
+    )
+    entry._write_executable(
+        "bash",
+        f'printf \'body argv=%s actor=[%s] sha=[%s] port=[%s]\\n\' "$*" '
+        f'"$DEPLOY_ACTOR" "$DEPLOY_SHA" "$PROXY_PORT" >> {entry.docker_calls}\nexit 0\n',
+    )
+    result = entry.run("run-deploy.sh",
+                       env_extra={"DEPLOY_SHA": _SHA, "DEPLOY_ACTOR": "gh-runner:lwj04"})
+    assert result.returncode == 0, result.stderr
+    log = entry.docker_calls.read_text()
+    assert "body argv=scripts/deploy_prod.sh" in log
+    assert "actor=[gh-runner:lwj04]" in log
+    assert f"sha=[{_SHA}]" in log
+
+
+def test_run_deploy_defaults_actor_to_empty_for_manual_runs(entry):
+    """Manual runs set no DEPLOY_ACTOR — the entry must export it EMPTY
+    (deploy_prod.sh then defaults it), never leave it unset (set -u trap)."""
+    entry._write_executable(
+        "git",
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\nexit 1\n',
+    )
+    entry._write_executable(
+        "bash",
+        f'printf \'body actor=[%s]\\n\' "$DEPLOY_ACTOR" >> {entry.docker_calls}\nexit 0\n',
+    )
+    result = entry.run("run-deploy.sh", env_extra={"DEPLOY_SHA": _SHA})
+    assert result.returncode == 0, result.stderr
+    assert "body actor=[]" in entry.docker_calls.read_text()
+
+
+def test_run_recovery_rollback_re_records_manifest_after_compose(entry, tmp_path):
+    """NFM-4273 review F3: a sanctioned rollback changes live digests, so it
+    must re-record the G4a manifest at the canonical path AFTER compose up —
+    otherwise the next drift interval false-alarms the rollback. The python3
+    spy appends to the SAME log as the fake docker so ORDER is provable."""
+    gate_var = tmp_path / "gate-var"
+    tag = "1a2b3c4d5e6f7a8b"
+    entry._write_executable(
+        "python3",
+        f'printf \'python3 %s\\n\' "$*" >> {entry.docker_calls}\n'
+        f'printf \'manifest=%s world=%s\\n\' "$NFM_DEPLOY_MANIFEST" '
+        f'"$NFM_DEPLOY_MANIFEST_WORLD_READABLE" >> {entry.docker_calls}\nexit 0\n',
+    )
+    result = entry.run("run-recovery.sh", "rollback", "--tag", tag,
+                       env_extra={"NFM_G2_VAR_DIR": str(gate_var)})
+    assert result.returncode == 0, result.stderr
+    log = entry.docker_calls.read_text().splitlines()
+    compose_at = next(i for i, ln in enumerate(log) if "up -d" in ln)
+    record_at = next(
+        i for i, ln in enumerate(log)
+        if ln.startswith("python3 scripts/record_deploy_manifest.py")
+    )
+    assert record_at > compose_at, f"manifest re-record must follow compose up: {log}"
+    assert f"--deploy-sha {tag}" in log[record_at]
+    assert "run-recovery.sh:" in log[record_at]
+    assert f"manifest={gate_var}/prod-deploy-manifest.json world=1" in log
 
 
 # ---- watchdog context assertion ----------------------------------------------------

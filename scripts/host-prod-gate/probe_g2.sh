@@ -90,7 +90,7 @@ else
 fi
 
 # ---- AC-G2.3: sanctioned entries live and root-owned ------------------------
-for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh; do
+for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh; do
   INFO="$(stat -f '%u %Lp' "${G2}/${ENTRY}" 2>/dev/null || true)"
   OWNER="${INFO%% *}"; PERMS="${INFO##* }"
   if [ "${OWNER}" = "0" ] && [ "${#PERMS}" -eq 3 ] \
@@ -110,7 +110,7 @@ if [ -n "${NOPASSWD_LINES}" ]; then
   else
     bad "G2.4 stray NOPASSWD grant(s) outside nfm-g2: ${STRAY}"
   fi
-  for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh; do
+  for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh; do
     if printf '%s\n' "${NOPASSWD_LINES}" | grep -q "${ENTRY}"; then
       ok "G2.4 sudo grant present: ${ENTRY}"
     else

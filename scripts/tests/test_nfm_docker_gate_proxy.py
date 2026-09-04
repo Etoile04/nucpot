@@ -36,6 +36,9 @@ class FakeDaemon:
     def __init__(self, path: str) -> None:
         self.path = path
         self.requests: list[tuple[str, str]] = []  # (method, full target)
+        # Optional override for container-inspect responses (NFM-4273
+        # review F1: tests of the resolver's volume extraction set this).
+        self.inspect_payload: dict | None = None
         self._lock = threading.Lock()
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(path)
@@ -104,10 +107,11 @@ class FakeDaemon:
         if path.endswith("/containers/json"):
             payload = json.dumps([{"Names": ["nucpot-prod-api"]}]).encode()
         elif "/containers/" in path and path.endswith("/json"):
-            payload = json.dumps(
-                {"Name": "/nucpot-prod-api",
-                 "Config": {"Labels": {"com.docker.compose.project": "nucpot-prod"}}}
-            ).encode()
+            doc = self.inspect_payload if self.inspect_payload is not None else {
+                "Name": "/nucpot-prod-api",
+                "Config": {"Labels": {"com.docker.compose.project": "nucpot-prod"}},
+            }
+            payload = json.dumps(doc).encode()
         else:
             payload = json.dumps({"Id": "ok"}).encode()
         return (
@@ -246,6 +250,27 @@ def test_opaque_hex_container_id_resolved_and_denied(ro):
     assert response.startswith(b"HTTP/1.1 403")
     assert ro.daemon.seen("GET", f"/containers/{opaque}/json")  # resolver consulted
     assert not ro.daemon.seen("DELETE")
+
+
+def test_opaque_id_with_prod_volume_denied_via_resolver(ro):
+    """NFM-4273 review F1 at the proxy layer: the resolver's daemon inspect
+    surfaces attached named volumes — a mutation against an innocent-named
+    container MOUNTING prod state is denied, and never reaches the daemon."""
+    ro.daemon.inspect_payload = {
+        "Name": "/innocent-toolbox",
+        "Config": {"Labels": {}},
+        "NetworkSettings": {"Networks": {"bridge": {}}},
+        "Mounts": [
+            {"Type": "volume", "Name": "nucpot-prod_pgdata",
+             "Source": "/var/lib/docker/volumes/x/_data", "Destination": "/data"},
+            {"Type": "bind", "Source": "/Users/x/proj", "Destination": "/p"},
+        ],
+    }
+    opaque = "9" * 64
+    response = ro.request(http("POST", f"/v1.43/containers/{opaque}/stop"))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert ro.daemon.seen("GET", f"/containers/{opaque}/json")  # resolver consulted
+    assert not ro.daemon.seen("POST", "/stop")
 
 
 def test_prune_denied(ro):
