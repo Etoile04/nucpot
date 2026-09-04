@@ -548,13 +548,17 @@ def is_prod_touching(command: str) -> bool:
     (mutations AND read-only touches)? Bounds the success-path log."""
     if not isinstance(command, str) or not command.strip():
         return False
-    lowered = command.lower()
-    if (any(marker in lowered for marker in PROD_FILE_MARKERS)
-            or PROD_CONTAINER_PREFIX in lowered):
-        return True
-    # NFM-4284 N1: escaped markers are invisible to the raw substring scan;
-    # the shlex-unescaped words reveal them, so read-only successes like
-    # `cat docker-compose\.prod\.yml` still bound the G3 log.
-    if _segment_has_prod_marker(lowered, [w.lower() for w in _words(command)]):
-        return True
-    return any(is_prod_touching(p) for p in _subshell_payloads(command))
+    for payload in _subshell_payloads(command):
+        if is_prod_touching(payload):
+            return True
+    for segment in _split_top_level(command):
+        # NFM-4284 N1: the shared boundary drops `\`+LF continuations the
+        # way bash does, and the shlex-unescaped segment words reveal
+        # escaped markers, so read-only successes like `cat
+        # docker-compose\.prod\.yml` or `cat docker-compose.prod.\<LF>yml`
+        # still bound the G3 log.
+        lowered = segment.lower()
+        if _segment_has_prod_marker(
+                lowered, [w.lower() for w in _words(segment)]):
+            return True
+    return False

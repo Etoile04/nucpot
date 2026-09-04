@@ -256,6 +256,12 @@ BLOCK_CASES = [
      "docker compose --env-file docker/.env.\\\nprod up -d"),
     ("N1: LF continuation between docker and bare verb",
      "docker \\\nstop nucpot-prod-api"),
+    # A continuation INSIDE the head words fuses back into `docker compose`
+    # in bash, executing the exact NFM-4264 mutation.
+    ("N1: LF continuation inside the docker head word",
+     "doc\\\nker compose --env-file docker/.env.prod up -d"),
+    ("N1: LF continuation inside the compose head word",
+     "docker com\\\npose -f docker-compose.prod.yml up -d"),
 ]
 
 
@@ -407,6 +413,11 @@ def test_write_target_allowed(pg, path):
     # NFM-4284 N1: escaped markers bound the G3 success log too (read-only
     # successes like `cat docker-compose\.prod\.yml` must be logged).
     ("cat docker-compose\\.prod\\.yml", True),
+    # N1: a `\`+LF inside a marker fuses it back together in bash, so the
+    # read-only success still names the real prod file and must be logged.
+    ("cat docker-compose.prod.\\\nyml", True),
+    ("docker compose --env-file docker/.env.\\\nprod config", True),
+    ("docker compose -f docker-compose.staging.yml \\\nconfig", False),
     ("docker compose -f docker-compose\\.staging\\.yml config", False),
     ("cat /etc/hosts", False),
     ("", False),
@@ -634,6 +645,12 @@ def test_belt_blocks_incident_command():
     "up -d",
     "sudo \\\n docker stop nucpot-prod-api",
     "docker compose -f docker-compose\\.prod\\.yml \\\nup -d",
+    # A continuation inside the head words (`doc\<LF>ker`, `com\<LF>pose`)
+    # fuses back into docker compose in bash, so the belt floor must not
+    # require a contiguous head spelling.
+    "doc\\\nker compose --env-file docker/.env.prod up -d",
+    "docker com\\\npose -f docker-compose.prod.yml up -d",
+    "doc\\\nker compose -f docker-compose.prod.yml \\\nup -d",
 ])
 def test_belt_blocks_high_risk_variants(command):
     assert any(
@@ -665,6 +682,7 @@ def test_belt_blocks_high_risk_variants(command):
     "docker compose -f docker-compose.prod.yml \\\nconfig",
     "docker compose -f docker-compose.staging.yml --env-file docker/.env."
     "staging \\\nup -d --build api web",
+    "doc\\\nker compose -f docker-compose.prod.yml \\\nconfig",
 ])
 def test_belt_allows_readonly_and_sanctioned(command):
     hits = [pat for pat in _belt_patterns()

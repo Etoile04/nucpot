@@ -117,18 +117,18 @@ approvals:
     # the staging/dev stacks stay allowed — belt-verified in
     # test_hermes_prod_guard.py::test_belt_blocks_* and
     # test_belt_allows_*.
-    - '*docker[ .\-]*compose*docker-compose[.\]*p*r*o*d[.\]*yml* u*p*'
-    - '*docker[ .\-]*compose* u*p *docker-compose[.\]*p*r*o*d[.\]*yml*'
-    - '*docker[ .\-]*compose*.env[.\]*p*r*o*d* u*p*'
-    - '*docker[ .\-]*compose* u*p *.env[.\]*p*r*o*d*'
-    - '*docker[ .\-]*compose*nucpot[.\-]*p*r*o*d* u*p*'
-    - '*docker[ .\-]*compose* u*p *nucpot[.\-]*p*r*o*d*'
-    - '*docker[ .\-]*compose*docker-compose[.\]*p*r*o*d[.\]*yml* d*own*'
-    - '*docker[ .\-]*compose* d*own *docker-compose[.\]*p*r*o*d[.\]*yml*'
-    - '*docker[ .\-]*compose*.env[.\]*p*r*o*d* d*own*'
-    - '*docker[ .\-]*compose* d*own *.env[.\]*p*r*o*d*'
-    - '*docker[ .\-]*compose*nucpot[.\-]*p*r*o*d* d*own*'
-    - '*docker[ .\-]*compose* d*own *nucpot[.\-]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *docker-compose[.\]*p*r*o*d[.\]*yml*'
+    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *.env[.\]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* u*p*'
+    - '*doc*ker[ .\-]*com*pose* u*p *nucpot[.\-]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*docker-compose[.\]*p*r*o*d[.\]*yml* d*own*'
+    - '*doc*ker[ .\-]*com*pose* d*own *docker-compose[.\]*p*r*o*d[.\]*yml*'
+    - '*doc*ker[ .\-]*com*pose*.env[.\]*p*r*o*d* d*own*'
+    - '*doc*ker[ .\-]*com*pose* d*own *.env[.\]*p*r*o*d*'
+    - '*doc*ker[ .\-]*com*pose*nucpot[.\-]*p*r*o*d* d*own*'
+    - '*doc*ker[ .\-]*com*pose* d*own *nucpot[.\-]*p*r*o*d*'
     # escaped write vectors — the shell unescapes every target spelling
     # below, so each writes the real prod file (`> docker-compose\.prod\.yml`,
     # `echo 'X=1' | tee docker/.env\.prod`, `cp /tmp/f docker-compose\.prod\.yml`).
@@ -169,15 +169,15 @@ approvals:
     # literal LF, which YAML only spells in double-quoted scalars (`\\`
     # is one backslash, `\n` is the LF); in a single-quoted scalar a raw
     # LF would break the entry across lines.
-    - "*docker[ .\\-]*compose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*up*"
-    - "*docker[ .\\-]*compose*.env[.\\]*p*r*o*d*\\\n*up*"
-    - "*docker[ .\\-]*compose*nucpot[.\\-]*p*r*o*d*\\\n*up*"
-    - "*docker[ .\\-]*compose*\\\n*up *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
-    - "*docker[ .\\-]*compose*\\\n*up *.env[.\\]*p*r*o*d*"
-    - "*docker[ .\\-]*compose*\\\n*up *nucpot[.\\-]*p*r*o*d*"
-    - "*docker[ .\\-]*compose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*down*"
-    - "*docker[ .\\-]*compose*.env[.\\]*p*r*o*d*\\\n*down*"
-    - "*docker[ .\\-]*compose*nucpot[.\\-]*p*r*o*d*\\\n*down*"
-    - "*docker[ .\\-]*compose*\\\n*down *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
-    - "*docker[ .\\-]*compose*\\\n*down *.env[.\\]*p*r*o*d*"
-    - "*docker[ .\\-]*compose*\\\n*down *nucpot[.\\-]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*up*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*up *nucpot[.\\-]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*docker-compose[.\\]*p*r*o*d[.\\]*yml*\\\n*down*"
+    - "*doc*ker[ .\\-]*com*pose*.env[.\\]*p*r*o*d*\\\n*down*"
+    - "*doc*ker[ .\\-]*com*pose*nucpot[.\\-]*p*r*o*d*\\\n*down*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*down *docker-compose[.\\]*p*r*o*d[.\\]*yml*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*down *.env[.\\]*p*r*o*d*"
+    - "*doc*ker[ .\\-]*com*pose*\\\n*down *nucpot[.\\-]*p*r*o*d*"
