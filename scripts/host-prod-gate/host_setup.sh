@@ -78,6 +78,15 @@ if ! dscl . -read "/Groups/${DEPLOY_GROUP}" >/dev/null 2>&1; then
   dscl . -create "/Groups/${DEPLOY_GROUP}"
   dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
 else
+  # Record exists — but a bare/partial record (e.g. created by an earlier
+  # interrupted run: dscl -create succeeded, property writes didn't) lacks
+  # PrimaryGroupID, which later chgrp/chown steps need. Backfill it.
+  # (eDSRecordAlreadyExists on the raw -create killed set -e here before.)
+  if ! dscl . -read "/Groups/${DEPLOY_GROUP}" PrimaryGroupID >/dev/null 2>&1; then
+    GID="$(next_id /Groups PrimaryGroupID 400)"
+    log "backfilling PrimaryGroupID=${GID} on partial ${DEPLOY_GROUP} record"
+    dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
+  fi
   log "group ${DEPLOY_GROUP} already exists"
 fi
 
@@ -92,11 +101,28 @@ if ! dscl . -read "/Users/${DEPLOY_USER}" >/dev/null 2>&1; then
   dscl . -create "/Users/${DEPLOY_USER}" RealName "NFMD deploy identity (NFM-4270)"
   dscl . -create "/Users/${DEPLOY_USER}" Password '*'
 else
-  log "user ${DEPLOY_USER} already exists"
+  # Same partial-record hazard as the group above: an interrupted first run
+  # leaves a bare user record (dscl -create + accountPolicyData only, no
+  # UniqueID) that breaks `sudo -u nfmdeploy` and the id(1) probe. Backfill
+  # every required property idempotently.
+  log "user ${DEPLOY_USER} record exists — backfilling missing properties"
+  if ! dscl . -read "/Users/${DEPLOY_USER}" UniqueID >/dev/null 2>&1; then
+    UID_="$(next_id /Users UniqueID 501)"
+    dscl . -create "/Users/${DEPLOY_USER}" UniqueID "${UID_}"
+  fi
+  dscl . -read "/Users/${DEPLOY_USER}" PrimaryGroupID >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" PrimaryGroupID 20
+  dscl . -read "/Users/${DEPLOY_USER}" NFSHomeDirectory >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" NFSHomeDirectory "${DEPLOY_HOME}"
+  dscl . -read "/Users/${DEPLOY_USER}" UserShell >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" UserShell /bin/zsh
+  dscl . -read "/Users/${DEPLOY_USER}" RealName >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" RealName "NFMD deploy identity (NFM-4270)"
 fi
 
 if ! dscl . -read "/Groups/${DEPLOY_GROUP}" GroupMembership 2>/dev/null | tr ' ' '\n' | grep -qx "${DEPLOY_USER}"; then
-  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}"
+  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}" 2>/dev/null \
+    || log "GroupMembership append returned nonzero (likely already a member) — continuing"
 fi
 
 # =============================================================================
