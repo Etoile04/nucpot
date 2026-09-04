@@ -254,8 +254,9 @@ def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
     ``--volumes-from nucpot-prod-db-1`` copies a prod container's mounts
     (incl. prod volumes) into the new container; ``--network
     container:nucpot-prod-api-1`` shares a prod container's network
-    namespace. Neither touches Binds/Mounts/EndpointsConfig, so they are
-    scope-checked here instead (NFM-4273 review R1).
+    namespace, and ``--pid``/``--ipc container:<ref>`` share its process
+    and IPC namespaces. None of these touch Binds/Mounts/EndpointsConfig,
+    so they are scope-checked here instead (NFM-4273 reviews R1, E1).
     """
     host_config = body.get("HostConfig") or {}
     if not isinstance(host_config, dict):
@@ -264,9 +265,10 @@ def _container_refs(body: dict[str, Any]) -> tuple[str, ...]:
     for entry in host_config.get("VolumesFrom") or []:
         if isinstance(entry, str):
             refs.append(entry.split(":", 1)[0])
-    network_mode = host_config.get("NetworkMode")
-    if isinstance(network_mode, str) and network_mode.startswith("container:"):
-        refs.append(network_mode[len("container:"):])
+    for flag in ("NetworkMode", "PidMode", "IpcMode"):
+        value = host_config.get(flag)
+        if isinstance(value, str) and value.startswith("container:"):
+            refs.append(value[len("container:"):])
     return tuple(refs)
 
 
@@ -276,7 +278,11 @@ def _target_from_create(name: str, body: dict[str, Any]) -> TargetInfo:
     networks: tuple[str, ...] = tuple()
     endpoints = (body.get("NetworkingConfig") or {}).get("EndpointsConfig") or {}
     if isinstance(endpoints, dict):
-        networks = tuple(str(k) for k in endpoints.keys())
+        networks = networks + tuple(str(k) for k in endpoints.keys())
+    host_config = body.get("HostConfig") or {}
+    network_mode = host_config.get("NetworkMode") if isinstance(host_config, dict) else None
+    if isinstance(network_mode, str) and network_mode and not network_mode.startswith("container:"):
+        networks = networks + (network_mode,)
     return TargetInfo(
         name=name or None,
         project=project,
@@ -383,36 +389,52 @@ def classify(
         return Decision(True, "container create (non-prod)", scope="non-prod", audit=True, target=name or None)
 
     # ---- container mutations by id or name ---------------------------------
-    def _resolve(ident: str) -> TargetInfo:
+    def _resolve(ident: str) -> Optional[TargetInfo]:
         local = TargetInfo(name=ident)
         if local.prod_violation(cfg) is not None:
             return local  # decisive from the CLI text; no daemon roundtrip
-        info = resolver(ident) if resolver is not None else None
-        return info if info is not None else local
+        if not _OPAQUE_ID_RE.match(ident.lower()):
+            return local  # a plain name is fully decided by the text above
+        if resolver is None:
+            return None  # opaque id with nothing to consult — fail closed
+        return resolver(ident)  # None back means unresolvable — fail closed
+
+    def _deny_if_prod(action_desc: str, ident: str) -> Optional[Decision]:
+        info = _resolve(ident)
+        if info is None:
+            return Decision(
+                False,
+                f"opaque id {ident!r} cannot be resolved to scope-check (fail-closed)",
+                scope="n/a",
+                audit=True,
+                target=ident,
+            )
+        violation = info.prod_violation(cfg)
+        if violation:
+            return Decision(False, f"{action_desc}: {violation}", scope="prod", audit=True, target=ident)
+        return None
 
     match = _CONTAINER_MUTATION.match(path)
     if match:
         ident, action = match.group("id"), match.group("action")
-        violation = _resolve(ident).prod_violation(cfg)
-        if violation:
-            return Decision(
-                False, f"{action} on prod container: {violation}", scope="prod", audit=True, target=ident
-            )
+        denied = _deny_if_prod(f"{action} on prod container", ident)
+        if denied:
+            return denied
         return Decision(True, f"{action} (non-prod container)", scope="non-prod", audit=True, target=ident)
 
     if method == "DELETE" and path.startswith("containers/"):
         ident = path[len("containers/"):]
-        violation = _resolve(ident).prod_violation(cfg)
-        if violation:
-            return Decision(False, f"rm on prod container: {violation}", scope="prod", audit=True, target=ident)
+        denied = _deny_if_prod("rm on prod container", ident)
+        if denied:
+            return denied
         return Decision(True, "rm (non-prod container)", scope="non-prod", audit=True, target=ident)
 
     if method == "PUT" and path.startswith("containers/") and path.endswith("/archive"):
         # PUT /containers/{id}/archive — docker cp INTO a container
         ident = path[len("containers/") : -len("/archive")]
-        violation = _resolve(ident).prod_violation(cfg)
-        if violation:
-            return Decision(False, f"cp into prod container: {violation}", scope="prod", audit=True, target=ident)
+        denied = _deny_if_prod("cp into prod container", ident)
+        if denied:
+            return denied
         return Decision(True, "cp (non-prod container)", scope="non-prod", audit=True, target=ident)
 
     # ---- networks -----------------------------------------------------------
@@ -425,10 +447,11 @@ def classify(
     network_action = _NETWORK_ACTION.match(path)
     if method == "POST" and network_action:
         net_id = network_action.group("id")
+        action = network_action.group("action")
         if _matches(net_id, cfg.prod_network_prefixes):
             return Decision(
                 False,
-                f"network {network_action.group('action')}: {net_id!r} matches prod scope",
+                f"network {action}: {net_id!r} matches prod scope",
                 scope="prod",
                 audit=True,
                 target=net_id,
@@ -441,7 +464,12 @@ def classify(
                 audit=True,
                 target=net_id,
             )
-        return Decision(True, "network connect (non-prod)", scope="non-prod", audit=True, target=net_id)
+        container = str(body_json.get("Container") or "") if isinstance(body_json, dict) else ""
+        if container:
+            denied = _deny_if_prod(f"network {action} on prod container", container)
+            if denied:
+                return denied
+        return Decision(True, f"network {action} (non-prod)", scope="non-prod", audit=True, target=net_id)
 
     if method == "DELETE" and path.startswith("networks/"):
         net_id = path[len("networks/"):]

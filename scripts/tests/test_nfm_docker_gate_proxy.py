@@ -39,6 +39,9 @@ class FakeDaemon:
         # Optional override for container-inspect responses (NFM-4273
         # review F1: tests of the resolver's volume extraction set this).
         self.inspect_payload: dict | None = None
+        # HTTP status for container-inspect responses; a non-200 simulates
+        # the daemon hiccup that makes the resolver roundtrip fail.
+        self.inspect_status = 200
         self._lock = threading.Lock()
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(path)
@@ -107,6 +110,12 @@ class FakeDaemon:
         if path.endswith("/containers/json"):
             payload = json.dumps([{"Names": ["nucpot-prod-api"]}]).encode()
         elif "/containers/" in path and path.endswith("/json"):
+            if self.inspect_status != 200:
+                return (
+                    f"HTTP/1.1 {self.inspect_status} Error\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode()
             doc = self.inspect_payload if self.inspect_payload is not None else {
                 "Name": "/nucpot-prod-api",
                 "Config": {"Labels": {"com.docker.compose.project": "nucpot-prod"}},
@@ -287,6 +296,26 @@ def test_opaque_id_with_prod_volume_denied_via_resolver(ro):
 def test_prune_denied(ro):
     assert ro.request(http("POST", "/v1.43/containers/prune")).startswith(b"HTTP/1.1 403")
     assert not ro.daemon.seen("POST", "prune")
+
+
+def test_network_connect_body_prod_container_denied(ro):
+    """NFM-4273 review E2: ``docker network connect rogue-net
+    nucpot-prod-api-1`` — the prod container rides in the connect BODY,
+    so the proxy must read it and the daemon must never see the connect."""
+    body = json.dumps({"Container": "nucpot-prod-api-1"}).encode()
+    response = ro.request(http("POST", "/v1.43/networks/rogue-net/connect", body))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("POST", "/connect")
+
+
+def test_unresolvable_opaque_id_fails_closed(ro):
+    """NFM-4273 review W1: when the resolver's daemon inspect fails
+    (timeout / 5xx), the mutation against the opaque id must be denied,
+    not waved through as a non-prod 'name'."""
+    ro.daemon.inspect_status = 500
+    response = ro.request(http("DELETE", f"/v1.43/containers/{'a' * 64}"))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("DELETE")
 
 
 # ---- AC-G2.2: reads frictionless, semantics preserved -----------------------

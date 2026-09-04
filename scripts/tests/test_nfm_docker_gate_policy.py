@@ -262,6 +262,111 @@ def test_create_with_nonprod_container_refs_allowed():
     assert result.allowed
 
 
+# ---- create-body NetworkMode names + Pid/Ipc namespaces (NFM-4273 review E1) ---
+
+
+def test_create_network_mode_prod_network_name_denied():
+    """``docker run --network nucpot-prod_default`` attaches to the prod
+    network through HostConfig alone — no NetworkingConfig involved."""
+    body = {"HostConfig": {"NetworkMode": "nucpot-prod_default"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod_default" in result.reason
+
+
+def test_create_network_mode_opaque_network_id_denied_fail_closed():
+    body = {"HostConfig": {"NetworkMode": "d" * 64}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_create_pid_mode_container_prod_denied():
+    """``--pid container:nucpot-prod-api-1`` shares a prod container's
+    process namespace (ptrace-equivalent access) without touching mounts."""
+    body = {"HostConfig": {"PidMode": "container:nucpot-prod-api-1"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod-api-1" in result.reason
+
+
+def test_create_ipc_mode_container_prod_denied():
+    body = {"HostConfig": {"IpcMode": "container:nucpot-prod-db-1"}}
+    result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_create_built_in_network_modes_still_allowed():
+    for mode in ("default", "bridge", "none", "host", "nucpot-staging_default"):
+        body = {"HostConfig": {"NetworkMode": mode}}
+        result = decide("POST", "/v1.43/containers/create", "name=harmless", body=body)
+        assert result.allowed, mode
+
+
+# ---- network connect/disconnect body container ref (NFM-4273 review E2) --------
+
+
+def test_network_connect_to_prod_container_denied():
+    """``docker network connect rogue-net nucpot-prod-api-1`` — the network
+    is non-prod but the CONNECT BODY's Container ref is a prod container."""
+    result = decide("POST", "/v1.43/networks/rogue-net/connect",
+                    body={"Container": "nucpot-prod-api-1"})
+    assert not result.allowed and result.scope == "prod"
+    assert "nucpot-prod-api-1" in result.reason
+
+
+def test_network_disconnect_prod_container_denied():
+    result = decide("POST", "/v1.43/networks/rogue-net/disconnect",
+                    body={"Container": "nucpot-prod-db-1"})
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_network_connect_container_hex_ref_resolved_through_daemon():
+    prefix = "c1d2e3f4a5b"
+
+    def resolver(ident):
+        assert ident == prefix
+        return TargetInfo(name="nucpot-prod-api", project="nucpot-prod")
+
+    result = decide("POST", "/v1.43/networks/rogue-net/connect",
+                    body={"Container": prefix}, resolver=resolver)
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_network_connect_container_hex_ref_unresolvable_fails_closed():
+    result = decide("POST", "/v1.43/networks/rogue-net/connect",
+                    body={"Container": "e" * 64}, resolver=lambda ident: None)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_network_connect_nonprod_container_allowed():
+    result = decide("POST", "/v1.43/networks/bridge/connect",
+                    body={"Container": "nucpot-staging-api-1"})
+    assert result.allowed
+
+
+# ---- unresolvable opaque container ids fail closed (NFM-4273 review W1) --------
+
+
+def test_opaque_id_resolver_failure_fails_closed():
+    """A transient daemon failure on the resolver roundtrip must deny, not
+    pass the prod container off as non-prod."""
+    result = decide("DELETE", f"/v1.43/containers/{'a' * 64}",
+                    resolver=lambda ident: None)
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_opaque_id_without_resolver_fails_closed():
+    result = decide("POST", f"/v1.43/containers/{'b' * 64}/restart", resolver=None)
+    assert not result.allowed and "fail-closed" in result.reason
+
+
+def test_named_container_unaffected_by_resolver_failure():
+    result = decide("POST", "/v1.43/containers/nucpot-staging-api/stop",
+                    resolver=lambda ident: None)
+    assert result.allowed
+
+
 # ---- hex id prefixes of ANY length are opaque (NFM-4273 review R2) ---------------
 
 

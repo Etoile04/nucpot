@@ -14,8 +14,8 @@ wall: a pipelined second request on the same connection is never treated
 as "already allowed" — the connection closes after the first exchange.
 
 Requests whose JSON body participates in classification (container /
-network / volume create) have it read up-front (bounded); everything
-else streams untouched.
+network / volume create, network connect/disconnect) have it read
+up-front (bounded); everything else streams untouched.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ _HEX = set("0123456789abcdef")
 
 # Endpoints whose JSON body participates in classification.
 _BODY_ENDPOINTS = {"containers/create", "networks/create", "volumes/create"}
+_BODY_ENDPOINT_RE = re.compile(r"^networks/[^/]+/(connect|disconnect)$")
 
 
 _API_VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
@@ -76,11 +77,11 @@ class UpstreamResolver:
             return TargetInfo(name=ident)
         raw = self._daemon_request(f"/containers/{ident}/json")
         if raw is None:
-            return TargetInfo(name=ident)
+            return None
         try:
             doc = json.loads(raw)
         except ValueError:
-            return TargetInfo(name=ident)
+            return None
         config = doc.get("Config") or {}
         labels = config.get("Labels") or {}
         networks = tuple(((doc.get("NetworkSettings") or {}).get("Networks") or {}).keys())
@@ -273,7 +274,7 @@ class DockerGateProxy:
 
     def _decide(self, conn: socket.socket, ctx: _ConnCtx) -> Decision:
         stripped = _strip_version(ctx.path).lstrip("/")
-        if stripped in _BODY_ENDPOINTS and ctx.method == "POST":
+        if ctx.method == "POST" and (stripped in _BODY_ENDPOINTS or _BODY_ENDPOINT_RE.match(stripped)):
             body = self._read_body(conn, ctx)
             if body is None:
                 return Decision(False, "oversized or unreadable JSON body (fail-closed)", audit=True)
