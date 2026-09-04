@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = TESTS_DIR.parent
@@ -301,10 +302,20 @@ def test_workflow_wires_recorder_outside_script():
     that live only inside the deploy body die with it). NFM-4273: the
     outside-script record goes through the root-owned gate entry so the
     write happens as the deploy identity at the canonical G4 path."""
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert "run-record-manifest.sh" in text, "must record via the G2 gate entry (NFM-4273)"
-    assert "gh-runner:" in text
-    assert "NFM-4271" in text
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps") or []
+    ]
+    record_steps = [
+        step for step in steps if "run-record-manifest.sh" in str(step.get("run") or "")
+    ]
+    assert record_steps, "a job step must invoke the G2 record entry (NFM-4273)"
+    run = str(record_steps[0]["run"])
+    assert "deploy_prod.sh" not in run, "the belt step records outside the deploy script"
+    assert "--deploy-sha '${{ github.sha }}'" in run
+    assert "--actor 'gh-runner:" in run
 
 
 def test_world_readable_mode_writes_0644_in_0755_dir(fake_docker, tmp_path):

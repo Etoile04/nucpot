@@ -388,6 +388,65 @@ def test_smuggle_behind_declared_body_is_dropped(ro):
     assert not ro.daemon.seen("DELETE")
 
 
+# ---- NFM-4273 review N1: body framing on body-participating endpoints --------
+
+
+def _chunked(payload: bytes) -> bytes:
+    return f"{len(payload):x}\r\n".encode() + payload + b"\r\n0\r\n\r\n"
+
+
+def test_chunked_create_body_fails_closed(ro):
+    """Content-Length: 0 + Transfer-Encoding: chunked must not classify an
+    empty body while _forward streams the real chunked payload to the
+    daemon — the create below attaches to the prod network."""
+    payload = json.dumps({"HostConfig": {"NetworkMode": "nucpot-prod_default"}}).encode()
+    raw = http("POST", "/v1.43/containers/create?name=harmless",
+               extra="Transfer-Encoding: chunked\r\n") + _chunked(payload)
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("POST", "containers/create")
+
+
+def test_chunked_network_connect_body_fails_closed(ro):
+    """Same smuggling maneuver against the E2 connect-body check."""
+    payload = json.dumps({"Container": "nucpot-prod-api-1"}).encode()
+    raw = http("POST", "/v1.43/networks/rogue-net/connect",
+               extra="Transfer-Encoding: chunked\r\n") + _chunked(payload)
+    response = ro.request(raw)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("POST", "/connect")
+
+
+def test_create_body_without_declared_length_fails_closed(ro):
+    """No Content-Length at all: the body must not be guessed from whatever
+    bytes happened to arrive with the head."""
+    payload = json.dumps({"HostConfig": {"Binds": ["nucpot-prod_pgdata:/data"]}}).encode()
+    head = (
+        "POST /v1.43/containers/create?name=harmless HTTP/1.1\r\n"
+        "Host: docker\r\n"
+        "User-Agent: Docker-Client/test\r\n\r\n"
+    ).encode()
+    response = ro.request(head + payload)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("POST", "containers/create")
+
+
+def test_conflicting_content_length_headers_fail_closed(ro):
+    """Two differing Content-Length values are classic request smuggling —
+    deny rather than pick one."""
+    payload = json.dumps({"HostConfig": {"VolumesFrom": ["nucpot-prod-db-1"]}}).encode()
+    head = (
+        "POST /v1.43/containers/create?name=harmless HTTP/1.1\r\n"
+        "Host: docker\r\n"
+        f"Content-Length: {len(payload)}\r\n"
+        "Content-Length: 0\r\n"
+        "User-Agent: Docker-Client/test\r\n\r\n"
+    ).encode()
+    response = ro.request(head + payload)
+    assert response.startswith(b"HTTP/1.1 403")
+    assert not ro.daemon.seen("POST", "containers/create")
+
+
 # ---- AC-G2.6: attributable deny records ----------------------------------------
 
 

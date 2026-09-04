@@ -15,7 +15,8 @@ as "already allowed" — the connection closes after the first exchange.
 
 Requests whose JSON body participates in classification (container /
 network / volume create, network connect/disconnect) have it read
-up-front (bounded); everything else streams untouched.
+up-front (bounded, Content-Length framed — any other body framing on
+those endpoints fails closed); everything else streams untouched.
 """
 
 from __future__ import annotations
@@ -290,15 +291,15 @@ class DockerGateProxy:
         for name, value in ctx.headers:
             if name == "content-length":
                 try:
-                    length = int(value)
+                    declared = int(value)
                 except ValueError:
                     return None
-                break
-        if length < 0:
-            ctx.body = ctx.rest
-            ctx.rest = b""
-            return ctx.body
-        if length > _BODY_LIMIT:
+                if length >= 0 and declared != length:
+                    return None
+                length = declared
+            elif name == "transfer-encoding":
+                return None
+        if length < 0 or length > _BODY_LIMIT:
             return None
         body = bytearray(ctx.rest)
         ctx.rest = b""
