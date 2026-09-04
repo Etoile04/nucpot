@@ -137,6 +137,13 @@ class LiteratureDetailResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
+    gap_count: int = Field(
+        default=0,
+        description=(
+            "Open extraction gaps for this literature (ontology-driven "
+            "gap scan, NFM-4093/G3-S5). 0 = no missing expected properties."
+        ),
+    )
 
 
 class LiteratureReextractResponse(BaseModel):

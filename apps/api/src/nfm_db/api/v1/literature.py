@@ -636,6 +636,20 @@ async def get_literature_detail(
 
     extraction_results = await _collect_extraction_results(literature_id, db)
 
+    # G3-S5 (NFM-4093): open-gap count for the detail header badge.
+    from nfm_db.models.extraction_gap import ExtractionGap
+
+    gap_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ExtractionGap)
+            .where(
+                ExtractionGap.literature_id == literature_id,
+                ExtractionGap.gap_status.in_(["open", "filling"]),
+            )
+        )
+    ).scalar_one()
+
     return ApiResponse(
         success=True,
         data=LiteratureDetailResponse(
@@ -650,6 +664,7 @@ async def get_literature_detail(
             content_md=source.content_md,
             figures=figures,
             extraction_results=extraction_results,
+            gap_count=gap_count,
             created_at=source.created_at,
             updated_at=source.updated_at,
         ),
