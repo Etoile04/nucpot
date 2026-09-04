@@ -22,8 +22,12 @@ from nfm_db.models.ref_gap_fill import RefGapFillStaging, StagingStatus
 logger = logging.getLogger(__name__)
 
 # Default target tuples: (element_system, phase, property_name).
-# In production this would come from a config or property-mapping.json.
-# For now we define a representative set to demonstrate the scan pipeline.
+# NFM-4088 (BUG-11): these are now only a **last-resort fallback**. The
+# service first tries to derive targets from the latest published
+# ontology's declared entity/property pairs (the scientifically correct
+# source) and, failing that, from the reference_values main table (what
+# the data actually covers). The static list below only keeps the scan
+# pipeline demonstrable when neither source yields anything.
 _DEFAULT_TARGET_TUPLES: list[dict[str, str | None]] = [
     {"element_system": "U", "phase": "BCC", "property_name": "lattice_constant"},
     {"element_system": "U", "phase": "BCC", "property_name": "bulk_modulus"},
@@ -139,7 +143,101 @@ class GapScanService:
         target_tuples: list[dict[str, str | None]] | None = None,
     ) -> None:
         self._session = session
-        self._targets = target_tuples or _DEFAULT_TARGET_TUPLES
+        self._targets = target_tuples  # resolved lazily in scan_gaps()
+        self._targets_explicit = target_tuples is not None
+
+    async def _resolve_targets(self) -> list[dict[str, str | None]]:
+        """Derive scan targets dynamically (BUG-11, NFM-4088).
+
+        Priority: ① explicit constructor arg → ② latest published
+        ontology's declared (entity_type → element_system, property)
+        pairs → ③ distinct tuples present in the reference_values main
+        table (so the gap report reflects the *real* data domain) →
+        ④ the static demonstrative list.
+        """
+        if self._targets_explicit:
+            assert self._targets is not None
+            return self._targets
+
+        # ② ontology-declared pairs
+        try:
+            from nfm_db.models.ontology_version import OntologyVersion
+            from nfm_db.services.gap_scanner import extract_entity_types
+
+            row = await self._session.execute(
+                select(OntologyVersion)
+                .where(OntologyVersion.status == "published")
+                .order_by(OntologyVersion.created_at.desc())
+                .limit(1)
+            )
+            ov = row.scalar_one_or_none()
+            if ov is not None:
+                pairs: list[dict[str, str | None]] = []
+                for et in extract_entity_types(ov):
+                    name = et.get("name")
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    props = et.get("properties")
+                    if not isinstance(props, list):
+                        continue
+                    for p in props:
+                        if isinstance(p, str) and p.strip():
+                            pairs.append(
+                                {
+                                    "element_system": name.strip(),
+                                    "phase": None,
+                                    "property_name": p.strip(),
+                                }
+                            )
+                if pairs:
+                    logger.info(
+                        "GapScanService: targets from ontology %s (%d pairs)",
+                        getattr(ov, "version", "?"),
+                        len(pairs),
+                    )
+                    return pairs
+        except Exception:  # ontology derivation is best-effort
+            logger.debug(
+                "GapScanService: ontology target derivation failed",
+                exc_info=True,
+            )
+
+        # ③ distinct tuples in reference_values
+        try:
+            from nfm_db.models.reference_value import ReferenceValue
+
+            rows = await self._session.execute(
+                select(
+                    ReferenceValue.element,
+                    ReferenceValue.crystal_structure,
+                    ReferenceValue.property_name,
+                )
+                .distinct()
+                .limit(500)
+            )
+            pairs = [
+                {
+                    "element_system": el,
+                    "phase": ph,
+                    "property_name": prop,
+                }
+                for el, ph, prop in rows.all()
+                if el and prop
+            ]
+            if pairs:
+                logger.info(
+                    "GapScanService: targets from reference_values (%d tuples)",
+                    len(pairs),
+                )
+                return pairs
+        except Exception:  # main-table derivation is best-effort
+            logger.debug(
+                "GapScanService: reference_values target derivation failed",
+                exc_info=True,
+            )
+
+        # ④ static fallback
+        return _DEFAULT_TARGET_TUPLES
 
     async def _get_covered_tuples(self) -> set[tuple[str, str | None, str]]:
         """Query staging table for existing (element_system, phase, property_name) tuples."""
@@ -176,7 +274,7 @@ class GapScanService:
         """
         covered = await self._get_covered_tuples()
 
-        targets = self._targets
+        targets = await self._resolve_targets()
         if element_systems is not None:
             targets = [t for t in targets if t["element_system"] in element_systems]
 

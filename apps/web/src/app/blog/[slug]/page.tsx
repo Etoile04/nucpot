@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from "react"
 import { getAllPosts, getPostBySlug, getAllSlugs } from "@/lib/blog/posts"
+import { getPublishedPost, getPublishedPosts } from "@/lib/blog/public-posts"
 import { formatDate } from "@/lib/blog/format-date"
 import { slugifyHeadingText } from "@/lib/blog/headings"
 import {
@@ -19,6 +20,11 @@ interface BlogDetailPageProps {
   readonly params: Promise<{ slug: string }>
 }
 
+// BUG-03 (NFM-4085): prerender seed posts, but allow on-demand render
+// for DB-published posts; ISR refreshes every 60s.
+export const revalidate = 60
+export const dynamicParams = true
+
 export async function generateStaticParams() {
   const slugs = getAllSlugs()
   return slugs.map((slug) => ({ slug }))
@@ -28,7 +34,7 @@ export async function generateMetadata({
   params,
 }: BlogDetailPageProps): Promise<Metadata> {
   const { slug } = await params
-  const post = getPostBySlug(slug)
+  const post = (await getPublishedPost(slug)) ?? getPostBySlug(slug)
 
   if (!post) {
     return { title: "文章未找到" }
@@ -77,13 +83,13 @@ function extractText(node: ReactNode): string {
   return ""
 }
 
-function findAdjacentPosts(
+async function findAdjacentPosts(
   currentSlug: string
-): {
+): Promise<{
   prev: { slug: string; title: string } | null
   next: { slug: string; title: string } | null
-} {
-  const posts = getAllPosts()
+}> {
+  const posts = await getPublishedPosts()
   const currentIndex = posts.findIndex((p) => p.slug === currentSlug)
 
   if (currentIndex === -1) {
@@ -103,14 +109,14 @@ export default async function BlogDetailPage({
   params,
 }: BlogDetailPageProps) {
   const { slug } = await params
-  const post = getPostBySlug(slug)
+  const post = (await getPublishedPost(slug)) ?? getPostBySlug(slug)
 
   if (!post) {
     notFound()
   }
 
   const posts = getAllPosts()
-  const { prev, next } = findAdjacentPosts(slug)
+  const { prev, next } = await findAdjacentPosts(slug)
 
   return (
     <>

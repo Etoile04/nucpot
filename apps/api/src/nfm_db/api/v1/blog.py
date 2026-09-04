@@ -6,6 +6,7 @@ from typing import Annotated
 
 import frontmatter as matter
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import (
@@ -107,6 +108,59 @@ require_admin_or_reviewer = require_blog_role(
     BlogRole.EDITOR,
     BlogRole.REVIEWER,
 )
+
+
+@router.get(
+    "/blog/public",
+    response_model=list[BlogPostResponse],
+    summary="公开博客文章列表",
+    description="列出全部已发布文章（公开只读，无需鉴权）。供前台博客页实时渲染，"
+    "替代 SSG 构建期文件读取（BUG-03）。\n\nList published blog posts "
+    "(public, unauthenticated).",
+)
+async def list_public_posts(
+    session: AsyncSession = Depends(get_db),
+) -> list[BlogPostResponse]:
+    """Return all published posts, newest first, for the public blog page."""
+    from nfm_db.models.blog_post import BlogPostMetadata, PostStatus
+
+    posts = (
+        await session.execute(
+            select(BlogPostMetadata)
+            .where(BlogPostMetadata.status == PostStatus.PUBLISHED)
+            .order_by(BlogPostMetadata.published_at.desc().nullslast())
+            .limit(200)
+        )
+    ).scalars().all()
+
+    return [_enrich_response(p) for p in posts]
+
+
+@router.get(
+    "/blog/public/{slug}",
+    response_model=BlogPostResponse,
+    summary="公开博客文章详情",
+    description="按 slug 获取单篇已发布文章（公开只读，无需鉴权）。BUG-03。",
+)
+async def get_public_post(
+    slug: str,
+    session: AsyncSession = Depends(get_db),
+) -> BlogPostResponse:
+    """Return one published post by slug (404 otherwise)."""
+    from nfm_db.models.blog_post import BlogPostMetadata, PostStatus
+
+    post = (
+        await session.execute(
+            select(BlogPostMetadata)
+            .where(
+                BlogPostMetadata.slug == slug,
+                BlogPostMetadata.status == PostStatus.PUBLISHED,
+            )
+        )
+    ).scalar_one_or_none()
+    if post is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return _enrich_response(post)
 
 
 @router.post(
