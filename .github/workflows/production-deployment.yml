@@ -463,23 +463,14 @@ jobs:
 
       - name: Run pre-deploy DB↔code alembic assertion
         run: |
+          # NFM-4270 (ADR-013 G2): assert.sh needs docker exec into
+          # nucpot-prod-db and docker run of the candidate image — prod-
+          # scoped ops. It runs as the deploy identity through the root-
+          # owned sudo entry (full docker gate, audited). Args expand in
+          # the LOCAL shell (unquoted heredoc), exactly as before.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
-            cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-            # github.com must go DIRECT: the proxy route for it is dead
-            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
-            # do not inherit job env, so this must be re-exported here.
-            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
-            export no_proxy=$NO_PROXY
-            # NFM-848: literal path — this heredoc is UNQUOTED so the local
-            # GHA shell expands \$-vars; the runner env has no USER/HOME set,
-            # which made the earlier \${USER} form expand to an empty string.
-            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
-            mkdir -p /tmp/nfm848-no-cred-docker-config
-            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
-            echo "===> Running pre-deploy-assert against ${CANDIDATE_TAG}..."
-            bash tools/pre-deploy-assert-smoke/assert.sh \
+            sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-pre-deploy-assert.sh \
               --image "${CANDIDATE_TAG}" \
               --db-container nucpot-prod-db \
               --db-user "${PROD_POSTGRES_USER:-nfm}" \
@@ -662,6 +653,15 @@ jobs:
           # it executes on PR runners and catches regressions in
           # `tools/prod-tag-retention/prune.sh` before they reach prod.
           python3 -m pytest tools/prod-tag-retention/test_prune.py -v
+          # NFM-4271: deploy manifest recorder (ADR-013 G4a). Same fake-docker
+          # shim pattern; exercises the script both deploy paths call, before
+          # it reaches prod.
+          python3 -m pytest scripts/tests/test_record_deploy_manifest.py -v
+          # NFM-4272: ADR-013 G4b deploy-drift alarm. Same fake-docker
+          # shim pattern; exercises the checker the Hermes cron runs against
+          # prod (including its stub-Paperclip end-to-end filing path)
+          # before any of it ships.
+          python3 -m pytest scripts/tests/test_check_deploy_drift.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -787,10 +787,20 @@ jobs:
           PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
         run: |
           set -euo pipefail
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key \
-            scripts/deploy_prod.sh lwj04@127.0.0.1:/tmp/nfm-deploy-prod.sh
+          # NFM-4270 (ADR-013 G2): repo sync stays with lwj04 (repo owner);
+          # the deploy body runs as the dedicated deploy identity via the
+          # root-owned sudo entry → full docker gate (audited). The scp'd
+          # /tmp copy is retired: the repo is reset to exactly github.sha
+          # first and run-deploy.sh re-verifies HEAD == DEPLOY_SHA before
+          # executing scripts/deploy_prod.sh, so the deployed tree is still
+          # exactly what CI tested.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' bash /tmp/nfm-deploy-prod.sh"
+            "cd ~/Projects/nucpot && git fetch origin && git reset --hard '${{ github.sha }}'"
+          # NFM-4271: DEPLOY_ACTOR tells the in-script manifest recorder this
+          # deploy's path is the GH runner (a manual deploy_prod.sh run keeps
+          # the deploy_prod.sh:<user> default inside the script).
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh"
 
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
@@ -831,6 +841,31 @@ jobs:
           done
           echo "CUTOVER_ASSERT_OK: all 4 nucpot-prod containers on ${{ github.sha }}"
 
+      # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest OUTSIDE the
+      # deploy script as belt-and-braces (NFM-3777/#1050 lesson: every defense
+      # that lived only inside the deploy body died with it when the tail was
+      # swallowed). deploy_prod.sh already records the manifest in-script once
+      # its health gates pass; this job-context step re-records so a manifest
+      # exists even if the script's tail was eaten. NFM-4273: routed through
+      # the root-owned sudo entry so the write happens as the deploy identity
+      # at the canonical /usr/local/var/nfm-g2 path — the ONE copy the G4b
+      # drift cron reads (no per-home fork) and the only identity allowed to
+      # write it. The overwrite-per-deploy contract makes the double write
+      # (in-script + this step) idempotent. The entry itself only validates
+      # arg shapes (sha hex, actor charset) and records — the HEAD ==
+      # DEPLOY_SHA check lives in run-deploy.sh before the deploy body runs,
+      # and the workflow has already reset the checkout to github.sha.
+      - name: Record deploy manifest (outside-script, NFM-4271 G4a via NFM-4273 gate entry)
+        run: |
+          set -euo pipefail
+          # Non-interactive SSH shell (zsh) lacks /usr/local/bin where sudo
+          # lives on this host — same PATH fix the deploy script applies.
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "export PATH=\"/usr/local/bin:/usr/local/sbin:\$PATH\"; \
+             sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-record-manifest.sh \
+               --deploy-sha '${{ github.sha }}' \
+               --actor 'gh-runner:${{ github.actor }}'"
+
       - name: External smoke tests
         id: external-smoke-tests
         env:
@@ -869,8 +904,10 @@ jobs:
 
       - name: Verify Celery workers
         run: |
+          # NFM-4270 (ADR-013 G2): docker exec into prod routes through the
+          # root-owned sudo entry (deploy identity, full gate, audited).
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "export PATH=\"/usr/local/bin:\$PATH\" && docker exec nucpot-prod-worker celery -A nfm_db.services.celery_app:celery_app inspect active"
+            "sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-worker-inspect.sh"
 
       # =======================================================================
       # NFM-2109 / ADR-KR3-A2: emit prod deploy-event fragment for the collector.
@@ -1164,7 +1201,7 @@ jobs:
                   `1. [View failed run](${runUrl})\n` +
                   `2. Check Docker containers: \`ssh lwj04@<host> docker ps\`\n` +
                   `3. Check Cloudflare Tunnel status\n` +
-                  `4. Manual rollback (NFM-2148 / ADR-NFM-2139 §5 D1 — SHA-tagged): \`ssh lwj04@<host> PROD_IMAGE_TAG=<prev-sha> docker compose -f docker-compose.prod.yml --env-file docker/.env.prod up -d\` (no rebuild; \`<prev-sha>\` is the SHA of the last successful deploy event — see C6.1.1 / NFM-2110)\n` +
+                  `4. Manual rollback (NFM-2148 / ADR-NFM-2139 §5 D1 — SHA-tagged; NFM-4270 sanctioned route): \`ssh lwj04@<host> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <prev-sha>\` (no rebuild; \`<prev-sha>\` is the SHA of the last successful deploy event — see C6.1.1 / NFM-2110)\n` +
                   `5. This issue auto-closes on next successful deploy`,
                 labels: ['deploy-failure'],
               });

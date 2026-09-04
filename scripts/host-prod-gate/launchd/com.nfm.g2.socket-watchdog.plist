@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-4270 (ADR-013 G2) — socket perms + docker-context watchdog.
+     Installed to /Library/LaunchDaemons by scripts/host-prod-gate/host_setup.sh.
+     Re-asserts group prod-deploy + mode 060 on the real Docker daemon
+     socket (Docker Desktop recreates it with default perms on restart)
+     and re-points the desktop user's docker CLI currentContext at the ro
+     gate. Every repair is logged as a "drift" record in
+     /var/log/nfm-g2/watchdog.log. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.socket-watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/lib/nfm-g2/start-watchdog.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/launchd-watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/launchd-watchdog.log</string>
+</dict>
+</plist>

@@ -27,6 +27,12 @@ docker image prune -f                     # 悬空层
 #   - 所有 :latest 标签（compose 默认 tag，动了破坏下次部署）
 ```
 
+> **G2 门禁生效后（NFM-4270 / ADR-013）**：桌面 `docker` 走 `nfm-ro` 只读门禁时，
+> 上面的 `docker builder prune`、`docker image prune`（daemon 级 prune 一律 fail-closed）
+> 以及 `prune.sh` / 手动 `docker rmi` 删 `nucpot-prod-*` tag 或镜像 ID 的操作都会被 403
+> （`docker system df` 等只读诊断不受影响）。届时镜像清理须经部署身份/sanctioned entry
+> 执行——见 [prod-compose-gate.md](./prod-compose-gate.md)。
+
 ### 已知误报
 
 `docker system df` 的 Reclaimable 把**共享层重复计算**（api 三版本共享基础层，

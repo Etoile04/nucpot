@@ -1,0 +1,7 @@
+{
+  "prod_projects": ["nucpot-prod"],
+  "prod_name_prefixes": ["nucpot-prod"],
+  "prod_network_prefixes": ["nucpot-prod"],
+  "prod_volume_prefixes": ["nucpot-prod"],
+  "prod_image_prefixes": ["nucpot-prod-"]
+}

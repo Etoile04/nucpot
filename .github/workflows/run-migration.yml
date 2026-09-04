@@ -28,22 +28,29 @@ jobs:
         run: |
           FILE="${{ github.event.inputs.sql_file }}"
           echo "Applying migration: $FILE"
+          # NFM-4270 (ADR-013 G2): docker exec into nucpot-prod-db is a
+          # prod-scoped op — route it through the root-owned sudo entry
+          # (deploy identity, full docker gate, audited).
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             cd ~/Projects/nucpot
             git pull origin main
             # Force checkout migration files to match HEAD (prevent stale local edits)
             git checkout HEAD -- apps/api/scripts/migrations/
-            docker exec -i nucpot-prod-db psql -U "\${PROD_POSTGRES_USER:-nfm}" -d "\${PROD_POSTGRES_DB:-nfm_db}" < $FILE || echo "Migration errored (may already be applied)"
+            sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh \
+              --db-user "\${PROD_POSTGRES_USER:-nfm}" --db-name "\${PROD_POSTGRES_DB:-nfm_db}" \
+              "$FILE" || echo "Migration errored (may already be applied)"
           ENDSSH
 
       - name: Verify columns exist
         run: |
+          # NFM-4270: same sanctioned route; SQL arrives on stdin.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
-            docker exec nucpot-prod-db psql -U "${PROD_POSTGRES_USER:-nfm}" -d "${PROD_POSTGRES_DB:-nfm_db}" -c "
+            /usr/bin/sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh \
+              --db-user "${PROD_POSTGRES_USER:-nfm}" --db-name "${PROD_POSTGRES_DB:-nfm_db}" - << 'SQL'
               SELECT column_name, data_type
               FROM information_schema.columns
               WHERE table_name = '_ref_gap_fill_staging'
               AND column_name IN ('dedup_hash', 'range_validated', 'fill_batch_id', 'review_note', 'reviewer_id', 'reviewed_at', 'promoted_to_pm_id', 'promoted_at')
               ORDER BY ordinal_position;
-            "
+            SQL
           ENDSSH
