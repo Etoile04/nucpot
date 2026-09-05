@@ -22,7 +22,9 @@ What it does
      count as missing; network errors and 429/5xx are *transient* and
      never blank anything. Foreign-origin absolute URLs are not
      server-fetched at all (SSRF guard) and are reported as
-     unverifiable.
+     unverifiable. Legacy multi-object rows are probed object by
+     object: the row counts as missing only when *every* object is
+     definitively gone.
 4. Rows whose file is definitively missing are **blanked** (``file_url=''``)
    with a ``extra.file_url_note`` recording why (spec: 置空并保留来源备注),
    preserving the object/file name for a future re-upload. Only ``--apply``
@@ -130,6 +132,35 @@ def _object_fetch_url(obj: str) -> str | None:
     return url if is_supabase_public_url(url) else None
 
 
+async def _verify_supabase_objects(objects: list[str]) -> tuple[str, str]:
+    """Probe every object of a (possibly legacy multi-object) row.
+
+    The row is ``"ok"`` while *any* object still downloads, and only
+    ``"missing"`` when every object is definitively gone. Any object
+    that cannot be verified (foreign origin, transient upstream) makes
+    the row ``"unverifiable"`` — a partial row must never be blanked.
+    """
+    missing: list[str] = []
+    unverifiable: list[str] = []
+    for obj in objects:
+        fetch_url = _object_fetch_url(obj)
+        if fetch_url is None:
+            unverifiable.append(
+                f"foreign-origin object URL not fetched server-side (SSRF guard): {obj}"
+            )
+            continue
+        state, error = await _verify_supabase(fetch_url)
+        if state == "ok":
+            return "ok", ""
+        if state == "unverifiable":
+            unverifiable.append(error)
+        else:
+            missing.append(error)
+    if unverifiable:
+        return "unverifiable", "; ".join([*missing, *unverifiable])
+    return "missing", "; ".join(missing)
+
+
 async def sweep(apply: bool) -> int:
     database_url = os.environ.get("NFM_DATABASE_URL")
     if not database_url:
@@ -180,21 +211,7 @@ async def sweep(apply: bool) -> int:
                             }
                         )
                         continue
-                    fetch_url = _object_fetch_url(objects[0])
-                    if fetch_url is None:
-                        unverifiable.append(
-                            {
-                                "id": pid,
-                                "name": row.name,
-                                "error": (
-                                    "foreign-origin object URL not fetched server-side "
-                                    f"(SSRF guard): {objects[0]}"
-                                ),
-                                "extra": extra,
-                            }
-                        )
-                        continue
-                    state, error = await _verify_supabase(fetch_url)
+                    state, error = await _verify_supabase_objects(objects)
                 if state == "ok":
                     continue
                 if state == "unverifiable":

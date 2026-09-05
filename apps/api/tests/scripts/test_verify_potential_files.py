@@ -185,6 +185,23 @@ def _seed_sweep_db(db_path: Path, upload_dir: Path) -> dict[str, str]:
             "sb-flaky": "/storage/v1/object/public/potentials/flaky.mtp",
             # foreign-origin absolute URL → never fetched, must survive
             "foreign": "https://example.com/some/pot.dat",
+            # legacy multi-object row, first object gone but the second
+            # still answers 200 → row survives --apply
+            "multi-partial": (
+                "/storage/v1/object/public/potentials/multi-gone0.mtp,"
+                "/storage/v1/object/public/potentials/multi-ok1.mtp"
+            ),
+            # legacy multi-object row with every object gone → definitive miss
+            "multi-all-gone": (
+                "/storage/v1/object/public/potentials/multi-a.mtp,"
+                "/storage/v1/object/public/potentials/multi-b.mtp"
+            ),
+            # legacy multi-object row, first object gone and the second
+            # behind a 503 → unverifiable, must survive --apply
+            "multi-gone-flaky": (
+                "/storage/v1/object/public/potentials/multi-flaky-gone.mtp,"
+                "/storage/v1/object/public/potentials/multi-flaky-503.mtp"
+            ),
         }
         for name, url in fixtures.items():
             # Dashless hex mirrors how SQLAlchemy's Uuid type stores ids on
@@ -237,6 +254,12 @@ async def test_sweep_apply_clears_only_definitive_misses(
     stub_supabase[_public_url("potentials/ok.mtp")] = 200
     stub_supabase[_public_url("potentials/gone.mtp")] = 404
     stub_supabase[_public_url("potentials/flaky.mtp")] = 503
+    stub_supabase[_public_url("potentials/multi-gone0.mtp")] = 404
+    stub_supabase[_public_url("potentials/multi-ok1.mtp")] = 200
+    stub_supabase[_public_url("potentials/multi-a.mtp")] = 404
+    stub_supabase[_public_url("potentials/multi-b.mtp")] = 400
+    stub_supabase[_public_url("potentials/multi-flaky-gone.mtp")] = 404
+    stub_supabase[_public_url("potentials/multi-flaky-503.mtp")] = 503
 
     monkeypatch.setenv("NFM_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setattr(upload_service, "_UPLOAD_DIR_OVERRIDE", upload_dir)
@@ -253,11 +276,21 @@ async def test_sweep_apply_clears_only_definitive_misses(
     # Definitive misses are blanked.
     assert urls["up-missing"] == ""
     assert urls["sb-gone"] == ""
+    assert urls["multi-all-gone"] == ""
     # Transient upstream failure must NOT be blanked (BUG-37: a network
     # error is not evidence the file is missing).
     assert urls["sb-flaky"] == "/storage/v1/object/public/potentials/flaky.mtp"
+    assert urls["multi-gone-flaky"] == (
+        "/storage/v1/object/public/potentials/multi-flaky-gone.mtp,"
+        "/storage/v1/object/public/potentials/multi-flaky-503.mtp"
+    )
     # Foreign-origin URL is never fetched and never blanked.
     assert urls["foreign"] == "https://example.com/some/pot.dat"
+    # A multi-object row with any surviving object keeps its file_url.
+    assert urls["multi-partial"] == (
+        "/storage/v1/object/public/potentials/multi-gone0.mtp,"
+        "/storage/v1/object/public/potentials/multi-ok1.mtp"
+    )
 
 
 @pytest.mark.asyncio
@@ -294,7 +327,10 @@ async def test_sweep_all_ok_exits_zero(
     db_path = tmp_path / "sweep.db"
     upload_dir = tmp_path / "uploads"
     _seed_sweep_db(db_path, upload_dir)
-    _drop_rows(db_path, ["foreign", "up-missing", "sb-gone", "sb-flaky"])
+    _drop_rows(
+        db_path,
+        ["foreign", "up-missing", "sb-gone", "sb-flaky", "multi-all-gone", "multi-gone-flaky"],
+    )
 
     stub_supabase[_public_url("potentials/ok.mtp")] = 200
 
