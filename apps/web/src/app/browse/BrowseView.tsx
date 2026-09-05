@@ -54,6 +54,9 @@ export function BrowseView() {
   const [elementSearch, setElementSearch] = useState<string>("")
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<SortField>("updated")
+  // NFM-4308 ① — bumped on reset so the load effect re-fires even when
+  // every filter was already at its default (e.g. user only paginated).
+  const [filterVersion, setFilterVersion] = useState(0)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [state, setState] = useState<BrowseState>(INITIAL_STATE)
@@ -101,7 +104,7 @@ export function BrowseView() {
 
   useEffect(() => {
     void loadPage(selectedElements, selectedTypes, sort, 1)
-  }, [selectedElements, selectedTypes, sort, loadPage])
+  }, [selectedElements, selectedTypes, sort, loadPage, filterVersion])
 
   const onPageChange: PaginationProps["onChange"] = (page) => {
     void loadPage(selectedElements, selectedTypes, sort, page)
@@ -125,12 +128,16 @@ export function BrowseView() {
   // NFM-4308 ① — reset must restore EVERY filter control (element search
   // input, selected elements, function-form checkboxes, sort) to its
   // default; the elements/types/sort state changes re-trigger the load
-  // effect, refreshing the list back to the unfiltered first page.
+  // effect, refreshing the list back to the unfiltered first page. The
+  // filterVersion bump covers the all-defaults edge case: when every
+  // setter receives an identical value the state-based deps alone would
+  // not re-fire, so reset would strand the user on page N.
   const resetFilters = useCallback(() => {
     setElementSearch("")
     setSelectedElements([])
     setSelectedTypes(new Set())
     setSort("updated")
+    setFilterVersion(v => v + 1)
   }, [])
 
   const toggleCompare = useCallback((id: string) => {

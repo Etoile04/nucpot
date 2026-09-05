@@ -194,6 +194,75 @@ class TestPublicEndpointPaginationValidation:
 
 
 # ---------------------------------------------------------------------------
+# Integration tests — truncated echo (NFM-4308 ③ gate finding 1)
+# ---------------------------------------------------------------------------
+
+
+class TestTruncatedEcho:
+    """Every endpoint the shared PaginationParams clamp applies to must
+    flag the truncation — envelope endpoints via ``truncated: true``, the
+    bare-list blog endpoint via the ``X-Pagination-Truncated`` header."""
+
+    @pytest.mark.parametrize(
+        ("path", "extra_params"),
+        [
+            ("/api/v1/kg/search", "q=test"),
+            ("/api/v1/ontology/search", "q=test"),
+            ("/api/v1/reference-gaps", ""),
+            ("/api/v1/reference-values/pending-review", ""),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_public_envelopes_echo_truncated(
+        self, async_client, path: str, extra_params: str
+    ) -> None:
+        url = f"{path}?per_page=101" + (f"&{extra_params}" if extra_params else "")
+        response = await async_client.get(url)
+        assert response.status_code == 200
+        body = response.json()
+        data = body.get("data", body) if isinstance(body, dict) else {}
+        assert data.get("truncated") is True
+        if "limit" in data:
+            assert data["limit"] == 100
+
+    @pytest.mark.asyncio
+    async def test_blog_list_echoes_truncated_header(
+        self, async_client, admin_headers
+    ) -> None:
+        response = await async_client.get(
+            "/api/v1/admin/blog/posts?per_page=101", headers=admin_headers
+        )
+        assert response.status_code == 200
+        assert response.headers.get("X-Pagination-Truncated") == "true"
+
+        # No clamp → no header.
+        unclamped = await async_client.get(
+            "/api/v1/admin/blog/posts?per_page=20", headers=admin_headers
+        )
+        assert unclamped.status_code == 200
+        assert "X-Pagination-Truncated" not in unclamped.headers
+
+    @pytest.mark.asyncio
+    async def test_md_verification_jobs_echo_truncated(
+        self, async_client, admin_user
+    ) -> None:
+        from nfm_db.core.auth import get_current_user
+        from nfm_db.main import app
+
+        async def override_get_current_user():  # type: ignore[no-untyped-def]
+            return admin_user
+
+        app.dependency_overrides[get_current_user] = override_get_current_user
+        try:
+            response = await async_client.get("/api/v1/md-verification/jobs?per_page=101")
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+        assert response.status_code == 200
+        assert response.json()["truncated"] is True
+        assert response.json()["limit"] == 100
+
+
+# ---------------------------------------------------------------------------
 # Integration tests — auth-required endpoints
 # ---------------------------------------------------------------------------
 

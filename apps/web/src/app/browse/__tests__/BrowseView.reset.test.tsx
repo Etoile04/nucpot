@@ -72,6 +72,34 @@ describe("BrowseView 重置筛选 (NFM-4308 ①)", () => {
     expect(screen.getByDisplayValue("最近更新")).toBeInTheDocument()
   })
 
+  it("reset returns the list to page 1 even when every filter is already at its default", async () => {
+    // NFM-4308 gate finding 3 — paginating without touching any filter
+    // leaves all filter state at defaults; reset must still reload page 1.
+    mockListPotentials.mockResolvedValue({
+      potentials: [],
+      total: 25, // PAGE_SIZE=12 → 3 pages
+      page: 1,
+    })
+    render(<BrowseView />)
+
+    await screen.findByLabelText("搜索元素")
+    expect(mockListPotentials).toHaveBeenCalledTimes(1)
+
+    // Paginate to page 2 with all filters untouched (rc-pagination
+    // renders page items as <li title="N"> wrappers)
+    fireEvent.click(screen.getByTitle("2"))
+    await waitFor(() => {
+      expect(mockListPotentials.mock.calls.at(-1)?.[0]?.page).toBe(2)
+    })
+
+    // Reset with all-default filters must still re-fire the page-1 load
+    fireEvent.click(screen.getByRole("button", { name: "重置筛选" }))
+
+    await waitFor(() => {
+      expect(mockListPotentials.mock.calls.at(-1)?.[0]?.page).toBe(1)
+    })
+  })
+
   it("reset reloads the unfiltered first page", async () => {
     render(<BrowseView />)
 

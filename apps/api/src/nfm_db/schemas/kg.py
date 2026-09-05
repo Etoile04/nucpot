@@ -31,6 +31,9 @@ class KGSearchResponse(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
+    #: NFM-4308 ③ — true when the requested page size exceeded the cap
+    #: and was clamped (limit echoes the effective value).
+    truncated: bool = Field(default=False)
 
 
 class SemanticQueryResponse(BaseModel):
@@ -45,6 +48,9 @@ class SemanticQueryResponse(BaseModel):
     relationships: list[dict[str, Any]] = Field(default_factory=list)
     provider: str = Field(default="")
     fallback: bool = Field(default=False)
+    #: NFM-4308 ③ — true when the requested page size exceeded the cap
+    #: and was clamped before reaching the semantic bridge.
+    truncated: bool = Field(default=False)
 
 
 # ---------------------------------------------------------------------------
