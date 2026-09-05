@@ -144,14 +144,15 @@ chown -R "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"
 # needs (a) traverse on ancestors, (b) search on every repo dir (batched
 # find, one chmod process), (c) read on gitignored secrets like
 # docker/.env.prod which are usually mode 600.
-acl_on() { # path ace — no-op when an nfmdeploy ACE is already present
-  if ls -led "$2" 2>/dev/null | grep -q "nfmdeploy"; then return 0; fi
-  chmod +a "$1" "$2"
+acl_on() { # ace path — no-op when an nfmdeploy ACE is already present
+  local ace="$1" path="$2"
+  if ls -led "$path" 2>/dev/null | grep -q "nfmdeploy"; then return 0; fi
+  chmod +a "$ace" "$path"
 }
 log "granting ${DEPLOY_USER} traverse + repo read (ACLs)"
-acl_on traverse "${USER_HOME}" "user:${DEPLOY_USER} allow search"
-acl_on traverse "${USER_HOME}/Projects" "user:${DEPLOY_USER} allow search"
-acl_on traverse "${USER_HOME}/.docker" "user:${DEPLOY_USER} allow search"
+acl_on "user:${DEPLOY_USER} allow search" "${USER_HOME}"
+acl_on "user:${DEPLOY_USER} allow search" "${USER_HOME}/Projects"
+acl_on "user:${DEPLOY_USER} allow search" "${USER_HOME}/.docker"
 if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
   chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${REPO_REAL}"
   find "${REPO_REAL}" -type d -name .git -prune -o -type d -print0 2>/dev/null \
