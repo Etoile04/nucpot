@@ -174,3 +174,70 @@ describe("GET /api/potentials/[id] — upstream failure", () => {
     expect(body.detail).toMatch(/ECONNREFUSED/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// F3 / NFM-4343 — bare-string reference passthrough
+// ---------------------------------------------------------------------------
+// Three Hunan University potentials (22d980dc, c6591f31, c19b8325) store
+// `references` as bare citation strings ("J. Nucl. Mater. 541 (2020) 152421")
+// rather than the canonical [{doi, citation}] dict list. FastAPI now
+// widens PotentialDetail.references to list[dict | str] and the BFF must
+// pass those entries through verbatim — no coercion, no filtering.
+describe("GET /api/potentials/[id] — F3 bare-string references", () => {
+  it("forwards bare-string references without coercion", async () => {
+    const bareRefs = [
+      "J. Nucl. Mater. 541 (2020) 152421",
+      "Phys. Rev. B 102 (2020) 014101",
+    ]
+    const potential = {
+      id: VALID_UUID,
+      name: "EAM_Fe_Hnu_2020",
+      type: "eam",
+      elements: ["Fe"],
+      references: bareRefs,
+    }
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => JSON.stringify({ success: true, data: potential }),
+    })
+    const res = await GET(makeRequest(VALID_UUID), {
+      params: Promise.resolve({ id: VALID_UUID }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.references).toEqual(bareRefs)
+    // Each entry must remain a string — not coerced to {} or filtered.
+    expect(typeof body.references[0]).toBe("string")
+    expect(typeof body.references[1]).toBe("string")
+  })
+
+  it("forwards mixed dict + bare-string reference lists", async () => {
+    const mixedRefs = [
+      { doi: "10.1234/canonical", citation: "Canonical ref" },
+      "J. Nucl. Mater. 541 (2020) 152421",
+    ]
+    const potential = {
+      id: VALID_UUID,
+      name: "EAM_Fe_Hnu_Mixed",
+      type: "eam",
+      elements: ["Fe"],
+      references: mixedRefs,
+    }
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => JSON.stringify({ success: true, data: potential }),
+    })
+    const res = await GET(makeRequest(VALID_UUID), {
+      params: Promise.resolve({ id: VALID_UUID }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.references).toEqual(mixedRefs)
+    expect(typeof body.references[0]).toBe("object")
+    expect(typeof body.references[1]).toBe("string")
+  })
+})

@@ -27,7 +27,8 @@ export interface PotentialDetail extends PotentialSummary {
   system_name?: string
   system_tags: string[]
   applicability: Record<string, unknown>
-  references: Record<string, unknown>[]
+  // F3 / NFM-4343 — entries may be dicts or bare citation strings.
+  references: (Record<string, unknown> | string)[]
   developers: Record<string, unknown>[]
   verified_props: Record<string, unknown> | null
   sim_software: string[]

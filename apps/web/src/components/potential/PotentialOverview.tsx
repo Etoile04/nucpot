@@ -39,11 +39,6 @@ interface ApplicabilityShape {
   readonly notes?: unknown
 }
 
-interface ReferenceShape {
-  readonly doi?: unknown
-  readonly citation?: unknown
-}
-
 interface DeveloperShape {
   readonly name?: unknown
   readonly affiliation?: unknown
@@ -74,6 +69,32 @@ function asObjectArray(value: unknown): readonly Record<string, unknown>[] {
   return value.filter(
     (v): v is Record<string, unknown> => typeof v === "object" && v !== null,
   )
+}
+
+/**
+ * Normalize a `references` payload into a list of `{doi?, citation?} | string`.
+ *
+ * F3 / NFM-4343 — three Hunan University potentials (22d980dc, c6591f31,
+ * c19b8325) store bare citation strings; canonical rows store
+ * `{doi, citation}` dicts. Both shapes render correctly downstream.
+ */
+function asReferenceItems(
+  value: unknown,
+): readonly ({ readonly doi?: string; readonly citation?: string } | string)[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(
+      (v): v is Record<string, unknown> | string =>
+        (typeof v === "object" && v !== null) || typeof v === "string",
+    )
+    .map(v =>
+      typeof v === "string"
+        ? v
+        : ({
+            doi: asString(v.doi).trim() || undefined,
+            citation: asString(v.citation).trim() || undefined,
+          } as { doi?: string; citation?: string }),
+    )
 }
 
 /** Formats an applicability temperature range as e.g. 「300–5000 K」. */
@@ -108,14 +129,18 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
   // badge used to render blank when the API returned null).
   const status = verification_status || "unverified"
 
-  const doi = source_doi ?? asString(asObjectArray(references)[0]?.doi)
+  const doi = source_doi ?? (() => {
+    const firstRef = asReferenceItems(references)[0]
+    if (typeof firstRef === "string") return ""
+    return firstRef?.doi ?? ""
+  })()
 
   const applicabilityShape = applicability as ApplicabilityShape | undefined
   const temperatureRange = formatTemperatureRange(applicability)
   const phases = asStringArray(applicabilityShape?.phases)
   const applicabilityNotes = asString(applicabilityShape?.notes).trim()
 
-  const referenceItems = asObjectArray(references)
+  const referenceItems = asReferenceItems(references)
   const developerItems = asObjectArray(developers)
   const simSoftware = asStringArray(sim_software)
 
@@ -181,9 +206,19 @@ export function PotentialOverview({ detail }: PotentialOverviewProps) {
         {referenceItems.length > 0 ? (
           <Space direction="vertical" size={2} style={{ width: "100%" }}>
             {referenceItems.map((ref, i) => {
-              const shape = ref as ReferenceShape
-              const refDoi = asString(shape.doi).trim()
-              const citation = asString(shape.citation).trim()
+              if (typeof ref === "string") {
+                // F3 / NFM-4343 — bare citation string (Hnu rows).
+                return (
+                  <Paragraph
+                    key={`bare-${i}-${ref}`}
+                    style={{ marginBottom: 0 }}
+                  >
+                    {ref}
+                  </Paragraph>
+                )
+              }
+              const refDoi = asString(ref.doi).trim()
+              const citation = asString(ref.citation).trim()
               return (
                 <Paragraph key={`${refDoi}-${i}`} style={{ marginBottom: 0 }}>
                   {citation || PLACEHOLDER}
