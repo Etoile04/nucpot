@@ -1,7 +1,23 @@
 import { describe, it, expect } from "vitest"
 import { resolveFileUrl } from "./file-url"
 
-describe("resolveFileUrl (NFM-3317)", () => {
+describe("resolveFileUrl (NFM-3317 / NFM-4309)", () => {
+  it("passes the canonical proxy path through unchanged (NFM-4309)", () => {
+    expect(
+      resolveFileUrl("/api/v1/potentials/14607d0a-1a7b-49fd-9b22-1cd5671864c8/file"),
+    ).toBe("/api/v1/potentials/14607d0a-1a7b-49fd-9b22-1cd5671864c8/file")
+  })
+
+  it("passes absolute Supabase object URLs through unchanged (NFM-4309)", () => {
+    expect(
+      resolveFileUrl(
+        "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/potentials/library/Al_Mendelev_2008.eam.fs",
+      ),
+    ).toBe(
+      "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/potentials/library/Al_Mendelev_2008.eam.fs",
+    )
+  })
+
   it("prefixes Supabase Storage paths with the project origin", () => {
     expect(
       resolveFileUrl(
