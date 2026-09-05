@@ -20,8 +20,14 @@ for p in (str(_SCRIPTS_DIR), str(_API_SRC)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from backfill_nfm4312_material_association import (  # noqa: E402
+    apply_plan,
+    build_plan,
+    format_report,
+)
 from sqlalchemy import ARRAY, JSON  # noqa: E402
-from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB as PG_JSONB  # noqa: E402
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from nfm_db.models import (  # noqa: E402
@@ -32,12 +38,6 @@ from nfm_db.models import (  # noqa: E402
     PropertyCategory,
     PropertyMeasurement,
     PropertyType,
-)
-
-from backfill_nfm4312_material_association import (  # noqa: E402
-    apply_plan,
-    build_plan,
-    format_report,
 )
 
 # Fixed ids mirror the production snapshot so the plan builder's
@@ -123,13 +123,33 @@ async def _seed(session) -> None:
                 title="Owen et al. - 2023 - Diffusion in undoped and Cr-doped amorphous UO2",
                 source_type="journal_article",
             ),
-            DataSource(id=uid("aaaa1111-0000-0000-0000-000000000001"), title=UUID_TITLE, source_type="other"),
-            DataSource(id=uid("aaaa1111-0000-0000-0000-000000000002"), title=UUID_TITLE, source_type="other"),
-            DataSource(id=uid("aaaa1111-0000-0000-0000-000000000003"), title="Unrelated source", source_type="other"),
-            DataSource(id=uid("aaaa1111-0000-0000-0000-000000000004"), title="Dup fragment source", source_type="other"),
+            DataSource(
+                id=uid("aaaa1111-0000-0000-0000-000000000001"),
+                title=UUID_TITLE,
+                source_type="other",
+            ),
+            DataSource(
+                id=uid("aaaa1111-0000-0000-0000-000000000002"),
+                title=UUID_TITLE,
+                source_type="other",
+            ),
+            DataSource(
+                id=uid("aaaa1111-0000-0000-0000-000000000003"),
+                title="Unrelated source",
+                source_type="other",
+            ),
+            DataSource(
+                id=uid("aaaa1111-0000-0000-0000-000000000004"),
+                title="Dup fragment source",
+                source_type="other",
+            ),
         ]
     )
-    session.add(PropertyCategory(id=uid("cccc0000-0000-0000-0000-000000000001"), name="Thermal", slug="thermal"))
+    session.add(
+        PropertyCategory(
+            id=uid("cccc0000-0000-0000-0000-000000000001"), name="Thermal", slug="thermal"
+        )
+    )
     await session.flush()
     session.add(
         PropertyType(
@@ -143,15 +163,42 @@ async def _seed(session) -> None:
     await session.flush()
 
     def dataset(ds_id, material_id, source_id, title):
-        return Dataset(id=uid(ds_id), material_id=uid(material_id), source_id=uid(source_id), title=title)
+        return Dataset(
+            id=uid(ds_id), material_id=uid(material_id), source_id=uid(source_id), title=title
+        )
 
     session.add_all(
         [
-            dataset("11111111-0000-0000-0000-000000000001", SENTINEL_ID, OWEN_SRC_ID, "main 83-row dataset"),
-            dataset("11111111-0000-0000-0000-000000000002", SENTINEL_ID, "aaaa1111-0000-0000-0000-000000000001", "scatter"),
-            dataset("11111111-0000-0000-0000-000000000003", UO2_ID, "aaaa1111-0000-0000-0000-000000000002", "misattached"),
-            dataset("11111111-0000-0000-0000-000000000004", SENTINEL_ID, "aaaa1111-0000-0000-0000-000000000003", "no provenance"),
-            dataset("11111111-0000-0000-0000-000000000005", DUP_ID, "aaaa1111-0000-0000-0000-000000000004", "dup fragment ds"),
+            dataset(
+                "11111111-0000-0000-0000-000000000001",
+                SENTINEL_ID,
+                OWEN_SRC_ID,
+                "main 83-row dataset",
+            ),
+            dataset(
+                "11111111-0000-0000-0000-000000000002",
+                SENTINEL_ID,
+                "aaaa1111-0000-0000-0000-000000000001",
+                "scatter",
+            ),
+            dataset(
+                "11111111-0000-0000-0000-000000000003",
+                UO2_ID,
+                "aaaa1111-0000-0000-0000-000000000002",
+                "misattached",
+            ),
+            dataset(
+                "11111111-0000-0000-0000-000000000004",
+                SENTINEL_ID,
+                "aaaa1111-0000-0000-0000-000000000003",
+                "no provenance",
+            ),
+            dataset(
+                "11111111-0000-0000-0000-000000000005",
+                DUP_ID,
+                "aaaa1111-0000-0000-0000-000000000004",
+                "dup fragment ds",
+            ),
         ]
     )
     await session.flush()
@@ -205,7 +252,7 @@ async def test_dry_run_writes_nothing():
     engine, factory = await _make_db()
     async with factory() as session:
         await _seed(session)
-        plan = await build_plan(session, **_kwargs())
+        await build_plan(session, **_kwargs())
         await session.rollback()
     async with factory() as session:
         moved = await session.get(Dataset, uid("11111111-0000-0000-0000-000000000001"))

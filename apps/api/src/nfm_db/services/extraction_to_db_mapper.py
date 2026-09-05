@@ -1237,18 +1237,29 @@ async def _find_material_by_formula(
     db: AsyncSession,
     formula: str | None,
 ) -> Material | None:
-    """Find existing Material by formula.
+    """Find an active Material by exact formula.
 
     NFM-3919: tolerates duplicate ``formula`` rows that exist in the
     database from prior batches. ``scalar_one_or_none()`` would raise
     ``MultipleResultsFound`` and fail the entire ingest batch the moment
     a second row with the same formula was inserted (e.g. legacy
     ``Unknown Material`` pollution). We instead use ``.limit(1)`` plus
-    ``scalars().first()`` so the lookup returns one row deterministically.
+    ``scalars().first()`` so the lookup returns one row deterministically
+    (oldest-first via ``ORDER BY created_at``).
+
+    NFM-4312 CR-R2: only ``is_active`` rows are eligible.  A retired
+    duplicate keeps its formula as audit residue after a merge; letting
+    stage-1 hit it would re-attach new datasets to the hidden fragment.
     """
     if not formula:
         return None
-    stmt = select(Material).where(Material.formula == formula).limit(1)
+    stmt = (
+        select(Material)
+        .where(Material.formula == formula)
+        .where(Material.is_active.is_(True))
+        .order_by(Material.created_at.asc())
+        .limit(1)
+    )
     return (await db.execute(stmt)).scalars().first()
 
 
@@ -1280,6 +1291,13 @@ async def _find_material_by_formula(
 # A new material is created only when every stage misses.  Each stage
 # hit is counted in ``MappingResult`` so operators can watch where
 # resolution lands.
+#
+# CR-R2 invariant: retired rows (``is_active=False``) are invisible to
+# every stage.  A retired duplicate is "merged audit residue" — its
+# datasets have been moved onto the canonical row and its (source,
+# material) slot is empty, so nothing downstream would catch a re-attach.
+# New data always lands on an active (canonical) row, or creates a fresh
+# active one.
 
 #: Unicode subscript/superscript digits → ASCII, applied to the
 #: *candidate* string only (the DB side stays as stored).
@@ -1293,8 +1311,11 @@ _SUBSCRIPT_FOLDS: dict[str, str] = {
 #: Phase qualifier detected on the CREATE path.  When the winning
 #: composition/name carries it, the new material row records its phase
 #: so fragment rows self-describe instead of arriving with a NULL
-#: crystal_structure.
-_AMORPHOUS_MARKERS: tuple[str, ...] = ("amorphous", "a-uo2", "amorph.")
+#: crystal_structure.  The short "a-uo2" form is matched separately as
+#: a standalone token so phase-prefixed identities ("alpha-UO2",
+#: "beta-UO2", "Na-UO2") do not trip it.
+_AMORPHOUS_MARKERS: tuple[str, ...] = ("amorphous", "amorph.")
+_AMORPHOUS_TOKEN_PATTERN: re.Pattern[str] = re.compile(r"\ba-uo2\b")
 
 
 def _normalize_formula_candidate(raw: str | None) -> str | None:
@@ -1324,7 +1345,8 @@ async def _find_material_by_normalized_formula(
     ``lower(replace(replace(formula, ' ', ''), '_', ''))``.  Handles the
     observed production variants ("UO2 " / "uo2" / "UO₂").  Strings that
     differ only by phase qualifiers ("amorphous UO2" vs "UO2") stay
-    distinct on purpose.
+    distinct on purpose.  Active rows only (CR-R2) — a retired fragment
+    must never absorb new data through a typography fold.
     """
     normalized = _normalize_formula_candidate(composition)
     if not normalized:
@@ -1339,6 +1361,7 @@ async def _find_material_by_normalized_formula(
     stmt = (
         select(Material)
         .where(sql_side == normalized)
+        .where(Material.is_active.is_(True))
         .order_by(Material.created_at.asc())
         .limit(1)
     )
@@ -1354,7 +1377,8 @@ async def _find_material_by_alias(
     Tries the composition first, then the display name, so either field
     can carry the alias.  Deterministic (oldest alias row wins) to keep
     re-runs stable when a curator registers the same alias text twice
-    under different types.
+    under different types.  Active rows only (CR-R2) — a stale alias
+    left pointing at a merged-away fragment must not resurrect it.
     """
     candidates = [
         c for c in (item.composition, item.material_name) if c
@@ -1364,6 +1388,7 @@ async def _find_material_by_alias(
             select(Material)
             .join(MaterialAlias, MaterialAlias.material_id == Material.id)
             .where(MaterialAlias.alias_name == candidate)
+            .where(Material.is_active.is_(True))
             .order_by(MaterialAlias.created_at.asc())
             .limit(1)
         )
@@ -1377,12 +1402,18 @@ async def _find_material_by_name(
     db: AsyncSession,
     name: str | None,
 ) -> Material | None:
-    """Stage-4 lookup: exact display-name match (re-run stability)."""
+    """Stage-4 lookup: exact display-name match (re-run stability).
+
+    Active rows only (CR-R2) — the name stage must not short-circuit
+    resolution onto a retired fragment that happens to keep the only
+    exact display name.
+    """
     if not name:
         return None
     stmt = (
         select(Material)
         .where(Material.name == name)
+        .where(Material.is_active.is_(True))
         .order_by(Material.created_at.asc())
         .limit(1)
     )
@@ -1422,7 +1453,9 @@ async def _resolve_existing_material(
 def _detect_amorphous_phase(*strings: str | None) -> bool:
     """True when any identity string marks the material as amorphous."""
     joined = " ".join(s for s in strings if s).casefold()
-    return any(marker in joined for marker in _AMORPHOUS_MARKERS)
+    if any(marker in joined for marker in _AMORPHOUS_MARKERS):
+        return True
+    return _AMORPHOUS_TOKEN_PATTERN.search(joined) is not None
 
 
 def _parse_float(value: str) -> float | None:

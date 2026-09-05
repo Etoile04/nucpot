@@ -312,6 +312,24 @@ async def test_search_materials_paginated(async_client, db_session) -> None:
     assert len(data["items"]) == 2
 
 
+@pytest.mark.asyncio
+async def test_search_materials_hides_inactive_merged_fragments(
+    async_client, db_session
+) -> None:
+    """NFM-4312 — retired duplicates leave search results, not just the list."""
+    active = await _seed_material(db_session, name="amorphous UO2 (canonical)")
+    retired = await _seed_material(
+        db_session, name="amorphous UO2 (undoped and Cr-doped)", is_active=False
+    )
+
+    response = await async_client.get("/api/v1/materials/search?q=amorphous")
+
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()["data"]["items"]]
+    assert active.name in names
+    assert retired.name not in names
+
+
 # ---------------------------------------------------------------------------
 # NFM-4057 — placeholder canonical row hidden from list/search
 #

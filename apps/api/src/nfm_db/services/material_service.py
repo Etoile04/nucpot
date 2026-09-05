@@ -164,6 +164,11 @@ async def search_materials(
     # canonical row, defeating the CPO Option-2 decision.
     stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
+    # NFM-4312 — retired fragments leave search results too, mirroring
+    # ``list_materials`` so a retired duplicate cannot re-enter through
+    # the name/formula/alias ILIKE path.
+    stmt = stmt.where(Material.is_active.is_(True))
+
     if query:
         pattern = f"%{query}%"
         stmt = stmt.where(
@@ -234,6 +239,7 @@ async def count_uncategorized_materials(
         .select_from(Material)
         .where(
             Material.category_id.is_(None),
+            Material.is_active.is_(True),
         )
     )
     total = (await db.execute(stmt)).scalar_one()

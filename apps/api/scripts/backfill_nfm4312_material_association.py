@@ -31,15 +31,18 @@ Idempotency contract:
   * Re-running after apply finds 0 pending moves and writes nothing.
   * A move that would violate ``uq_datasets_source_material`` (target
     already holds another dataset with the same source) is reported as
-    a collision and, in ``--apply`` mode, aborts with exit code 2
-    before any write.
+    a collision and aborts with exit code 2 in BOTH modes — dry-run
+    and ``--apply`` — before any write.  Resolve collisions before
+    proceeding.
 
-Exit codes: 0 ok (dry-run or apply), 2 collisions in apply mode,
+Exit codes: 0 ok (dry-run or apply), 2 collisions detected,
 1 configuration/validation error.
 
 Runbook: RE executes against prod after NFM-4312's forward fix ships —
     uv run python scripts/backfill_nfm4312_material_association.py          # dry-run
     uv run python scripts/backfill_nfm4312_material_association.py --apply
+A non-zero dry-run exit means the collision guard fired; do not run
+``--apply`` until the reported collisions are resolved.
 """
 
 from __future__ import annotations
@@ -183,8 +186,12 @@ async def _select_moves(
             ),
         )
         .group_by(
-            Dataset.id, Dataset.title, DataSource.id, DataSource.title,
-            Material.id, Material.name,
+            Dataset.id,
+            Dataset.title,
+            DataSource.id,
+            DataSource.title,
+            Material.id,
+            Material.name,
         )
         .order_by(Material.name, Dataset.created_at)
     )
@@ -220,8 +227,12 @@ async def _all_datasets_of(db: AsyncSession, material_id: str) -> tuple[PlannedM
         .outerjoin(PropertyMeasurement, PropertyMeasurement.dataset_id == Dataset.id)
         .where(Dataset.material_id == _uid(material_id))
         .group_by(
-            Dataset.id, Dataset.title, DataSource.id, DataSource.title,
-            Material.id, Material.name,
+            Dataset.id,
+            Dataset.title,
+            DataSource.id,
+            DataSource.title,
+            Material.id,
+            Material.name,
         )
         .order_by(Dataset.created_at)
     )
@@ -249,9 +260,7 @@ async def _count_measurements(
         .where(Dataset.material_id == _uid(material_id))
     )
     if exclude_dataset_ids:
-        stmt = stmt.where(
-            Dataset.id.not_in([_uid(x) for x in exclude_dataset_ids])
-        )
+        stmt = stmt.where(Dataset.id.not_in([_uid(x) for x in exclude_dataset_ids]))
     return (await db.execute(stmt)).scalar_one()
 
 
@@ -281,8 +290,7 @@ async def build_plan(
         _validate_uuid(value, flag)
     if not _UUID_PATTERN.match(uuid_title):
         raise ValueError(
-            f"--uuid-title must be a canonical UUID string (NFM-4088 "
-            f"signature), got {uuid_title!r}"
+            f"--uuid-title must be a canonical UUID string (NFM-4088 signature), got {uuid_title!r}"
         )
     ids = {sentinel_material_id, uo2_material_id, target_material_id}
     if len(ids) != 3:
@@ -313,9 +321,7 @@ async def build_plan(
     target_source_stmt = select(Dataset.source_id).where(
         Dataset.material_id == _uid(target_material_id)
     )
-    target_sources = {
-        str(s) for s in (await db.execute(target_source_stmt)).scalars().all()
-    }
+    target_sources = {str(s) for s in (await db.execute(target_source_stmt)).scalars().all()}
     all_movers = moves + duplicate_moves
     collisions: list[str] = []
     seen: set[str] = set()
@@ -372,8 +378,7 @@ async def apply_plan(db: AsyncSession, plan: BackfillPlan) -> None:
 
 def format_report(plan: BackfillPlan) -> str:
     lines = [
-        f"NFM-4312 backfill plan — target {plan.target_material_id} "
-        f"({plan.target_name!r})",
+        f"NFM-4312 backfill plan — target {plan.target_material_id} ({plan.target_name!r})",
         f"formula: {plan.target_formula_before!r} -> {plan.target_formula_after!r}, "
         f"crystal_structure -> {plan.target_crystal_structure_after!r}",
         "",
@@ -385,14 +390,10 @@ def format_report(plan: BackfillPlan) -> str:
             f"source={move.source_title[:48]!r}"
         )
     for move in plan.duplicate_moves:
-        lines.append(
-            f"  merge {move.dataset_id} (duplicate fragment)  "
-            f"n={move.measurement_count}"
-        )
+        lines.append(f"  merge {move.dataset_id} (duplicate fragment)  n={move.measurement_count}")
     lines += [
         "",
-        f"datasets moved: {len(plan.moves)} "
-        f"({plan.moved_measurements} measurements)",
+        f"datasets moved: {len(plan.moves)} ({plan.moved_measurements} measurements)",
         f"duplicate fragment retired: {plan.duplicate_material_id}",
         f"sentinel residue after: {plan.sentinel_residue_measurements}",
         f"target measurements after: {plan.target_measurements_after}",
@@ -458,8 +459,7 @@ async def _main(args: argparse.Namespace) -> int:
 
         if plan.collisions:
             logger.error(
-                "refusing to apply: %d dataset move(s) would violate "
-                "uq_datasets_source_material",
+                "refusing to apply: %d dataset move(s) would violate uq_datasets_source_material",
                 len(plan.collisions),
             )
             await session.rollback()
