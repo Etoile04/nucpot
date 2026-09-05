@@ -46,13 +46,28 @@ router = APIRouter(tags=["势函数管理"])
 async def list_potentials_endpoint(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100, alias="per_page"),
-    type: str | None = Query(None),
+    type: str | None = Query(None, description="Comma-separated potential types"),
     elements: str | None = Query(None, description="Comma-separated element symbols"),
     q: str | None = Query(None),
     sort: str = Query("updated", pattern="^(updated|name|type)$"),
+    irradiation: bool | None = Query(None, description="Filter extra.irradiationRelevant == true"),
+    has_defect: bool | None = Query(None, alias="hasDefect", description="Filter extra.hasDefectData == true"),
+    has_liquid: bool | None = Query(None, alias="hasLiquid", description="Filter extra.hasLiquidPhase == true"),
+    validation_level: str | None = Query(None, alias="validationLevel", description="Filter extra.validationLevel equality"),
+    temp_min: float | None = Query(None, alias="tempMin", description="applicability.temperatureRange[1] (max) must be >= this"),
+    temp_max: float | None = Query(None, alias="tempMax", description="applicability.temperatureRange[0] (min) must be <= this"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialListResponse]:
     elements_list = [e for e in (elements.split(",") if elements else [])] or None
+    extra_filters: dict[str, object] = {}
+    if irradiation is True:
+        extra_filters["irradiationRelevant"] = True
+    if has_defect is True:
+        extra_filters["hasDefectData"] = True
+    if has_liquid is True:
+        extra_filters["hasLiquidPhase"] = True
+    if validation_level and validation_level != "all":
+        extra_filters["validationLevel"] = validation_level
     result = await list_potentials(
         db,
         page=page,
@@ -61,6 +76,9 @@ async def list_potentials_endpoint(
         elements=elements_list,
         query=q,
         sort=sort,
+        extra_filters=extra_filters or None,
+        temp_min=temp_min,
+        temp_max=temp_max,
     )
     return ApiResponse(success=True, data=result)
 

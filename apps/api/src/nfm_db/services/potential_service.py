@@ -1,14 +1,16 @@
 """Service layer for potential queries.
 
-Filtering of JSON-stored fields (elements overlap) is done in Python for
-cross-database portability (SQLite tests). PG-native operators (&&, jsonb ops)
-+ GIN indexes are a Phase 2 optimization.
+Filtering of JSON-stored fields (elements overlap, ``extra`` containment,
+temperature ranges) is done in Python for cross-database portability (SQLite
+tests). PG-native operators (&&, jsonb ops) + GIN indexes are a Phase 2
+optimization.
 """
 
 import logging
 import uuid
+from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import Potential
@@ -21,6 +23,41 @@ from nfm_db.schemas.potential import (
 logger = logging.getLogger(__name__)
 
 
+def _matches_extra(row: Potential, extra_filters: dict[str, Any]) -> bool:
+    """JSONB containment semantics (``extra @> filters``): every key must be
+    present in ``row.extra`` with an equal value."""
+    extra = row.extra or {}
+    return all(extra.get(key) == value for key, value in extra_filters.items())
+
+
+def _temp_bounds(row: Potential) -> tuple[float | None, float | None]:
+    """Extract ``(min, max)`` from ``applicability.temperatureRange``.
+
+    Returns ``(None, None)`` when the range is absent or non-numeric —
+    PostgREST's ``->>``-based comparison treats those rows as non-matching.
+    """
+    raw = (row.applicability or {}).get("temperatureRange")
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        return (None, None)
+    try:
+        return (float(raw[0]), float(raw[1]))
+    except (TypeError, ValueError):
+        return (None, None)
+
+
+def _matches_temperature(
+    row: Potential, temp_min: float | None, temp_max: float | None
+) -> bool:
+    if temp_min is None and temp_max is None:
+        return True
+    low, high = _temp_bounds(row)
+    if low is None or high is None:
+        return False
+    if temp_min is not None and high < temp_min:
+        return False
+    return not (temp_max is not None and low > temp_max)
+
+
 async def list_potentials(
     db: AsyncSession,
     *,
@@ -30,21 +67,37 @@ async def list_potentials(
     elements: list[str] | None = None,
     query: str | None = None,
     sort: str = "updated",
+    extra_filters: dict[str, Any] | None = None,
+    temp_min: float | None = None,
+    temp_max: float | None = None,
 ) -> PotentialListResponse:
-    """Return a paginated, filtered list of published potentials."""
+    """Return a paginated, filtered list of published potentials.
+
+    ``extra_filters`` mirrors the legacy Supabase BFF containment filters
+    (irradiation / defect / liquid / validationLevel) and ``temp_min`` /
+    ``temp_max`` mirror its ``applicability.temperatureRange`` bounds, so the
+    list can be served from the local stack (NFM-4311) without contract loss.
+    """
 
     stmt = select(Potential).where(Potential.status == "published")
 
     if type_filter:
-        stmt = stmt.where(Potential.type == type_filter)
+        # The browse UI sends comma-joined selections ("EAM,MEAM"); treat the
+        # parameter as an IN list rather than an exact (never-matching) string.
+        types = [t.strip() for t in type_filter.split(",") if t.strip()]
+        if types:
+            stmt = stmt.where(Potential.type.in_(types))
 
     if query:
-        pattern = f"%{query}%"
+        escaped = (
+            query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
         stmt = stmt.where(
             or_(
-                Potential.name.ilike(pattern),
-                Potential.display_name.ilike(pattern),
-                Potential.description.ilike(pattern),
+                Potential.name.ilike(pattern, escape="\\"),
+                Potential.display_name.ilike(pattern, escape="\\"),
+                Potential.description.ilike(pattern, escape="\\"),
             )
         )
 
@@ -53,21 +106,36 @@ async def list_potentials(
         "type": Potential.type,
         "updated": Potential.updated_at,
     }.get(sort, Potential.updated_at)
-    stmt = stmt.order_by(sort_column.desc() if sort == "updated" else sort_column.asc())
+    # The BFF stitches multiple backend pages into one response; a unique
+    # tiebreaker keeps LIMIT/OFFSET windows stable across those statements.
+    stmt = stmt.order_by(
+        desc(sort_column) if sort == "updated" else asc(sort_column),
+        Potential.id,
+    )
 
     offset = (page - 1) * limit
 
-    # Materialize all matching rows for in-Python element filtering.
-    # We fetch unfiltered to keep the SQL portable (no PG-specific JSONB ops);
-    # this is acceptable because the corpus is small (≤hundreds).
-    if elements:
-        wanted = {e.strip() for e in elements if e.strip()}
+    # Materialize all matching rows for in-Python element / extra / temperature
+    # filtering. We fetch unfiltered to keep the SQL portable (no PG-specific
+    # JSONB ops); this is acceptable because the corpus is small (≤hundreds).
+    python_filters = bool(
+        elements or extra_filters or temp_min is not None or temp_max is not None
+    )
+    if python_filters:
+        wanted = {e.strip() for e in (elements or []) if e.strip()}
+        extra_filters = extra_filters or {}
         all_rows = (await db.execute(stmt)).scalars().all()
-        matched = [r for r in all_rows if wanted.intersection(r.elements or [])]
+        matched = [
+            r
+            for r in all_rows
+            if (not wanted or wanted.intersection(r.elements or []))
+            and _matches_extra(r, extra_filters)
+            and _matches_temperature(r, temp_min, temp_max)
+        ]
         total = len(matched)
         rows = matched[offset : offset + limit]
     else:
-        # Cross-DB count + paginate (no Python-side element filter needed)
+        # Cross-DB count + paginate (no Python-side filter needed)
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await db.execute(count_stmt)).scalar_one()
         stmt = stmt.offset(offset).limit(limit)

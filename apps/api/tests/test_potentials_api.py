@@ -116,3 +116,80 @@ async def test_patch_verification_accepts_message_and_evidence(async_client, db_
     assert data["data"]["verification_status"] == "verified"
     assert data["data"]["extra"]["verification_message"] == "all clear"
     assert data["data"]["extra"]["verification_evidence_url"] == "https://example.org/ev"
+
+
+# ---------------------------------------------------------------------------
+# NFM-4311 — advanced filter query params (contract parity with the legacy
+# Supabase BFF route) and comma-separated type filter.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_comma_separated_type(async_client, db_session) -> None:
+    await _seed(db_session, name="eam1", type="EAM")
+    await _seed(db_session, name="meam1", type="MEAM")
+    await _seed(db_session, name="mtp1", type="MTP")
+    response = await async_client.get("/api/v1/potentials?type=EAM,MEAM")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert {p["type"] for p in payload["potentials"]} == {"EAM", "MEAM"}
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_advanced_filters(async_client, db_session) -> None:
+    await _seed(
+        db_session,
+        name="match",
+        extra={"irradiationRelevant": True, "validationLevel": "production"},
+        applicability={"temperatureRange": [300, 2500]},
+    )
+    await _seed(
+        db_session,
+        name="too_cold",
+        extra={"irradiationRelevant": True, "validationLevel": "production"},
+        applicability={"temperatureRange": [300, 900]},
+    )
+    await _seed(db_session, name="not_irrad", extra={"irradiationRelevant": False})
+
+    response = await async_client.get(
+        "/api/v1/potentials?irradiation=true&validationLevel=production&tempMin=2000"
+    )
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert [p["name"] for p in payload["potentials"]] == ["match"]
+    assert payload["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_has_defect_and_has_liquid_params(
+    async_client, db_session
+) -> None:
+    await _seed(db_session, name="defect", extra={"hasDefectData": True})
+    await _seed(db_session, name="liquid", extra={"hasLiquidPhase": True})
+    response = await async_client.get("/api/v1/potentials?hasDefect=true&hasLiquid=true")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_temp_max_param(async_client, db_session) -> None:
+    await _seed(db_session, name="cold", applicability={"temperatureRange": [100, 500]})
+    await _seed(db_session, name="hot", applicability={"temperatureRange": [1500, 3000]})
+    response = await async_client.get("/api/v1/potentials?tempMax=600")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert [p["name"] for p in payload["potentials"]] == ["cold"]
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_validation_level_all_returns_everything(
+    async_client, db_session
+) -> None:
+    await _seed(db_session, name="prod", extra={"validationLevel": "production"})
+    await _seed(db_session, name="unlevelled")
+    response = await async_client.get("/api/v1/potentials?validationLevel=all")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 2
+    assert {p["name"] for p in payload["potentials"]} == {"prod", "unlevelled"}
