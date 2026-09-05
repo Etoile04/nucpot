@@ -432,6 +432,14 @@ jobs:
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+            # NFM-4333: ADR-013 G2 wall — the socket watchdog forces the
+            # desktop docker socket 060 group-only (owner has no access),
+            # and this scratch DOCKER_CONFIG drops the nfm-ro context the
+            # desktop user normally defaults to. Pin the read-only gate
+            # endpoint explicitly: docker build/tag are sanctioned
+            # image-layer ops through it; the default /var/run/docker.sock
+            # fallback is permission-denied.
+            export DOCKER_HOST=unix:///var/run/nfm-g2/docker-ro.sock
             for i in 1 2 3 4 5; do
               git fetch origin main && break
               [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
@@ -694,6 +702,12 @@ jobs:
           mkdir -p "$DOCKER_CONFIG"
           printf '{}' > "$DOCKER_CONFIG/config.json"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG (credsStore-free)"
+          # NFM-4333: same G2 context-loss as the build-candidate step —
+          # scratch DOCKER_CONFIG drops the nfm-ro context, and the default
+          # /var/run/docker.sock is 060 group-only under the G2 watchdog.
+          # Pin the ro gate endpoint (image ls/pull are sanctioned reads /
+          # image-layer ops; image inspect falls to the advisory pull path).
+          export DOCKER_HOST=unix:///var/run/nfm-g2/docker-ro.sock
           # Skip pull if images already cached locally — avoids any network
           # round-trip; credential helper is already bypassed above.
           # NFM-2564 follow-up (run 32612021153): pulling through Docker
@@ -723,6 +737,8 @@ jobs:
         # keychain prompt.
         env:
           DOCKER_CONFIG: /tmp/no-cred-docker-config
+          # NFM-4333: pin the ro gate endpoint — see the pre-pull step.
+          DOCKER_HOST: unix:///var/run/nfm-g2/docker-ro.sock
         run: |
           bash tools/pre-deploy-assert-smoke/smoke.sh
 
