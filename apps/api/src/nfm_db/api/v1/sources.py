@@ -66,7 +66,11 @@ async def list_sources_endpoint(
         sort=sort,
         order=order,
     )
-    return ApiResponse(success=True, data=result)
+    # NFM-4308 ③ — echo clamped page sizes via data.truncated.
+    return ApiResponse(
+        success=True,
+        data=result.model_copy(update={"truncated": pagination.truncated}),
+    )
 
 
 @router.get("/sources/{source_id}", response_model=ApiResponse[DataSourceDetailResponse], summary="获取数据源详情", description="获取单个数据源的详细信息，包含作者列表（按 author_order 排序）。\n\nReturn a single source with authors ordered by author_order.")

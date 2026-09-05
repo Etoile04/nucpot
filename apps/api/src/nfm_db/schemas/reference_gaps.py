@@ -44,6 +44,9 @@ class ReferenceGapsListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+    # NFM-4308 ③ — true when the requested page size exceeded the cap and
+    # was clamped (per_page echoes the effective value).
+    truncated: bool = False
 
 
 # ---------------------------------------------------------------------------

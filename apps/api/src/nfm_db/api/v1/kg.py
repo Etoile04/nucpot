@@ -86,17 +86,20 @@ async def search_kg_nodes(
 
     # Semantic query bridge (NFM-1222)
     if mode == "lightrag" and q is not None:
-        return await _semantic_query(q=q, limit=effective_limit, session=session)
+        result = await _semantic_query(q=q, limit=effective_limit, session=session)
+    else:
+        # Standard structured search (existing logic + merged pagination)
+        result = await _structured_search(
+            q=q,
+            type=type,
+            status=status,
+            limit=effective_limit,
+            offset=effective_offset,
+            session=session,
+        )
 
-    # Standard structured search (existing logic + merged pagination)
-    return await _structured_search(
-        q=q,
-        type=type,
-        status=status,
-        limit=effective_limit,
-        offset=effective_offset,
-        session=session,
-    )
+    # NFM-4308 ③ — both response shapes echo the clamp flag.
+    return result.model_copy(update={"truncated": pagination.truncated})
 
 
 def _build_search_item(node: KGNode) -> KGSearchItem:

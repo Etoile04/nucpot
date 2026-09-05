@@ -132,6 +132,7 @@ async def list_requests(
         page=pagination.page,
         limit=pagination.per_page,
         pages=pagination.pages(total),
+        truncated=pagination.truncated,
     )
 
 
@@ -634,6 +635,7 @@ async def list_dispatch_status(
         page=pagination.page,
         limit=pagination.per_page,
         pages=pagination.pages(filtered_total),
+        truncated=pagination.truncated,
     )
 
 

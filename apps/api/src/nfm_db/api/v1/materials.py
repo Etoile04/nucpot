@@ -61,7 +61,8 @@ router = APIRouter(tags=["材料管理"])
     "/materials",
     response_model=ApiResponse[PaginatedResponse[MaterialResponse]],
     summary="分页查询材料列表",
-    description="返回分页的材料列表，支持按类别筛选和排序。\n\nReturn a paginated list of materials, optionally filtered by category.",
+    description="返回分页的材料列表，支持按类别筛选和排序。\n\nReturn a paginated list of materials, optionally filtered by category.\n\n分页契约 (NFM-4308): `page_size` 是 `per_page` 的别名；超过上限 100 时按 100 执行，"
+    "`data.limit` 回传实际生效值并置 `data.truncated: true`。",
 )
 async def list_materials_endpoint(
     pagination: PaginationParams = Depends(PaginationParams),
@@ -72,7 +73,9 @@ async def list_materials_endpoint(
 ) -> ApiResponse[PaginatedResponse[MaterialResponse]]:
     """Return a paginated list of materials, optionally filtered by category.
 
-    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    分页契约 (NFM-4308 ③): ``page_size`` 为 ``per_page`` 别名（显式
+    ``per_page`` 优先）；默认 20，上限 100。超限值按 100 执行并在
+    ``data.limit`` / ``data.truncated`` 回传实际生效值与截断标志。
     """
     result = await list_materials(
         db,
@@ -82,7 +85,7 @@ async def list_materials_endpoint(
         order=order,
         category_id=category_id,
     )
-    return ApiResponse(success=True, data=result)
+    return ApiResponse(success=True, data=result.model_copy(update={"truncated": pagination.truncated}))
 
 
 @router.get(
@@ -107,7 +110,9 @@ async def search_materials_endpoint(
     decision; mutual exclusion would silently drop the user's category
     selection when they type a query).
 
-    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100
+    分页契约 (NFM-4308 ③): ``page_size`` 为 ``per_page`` 别名（显式
+    ``per_page`` 优先）；默认 20，上限 100。超限值按 100 执行并在
+    ``data.limit`` / ``data.truncated`` 回传实际生效值与截断标志。
     """
     result = await search_materials(
         db,
@@ -116,7 +121,7 @@ async def search_materials_endpoint(
         limit=pagination.per_page,
         category_id=category_id,
     )
-    return ApiResponse(success=True, data=result)
+    return ApiResponse(success=True, data=result.model_copy(update={"truncated": pagination.truncated}))
 
 
 @router.get(

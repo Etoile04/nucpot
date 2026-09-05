@@ -69,6 +69,10 @@ async def list_feedback_endpoint(
 
     分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit 参数)
     """
+    # Capture truncation before the legacy-limit override rebuilds `pagination`
+    # (the rebuilt object would report truncated=False even when the caller's
+    # per_page was clamped).
+    truncated = pagination.truncated
     if _limit is not None:
         pagination = PaginationParams(page=pagination.page, per_page=_limit)
 
@@ -91,5 +95,6 @@ async def list_feedback_endpoint(
             page=pagination.page,
             limit=pagination.per_page,
             pages=pages,
+            truncated=truncated,
         ),
     )

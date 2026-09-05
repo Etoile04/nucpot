@@ -5,7 +5,7 @@ import uuid
 from typing import Annotated
 
 import frontmatter as matter
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -199,6 +199,7 @@ async def create_post(
 )
 async def list_posts(
     _current_user: Annotated[User, Depends(require_admin_or_reviewer)],
+    response: Response,
     session: AsyncSession = Depends(get_db),
     status: str | None = Query(default=None),
     author_id: str | None = Query(default=None),
@@ -217,11 +218,15 @@ async def list_posts(
 ) -> list[BlogPostResponse]:
     """List blog posts with filtering (admin/editor/reviewer only).
 
-    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)
+    分页参数: page/per_page, 默认 page=1 per_page=20, 最大100 (已弃用 limit/offset 参数)。
+    NFM-4308 ③ — 本端点返回裸列表(无分页信封)，超限截断经
+    ``X-Pagination-Truncated: true`` 响应头回传。
     """
     if _limit is not None:
         effective_page = ((_offset or 0) // _limit) + 1
         pagination = PaginationParams(page=effective_page, per_page=_limit)
+    if pagination.truncated:
+        response.headers["X-Pagination-Truncated"] = "true"
     post_status = None
     if status is not None:
         try:
