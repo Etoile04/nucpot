@@ -948,7 +948,8 @@ jobs:
       #   never-fail contract).
       # - if: always() so a failing SSH step / smoke step / celery verify
       #   still emits — that's failure mode 6.
-      # - The marker file /tmp/nfmd_prod_health_passed is the prod analog
+      # - The marker file /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed
+      #   is the prod analog
       #   of staging's first-poll gate; the deploy step writes it on success.
       # =======================================================================
       - name: Emit prod deploy-event fragment
@@ -977,8 +978,13 @@ jobs:
 
           # First-poll gate: the deploy heredoc's internal API curl succeeded.
           # The marker file lives on the Mac Studio (same fs as the runner).
+          # NFM-4333 RC8: moved out of /tmp (sticky bit + cross-identity
+          # ownership makes /tmp unsafe for markers written by nfmdeploy and
+          # read by the runner). nfmdeploy's $HOME is /var/lib/nfmdeploy,
+          # mode 755 group-readable (lwj04 in staff), so the runner can read
+          # the marker nfmdeploy wrote without EACCES.
           FIRST_POLL="false"
-          if [ -f /tmp/nfmd_prod_health_passed ]; then
+          if [ -f /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed ]; then
             FIRST_POLL="true"
           fi
 
