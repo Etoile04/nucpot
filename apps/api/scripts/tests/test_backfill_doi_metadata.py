@@ -108,9 +108,16 @@ class TestRunBackfill:
         assert report.journal_filled == 0
         assert report.year_filled == 1
         assert report.rows_updated == 1
-        _, params = session.updates[0]
+        sql, params = session.updates[0]
         assert "journal" not in params
         assert params["year"] == 2018
+        # Pin the per-field IS NULL guard in the emitted SQL (NFM-4332):
+        # the script is meant to be re-run against new stock, so a refactor
+        # that silently drops the guard must fail here, not in production
+        # where curated values would be overwritten.
+        assert "year IS NULL" in sql
+        assert "journal IS NULL" not in sql
+        assert "SET journal" not in sql
 
     def test_crossref_has_no_new_fields_no_update(self) -> None:
         # Both fields already set → row is not even a candidate, but if

@@ -204,7 +204,7 @@ class TestFetchCrossrefMetadata:
         mailtos = [httpx.URL(url).params.get("mailto") for url in seen_urls]
         assert "ops@example.org" in mailtos
 
-    def test_doi_is_url_encoded_in_path(self) -> None:
+    def test_doi_slashes_survive_in_path(self) -> None:
         seen_urls: list[str] = []
 
         def handler(request: httpx.Request) -> Response:
