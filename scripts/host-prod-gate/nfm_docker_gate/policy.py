@@ -181,6 +181,9 @@ class TargetInfo:
         return None
 
 
+# A module-level alias is RUNTIME code — `from __future__ import
+# annotations` does not defer it — so PEP 604 `|` here crashes the
+# py3.9 interpreter the launchd proxies run under (NFM-4320).
 Resolver = Callable[[str], Optional[TargetInfo]]
 
 

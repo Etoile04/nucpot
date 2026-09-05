@@ -67,10 +67,13 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 ## Develop
 
 ```bash
-uv run --project apps/api pytest scripts/tests/test_nfm_docker_gate_policy.py \
-    scripts/tests/test_nfm_docker_gate_proxy.py \
-    scripts/tests/test_nfm_docker_gate_hostsetup.py -v
+uv run --project apps/api pytest scripts/tests/test_nfm_docker_gate_*.py -v
 ```
+
+The launchd proxies run under the host's `/usr/bin/python3` (3.9), so the
+package must stay 3.9-clean — no runtime PEP 604 unions, no `datetime.UTC`,
+catch `socket.timeout` (not `TimeoutError`). `test_nfm_docker_gate_py39_compat.py`
+pins this via an AST sweep plus a functional smoke under the real 3.9 interpreter.
 
 Stdlib + pytest only. Local end-to-end without installing:
 
