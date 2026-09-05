@@ -801,6 +801,36 @@ def test_images_get_opaque_id_or_digest_denied_fail_closed():
         assert not result.allowed and "fail-closed" in result.reason, names
 
 
+# ---- NFM-4333: single-image inspect is a sanctioned read ---------------------
+# `docker compose up` resolves every service image via GET
+# images/{ref}/json; it was fail-closed in BOTH modes and blocked all
+# sanctioned deploys. The full list (images/json) is already an allowed
+# read returning the same metadata per image — the item endpoint exposes
+# strictly less data.
+
+
+def test_get_image_inspect_allowed_ro_mode():
+    for ref in ("nucpot-prod-api:latest", "alpine:3.20", "pgvector/pgvector:pg16"):
+        result = decide("GET", f"/v1.43/images/{ref}/json")
+        assert result.allowed, ref
+
+
+def test_get_image_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/images/nucpot-prod-api:c96b8c4d1/json", full=True)
+    assert result.allowed
+
+
+def test_get_image_inspect_does_not_widen_layer_export():
+    # The read fix must not touch the images/get exfiltration guard.
+    assert not decide("GET", "/v1.43/images/get", "names=nucpot-prod-api:latest").allowed
+
+
+def test_get_image_other_subresources_still_fail_closed():
+    # Only inspect (json) is allowed; e.g. history stays unrecognized.
+    result = decide("GET", "/v1.43/images/alpine:3.20/history")
+    assert not result.allowed and result.audit
+
+
 # ---- CR F4: opaque volume ids -------------------------------------------------------
 
 

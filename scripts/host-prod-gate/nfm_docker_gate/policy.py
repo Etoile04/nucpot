@@ -46,6 +46,9 @@ _CONTAINER_MUTATION = re.compile(
     r"^containers/(?P<id>[^/]+)/(?P<action>start|stop|kill|restart|pause|unpause|wait|update|rename|exec|attach|archive)$"
 )
 _IMAGE_NAME_ACTION = re.compile(r"^images/(?P<name>[^/]+)/(?P<action>tag|push)$")
+# GET images/{name}/json — single-image inspect. {name} is multi-segment
+# for registry refs (e.g. pgvector/pgvector:pg16), hence ".+".
+_IMAGE_INSPECT = re.compile(r"^images/(?P<name>.+)/json$")
 _NETWORK_ACTION = re.compile(r"^networks/(?P<id>[^/]+)/(?P<action>connect|disconnect)$")
 
 # GET endpoints the read-only context may hit. Anything else: denied
@@ -401,6 +404,15 @@ def classify(
                         audit=True,
                         target=name,
                     )
+            return Decision(True, "read-only endpoint")
+        if _IMAGE_INSPECT.match(path):
+            # Single-image inspect — a sanctioned read (NFM-4333: this was
+            # fail-closed in BOTH modes and `docker compose up` — the
+            # sanctioned deploy path — could not resolve a single service
+            # image). The full list (images/json) is already allowed and
+            # returns the same metadata for every image, so the item
+            # endpoint exposes strictly less data. Layer/export channels
+            # (images/get) stay scope-guarded above.
             return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")
