@@ -31,9 +31,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-import verify_potential_files as sweep_mod  # noqa: E402
-
 import httpx  # noqa: E402
+import verify_potential_files as sweep_mod  # noqa: E402
 
 from nfm_db.services import upload_service  # noqa: E402
 from nfm_db.services.potential_file_resolver import (  # noqa: E402
@@ -61,7 +60,7 @@ class _StubSupabaseClient:
     def __init__(self, *args: object, **kwargs: object) -> None:
         pass
 
-    async def __aenter__(self) -> "_StubSupabaseClient":
+    async def __aenter__(self) -> _StubSupabaseClient:
         return self
 
     async def __aexit__(self, *exc: object) -> None:

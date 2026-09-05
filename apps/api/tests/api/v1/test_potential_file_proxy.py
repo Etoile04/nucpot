@@ -364,7 +364,7 @@ _OBJECT_SERVER_PAYLOAD = b"# regression payload - remote file stream body\n" * 8
 class _ObjectServerHandler(BaseHTTPRequestHandler):
     """Serves a fixed payload for every GET (stand-in public object store)."""
 
-    def do_GET(self) -> None:  # noqa: N802 — http.server API
+    def do_GET(self) -> None:
         body = _OBJECT_SERVER_PAYLOAD
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")

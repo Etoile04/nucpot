@@ -286,8 +286,8 @@ def test_download_count_update_sql_per_dialect(dialect: str, expected_fragments)
 
 
 def test_download_count_update_sql_compiles_on_both_dialects() -> None:
-    from sqlalchemy.dialects import postgresql, sqlite
     from sqlalchemy import text
+    from sqlalchemy.dialects import postgresql, sqlite
 
     for dialect in (postgresql.dialect(), sqlite.dialect()):
         compiled = text(download_count_update_sql(dialect.name)).compile(dialect=dialect)

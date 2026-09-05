@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated, Any, AsyncIterator
+from typing import Annotated, Any
 from uuid import UUID
 
 import httpx
