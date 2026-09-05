@@ -44,7 +44,11 @@ class PaginationParams(BaseModel):
     * Values above :data:`MAX_PER_PAGE` are clamped to the cap and the
       request still succeeds — the effective page size is echoed in the
       response (``limit``) together with ``truncated: true`` so callers
-      never silently miss rows.
+      never silently miss rows. Every paginated endpoint participates:
+      envelope-bearing routes expose ``truncated`` in their payload
+      (``PaginatedResponse.truncated`` or the route's own envelope);
+      bare-list routes without an envelope (e.g. admin blog posts)
+      echo ``X-Pagination-Truncated: true`` as a response header.
     """
 
     page: int = Field(default=1, ge=1, description="页码")
