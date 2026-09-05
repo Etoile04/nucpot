@@ -14,6 +14,12 @@ import os
 import threading
 from typing import Any
 
+try:  # py3.11+ fast path; fall back for the py3.9 launchd interpreter
+    from datetime import UTC  # noqa: F401
+except ImportError:  # pragma: no cover — py<3.11
+    from datetime import timezone as _tz
+    UTC = _tz.utc
+
 
 class AuditLog:
     def __init__(self, path: str, mode: str) -> None:
@@ -28,7 +34,7 @@ class AuditLog:
 
     def write(self, event: str, identity: dict[str, Any] | None, **fields: Any) -> None:
         record = {
-            "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds"),
+            "ts": datetime.datetime.now(UTC).isoformat(timespec="milliseconds"),
             "event": event,  # "allow" | "deny" | "startup" | "drift"
             "mode": self._mode,
             "identity": identity or {"known": False},
