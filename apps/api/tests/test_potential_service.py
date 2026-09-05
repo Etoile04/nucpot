@@ -332,9 +332,9 @@ async def test_list_pagination_is_deterministic_on_tied_sort_keys(db_session) ->
     """NFM-4311: the BFF stitches multiple backend pages into one response;
     rows sharing a sort key (bulk import → identical updated_at) must page
     in a stable order so stitched windows neither overlap nor skip rows."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
-    tied = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+    tied = datetime(2026, 9, 5, 12, 0, 0, tzinfo=UTC)
     seeded_ids = []
     for i in range(6):
         p = await _seed(db_session, name=f"bulk_{i}", updated_at=tied)
