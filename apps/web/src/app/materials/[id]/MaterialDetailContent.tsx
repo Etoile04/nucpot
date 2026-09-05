@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { Typography, Spin, Alert, Descriptions, Table, Space, Button } from "antd"
 import type { ColumnsType } from "antd/es/table"
 import { request } from "@/lib/api-client"
@@ -96,19 +95,14 @@ const compositionColumns: ColumnsType<MaterialComposition> = [
 
 // ── Component ──────────────────────────────────────────────────────────
 
-export function MaterialDetailContent({
-  materialId,
-}: MaterialDetailContentProps) {
+export function MaterialDetailContent({ materialId }: MaterialDetailContentProps) {
   const [state, setState] = useState<ViewState>(INITIAL_STATE)
-  const router = useRouter()
 
   const fetchData = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
 
     try {
-      const response = await request<ApiResponse<MaterialDetail>>(
-        `/api/v1/materials/${materialId}`,
-      )
+      const response = await request<ApiResponse<MaterialDetail>>(`/api/v1/materials/${materialId}`)
       setState({
         material: response.data,
         loading: false,
@@ -173,10 +167,7 @@ export function MaterialDetailContent({
             {m?.formula ? `化学式：${m.formula}` : `材料 ID：${materialId}`}
           </Text>
         </div>
-        <Link
-          href="/browse"
-          className="text-blue-400 hover:text-blue-300 text-sm"
-        >
+        <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
           返回浏览
         </Link>
       </div>
@@ -229,19 +220,14 @@ export function MaterialDetailContent({
             ]}
           />
 
-          {/* Navigation buttons — button + programmatic navigation.
-              Wrapping a <button> in Link's <a> is invalid HTML (NFM-4308 ④). */}
+          {/* Navigation buttons — antd Button with href renders a single <a>
+              styled as a button; wrapping a <button> in Link's <a> is
+              invalid HTML (NFM-4308 ④). */}
           <Space className="mb-6">
-            <Button
-              type="primary"
-              onClick={() => router.push(`/materials/${materialId}/graph`)}
-            >
+            <Button type="primary" href={`/materials/${materialId}/graph`}>
               查看知识图谱
             </Button>
-            <Button
-              type="primary"
-              onClick={() => router.push(`/materials/${materialId}/properties`)}
-            >
+            <Button type="primary" href={`/materials/${materialId}/properties`}>
               查看属性
             </Button>
           </Space>
@@ -255,9 +241,7 @@ export function MaterialDetailContent({
               <Table<MaterialAlias>
                 columns={aliasColumns}
                 dataSource={m.aliases}
-                rowKey={(record, index) =>
-                  `${record.alias_name}-${record.alias_type}-${index}`
-                }
+                rowKey={(record, index) => `${record.alias_name}-${record.alias_type}-${index}`}
                 pagination={false}
                 size="small"
               />

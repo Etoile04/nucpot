@@ -52,10 +52,7 @@ describe("BrowseView 重置筛选 (NFM-4308 ①)", () => {
     }) // sort → 按名称
 
     expect(searchInput).toHaveValue("U")
-    expect(screen.getByRole("button", { name: "U" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    )
+    expect(screen.getByRole("button", { name: "U" })).toHaveAttribute("aria-pressed", "true")
     expect(screen.getByLabelText("EAM")).toBeChecked()
     expect(screen.getByDisplayValue("按名称")).toBeInTheDocument()
 
@@ -64,10 +61,7 @@ describe("BrowseView 重置筛选 (NFM-4308 ①)", () => {
 
     // Every control is back to its default
     expect(searchInput).toHaveValue("")
-    expect(screen.getByRole("button", { name: "U" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    )
+    expect(screen.getByRole("button", { name: "U" })).toHaveAttribute("aria-pressed", "false")
     expect(screen.getByLabelText("EAM")).not.toBeChecked()
     expect(screen.getByDisplayValue("最近更新")).toBeInTheDocument()
   })

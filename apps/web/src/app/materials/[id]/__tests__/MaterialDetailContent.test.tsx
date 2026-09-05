@@ -4,24 +4,12 @@ import { MaterialDetailContent } from "../MaterialDetailContent"
 
 // ── API mock (vi.hoisted avoids TDZ in hoisted vi.mock factory) ──────
 
-const { mockRequest, mockPush } = vi.hoisted(() => ({
+const { mockRequest } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
-  mockPush: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
   request: (...args: unknown[]) => mockRequest(...args),
-}))
-
-// ── next/navigation mock (NFM-4308 ④ — buttons navigate via router.push) ──
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: mockPush,
-    replace: vi.fn(),
-    prefetch: vi.fn(),
-    back: vi.fn(),
-  }),
 }))
 
 // ── Test data ──────────────────────────────────────────────────────────
@@ -121,13 +109,14 @@ describe("MaterialDetailContent", () => {
       expect(screen.getByText("萤石结构")).toBeInTheDocument()
     })
 
-    // NFM-4308 ④ — navigation is a button + programmatic navigation
-    // (router.push), not an <a> wrapping a <button>.
-    fireEvent.click(screen.getByRole("button", { name: "查看知识图谱" }))
-    expect(mockPush).toHaveBeenCalledWith("/materials/mat-001/graph")
+    // NFM-4308 ④ — CTAs are real anchors (antd Button href renders a
+    // single <a>), preserving open-in-new-tab / Cmd+click semantics with
+    // no <button> nested inside an <a>.
+    const graphLink = screen.getByRole("link", { name: "查看知识图谱" })
+    expect(graphLink).toHaveAttribute("href", "/materials/mat-001/graph")
 
-    fireEvent.click(screen.getByRole("button", { name: "查看属性" }))
-    expect(mockPush).toHaveBeenCalledWith("/materials/mat-001/properties")
+    const propsLink = screen.getByRole("link", { name: "查看属性" })
+    expect(propsLink).toHaveAttribute("href", "/materials/mat-001/properties")
   })
 
   it("renders localized timestamps, never raw ISO strings (NFM-4308 ②)", async () => {

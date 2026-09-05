@@ -24,7 +24,14 @@ from scripts.nfm_4308_test_material_cleanup import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.models import Dataset, Material
+from nfm_db.models import (
+    ConflictRecord,
+    Dataset,
+    EntityMergeLog,
+    KGNode,
+    MatchMethod,
+    Material,
+)
 from tests.test_materials_router import _seed_material
 
 pytestmark = pytest.mark.asyncio
@@ -83,6 +90,52 @@ class TestFind:
         assert by_name["Test"].dataset_count == 1
         assert by_name["E2E-Test-Novel-Alloy-X7"].deletable is True
 
+    async def test_find_flags_rows_with_merge_log(
+        self, db_session: AsyncSession
+    ) -> None:
+        junk = await _seed_junk(db_session)
+        db_session.add(
+            EntityMergeLog(
+                canonical_id=junk[1].id,
+                merged_id=junk[0].id,
+                match_score=0.99,
+                match_method=MatchMethod.EXACT,
+            )
+        )
+        await db_session.commit()
+
+        candidates = await find_test_materials(db_session)
+
+        by_name = {c.name: c for c in candidates}
+        assert by_name["Test"].deletable is False
+        assert by_name["Test"].merge_log_count == 1
+        assert by_name["E2E-Test-Novel-Alloy-X7"].deletable is False
+        assert by_name["E2E-Test-Novel-Alloy-X7"].merge_log_count == 1
+
+    async def test_find_flags_rows_with_conflict_record(
+        self, db_session: AsyncSession
+    ) -> None:
+        junk = await _seed_junk(db_session)
+        material_node = KGNode(node_type="Material", label="Test")
+        property_node = KGNode(node_type="Property", label="Density")
+        db_session.add_all([material_node, property_node])
+        await db_session.flush()
+        db_session.add(
+            ConflictRecord(
+                material_node_id=material_node.id,
+                property_node_id=property_node.id,
+                material_id=junk[0].id,
+            )
+        )
+        await db_session.commit()
+
+        candidates = await find_test_materials(db_session)
+
+        by_name = {c.name: c for c in candidates}
+        assert by_name["Test"].deletable is False
+        assert by_name["Test"].conflict_count == 1
+        assert by_name["E2E-Test-Novel-Alloy-X7"].deletable is True
+
 
 class TestDelete:
     async def test_delete_removes_junk_and_keeps_real(
@@ -117,4 +170,29 @@ class TestDelete:
             (await db_session.execute(select(Material.name))).scalars().all()
         )
         assert "Test" in names  # kept for manual review
+        assert "E2E-Test-Novel-Alloy-X7" not in names
+
+    async def test_delete_skips_rows_with_merge_log(
+        self, db_session: AsyncSession
+    ) -> None:
+        junk = await _seed_junk(db_session)
+        real = await _seed_material(db_session, name="UO2")
+        db_session.add(
+            EntityMergeLog(
+                canonical_id=junk[0].id,
+                merged_id=real.id,
+                match_score=0.5,
+                match_method=MatchMethod.FUZZY,
+            )
+        )
+        await db_session.commit()
+
+        report = await delete_test_materials(db_session)
+
+        assert report.deleted_count == 1
+        assert report.skipped_count == 1
+        names = set(
+            (await db_session.execute(select(Material.name))).scalars().all()
+        )
+        assert "Test" in names
         assert "E2E-Test-Novel-Alloy-X7" not in names

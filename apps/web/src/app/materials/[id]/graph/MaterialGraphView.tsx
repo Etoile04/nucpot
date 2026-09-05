@@ -6,11 +6,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Typography, Skeleton, Result, Button } from "antd"
 import type { GraphNode, GraphData } from "@/components/graph"
-import {
-  getKGGraph,
-  transformGraphResponse,
-  type KGGraphResponse,
-} from "@/lib/kg-api"
+import { getKGGraph, transformGraphResponse, type KGGraphResponse } from "@/lib/kg-api"
 // ApiHttpError was renamed to ApiError; not used for narrowing here.
 
 const { Title, Text } = Typography
@@ -81,33 +77,25 @@ function GraphLoadingSkeleton() {
       aria-busy="true"
     >
       <Skeleton active paragraph={{ rows: 1 }} />
-      <Skeleton.Image
-        active
-        style={{ width: "100%", height: 500, borderRadius: 8 }}
-      />
+      <Skeleton.Image active style={{ width: "100%", height: 500, borderRadius: 8 }} />
       <Skeleton active paragraph={{ rows: 2 }} />
     </div>
   )
 }
 
 function NotFoundState({ materialId }: { readonly materialId: string }) {
-  // Buttons navigate programmatically — wrapping a <button> in Link's <a>
-  // is invalid HTML (NFM-4308 ④).
-  const router = useRouter()
+  // antd Button with href renders a single <a> styled as a button —
+  // wrapping a <button> in Link's <a> is invalid HTML (NFM-4308 ④).
   return (
     <Result
       status="warning"
       title="节点未找到"
       subTitle={`材料 "${materialId}" 在知识图谱中未找到。该材料可能尚未被提取到知识图谱中。`}
       extra={[
-        <Button
-          key="back"
-          type="primary"
-          onClick={() => router.push(`/materials/${materialId}/properties`)}
-        >
+        <Button key="back" type="primary" href={`/materials/${materialId}/properties`}>
           返回材料属性
         </Button>,
-        <Button key="browse" onClick={() => router.push("/browse")}>
+        <Button key="browse" href="/browse">
           浏览材料
         </Button>,
       ]}
@@ -211,9 +199,7 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
           <Title level={2} className="!m-0 text-white">
             知识图谱
           </Title>
-          <Text type="secondary">
-            材料 ID：{materialId} — 邻域子图（深度 2）
-          </Text>
+          <Text type="secondary">材料 ID：{materialId} — 邻域子图（深度 2）</Text>
         </div>
         <div className="flex gap-3">
           <Link
@@ -222,10 +208,7 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
           >
             材料属性
           </Link>
-          <Link
-            href="/browse"
-            className="text-blue-400 hover:text-blue-300 text-sm"
-          >
+          <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
             返回浏览
           </Link>
         </div>
