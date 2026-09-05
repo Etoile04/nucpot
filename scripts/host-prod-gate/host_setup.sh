@@ -156,9 +156,23 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
   chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${REPO_REAL}"
   find "${REPO_REAL}" -type d -name .git -prune -o -type d -print0 2>/dev/null \
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit"
+  # NFM-4333 RC7: the prune above skips .git/ entirely — but nfmdeploy still
+  # needs to traverse INTO .git/ to read .git/HEAD (run-deploy.sh does
+  # `git rev-parse HEAD`). Without this ACE, the per-file `allow read` on
+  # COMMIT_EDITMSG etc. is unreachable (parent dir blocks entry) and the
+  # deploy dies with "fatal: not a git repository". Walk .git/ subdirs
+  # here too (skip worktrees/ — not needed for rev-parse and may pin
+  # fragile state if mutated mid-deploy).
+  chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${REPO_REAL}/.git"
+  find "${REPO_REAL}/.git" -type d -not -path "${REPO_REAL}/.git" -not -path "*/worktrees*" 2>/dev/null \
+    | while read -r d; do
+        if ! ls -led "${d}" 2>/dev/null | grep -q "nfmdeploy"; then
+          chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${d}"
+        fi
+      done
   # secrets and any non-other-readable file the deploy reads directly
   find "${REPO_REAL}/docker" "${REPO_REAL}/scripts" "${REPO_REAL}/tools" \
-       "${REPO_REAL}/.git" -type f ! -perm -o=r -print0 2>/dev/null \
+       "${REPO_REAL}/.git" -type f ! -perm -o=r -not -path "*/worktrees/*" -print0 2>/dev/null \
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
 fi
 
