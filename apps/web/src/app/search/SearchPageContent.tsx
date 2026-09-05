@@ -5,10 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { Typography } from "antd"
 import { SearchView } from "./SearchView"
 import { RagSearchView } from "@/components/search/RagSearchView"
-import {
-  SearchModeToggle,
-  type SearchMode,
-} from "@/components/search/SearchModeToggle"
+import { SearchModeToggle, type SearchMode } from "@/components/search/SearchModeToggle"
 
 const { Title, Text } = Typography
 
@@ -45,7 +42,7 @@ export function SearchPageContent() {
           <Text type="secondary">
             {mode === "text"
               ? "按类型、元素或关键字检索势函数库"
-              : "使用 AI 语义检索知识图谱中的核材料数据"}
+              : "使用 AI 语义检索知识图谱中的核材料数据（需登录）"}
           </Text>
         </div>
         <SearchModeToggle value={mode} onChange={handleModeChange} />

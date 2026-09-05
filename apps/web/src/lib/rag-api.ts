@@ -99,16 +99,18 @@ function mapReferenceToCitation(ref: BackendReference, idx: number): RagCitation
 export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 45_000
 
 /** Shown when the client-side AbortController fires. */
-export const RAG_TIMEOUT_MESSAGE =
-  "查询超时，请稍后重试，或请尝试使用关键词搜索。"
+export const RAG_TIMEOUT_MESSAGE = "查询超时，请稍后重试，或请尝试使用关键词搜索。"
 
 /** Shown for every other failure mode (network, 5xx, success:false). */
-export const RAG_UNAVAILABLE_MESSAGE =
-  "语义检索暂时不可用，请稍后重试，或请尝试使用关键词搜索。"
+export const RAG_UNAVAILABLE_MESSAGE = "语义检索暂时不可用，请稍后重试，或请尝试使用关键词搜索。"
 
-/** Shown when the session expired and token refresh failed. */
-export const RAG_AUTH_EXPIRED_MESSAGE =
-  "登录已过期，请重新登录后再试。"
+/**
+ * Shown when the query is rejected for lack of auth (NFM-4307 / BUG-31).
+ * Must not say 「已过期」: the overwhelmingly common cause is an anonymous
+ * visitor who never had a session, so the copy states the login requirement
+ * instead of implying state the user never had.
+ */
+export const RAG_LOGIN_REQUIRED_MESSAGE = "语义检索需要登录，请先登录后再试。"
 
 /**
  * Check whether an unknown error value is an auth-expired error.
@@ -133,9 +135,7 @@ export function isAuthExpiredError(err: unknown): boolean {
  */
 export function resolveRagQueryTimeoutMs(): number {
   const parsed = Number(process.env.NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS)
-  return Number.isFinite(parsed) && parsed > 0
-    ? parsed
-    : DEFAULT_RAG_QUERY_TIMEOUT_MS
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RAG_QUERY_TIMEOUT_MS
 }
 
 /**
@@ -144,9 +144,7 @@ export function resolveRagQueryTimeoutMs(): number {
  */
 function isAbortError(err: unknown): boolean {
   return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { name?: unknown }).name === "AbortError"
+    typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError"
   )
 }
 
@@ -189,14 +187,11 @@ async function fetchQueryEnvelope(
   signal: AbortSignal,
 ): Promise<ApiResponse<BackendQueryResponse>> {
   try {
-    return await request<ApiResponse<BackendQueryResponse>>(
-      "/api/v1/lightrag/query",
-      {
-        method: "POST",
-        body: JSON.stringify(backendPayload),
-        signal,
-      },
-    )
+    return await request<ApiResponse<BackendQueryResponse>>("/api/v1/lightrag/query", {
+      method: "POST",
+      body: JSON.stringify(backendPayload),
+      signal,
+    })
   } catch (err: unknown) {
     if (isAbortError(err)) throw new Error(RAG_TIMEOUT_MESSAGE)
     // Auth-expired errors already carry user-safe copy from the refresh
@@ -232,22 +227,14 @@ export const ragApi = {
     }
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      resolveRagQueryTimeoutMs(),
-    )
+    const timeoutId = setTimeout(() => controller.abort(), resolveRagQueryTimeoutMs())
     try {
-      const envelope = await fetchQueryEnvelope(
-        backendPayload,
-        controller.signal,
-      )
+      const envelope = await fetchQueryEnvelope(backendPayload, controller.signal)
       if (!envelope.success || !envelope.data) {
         // `request()` already throws on non-2xx, so reaching here means a 2xx
         // with success=false — unusual but possible. The envelope is the only
         // place a correlation id survives, so read it before discarding.
-        throw new Error(
-          withRequestId(RAG_UNAVAILABLE_MESSAGE, readRequestId(envelope)),
-        )
+        throw new Error(withRequestId(RAG_UNAVAILABLE_MESSAGE, readRequestId(envelope)))
       }
       const data = envelope.data
       const citations = (data.references ?? []).map(mapReferenceToCitation)
