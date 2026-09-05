@@ -744,16 +744,34 @@ def test_percent_encoded_path_denied():
 
 
 def test_percent_encoded_scope_query_value_denied():
-    """The scope keys are checked as SENT: %2D decodes to '-' server-side,
-    so `nucpot%2Dprod-x` would scope-check innocent and land as prod."""
+    """NFM-4333 RC4 semantics: scope keys are percent-DECODED once and
+    checked on what the daemon will resolve — an encoded prod name
+    (`%2D` = '-') is caught BY SCOPE, not by encoding shape."""
+    result = decide("POST", "/v1.43/containers/create", "name=nucpot%2Dprod-api-1", body={})
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_percent_encoded_pull_of_registry_ref_allowed():
+    """The RC4 fix's whole point: `docker build`/`docker pull` send
+    multi-segment image refs percent-encoded in images/create — a
+    sanctioned image-layer op that the old blanket '%' refusal blocked
+    (candidate build died: "percent-encoded 'repo' value cannot be
+    scope-checked")."""
     for query in (
-        "name=nucpot%2Dprod-api-1",  # containers/create
-        "fromImage=nucpot%2Dprod-api",  # images/create
-        "fromSrc=nucpot%2Dprod",  # build
+        "fromImage=docker.io%2Flibrary%2Fpython&tag=3.12-slim",
+        "fromImage=pgvector%2Fpgvector&tag=pg16",
+        "repo=docker.io%2Flibrary%2Fpython&tag=latest",
     ):
-        result = decide("POST", "/v1.43/containers/create", query, body={})
-        assert not result.allowed, query
-        assert "cannot be scope-checked" in result.reason
+        result = decide("POST", "/v1.43/images/create", query)
+        assert result.allowed, query
+
+
+def test_double_encoded_scope_value_denied_fail_closed():
+    """One decode, never two: %25 (a literal '%') can only be an evasion
+    attempt — the docker CLI never double-encodes."""
+    result = decide("POST", "/v1.43/images/create", "fromImage=a%252Fb")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
 
 
 def test_percent_encoded_read_filter_still_allowed():

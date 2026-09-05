@@ -35,6 +35,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from urllib.parse import unquote
 
 # Docker API paths arrive as /v1.43/containers/json or /containers/json.
 _VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
@@ -447,17 +448,34 @@ def classify(
     # ---- ro mode mutations -------------------------------------------------
     params = parse_query(query)
 
-    # R3 (fail-closed): scope-relevant query values must be readable as
-    # sent — the daemon percent-decodes them server-side, so an encoded
-    # name could scope-check as innocent here and resolve as prod there.
+    # R3 (fail-closed): scope checks must see EXACTLY what the daemon
+    # resolves. The daemon percent-decodes query values server-side, so
+    # an encoded name could scope-check as innocent here and resolve as
+    # prod there. Decode each scope-relevant value once — what the daemon
+    # sees after its own single decode — and keep failing closed when a
+    # value is still encoded afterwards: a double-encoded ref is never
+    # sent by the docker CLI and can only be an evasion attempt.
+    # (NFM-4333 RC4: `docker build`'s base-image pull sends
+    # repo=docker.io%2Flibrary%2Fpython — a sanctioned image-layer op the
+    # old blanket refusal on '%' blocked.)
+    decoded: dict[str, list[str]] = {}
     for key in ("name", "fromImage", "fromSrc", "ref", "repo", "tag", "names"):
-        for value in params.get(key, []):
+        values = params.get(key, [])
+        if not values:
+            continue
+        checked = []
+        for value in values:
             if "%" in value:
-                return Decision(
-                    False,
-                    f"percent-encoded {key!r} value cannot be scope-checked (fail-closed)",
-                    audit=True,
-                )
+                value = unquote(value)
+                if "%" in value:
+                    return Decision(
+                        False,
+                        f"double-encoded {key!r} value cannot be scope-checked (fail-closed)",
+                        audit=True,
+                    )
+            checked.append(value)
+        decoded = {**decoded, key: checked}
+    params = {**params, **decoded}
 
     if method == "POST" and path == "build":
         tags = params.get("t") or params.get("tag") or []
