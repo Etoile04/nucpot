@@ -14,6 +14,9 @@ import os
 import threading
 from typing import Any
 
+if not hasattr(datetime, "UTC"):  # py3.9/3.10 (macOS CLT python) — NFM-4315
+    datetime.UTC = datetime.timezone.utc
+
 
 class AuditLog:
     def __init__(self, path: str, mode: str) -> None:
