@@ -42,9 +42,11 @@ previous cohort of rows.
    - `{"kind": "supabase", "objects": ["potentials/library/x.eam.alloy", …]}` —
      object paths (multi-object rows keep the full list; `?index=` selects).
 3. **The proxy resolves sources server-side**: uploads files stream via
-   `FileResponse`; Supabase objects stream through the backend (httpx, 200 +
-   bytes, no redirect — plain `GET` must return the body). Legacy un-migrated
-   forms are still parsed on read (tolerant reader).
+   `FileResponse`; Supabase objects on the configured origin stream through
+   the backend (httpx, 200 + bytes — plain `GET` must return the body).
+   Foreign-origin absolute URLs are *not* fetched by the API container (SSRF
+   guard); the proxy hands them back to the client with a `307` redirect.
+   Legacy un-migrated forms are still parsed on read (tolerant reader).
 4. **Write paths validate shape before persist** (`validate_persistable_file_url`):
    allowed = canonical proxy, `/uploads/<key>`, `/storage/v1/object/public/…`,
    absolute `http(s)`. Rejected: `/app/…` and any other filesystem/container
@@ -55,10 +57,13 @@ previous cohort of rows.
    (bare filenames) are blanked with `extra.file_url_note`.
 6. **Post-deploy sweep** (`apps/api/scripts/verify_potential_files.py`) enforces
    the invariant *every non-empty `file_url` anonymously downloads 200 + bytes>0*
-   and blanks missing-file rows with a note (default dry-run, `--apply` writes).
-   File existence is deliberately **not** probed by the migration itself — the
-   volume is only visible where prod runs, and migration results must not
-   depend on the deploy host.
+   and blanks definitively-missing rows with a note (default dry-run, `--apply`
+   writes). Transient upstream conditions (network errors, 429/5xx) and
+   foreign-origin URLs (never fetched server-side) are reported as
+   *unverifiable* and never blanked — the operator re-runs once the upstream
+   is healthy. File existence is deliberately **not** probed by the migration
+   itself — the volume is only visible where prod runs, and migration results
+   must not depend on the deploy host.
 
 ## 3. Consequences
 

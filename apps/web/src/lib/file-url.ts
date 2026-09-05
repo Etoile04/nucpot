@@ -45,3 +45,51 @@ export function resolveFileUrl(fileUrl: string): string {
   // site-relative /uploads/ paths are already site-relative.
   return fileUrl.startsWith("/") ? fileUrl : `/uploads/${fileUrl}`
 }
+
+const STORAGE_V1_MARKER = "/storage/v1/object/public/"
+
+function lastPathSegment(path: string): string {
+  const cleaned = path.split("?")[0]?.split("#")[0] ?? path
+  const segments = cleaned.split("/")
+  return segments[segments.length - 1] ?? ""
+}
+
+export function fileNameFromUrl(fileUrl: string): string {
+  return lastPathSegment(fileUrl) || fileUrl
+}
+
+/**
+ * Display/download filename for a potential file (NFM-4309).
+ *
+ * The canonical proxy URL ends in the literal segment "file", so the
+ * real name must come from the storage reference: the uploads key or the
+ * first supabase object path (bucket prefix and origin stripped). Legacy
+ * URL forms keep deriving the name from the URL itself.
+ */
+export function resolveFileName(
+  fileUrl: string,
+  extra?: Record<string, unknown> | null,
+): string {
+  const storage = extra?.file_storage
+  if (storage !== null && typeof storage === "object") {
+    const key = (storage as { key?: unknown }).key
+    if (typeof key === "string") {
+      const name = lastPathSegment(key)
+      if (name) return name
+    }
+    const objects = (storage as { objects?: unknown }).objects
+    if (Array.isArray(objects)) {
+      const first = objects.find(
+        (o): o is string => typeof o === "string" && o.length > 0,
+      )
+      if (first) {
+        const markerAt = first.indexOf(STORAGE_V1_MARKER)
+        const path =
+          markerAt >= 0 ? first.slice(markerAt + STORAGE_V1_MARKER.length) : first
+        const name = lastPathSegment(path)
+        if (name) return name
+      }
+    }
+  }
+  return fileNameFromUrl(fileUrl)
+}

@@ -16,7 +16,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -32,6 +32,7 @@ from nfm_db.schemas.potential import (
 )
 from nfm_db.services.potential_file_resolver import (
     canonical_file_url,
+    is_supabase_public_url,
     public_object_url,
     resolve_storage_ref,
     validate_persistable_file_url,
@@ -155,7 +156,10 @@ async def download_potential_file(
             detail=f"Potential file index {index} out of range ({len(objects)} file(s))",
         )
     filename = Path(objects[index].rstrip("/")).name or "potential_file"
-    stream = await RemoteFileStream.open(public_object_url(objects[index]))
+    url = public_object_url(objects[index])
+    if not is_supabase_public_url(url):
+        return RedirectResponse(url, status_code=307)
+    stream = await RemoteFileStream.open(url)
     if stream.status_code != 200:
         await stream.aclose()
         detail = "Potential file not found in object storage"

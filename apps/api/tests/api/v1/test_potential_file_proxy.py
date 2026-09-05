@@ -252,6 +252,33 @@ async def test_download_legacy_supabase_relative_row(async_client, db_session, m
     assert response.content == b"mtp bytes"
 
 
+@pytest.mark.asyncio
+async def test_download_foreign_origin_redirects_without_server_fetch(
+    async_client, db_session, monkeypatch
+) -> None:
+    """Foreign-origin object URLs are handed to the browser (SSRF guard).
+
+    Pre-change, absolute URLs were fetched by the browser; the proxy must
+    not turn them into unauthenticated server-side fetches of arbitrary
+    (possibly internal) addresses.
+    """
+    foreign = "https://example.com/some/pot.dat"
+    pot = await _seed(
+        db_session,
+        name="foreign-origin",
+        file_url=canonical_file_url("00000000-0000-0000-0000-000000000006"),
+        extra={"file_storage": {"kind": "supabase", "objects": [foreign]}},
+    )
+    _FakeClient.requested = []
+    monkeypatch.setattr("httpx.AsyncClient", _FakeClient)
+
+    response = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == foreign
+    assert _FakeClient.requested == []
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------

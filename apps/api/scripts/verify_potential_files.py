@@ -18,7 +18,12 @@ What it does
      (the shared ``prod-uploads`` volume) and is non-empty;
    * ``supabase`` — ``GET`` the public object URL and confirm
      HTTP 200 with at least one byte (streams and discards).
-4. Rows whose file cannot be recovered are **blanked** (``file_url=''``)
+     Only definitive upstream verdicts (400/403/404, empty 200 body)
+     count as missing; network errors and 429/5xx are *transient* and
+     never blank anything. Foreign-origin absolute URLs are not
+     server-fetched at all (SSRF guard) and are reported as
+     unverifiable.
+4. Rows whose file is definitively missing are **blanked** (``file_url=''``)
    with a ``extra.file_url_note`` recording why (spec: 置空并保留来源备注),
    preserving the object/file name for a future re-upload. Only ``--apply``
    writes; the default run is a read-only report.
@@ -27,7 +32,9 @@ Exit codes
 ----------
 
 0  all non-empty file_urls verified downloadable (after --apply, none missing)
-1  some rows still missing files (dry-run findings — run --apply or fix uploads)
+1  findings (dry-run), or rows that could not be verified due to transient
+   upstream errors / foreign origins — never cleared automatically, re-run
+   once the upstream is healthy
 2  configuration error (no NFM_DATABASE_URL, unreachable DB)
 """
 
@@ -53,6 +60,7 @@ import sqlalchemy as sa  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 
 from nfm_db.services.potential_file_resolver import (  # noqa: E402
+    is_supabase_public_url,
     public_object_url,
     resolve_storage_ref,
 )
@@ -75,29 +83,51 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-async def _verify_uploads(key: str) -> tuple[bool, str]:
+async def _verify_uploads(key: str) -> tuple[str, str]:
     upload_root = get_upload_dir().resolve()
     candidate = (upload_root / key).resolve()
     if not candidate.is_relative_to(upload_root):
-        return False, f"key escapes upload dir: {key!r}"
+        return "missing", f"key escapes upload dir: {key!r}"
     if not candidate.is_file():
-        return False, f"file not found in upload dir: {key!r}"
+        return "missing", f"file not found in upload dir: {key!r}"
     if candidate.stat().st_size <= 0:
-        return False, f"file is empty: {key!r}"
-    return True, ""
+        return "missing", f"file is empty: {key!r}"
+    return "ok", ""
 
 
-async def _verify_supabase(url: str) -> tuple[bool, str]:
+async def _verify_supabase(url: str) -> tuple[str, str]:
+    """Probe a Supabase public object URL.
+
+    Returns ``(state, error)`` where state is:
+
+    * ``"ok"`` — HTTP 200 with at least one byte;
+    * ``"missing"`` — definitive not-found verdict (400/403/404, or an
+      existing-but-empty object); safe to blank on ``--apply``;
+    * ``"unverifiable"`` — transient upstream condition (network error,
+      429, 5xx); must NOT be blanked, the operator re-runs later.
+    """
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
             response = await client.get(url)
-            if response.status_code != 200:
-                return False, f"HTTP {response.status_code} for {url}"
-            if len(response.content) == 0:
-                return False, f"empty body for {url}"
-            return True, ""
     except httpx.HTTPError as exc:
-        return False, f"fetch error for {url}: {exc}"
+        return "unverifiable", f"fetch error for {url}: {exc}"
+    if response.status_code in (400, 403, 404):
+        return "missing", f"HTTP {response.status_code} for {url}"
+    if response.status_code != 200:
+        return "unverifiable", f"HTTP {response.status_code} for {url}"
+    if len(response.content) == 0:
+        return "missing", f"empty body for {url}"
+    return "ok", ""
+
+
+def _object_fetch_url(obj: str) -> str | None:
+    """Server-side fetch URL for a supabase object, or ``None``.
+
+    Foreign-origin absolute URLs are never fetched by the container
+    (SSRF guard — same policy as the download proxy).
+    """
+    url = public_object_url(obj)
+    return url if is_supabase_public_url(url) else None
 
 
 async def sweep(apply: bool) -> int:
@@ -108,6 +138,7 @@ async def sweep(apply: bool) -> int:
     engine = create_async_engine(database_url)
 
     findings: list[dict] = []
+    unverifiable: list[dict] = []
     cleared = 0
     try:
         async with engine.connect() as conn:
@@ -136,7 +167,7 @@ async def sweep(apply: bool) -> int:
                     )
                     continue
                 if ref.get("kind") == "uploads":
-                    ok, error = await _verify_uploads(str(ref.get("key", "")))
+                    state, error = await _verify_uploads(str(ref.get("key", "")))
                 else:
                     objects = [str(o) for o in (ref.get("objects") or [])]
                     if not objects:
@@ -149,8 +180,27 @@ async def sweep(apply: bool) -> int:
                             }
                         )
                         continue
-                    ok, error = await _verify_supabase(public_object_url(objects[0]))
-                if ok:
+                    fetch_url = _object_fetch_url(objects[0])
+                    if fetch_url is None:
+                        unverifiable.append(
+                            {
+                                "id": pid,
+                                "name": row.name,
+                                "error": (
+                                    "foreign-origin object URL not fetched server-side "
+                                    f"(SSRF guard): {objects[0]}"
+                                ),
+                                "extra": extra,
+                            }
+                        )
+                        continue
+                    state, error = await _verify_supabase(fetch_url)
+                if state == "ok":
+                    continue
+                if state == "unverifiable":
+                    unverifiable.append(
+                        {"id": pid, "name": row.name, "error": error, "extra": extra}
+                    )
                     continue
                 findings.append({"id": pid, "name": row.name, "error": error, "extra": extra})
 
@@ -169,30 +219,53 @@ async def sweep(apply: bool) -> int:
                     }
                     await conn.execute(
                         sa.text(
-                            "UPDATE potentials SET file_url = '', extra = CAST(:extra AS json) "
-                            "WHERE id = CAST(:id AS uuid)"
+                            "UPDATE potentials SET file_url = '', extra = :extra "
+                            "WHERE id = :pid"
+                        ).bindparams(
+                            sa.bindparam("extra", type_=sa.JSON),
+                            sa.bindparam("pid", value=UUID(finding["id"])),
                         ),
-                        {
-                            "extra": json.dumps(merged_extra, ensure_ascii=False),
-                            "id": finding["id"],
-                        },
+                        {"extra": merged_extra},
                     )
                     cleared += 1
                 await conn.commit()
     finally:
         await engine.dispose()
 
-    logger.info("sweep complete: %d missing, %d cleared (apply=%s)", len(findings), cleared, apply)
-    if findings:
+    logger.info(
+        "sweep complete: %d missing, %d unverifiable, %d cleared (apply=%s)",
+        len(findings),
+        len(unverifiable),
+        cleared,
+        apply,
+    )
+    if unverifiable:
+        for row in unverifiable:
+            logger.error(
+                "UNVERIFIABLE %s (%s): %s — left untouched, re-run later",
+                row["name"],
+                row["id"],
+                row["error"],
+            )
+    if findings or unverifiable:
         for finding in findings:
             logger.warning("MISSING %s (%s): %s", finding["name"], finding["id"], finding["error"])
         report = Path("/var/log/nfmd/potential_file_verify_report.json")
         try:
             report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(json.dumps(findings, ensure_ascii=False, indent=2), encoding="utf-8")
+            report.write_text(
+                json.dumps(
+                    {"missing": findings, "unverifiable": unverifiable},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
             logger.info("report written to %s", report)
         except OSError:
             logger.info("report not writable; findings above are the record")
+        if unverifiable:
+            return 1
         return 1 if not apply else 0
     return 0
 

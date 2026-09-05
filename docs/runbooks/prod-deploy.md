@@ -737,6 +737,13 @@ docker exec nucpot-prod-api python scripts/verify_potential_files.py
 docker exec nucpot-prod-api python scripts/verify_potential_files.py --apply
 ```
 
+`--apply` only blanks rows whose file is **definitively** gone (missing from
+the uploads volume, or Supabase answers 400/403/404 / an empty object).
+Transient upstream failures (network errors, 429/5xx) and foreign-origin
+URLs (never fetched server-side — SSRF guard) are reported as
+`UNVERIFIABLE`, left untouched, and keep the exit code at 1: re-run the
+sweep once Supabase/egress is healthy instead of re-applying.
+
 Acceptance (BUG-37): every potential whose `file_url` is non-empty must
 anonymously `GET` its download URL with HTTP 200 and bytes > 0:
 

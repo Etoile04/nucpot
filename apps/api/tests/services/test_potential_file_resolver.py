@@ -16,9 +16,11 @@ from nfm_db.services.potential_file_resolver import (
     FileUrlForm,
     canonical_file_url,
     classify_file_url,
+    is_supabase_public_url,
     public_object_url,
     split_file_url_objects,
     storage_ref_from_file_url,
+    supabase_public_origin,
     validate_persistable_file_url,
 )
 from nfm_db.services.upload_service import PotentialUploadError
@@ -183,6 +185,30 @@ def test_public_object_url_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     assert (
         public_object_url("bucket/x.mtp")
         == "https://stub.supabase.co/storage/v1/object/public/bucket/x.mtp"
+    )
+
+
+# ---------------------------------------------------------------------------
+# is_supabase_public_url — server-side fetch origin guard (SSRF)
+# ---------------------------------------------------------------------------
+
+
+def test_is_supabase_public_url_accepts_configured_origin() -> None:
+    assert is_supabase_public_url(f"{supabase_public_origin()}/storage/v1/object/public/bucket/x.mtp")
+
+
+def test_is_supabase_public_url_rejects_foreign_origin() -> None:
+    assert not is_supabase_public_url("https://example.com/some/pot.dat")
+    assert not is_supabase_public_url("https://evil.supabase.co.attacker.io/storage/v1/object/public/x")
+    assert not is_supabase_public_url("http://169.254.169.254/latest/meta-data")
+
+
+def test_is_supabase_public_url_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NFM_SUPABASE_PUBLIC_ORIGIN", "https://stub.supabase.co/")
+    assert supabase_public_origin() == "https://stub.supabase.co"
+    assert is_supabase_public_url("https://stub.supabase.co/storage/v1/object/public/x")
+    assert not is_supabase_public_url(
+        "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/x"
     )
 
 

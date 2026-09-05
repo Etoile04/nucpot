@@ -4,7 +4,7 @@ import { Card, Button, Empty, Space, Typography } from "antd"
 import { DownloadOutlined, FileOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import type { PotentialDetail } from "@/lib/potentials-api"
-import { resolveFileUrl } from "@/lib/file-url"
+import { resolveFileName, resolveFileUrl } from "@/lib/file-url"
 
 const { Text } = Typography
 
@@ -16,12 +16,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
-
-function fileNameFromUrl(fileUrl: string): string {
-  const cleaned = fileUrl.split("?")[0]?.split("#")[0] ?? fileUrl
-  const segments = cleaned.split("/")
-  return segments[segments.length - 1] || fileUrl
 }
 
 export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
@@ -40,7 +34,7 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
   }
 
   const url = resolveFileUrl(file_url)
-  const fileName = fileNameFromUrl(file_url)
+  const fileName = resolveFileName(file_url, detail.extra)
 
   return (
     <Card title="文件下载">

@@ -156,13 +156,28 @@ def resolve_storage_ref(
     return storage_ref_from_file_url(file_url)
 
 
+def supabase_public_origin() -> str:
+    """Configured public Supabase project origin (no trailing slash)."""
+    return os.environ.get(
+        "NFM_SUPABASE_PUBLIC_ORIGIN", DEFAULT_SUPABASE_PUBLIC_ORIGIN
+    ).rstrip("/")
+
+
+def is_supabase_public_url(url: str) -> bool:
+    """True when ``url`` is an absolute URL on the configured origin.
+
+    Server-side fetches (download proxy, sweep) must only target the
+    configured Supabase origin; foreign absolute URLs are handed back to
+    the client instead of being fetched by the API container.
+    """
+    return url.startswith(f"{supabase_public_origin()}/")
+
+
 def public_object_url(obj: str, origin: str | None = None) -> str:
     """Return the fetchable public URL for a Supabase object path."""
     if obj.startswith("http://") or obj.startswith("https://"):
         return obj
-    base = origin or os.environ.get(
-        "NFM_SUPABASE_PUBLIC_ORIGIN", DEFAULT_SUPABASE_PUBLIC_ORIGIN
-    ).rstrip("/")
+    base = origin or supabase_public_origin()
     return f"{base}{_STORAGE_V1_MARKER}{obj}"
 
 
