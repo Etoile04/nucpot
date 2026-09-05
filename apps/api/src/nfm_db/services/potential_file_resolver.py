@@ -44,10 +44,11 @@ from __future__ import annotations
 import os
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text as sa_text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.services.upload_service import PotentialUploadError
@@ -290,4 +291,6 @@ async def record_potential_download(db: AsyncSession, potential_id: UUID | str) 
     pid = download_count_bind_value(dialect, potential_id)
     result = await db.execute(sa_text(sql), {"pid": pid})
     await db.commit()
-    return bool(result.rowcount)
+    # AsyncSession.execute() is typed as Result[Any]; a DML statement
+    # yields a CursorResult at runtime, which carries .rowcount.
+    return bool(cast("CursorResult[Any]", result).rowcount)

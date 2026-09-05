@@ -134,7 +134,7 @@ async def download_potential_file(
     potential_id: UUID,
     index: int = Query(0, ge=0, description="多文件条目的对象下标（默认 0）"),
     db: AsyncSession = Depends(get_db),
-) -> FileResponse | StreamingResponse:
+) -> FileResponse | RedirectResponse | StreamingResponse:
     """Canonical anonymous download proxy (BUG-37 spec §1)."""
     from sqlalchemy import select as sa_select
 
