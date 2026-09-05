@@ -32,6 +32,20 @@ MOCK_MARKDOWN_CONTENT = (
     "This paper investigates the behavior of UO2 fuel under high burnup conditions.\n"
 )
 
+# Markdown that embeds a parseable citation line (journal + year), used
+# to prove the fallback path when Crossref is unavailable (NFM-4313).
+MOCK_MARKDOWN_WITH_CITATION = (
+    "# Nuclear Fuel Performance Under Irradiation\n\n"
+    "Journal of Nuclear Materials 512 (2018) 33-41.\n\n"
+    "This paper investigates the behavior of UO2 fuel under high burnup conditions.\n"
+)
+
+MOCK_CROSSREF_METADATA = {
+    "title": "Nuclear Fuel Performance Under Irradiation",
+    "journal": "Journal of Nuclear Materials",
+    "year": 2020,
+}
+
 # ---------------------------------------------------------------------------
 # Shared mock context — patches Celery dispatcher and storage backend
 # ---------------------------------------------------------------------------
@@ -45,13 +59,28 @@ def mock_literature_env(tmp_path: Path):
     os.environ.pop("LITERATURE_STORAGE_ROOT", None)
 
 
-def _doi_happy_context():
-    """Patch fetcher + dispatcher for happy-path DOI tests."""
+def _doi_happy_context(
+    *,
+    markdown: str = MOCK_MARKDOWN_CONTENT,
+    crossref: dict | None = MOCK_CROSSREF_METADATA,
+):
+    """Patch fetcher + Crossref + dispatcher for happy-path DOI tests.
+
+    ``crossref`` defaults to a full metadata record so existing tests
+    exercise the NFM-4313 incremental path without network access;
+    pass ``crossref=None`` to simulate Crossref being unavailable.
+    """
     cm = ExitStack()
     cm.enter_context(
         patch(
             "nfm_db.services.doi_fetcher.fetch_paper_content",
-            return_value=MOCK_MARKDOWN_CONTENT,
+            return_value=markdown,
+        ),
+    )
+    cm.enter_context(
+        patch(
+            "nfm_db.services.crossref_metadata.fetch_crossref_metadata",
+            return_value=crossref,
         ),
     )
     cm.enter_context(
@@ -226,3 +255,87 @@ async def test_from_doi_idempotent_returns_original_id(
 
     # Same DOI → same literature_id (idempotent).
     assert first_id == second_id
+
+
+# ---------------------------------------------------------------------------
+# NFM-4313 — journal / year must actually persist on the incremental path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_from_doi_persists_crossref_journal_and_year(
+    async_client,
+    db_session: AsyncSession,
+    mock_literature_env,
+) -> None:
+    """BUG-17 regression: journal/year land on the DataSource row.
+
+    The #1141 fix only regex-parsed the fetched markdown; Semantic
+    Scholar abstract-only markdown has no citation line, so journal
+    stayed NULL.  NFM-4313 resolves via Crossref — those fields must
+    now persist.
+    """
+    with _doi_happy_context():
+        response = await async_client.post(
+            "/api/v1/literature/from-doi",
+            json={"doi": VALID_DOI},
+        )
+
+    assert response.status_code == 200
+    literature_id = uuid.UUID(response.json()["data"]["literature_id"])
+    source = await db_session.get(DataSource, literature_id)
+    assert source is not None
+    assert source.journal == "Journal of Nuclear Materials"
+    assert source.year == 2020
+    assert source.title == "Nuclear Fuel Performance Under Irradiation"
+
+
+@pytest.mark.asyncio
+async def test_from_doi_crossref_unavailable_falls_back_to_markdown(
+    async_client,
+    db_session: AsyncSession,
+    mock_literature_env,
+) -> None:
+    """When Crossref is down, a citation line in the markdown still wins."""
+    with _doi_happy_context(
+        markdown=MOCK_MARKDOWN_WITH_CITATION,
+        crossref=None,
+    ):
+        response = await async_client.post(
+            "/api/v1/literature/from-doi",
+            json={"doi": VALID_DOI_2},
+        )
+
+    assert response.status_code == 200
+    literature_id = uuid.UUID(response.json()["data"]["literature_id"])
+    source = await db_session.get(DataSource, literature_id)
+    assert source is not None
+    assert source.journal == "Journal of Nuclear Materials"
+    assert source.year == 2018
+
+
+@pytest.mark.asyncio
+async def test_from_doi_stub_title_when_no_metadata_anywhere(
+    async_client,
+    db_session: AsyncSession,
+    mock_literature_env,
+) -> None:
+    """No Crossref record + markdown without a parseable title → DOI stub.
+
+    Preserves the pre-existing stub-title behaviour; metadata absence
+    must never fail the ingestion.
+    """
+    abstract_only = "Abstract text with no heading and no citation line.\n"
+    with _doi_happy_context(markdown=abstract_only, crossref=None):
+        response = await async_client.post(
+            "/api/v1/literature/from-doi",
+            json={"doi": VALID_DOI_2},
+        )
+
+    assert response.status_code == 200
+    literature_id = uuid.UUID(response.json()["data"]["literature_id"])
+    source = await db_session.get(DataSource, literature_id)
+    assert source is not None
+    assert source.title == f"DOI: {VALID_DOI_2}"
+    assert source.journal is None
+    assert source.year is None

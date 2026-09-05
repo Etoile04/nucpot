@@ -21,6 +21,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -459,20 +460,26 @@ async def from_doi_literature(
     # --- Create DataSource row (AC #6: status='parsed') -----------------
     file_hash = hashlib.sha256(md_bytes).hexdigest()
 
-    # BUG-17 (NFM-4082): previously year/journal were left NULL because
-    # the Semantic Scholar payload only carried a title. Parse the fetched
-    # markdown for bibliographic metadata and prefer explicit fields,
-    # falling back to the DOI-stub title.
+    # BUG-17 (NFM-4082) / NFM-4313: previously year/journal were left
+    # NULL because the Semantic Scholar payload only carried a title.
+    # #1141 added a markdown regex parse, but abstract-only markdown has
+    # no citation line, so journal still never resolved — the production
+    # literature list kept showing "—".  NFM-4313 resolves via Crossref
+    # first (journal-of-record container-title + issued year) with the
+    # markdown parse as fallback; metadata is best-effort and never
+    # gates the fetch.
     biblio: dict[str, Any] = {}
     try:
-        from nfm_db.services.bibliographic_metadata import (
-            extract_bibliographic_metadata,
+        from nfm_db.services.crossref_metadata import (
+            resolve_doi_bibliography,
         )
 
-        biblio = extract_bibliographic_metadata(md_content)
+        biblio = await asyncio.to_thread(
+            resolve_doi_bibliography, doi, md_content
+        )
     except Exception:  # metadata is best-effort, never gates the fetch
         logger.warning(
-            "from_doi: bibliographic metadata extraction failed for doi=%s",
+            "from_doi: bibliographic metadata resolution failed for doi=%s",
             doi,
             exc_info=True,
         )
