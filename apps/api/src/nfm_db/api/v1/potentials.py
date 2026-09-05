@@ -34,6 +34,7 @@ from nfm_db.services.potential_file_resolver import (
     canonical_file_url,
     is_supabase_public_url,
     public_object_url,
+    record_potential_download,
     resolve_storage_ref,
     validate_persistable_file_url,
 )
@@ -74,19 +75,27 @@ class RemoteFileStream:
     unwound manually via ``aclose``).
     """
 
-    def __init__(self, client: Any, response: Any) -> None:
+    def __init__(self, client: Any, response: Any, stream_cm: Any = None) -> None:
         self._client = client
         self.response = response
+        # Keep the async context manager returned by ``client.stream()``
+        # referenced for the lifetime of the stream.  Dropping the only
+        # reference lets CPython finalize its async generator, whose
+        # ``finally`` closes the response — after any intervening await the
+        # body iteration then fails with ``httpx.StreamClosed`` and the
+        # client receives a truncated (empty) 200 body.
+        self._stream_cm = stream_cm if stream_cm is not None else response
 
     @classmethod
     async def open(cls, url: str) -> RemoteFileStream:
         client = httpx.AsyncClient(follow_redirects=True, timeout=_REMOTE_FETCH_TIMEOUT)
+        stream_cm = client.stream("GET", url)
         try:
-            response = await client.stream("GET", url).__aenter__()
+            response = await stream_cm.__aenter__()
         except Exception:
             await _aclose(client)
             raise
-        return cls(client, response)
+        return cls(client, response, stream_cm)
 
     @property
     def status_code(self) -> int:
@@ -102,7 +111,11 @@ class RemoteFileStream:
             yield chunk
 
     async def aclose(self) -> None:
-        await _aclose(self.response)
+        aexit = getattr(self._stream_cm, "__aexit__", None)
+        if aexit is not None:
+            await aexit(None, None, None)
+        else:
+            await _aclose(self.response)
         await _aclose(self._client)
 
 
@@ -142,6 +155,7 @@ async def download_potential_file(
         candidate = (upload_root / key).resolve()
         if not candidate.is_relative_to(upload_root) or not candidate.is_file():
             raise HTTPException(status_code=404, detail="Potential file not found")
+        await _record_download(db, potential_id)
         media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         return FileResponse(
             candidate,
@@ -167,12 +181,24 @@ async def download_potential_file(
         if code == 502:
             detail = f"Object storage returned {stream.status_code}"
         raise HTTPException(status_code=code, detail=detail)
+    await _record_download(db, potential_id)
     return StreamingResponse(
         stream.aiter_bytes(),
         media_type=stream.content_type or "application/octet-stream",
         headers={"content-disposition": f'attachment; filename="{filename}"'},
         background=BackgroundTask(stream.aclose),
     )
+
+
+async def _record_download(db: AsyncSession, potential_id: UUID) -> None:
+    """Count a served download; statistics must never fail the download."""
+    try:
+        await record_potential_download(db, potential_id)
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "download_count update failed for potential %s", potential_id, exc_info=True
+        )
 
 
 @router.get(

@@ -12,6 +12,11 @@ for every potential that has a file (BUG-37):
 
 from __future__ import annotations
 
+import asyncio
+import gc
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -347,3 +352,164 @@ async def test_upload_persists_canonical_url_and_storage_ref(
     download = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
     assert download.status_code == 200
     assert download.content == b"fake eam body"
+
+
+# ---------------------------------------------------------------------------
+# Real-HTTP regression: streamed bodies must survive awaits (gate round 2)
+# ---------------------------------------------------------------------------
+
+_OBJECT_SERVER_PAYLOAD = b"# regression payload - remote file stream body\n" * 8
+
+
+class _ObjectServerHandler(BaseHTTPRequestHandler):
+    """Serves a fixed payload for every GET (stand-in public object store)."""
+
+    def do_GET(self) -> None:  # noqa: N802 — http.server API
+        body = _OBJECT_SERVER_PAYLOAD
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:  # silence test output
+        return
+
+
+@pytest.fixture
+def object_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Real localhost HTTP server bound to the Supabase public origin env."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ObjectServerHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setenv("NFM_SUPABASE_PUBLIC_ORIGIN", origin)
+    yield origin
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.asyncio
+async def test_remote_file_stream_keeps_upstream_body_alive(object_server: str) -> None:
+    """Regression (NFM-4309 gate test round): ``RemoteFileStream`` must retain
+    the httpx stream context manager for the stream's lifetime.
+
+    Dropping the only reference lets CPython finalize the ``client.stream``
+    async generator, whose unwind closes the upstream response — after any
+    intervening await, body iteration then fails with ``httpx.StreamClosed``
+    and the proxy returns a truncated (empty) 200 body.  The fake-client
+    unit tests cannot catch this because they substitute a plain object for
+    the real context manager.
+    """
+    from nfm_db.api.v1.potentials import RemoteFileStream
+
+    url = f"{object_server}/storage/v1/object/public/potentials/regression.mtp"
+    stream = await RemoteFileStream.open(url)
+    try:
+        await asyncio.sleep(0.02)  # intervening await → finalization window
+        gc.collect()  # force async-generator finalization deterministically
+        chunks = [chunk async for chunk in stream.aiter_bytes()]
+    finally:
+        await stream.aclose()
+
+    assert b"".join(chunks) == _OBJECT_SERVER_PAYLOAD
+
+
+@pytest.mark.asyncio
+async def test_download_supabase_object_body_over_real_http(
+    async_client, db_session, object_server
+) -> None:
+    """The endpoint streams the full upstream body over real httpx.
+
+    Unit tests fake ``httpx.AsyncClient`` entirely; this exercises the real
+    client against a real (localhost) object server so an empty-body 200 —
+    the exact production symptom of BUG-37's proxy — fails loudly.
+    """
+    pot = await _seed(
+        db_session,
+        name="supabase-real-http",
+        file_url=canonical_file_url("00000000-0000-0000-0000-0000000000a1"),
+        extra={
+            "file_storage": {"kind": "supabase", "objects": ["potentials/regression.mtp"]}
+        },
+    )
+
+    response = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
+
+    assert response.status_code == 200
+    assert response.content == _OBJECT_SERVER_PAYLOAD
+
+
+# ---------------------------------------------------------------------------
+# download_count (grilling decision #1154 item 3 — proxy hit statistics)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_download_increments_download_count(async_client, db_session, upload_dir) -> None:
+    """Every successful proxy hit atomically bumps extra.download_count."""
+    (upload_dir / "counted.eam").write_bytes(b"counted body")
+    pot = await _seed(
+        db_session,
+        name="dl-count",
+        file_url=canonical_file_url("00000000-0000-0000-0000-0000000000b1"),
+        extra={"file_storage": {"kind": "uploads", "key": "counted.eam"}},
+    )
+
+    first = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
+    second = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    row = (await db_session.execute(select(Potential).where(Potential.id == pot.id))).scalar_one()
+    # Async refresh — identity-map attribute access on an expired row would
+    # be sync IO (MissingGreenlet), and without expiry the cached ``extra``
+    # from seeding hides the endpoint's committed UPDATE.
+    await db_session.refresh(row)
+    assert row.extra["download_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_download_404_does_not_increment_download_count(
+    async_client, db_session, upload_dir
+) -> None:
+    """Failed resolutions are not downloads — the counter must stay absent."""
+    pot = await _seed(
+        db_session,
+        name="dl-count-miss",
+        file_url=canonical_file_url("00000000-0000-0000-0000-0000000000b2"),
+        extra={"file_storage": {"kind": "uploads", "key": "vanished.eam"}},
+    )
+
+    response = await async_client.get(f"/api/v1/potentials/{pot.id}/file")
+
+    assert response.status_code == 404
+    row = (await db_session.execute(select(Potential).where(Potential.id == pot.id))).scalar_one()
+    await db_session.refresh(row)
+    assert "download_count" not in row.extra
+
+
+@pytest.mark.asyncio
+async def test_download_count_exposed_on_detail(async_client, db_session, upload_dir) -> None:
+    """PotentialDetail surfaces extra.download_count as a top-level field."""
+    (upload_dir / "exposed.eam").write_bytes(b"exposed body")
+    pot = await _seed(
+        db_session,
+        name="dl-expose",
+        file_url=canonical_file_url("00000000-0000-0000-0000-0000000000b3"),
+        extra={"file_storage": {"kind": "uploads", "key": "exposed.eam"}},
+    )
+
+    before = await async_client.get(f"/api/v1/potentials/{pot.id}")
+    assert before.json()["data"]["download_count"] == 0
+
+    assert (await async_client.get(f"/api/v1/potentials/{pot.id}/file")).status_code == 200
+
+    # The app shares this session; expire so the detail SELECT reloads
+    # ``extra`` instead of trusting the identity map's pre-download copy.
+    # (Read pot.id first — attribute access on an expired row is sync IO.)
+    pid = pot.id
+    db_session.expire_all()
+    after = await async_client.get(f"/api/v1/potentials/{pid}")
+    assert after.json()["data"]["download_count"] == 1

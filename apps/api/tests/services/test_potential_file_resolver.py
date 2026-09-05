@@ -16,6 +16,8 @@ from nfm_db.services.potential_file_resolver import (
     FileUrlForm,
     canonical_file_url,
     classify_file_url,
+    download_count_bind_value,
+    download_count_update_sql,
     is_supabase_public_url,
     public_object_url,
     split_file_url_objects,
@@ -260,3 +262,42 @@ def test_validate_accepts_none_and_empty() -> None:
     """Blank file_url is legal (rows without files)."""
     assert validate_persistable_file_url(None) is None
     assert validate_persistable_file_url("") is None
+
+
+# ---------------------------------------------------------------------------
+# download_count helpers (#1154 item 3 — atomic single-statement bump)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("dialect", "expected_fragments"),
+    [
+        ("postgresql", ["jsonb_set", "CAST(:pid AS uuid)", "::json"]),
+        ("sqlite", ["json_set", "$.download_count", "json_extract"]),
+    ],
+)
+def test_download_count_update_sql_per_dialect(dialect: str, expected_fragments) -> None:
+    sql = download_count_update_sql(dialect)
+    for fragment in expected_fragments:
+        assert fragment in sql
+    # Both branches bump inside a single UPDATE — no read-modify-write race.
+    assert sql.strip().upper().startswith("UPDATE POTENTIALS")
+    assert "SELECT" not in sql.upper()
+
+
+def test_download_count_update_sql_compiles_on_both_dialects() -> None:
+    from sqlalchemy.dialects import postgresql, sqlite
+    from sqlalchemy import text
+
+    for dialect in (postgresql.dialect(), sqlite.dialect()):
+        compiled = text(download_count_update_sql(dialect.name)).compile(dialect=dialect)
+        assert ":pid" in str(compiled) or "%(pid)s" in str(compiled) or "?" in str(compiled)
+
+
+def test_download_count_bind_value_matches_dialect_storage() -> None:
+    """PG compares hyphenated text via CAST; SQLite stores Uuid as 32-hex."""
+    pid = uuid.UUID("00000000-0000-0000-0000-0000000000b1")
+    assert download_count_bind_value("postgresql", pid) == str(pid)
+    assert download_count_bind_value("sqlite", pid) == pid.hex
+    # String ids normalize too (endpoint receives UUID, be lenient anyway).
+    assert download_count_bind_value("sqlite", str(pid)) == pid.hex

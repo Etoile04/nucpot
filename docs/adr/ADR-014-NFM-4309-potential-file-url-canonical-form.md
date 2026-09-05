@@ -64,6 +64,17 @@ previous cohort of rows.
    is healthy. File existence is deliberately **not** probed by the migration
    itself — the volume is only visible where prod runs, and migration results
    must not depend on the deploy host.
+7. **download_count** (grilling decision [#1154](https://github.com/Etoile04/nucpot/issues/1154) item 3):
+   every successful proxy hit (both the `FileResponse` and the streamed
+   Supabase paths; not 404s and not `307` foreign redirects) atomically
+   increments `extra.download_count` via a single dialect-specific UPDATE
+   (`jsonb_set` on PostgreSQL, `json_set` on SQLite) — no migration (the key
+   is added lazily, keeping the 084 migration number free), no
+   read-modify-write race, and `updated_at` deliberately untouched so
+   downloads never churn the list's default "recently updated" ordering.
+   `PotentialDetail` exposes the value as a top-level `download_count` field
+   derived from `extra`. A counting failure must never fail the download
+   (logged, rolled back).
 
 ## 3. Consequences
 
@@ -76,13 +87,22 @@ previous cohort of rows.
   (verified working 2026-09-05).
 - Frontend `resolveFileUrl` keeps legacy branches for cached/un-migrated data
   but now passes absolute URLs and the canonical proxy path through unchanged.
+- **Stream-lifetime contract** (found by gate test round 2, fixed with it):
+  `RemoteFileStream` must retain the httpx stream context manager for the
+  stream's lifetime. Dropping the only reference lets CPython finalize the
+  `client.stream` async generator mid-flight, closing the upstream response —
+  every Supabase-backed proxy download then returned a truncated (empty) 200
+  body. Fake-client unit tests cannot catch this (they substitute a plain
+  object for the real async-generator CM); regression tests run real httpx
+  against a localhost object server.
 
 ## 4. Verification evidence
 
 - Prod inventory + live probes: `/uploads/…` → 404 on the site domain;
   both tersoff files present in the volume; Supabase object fetch from the API
   container → 200/25,348 B.
-- Tests: `tests/services/test_potential_file_resolver.py` (46 unit),
-  `tests/api/v1/test_potential_file_proxy.py` (12 integration),
+- Tests: `tests/services/test_potential_file_resolver.py` (unit incl. dialect
+  SQL helpers), `tests/api/v1/test_potential_file_proxy.py` (integration incl.
+  real-http body-lifetime regressions + download_count),
   `tests/test_migration_083_normalize_potential_file_urls.py` (3 runtime),
   `apps/web/src/lib/file-url.test.ts` (frontend forms).

@@ -47,6 +47,9 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import text as sa_text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from nfm_db.services.upload_service import PotentialUploadError
 
 #: Canonical proxy path template (the single storage spec, BUG-37 §1).
@@ -227,3 +230,64 @@ def validate_persistable_file_url(url: str | None) -> str | None:
         f"'/storage/v1/object/public/<bucket>/…' or an absolute http(s) URL — "
         f"got {value!r}",
     )
+
+
+# ---------------------------------------------------------------------------
+# download_count (grilling decision #1154 item 3 — proxy hit statistics)
+# ---------------------------------------------------------------------------
+# Single-statement atomic bump; no migration (the key is added lazily, so the
+# 084 migration number stays free for NFM-4311).  ``updated_at`` is
+# deliberately untouched — downloads must not churn the list's default
+# "recently updated" ordering.
+
+_DOWNLOAD_COUNT_UPDATE_POSTGRES = """
+UPDATE potentials
+SET extra = jsonb_set(
+        COALESCE(extra::jsonb, '{}'::jsonb),
+        '{download_count}',
+        to_jsonb(COALESCE(NULLIF(extra::jsonb ->> 'download_count', ''), '0')::int + 1)
+    )::json
+WHERE id = CAST(:pid AS uuid)
+"""
+
+_DOWNLOAD_COUNT_UPDATE_SQLITE = """
+UPDATE potentials
+SET extra = json_set(
+        COALESCE(extra, '{}'),
+        '$.download_count',
+        COALESCE(CAST(json_extract(extra, '$.download_count') AS INTEGER), 0) + 1
+    )
+WHERE id = :pid
+"""
+
+
+def download_count_update_sql(dialect: str) -> str:
+    """Dialect-specific atomic ``extra.download_count`` UPDATE statement.
+
+    The bind parameter differs per dialect: PostgreSQL casts the hyphenated
+    UUID text, while SQLite stores ``Uuid`` values as 32-char hex (see
+    ``record_potential_download``).
+    """
+    if dialect == "postgresql":
+        return _DOWNLOAD_COUNT_UPDATE_POSTGRES
+    return _DOWNLOAD_COUNT_UPDATE_SQLITE
+
+
+def download_count_bind_value(dialect: str, potential_id: UUID | str) -> str:
+    """Bind value for ``:pid`` under the given dialect."""
+    pid = potential_id if isinstance(potential_id, UUID) else UUID(str(potential_id))
+    return str(pid) if dialect == "postgresql" else pid.hex
+
+
+async def record_potential_download(db: AsyncSession, potential_id: UUID | str) -> bool:
+    """Atomically increment ``extra.download_count`` for a served download.
+
+    Returns True when the row was updated. Callers treat a False/raise as
+    non-fatal — a statistics miss must never fail the download itself.
+    """
+    dialect = db.get_bind().dialect.name
+    sql = download_count_update_sql(dialect)
+    pid = download_count_bind_value(dialect, potential_id)
+    result = await db.execute(sa_text(sql), {"pid": pid})
+    await db.commit()
+    return bool(result.rowcount)
