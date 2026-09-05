@@ -14,6 +14,11 @@ import os
 import threading
 from typing import Any
 
+try:  # py3.11+; fallback for the py3.9 CommandLineTools interpreter on the G2 host
+    UTC = datetime.UTC
+except AttributeError:  # pragma: no cover — py<3.11
+    UTC = datetime.timezone.utc
+
 
 class AuditLog:
     def __init__(self, path: str, mode: str) -> None:
@@ -28,7 +33,7 @@ class AuditLog:
 
     def write(self, event: str, identity: dict[str, Any] | None, **fields: Any) -> None:
         record = {
-            "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds"),
+            "ts": datetime.datetime.now(UTC).isoformat(timespec="milliseconds"),
             "event": event,  # "allow" | "deny" | "startup" | "drift"
             "mode": self._mode,
             "identity": identity or {"known": False},
