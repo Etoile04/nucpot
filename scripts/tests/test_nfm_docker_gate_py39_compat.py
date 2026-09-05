@@ -231,7 +231,8 @@ def daemon():
     except OSError:
         pass
 
-threading.Thread(target=daemon, daemon=True).start()
+upstream_thread = threading.Thread(target=daemon, daemon=True)
+upstream_thread.start()
 gate = proxy.DockerGateProxy(
     listen_path=listen_path,
     upstream_path=upstream_path,
@@ -264,6 +265,17 @@ while b"\r\n\r\n" not in buf:
 status = buf.split(b"\r\n", 1)[0]
 assert b" 200 " in status, status
 gate.shutdown()
+# Clean teardown before interpreter exit (NFM-4320 round-1 review finding):
+# exiting with threads still blocked in accept() on open Unix sockets
+# segfaults py3.9 at Py_Finalize intermittently — a false red that fired
+# exclusively on-host, in the verification path RE/SRE rely on.
+worker.join(2.0)  # serve_forever exits at its next <=1.0s accept-timeout
+                  # tick and closes its listening socket
+assert not worker.is_alive(), "serve_forever ignored shutdown() for 2s"
+server.close()  # the mock daemon's accept() now raises OSError and its
+                # existing handler exits the loop
+upstream_thread.join(2.0)
+assert not upstream_thread.is_alive(), "mock upstream daemon did not exit"
 print("PY39-SMOKE-OK")
 """
 
