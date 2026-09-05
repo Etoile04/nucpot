@@ -67,7 +67,9 @@ export async function listPotentials(params: ListParams = {}): Promise<Potential
   if (params.elements?.length) sp.set("elements", params.elements.join(","))
   if (params.q) sp.set("q", params.q)
   sp.set("page", String(params.page ?? 1))
-  sp.set("limit", String(params.limit ?? 20))
+  // NFM-4308 ③ — the API's canonical page-size param is per_page; the old
+  // `limit` key was silently ignored, desyncing client/server pagination.
+  sp.set("per_page", String(params.limit ?? 20))
   sp.set("sort", params.sort ?? "updated")
   const response = await fetch(`/api/potentials?${sp.toString()}`, {
     headers: { "Content-Type": "application/json" },

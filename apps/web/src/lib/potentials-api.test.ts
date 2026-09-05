@@ -18,8 +18,10 @@ describe("potentials-api", () => {
     })
     const { listPotentials } = await import("./potentials-api")
     await listPotentials({ type: "EAM", page: 1 })
+    // NFM-4308 ③ — per_page is the canonical page-size param (limit was
+    // silently ignored by the FastAPI surface).
     expect(global.fetch).toHaveBeenCalledWith(
-      "/api/potentials?type=EAM&page=1&limit=20&sort=updated",
+      "/api/potentials?type=EAM&page=1&per_page=20&sort=updated",
       expect.objectContaining({ headers: { "Content-Type": "application/json" } }),
     )
   })

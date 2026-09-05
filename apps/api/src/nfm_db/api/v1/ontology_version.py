@@ -168,6 +168,7 @@ async def list_versions(
         page=pagination.page,
         limit=pagination.per_page,
         pages=pagination.pages(total),
+        truncated=pagination.truncated,
     )
 
 

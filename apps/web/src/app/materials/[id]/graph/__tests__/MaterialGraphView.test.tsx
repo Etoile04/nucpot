@@ -213,6 +213,19 @@ describe("MaterialGraphView", () => {
     })
   })
 
+  it("has no <button> nested inside an <a> in the not-found state (NFM-4308 ④)", async () => {
+    mockGetKGGraph.mockRejectedValue(new Error("not found"))
+
+    const { container } = renderView("test-material")
+
+    await waitFor(() => {
+      expect(screen.getByText("节点未找到")).toBeInTheDocument()
+    })
+
+    expect(container.querySelectorAll("a button")).toHaveLength(0)
+    expect(container.querySelectorAll("button").length).toBeGreaterThanOrEqual(2)
+  })
+
   it("shows error state with retry button on generic failure", async () => {
     mockGetKGGraph.mockRejectedValue(new Error("Network error"))
 

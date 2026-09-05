@@ -51,6 +51,7 @@ const INITIAL_STATE: BrowseState = {
 export function BrowseView() {
   const [allElements, setAllElements] = useState<string[]>([])
   const [selectedElements, setSelectedElements] = useState<string[]>([])
+  const [elementSearch, setElementSearch] = useState<string>("")
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<SortField>("updated")
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
@@ -121,9 +122,15 @@ export function BrowseView() {
     })
   }, [])
 
+  // NFM-4308 ① — reset must restore EVERY filter control (element search
+  // input, selected elements, function-form checkboxes, sort) to its
+  // default; the elements/types/sort state changes re-trigger the load
+  // effect, refreshing the list back to the unfiltered first page.
   const resetFilters = useCallback(() => {
+    setElementSearch("")
     setSelectedElements([])
     setSelectedTypes(new Set())
+    setSort("updated")
   }, [])
 
   const toggleCompare = useCallback((id: string) => {
@@ -158,6 +165,8 @@ export function BrowseView() {
             allElements={allElements}
             selected={selectedElements}
             onToggle={toggleElement}
+            search={elementSearch}
+            onSearchChange={setElementSearch}
           />
         </div>
       </div>

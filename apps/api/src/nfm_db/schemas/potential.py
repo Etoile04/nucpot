@@ -58,13 +58,18 @@ class PotentialDetail(PotentialSummary):
 
 
 class PotentialListResponse(BaseModel):
-    """Paginated list of potentials."""
+    """Paginated list of potentials.
+
+    ``limit`` echoes the effective page size; ``truncated`` is true when
+    the request exceeded the server cap and was clamped (NFM-4308 ③).
+    """
 
     potentials: list[PotentialSummary]
     total: int
     page: int
     limit: int
     total_pages: int
+    truncated: bool = False
 
 
 class PotentialCreateRequest(BaseModel):

@@ -195,8 +195,9 @@ async def register_node(
     summary="列出资源节点",
     description=(
         "Return all registered resource nodes, paginated.  Default "
-        "page size is 20; the maximum is 100 (request rejected with "
-        "422 above that).  Optionally filter by ``hub_node_id``."
+        "page size is 20; the maximum is 100.  Over-cap requests are "
+        "clamped to 100 and flagged via ``data.truncated`` (NFM-4308 ③).  "
+        "Optionally filter by ``hub_node_id``."
     ),
 )
 async def list_nodes(
@@ -231,6 +232,7 @@ async def list_nodes(
             page=params.page,
             limit=params.per_page,
             pages=pages,
+            truncated=params.truncated,
         ),
     )
 
