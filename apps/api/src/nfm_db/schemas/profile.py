@@ -64,11 +64,19 @@ class RecentPotentialItem(BaseModel):
 
 
 class StatsResponse(BaseModel):
-    """Aggregate database statistics."""
+    """Aggregate database statistics.
+
+    ``elements`` is the sorted, deduplicated union of element symbols across
+    all potentials. Served inside the standard ``ApiResponse`` envelope by
+    ``GET /api/v1/stats``; the Next BFF and downstream consumers are
+    responsible for unwrapping the envelope. Adding the field closes
+    NFM-4341 on the FastAPI side.
+    """
 
     total_potentials: int
     total_types: int
     total_elements: int
+    elements: list[str] = Field(default_factory=list)
     recent_potentials: list[RecentPotentialItem] = Field(default_factory=list)
 
 
