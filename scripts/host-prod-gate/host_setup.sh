@@ -164,12 +164,19 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
 fi
 
 # git refuses repos owned by another user (dubious-ownership) — allow both
-# the symlinked and real paths.
+# the symlinked and real paths. Write nfmdeploy's .gitconfig DIRECTLY as
+# root: the user's git is a Homebrew binary under /opt/homebrew, whose
+# Cellar dirs are 0700 lwj04-owned on this host, so `sudo -u nfmdeploy git`
+# dyld-fails (errno=13 loading libintl) before git even starts.
+GITCONFIG="${DEPLOY_HOME}/.gitconfig"
+touch "${GITCONFIG}"
 for P in "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"; do
-  if ! sudo -u "${DEPLOY_USER}" -H git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
-    sudo -u "${DEPLOY_USER}" -H git config --global --add safe.directory "${P}"
+  if ! git config --file "${GITCONFIG}" --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
+    git config --file "${GITCONFIG}" --add safe.directory "${P}"
   fi
 done
+chown "${DEPLOY_USER}:staff" "${GITCONFIG}"
+chmod 0644 "${GITCONFIG}"
 
 # =============================================================================
 # 4. install gate code + entries (root-owned — the wall depends on this)
