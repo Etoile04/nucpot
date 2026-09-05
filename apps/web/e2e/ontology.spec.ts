@@ -67,8 +67,9 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("/ontology-viewer/index.html")
     expect(src).toContain("embed=false")
-    // Browser URL-encodes the data param value (%2F = "/")
-    expect(src).toContain("data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json")
+    // NFM-3325: ?data= is no longer pinned — the viewer must fetch
+    // corpus/index.json itself so the dynamic corpora dropdown works.
+    expect(src).not.toContain("data=")
 
     // AC#1/#3: the corpus must actually load successfully (same-origin → no
     // CORS). Wait positively for its response status, not merely the absence
@@ -109,10 +110,10 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
     await expect(frame).toBeVisible()
     const src = (await frame.getAttribute("src")) ?? ""
     expect(src).toContain("node=Material")
-    // passthrough must preserve embed + data contract too
+    // passthrough must preserve the embed contract too
     expect(src).toContain("embed=false")
-    // Browser URL-encodes the data param value (%2F = "/")
-    expect(src).toContain("data=%2Fontology-viewer%2Fdata%2Fnvl_ontology_data.json")
+    // NFM-3325: no pinned ?data= (viewer resolves corpora itself)
+    expect(src).not.toContain("data=")
   })
 
   test("AC#4: captures the desktop visual-regression screenshot (1440px)", async ({
@@ -130,6 +131,110 @@ test.describe("Ontology page — Phase 0 static embed", { tag: "@unit" }, () => 
       animations: "disabled",
       timeout: 30_000,
     })
+  })
+})
+
+// NFM-4306 (BUG-28, GitHub #1147 regression): the NFM-3478 debug panel must
+// not exist in the production /ontology DOM, the graph must mount and stay
+// interactive (zoom/search/layout switch), and the console must show no
+// cytoscape/viewer initialization errors.
+//
+// NOTE (NFM-4306 finding): the vendored bundle renders with NVL (WebGL) —
+// window.__Nvl_* globals, no DOM _cyreg — so the previous cytoscape capture
+// could never succeed and its debug panel reported "cy: NOT FOUND" forever.
+// Interactivity is therefore asserted through the real NVL surface.
+test.describe("BUG-28 (NFM-4306): debug panel removed + graph mounts and stays interactive", { tag: "@unit" }, () => {
+  test.setTimeout(90_000)
+
+  test("AC#1/#2/#3: viewer DOM has no NFM-3478, graph is zoomable/searchable/layout-switchable", async ({
+    page,
+  }) => {
+    const pageErrors: string[] = []
+    const consoleErrors: string[] = []
+    page.on("pageerror", (e) => pageErrors.push(e.message))
+    page.on("console", (m) => {
+      if (m.type() === "error") consoleErrors.push(m.text())
+    })
+
+    await page.goto("/ontology", { waitUntil: "domcontentloaded", timeout: 60_000 })
+    const frame = page.locator(IFRAME)
+    await expect(frame).toBeVisible()
+    // FrameLocator lacks evaluate(); resolve the real Frame by URL instead.
+    // The iframe is loading="lazy" — poll until it is attached and navigated.
+    await expect
+      .poll(
+        () => page.frame({ url: /ontology-viewer\/index\.html/ }) !== null,
+        { timeout: 15_000 },
+      )
+      .toBeTruthy()
+    const viewer = page.frame({ url: /ontology-viewer\/index\.html/ })
+    expect(viewer).not.toBeNull()
+
+    // AC#1: no NFM-3478 artifacts anywhere in the production viewer DOM.
+    await expect(viewer!.locator("#nfm3478-debug-panel")).toHaveCount(0)
+    expect(await viewer!.evaluate(() => (window as any).__NFM3478_DEBUG)).toBeUndefined()
+
+    // AC#2: the graph mounts — canvas inside the viewer root, with nodes
+    // actually loaded into the renderer (NVL keeps live counters on window).
+    const canvas = viewer!.locator("#root canvas").first()
+    await expect(canvas).toBeVisible({ timeout: 45_000 })
+    await expect
+      .poll(
+        () =>
+          viewer!.evaluate(
+            () =>
+              ((window as any).__Nvl_getNodesOnScreen?.()?.nodes ?? [])
+                .length as number,
+          ),
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0)
+
+    // AC#2: zoom interactivity — wheel over the canvas changes the NVL zoom.
+    const zoomBefore = await viewer!.evaluate(() =>
+      (window as any).__Nvl_getZoomLevel?.(),
+    )
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+    await page.mouse.wheel(0, -240)
+    await page.waitForTimeout(800)
+    const zoomAfter = await viewer!.evaluate(() =>
+      (window as any).__Nvl_getZoomLevel?.(),
+    )
+    expect(zoomAfter).not.toBe(zoomBefore)
+
+    // AC#2: search interactivity — filtering by a known class node drops the
+    // on-screen node count from hundreds to a focused handful.
+    const nodesBeforeSearch = await viewer!.evaluate(
+      () => ((window as any).__Nvl_getNodesOnScreen?.()?.nodes ?? []).length,
+    )
+    await viewer!.locator("input.search-input").fill("Material")
+    await page.waitForTimeout(1200)
+    const nodesAfterSearch = await viewer!.evaluate(
+      () => ((window as any).__Nvl_getNodesOnScreen?.()?.nodes ?? []).length,
+    )
+    expect(nodesAfterSearch).toBeGreaterThan(0)
+    expect(nodesAfterSearch).toBeLessThan(nodesBeforeSearch)
+
+    // AC#2: layout switch — selecting a different layout re-runs without
+    // errors and the graph keeps rendering nodes.
+    await viewer!.locator("select.layout-select").selectOption("hierarchical")
+    await page.waitForTimeout(1500)
+    const nodesAfterLayout = await viewer!.evaluate(
+      () => ((window as any).__Nvl_getNodesOnScreen?.()?.nodes ?? []).length,
+    )
+    expect(nodesAfterLayout).toBeGreaterThan(0)
+
+    // AC#3: no viewer/cytoscape initialization errors in the console, no
+    // uncaught exceptions from the capture script. (The dev-server
+    // flag-service 500s are unrelated backend noise and excluded.)
+    const viewerErrors = consoleErrors.filter(
+      (t) =>
+        /cytoscape|_cyreg|nfm3478|nfm4306|ontology-viewer/i.test(t) &&
+        !/flag-service/i.test(t),
+    )
+    expect(viewerErrors, viewerErrors.join("\n")).toEqual([])
+    expect(pageErrors, pageErrors.join("\n")).toEqual([])
   })
 })
 
