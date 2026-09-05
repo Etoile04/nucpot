@@ -18,7 +18,7 @@ What it does
      (the shared ``prod-uploads`` volume) and is non-empty;
    * ``supabase`` — ``GET`` the public object URL and confirm
      HTTP 200 with at least one byte (streams and discards).
-     Only definitive upstream verdicts (400/403/404, empty 200 body)
+     Only definitive upstream verdicts (400/404, empty 200 body)
      count as missing; network errors and 429/5xx are *transient* and
      never blank anything. Foreign-origin absolute URLs are not
      server-fetched at all (SSRF guard) and are reported as
@@ -101,7 +101,7 @@ async def _verify_supabase(url: str) -> tuple[str, str]:
     Returns ``(state, error)`` where state is:
 
     * ``"ok"`` — HTTP 200 with at least one byte;
-    * ``"missing"`` — definitive not-found verdict (400/403/404, or an
+    * ``"missing"`` — definitive not-found verdict (400/404, or an
       existing-but-empty object); safe to blank on ``--apply``;
     * ``"unverifiable"`` — transient upstream condition (network error,
       429, 5xx); must NOT be blanked, the operator re-runs later.
@@ -111,7 +111,7 @@ async def _verify_supabase(url: str) -> tuple[str, str]:
             response = await client.get(url)
     except httpx.HTTPError as exc:
         return "unverifiable", f"fetch error for {url}: {exc}"
-    if response.status_code in (400, 403, 404):
+    if response.status_code in (400, 404):
         return "missing", f"HTTP {response.status_code} for {url}"
     if response.status_code != 200:
         return "unverifiable", f"HTTP {response.status_code} for {url}"

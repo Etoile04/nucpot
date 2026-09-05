@@ -24,11 +24,7 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
   if (!file_url) {
     return (
       <Empty description="暂无可下载文件，请从原始来源获取">
-        {source && (
-          <Text type="secondary">
-            数据来源：{source}
-          </Text>
-        )}
+        {source && <Text type="secondary">数据来源：{source}</Text>}
       </Empty>
     )
   }
@@ -66,9 +62,7 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
           </div>
         )}
 
-        {source && (
-          <Text type="secondary">数据来源：{source}</Text>
-        )}
+        {source && <Text type="secondary">数据来源：{source}</Text>}
       </Space>
     </Card>
   )

@@ -738,8 +738,8 @@ docker exec nucpot-prod-api python scripts/verify_potential_files.py --apply
 ```
 
 `--apply` only blanks rows whose file is **definitively** gone (missing from
-the uploads volume, or Supabase answers 400/403/404 / an empty object).
-Transient upstream failures (network errors, 429/5xx) and foreign-origin
+the uploads volume, or Supabase answers 400/404 / an empty object).
+Transient upstream failures (network errors, 403 access-denied, 429/5xx) and foreign-origin
 URLs (never fetched server-side — SSRF guard) are reported as
 `UNVERIFIABLE`, left untouched, and keep the exit code at 1: re-run the
 sweep once Supabase/egress is healthy instead of re-applying.

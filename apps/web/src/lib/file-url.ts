@@ -66,10 +66,7 @@ export function fileNameFromUrl(fileUrl: string): string {
  * first supabase object path (bucket prefix and origin stripped). Legacy
  * URL forms keep deriving the name from the URL itself.
  */
-export function resolveFileName(
-  fileUrl: string,
-  extra?: Record<string, unknown> | null,
-): string {
+export function resolveFileName(fileUrl: string, extra?: Record<string, unknown> | null): string {
   const storage = extra?.file_storage
   if (storage !== null && typeof storage === "object") {
     const key = (storage as { key?: unknown }).key
@@ -79,13 +76,10 @@ export function resolveFileName(
     }
     const objects = (storage as { objects?: unknown }).objects
     if (Array.isArray(objects)) {
-      const first = objects.find(
-        (o): o is string => typeof o === "string" && o.length > 0,
-      )
+      const first = objects.find((o): o is string => typeof o === "string" && o.length > 0)
       if (first) {
         const markerAt = first.indexOf(STORAGE_V1_MARKER)
-        const path =
-          markerAt >= 0 ? first.slice(markerAt + STORAGE_V1_MARKER.length) : first
+        const path = markerAt >= 0 ? first.slice(markerAt + STORAGE_V1_MARKER.length) : first
         const name = lastPathSegment(path)
         if (name) return name
       }

@@ -3,9 +3,10 @@
 Two behaviors are pinned:
 
 1. **Transient upstream failures never blank rows** — only definitive
-   not-found verdicts (uploads-volume misses, HTTP 400/403/404, empty
-   200 body) may be cleared by ``--apply``; network errors and 429/5xx
-   are reported as unverifiable and left untouched.
+   not-found verdicts (uploads-volume misses, HTTP 400/404, empty
+   200 body) may be cleared by ``--apply``; network errors, auth
+   failures (403) and 429/5xx are reported as unverifiable and left
+   untouched.
 2. **Foreign-origin URLs are never fetched server-side** (SSRF guard,
    same policy as the download proxy) and are reported unverifiable.
 
@@ -100,7 +101,7 @@ async def test_verify_supabase_ok(stub_supabase) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [400, 403, 404])
+@pytest.mark.parametrize("status", [400, 404])
 async def test_verify_supabase_definitive_miss(stub_supabase, status: int) -> None:
     stub_supabase[_public_url("bucket/gone.mtp")] = status
     state, error = await sweep_mod._verify_supabase(_public_url("bucket/gone.mtp"))
@@ -116,7 +117,7 @@ async def test_verify_supabase_empty_body_is_missing(stub_supabase) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [429, 500, 503])
+@pytest.mark.parametrize("status", [403, 429, 500, 503])
 async def test_verify_supabase_transient_statuses(stub_supabase, status: int) -> None:
     stub_supabase[_public_url("bucket/flaky.mtp")] = status
     state, _ = await sweep_mod._verify_supabase(_public_url("bucket/flaky.mtp"))
