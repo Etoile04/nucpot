@@ -18,7 +18,12 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+try:  # py3.11+; fallback for the py3.9 CommandLineTools interpreter on the runner
+    from datetime import UTC
+except ImportError:  # pragma: no cover
+    from datetime import timezone as _tz
+    UTC = _tz.utc
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
