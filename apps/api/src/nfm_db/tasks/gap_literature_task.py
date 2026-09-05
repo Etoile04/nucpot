@@ -179,6 +179,24 @@ async def _ingest_and_extract(
             storage = get_storage()
             file_path = storage.save(datasource_id, md_filename, md_bytes)
 
+            # NFM-4313: resolve title/journal/year via Crossref (fallback:
+            # markdown parse, then the DOI-stub title) — the gap path used
+            # to land DOI-stub rows with NULL journal/year, the same
+            # regression class as the from-doi endpoint (BUG-17 回票).
+            biblio: dict[str, Any] = {}
+            try:
+                from nfm_db.services.crossref_metadata import (
+                    resolve_doi_bibliography,
+                )
+
+                biblio = resolve_doi_bibliography(doi, md_content)
+            except Exception:  # metadata is best-effort, never gates ingest
+                logger.warning(
+                    "gap_literature: bibliography resolution failed for doi=%s",
+                    doi,
+                    exc_info=True,
+                )
+
             source = DataSource(
                 id=datasource_id,
                 doi=doi,
@@ -189,7 +207,9 @@ async def _ingest_and_extract(
                 parse_status="parsed",
                 original_filename=md_filename,
                 source_type="journal_article",
-                title=f"DOI: {doi}",
+                title=(biblio.get("title") or (f"DOI: {doi}")),
+                year=biblio.get("year"),
+                journal=biblio.get("journal"),
                 # G3-S4 provenance: link this ingestion back to the gaps
                 metadata_={
                     "gap_request_id": request_id,
