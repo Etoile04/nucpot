@@ -460,11 +460,18 @@ jobs:
             HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
             docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
 
-            # Tag as :latest so deploy-prod's `up -d` (without --build)
-            # starts the image the assertion just inspected. The candidate
-            # tag is preserved as the rollback primitive (D1 follow-up).
-            docker tag "${CANDIDATE_TAG}" nucpot-prod-api:latest
-            echo "===> Candidate image ready:"
+            # NFM-4333 RC6: do NOT `docker tag ... :latest` here. The
+            # RO gate (ADR-013 G2) denies re-tagging prod-named images
+            # under the exfiltration guard (`POST images/<prod>/tag`
+            # fails closed in both modes), and the tag is also dead
+            # code for the deploy path now: deploy_prod.sh (NFM-4265
+            # D1) rebuilds `nucpot-prod-api:${DEPLOY_SHA}` itself as
+            # nfmdeploy via the full gate, and docker-compose.prod.yml
+            # consumes `${PROD_IMAGE_TAG:-latest}` with PROD_IMAGE_TAG
+            # exported from DEPLOY_SHA — so compose never reads
+            # `:latest`. The candidate tag (short SHA) is the rollback
+            # primitive, retained as-is.
+            echo "===> Candidate image ready (rollback primitive only):"
             docker images --format '  {{.Repository}}:{{.Tag}} ({{.CreatedSince}}, {{.Size}})' \
               | grep '^nucpot-prod-api' || true
           ENDSSH
