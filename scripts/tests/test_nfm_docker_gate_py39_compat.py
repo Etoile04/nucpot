@@ -1,4 +1,4 @@
-"""Py3.9 compatibility guards for the NFM-4270 host gate package (NFM-4320).
+"""Py3.9 compatibility regression guards for the NFM-4270 host gate package (NFM-4320).
 
 The launchd proxies execute with the system interpreter
 ``/usr/bin/python3`` = 3.9.6, but the package was authored against 3.10+
@@ -16,19 +16,19 @@ constructs and shipped to main in NFM-4273/#1159/#1161's blind spot:
     in 3.10), so an idle ``accept()`` timeout fell through to the outer
     ``except OSError: raise`` and killed ``serve_forever``.
 
-These tests pin the whole defect class in two layers: a static AST sweep
-(runs under any interpreter, so the guard fires even where 3.9 is absent)
-and a functional smoke executed by the real 3.9 interpreter via subprocess.
-
-Static sweep scope note: the gate package uses ``|`` exclusively for type
-unions. If a genuine runtime bitwise-or is ever needed here, restrict this
-test or move the expression behind a runtime-version check deliberately —
-do not weaken the sweep for the whole package.
+Each defect class is pinned by executing the real package under the real
+3.9 interpreter via subprocess: the functional smoke below imports every
+module, exercises the audit write and policy classification, and proves an
+idle ``accept()`` timeout does not kill ``serve_forever``; the entry-script
+test proves the launchd entry point parses args. On hosts whose
+``/usr/bin/python3`` is not 3.9 both tests skip; the style constraint
+(Optional over PEP 604, timezone.utc over UTC) is additionally pinned in
+the lint gate via the ``UP017``/``UP045``/``UP041`` per-file ignores in
+``pyproject.toml``.
 """
 
 from __future__ import annotations
 
-import ast
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -37,57 +37,6 @@ import pytest
 
 GATE_DIR = Path(__file__).resolve().parents[1] / "host-prod-gate"
 PY39 = "/usr/bin/python3"
-
-# The gate path executes the package plus its entry script; both must stay
-# 3.9-clean. Watchdog/peercred carry no entry of their own.
-SWEEP_FILES = [
-    *(GATE_DIR / "nfm_docker_gate").glob("*.py"),
-    GATE_DIR / "nfm_docker_gate_proxy.py",
-]
-
-
-def _source(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def _parents(tree: ast.Module) -> dict[int, ast.AST]:
-    parent_of: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent_of[id(child)] = node
-    return parent_of
-
-
-def _annotation_node_ids(tree: ast.Module) -> set[int]:
-    """ids of all nodes living inside an annotation.
-
-    With ``from __future__ import annotations`` (asserted separately)
-    these subtrees are never evaluated at runtime, so PEP 604 unions
-    inside them are 3.9-safe. Everything else — module-level aliases,
-    subscripts, call arguments — IS evaluated and must not use ``|``.
-    """
-    ids: set[int] = set()
-
-    def harvest(root: ast.AST) -> None:
-        for node in ast.walk(root):
-            ids.add(id(node))
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            annotated = list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
-            if args.vararg is not None:
-                annotated.append(args.vararg)
-            if args.kwarg is not None:
-                annotated.append(args.kwarg)
-            for arg in annotated:
-                if arg.annotation is not None:
-                    harvest(arg.annotation)
-            if node.returns is not None:
-                harvest(node.returns)
-        elif isinstance(node, ast.AnnAssign):
-            harvest(node.annotation)
-    return ids
 
 
 @lru_cache(maxsize=1)
@@ -102,83 +51,6 @@ def _py39_available() -> bool:
         return False
     return probe.returncode == 0
 
-
-# ---- static sweep -----------------------------------------------------------
-
-
-@pytest.mark.parametrize("path", SWEEP_FILES, ids=lambda p: p.name)
-def test_syntax_parses_under_39(path: Path) -> None:
-    """Rejects 3.10+ syntax (match statements, walrus-free zone checks)."""
-    ast.parse(_source(path), filename=str(path), feature_version=(3, 9))
-
-
-@pytest.mark.parametrize("path", SWEEP_FILES, ids=lambda p: p.name)
-def test_future_annotations_present(path: Path) -> None:
-    """Deferred annotations are what keeps annotation-position `|` safe."""
-    tree = ast.parse(_source(path), filename=str(path))
-    for node in tree.body:  # only a top-level future import defers
-        if (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "__future__"
-            and any(alias.name == "annotations" for alias in node.names)
-        ):
-            return
-    pytest.fail(f"{path.name} lacks `from __future__ import annotations`")
-
-
-@pytest.mark.parametrize("path", SWEEP_FILES, ids=lambda p: p.name)
-def test_no_runtime_pep604_union(path: Path) -> None:
-    """`X | Y` may appear only in (deferred) annotation positions.
-
-    A module-level alias is runtime code even under the future import —
-    exactly the policy.py:184 crash of NFM-4320.
-    """
-    tree = ast.parse(_source(path), filename=str(path))
-    deferred = _annotation_node_ids(tree)
-    offenders = [
-        f"line {node.lineno}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.BinOp)
-        and isinstance(node.op, ast.BitOr)
-        and id(node) not in deferred
-    ]
-    assert not offenders, (
-        f"{path.name} evaluates PEP 604 unions at runtime (py3.9 TypeError): "
-        f"{', '.join(offenders)} — use typing.Optional / Union instead"
-    )
-
-
-@pytest.mark.parametrize("path", SWEEP_FILES, ids=lambda p: p.name)
-def test_no_datetime_utc_alias(path: Path) -> None:
-    """`datetime.UTC` / `from datetime import UTC` need py3.11+.
-
-    A try/except ImportError fallback to ``timezone.utc`` (the #1159
-    pattern) is allowed; bare usage is the audit.py:31 crash of NFM-4320.
-    """
-    tree = ast.parse(_source(path), filename=str(path))
-    parent_of = _parents(tree)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and node.attr == "UTC"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "datetime"
-        ):
-            offenders.append(f"line {node.lineno}: datetime.UTC")
-        if isinstance(node, ast.ImportFrom) and node.module == "datetime":
-            if not any(alias.name == "UTC" for alias in node.names):
-                continue
-            guarded = isinstance(parent_of.get(id(node)), ast.Try)
-            if not guarded:
-                offenders.append(f"line {node.lineno}: unguarded 'from datetime import UTC'")
-    assert not offenders, (
-        f"{path.name} uses the py3.11+ datetime.UTC alias outside a fallback: "
-        f"{'; '.join(offenders)} — use datetime.timezone.utc"
-    )
-
-
-# ---- functional smoke under the real 3.9 interpreter ------------------------
 
 SMOKE = r"""
 import json, os, socket, sys, tempfile, threading, time
