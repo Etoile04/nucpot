@@ -60,6 +60,12 @@ async def list_materials(
     # open (see ``get_material`` and the per-material properties endpoint).
     stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
+    # NFM-4312 — retired materials (duplicate fragments merged into a
+    # canonical row by the backfill) stay queryable by UUID but leave
+    # the public list. All prod rows are is_active=True today, so this
+    # only affects future merges.
+    stmt = stmt.where(Material.is_active.is_(True))
+
     if category_id is not None:
         stmt = stmt.where(Material.category_id == category_id)
 
