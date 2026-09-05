@@ -171,9 +171,7 @@ def fetch_crossref_metadata(
     try:
         resp = http.get(url, params=params, headers=headers, timeout=timeout)
         if resp.status_code != 200:
-            logger.info(
-                "crossref: doi=%s status=%d — no metadata", doi, resp.status_code
-            )
+            logger.info("crossref: doi=%s status=%d — no metadata", doi, resp.status_code)
             return None
         payload = resp.json()
         message = payload.get("message") if isinstance(payload, dict) else None

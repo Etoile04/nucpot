@@ -474,9 +474,7 @@ async def from_doi_literature(
             resolve_doi_bibliography,
         )
 
-        biblio = await asyncio.to_thread(
-            resolve_doi_bibliography, doi, md_content
-        )
+        biblio = await asyncio.to_thread(resolve_doi_bibliography, doi, md_content)
     except Exception:  # metadata is best-effort, never gates the fetch
         logger.warning(
             "from_doi: bibliographic metadata resolution failed for doi=%s",
@@ -494,10 +492,7 @@ async def from_doi_literature(
         parse_status="parsed",
         original_filename=md_filename,
         source_type="journal_article",
-        title=(
-            biblio.get("title")
-            or (f"DOI: {doi}")
-        ),
+        title=(biblio.get("title") or (f"DOI: {doi}")),
         year=biblio.get("year"),
         journal=biblio.get("journal"),
     )

@@ -207,10 +207,7 @@ async def _ingest_and_extract(
                 parse_status="parsed",
                 original_filename=md_filename,
                 source_type="journal_article",
-                title=(
-                    biblio.get("title")
-                    or (f"DOI: {doi}")
-                ),
+                title=(biblio.get("title") or (f"DOI: {doi}")),
                 year=biblio.get("year"),
                 journal=biblio.get("journal"),
                 # G3-S4 provenance: link this ingestion back to the gaps

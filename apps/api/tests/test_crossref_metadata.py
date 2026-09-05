@@ -126,9 +126,7 @@ class TestParseCrossrefMessage:
             "issued": {"date-parts": [[2018]]},
         }
         parsed = parse_crossref_message(msg)
-        assert parsed["title"] == (
-            "Calculation of the displacement energy of α and γ uranium"
-        )
+        assert parsed["title"] == ("Calculation of the displacement energy of α and γ uranium")
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +236,9 @@ class TestResolveDoiBibliography:
         assert resolved["journal"] == "Journal of Nuclear Materials"
         assert resolved["year"] == 2018
 
-    def test_crossref_unavailable_falls_back_to_markdown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_crossref_unavailable_falls_back_to_markdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         md = "# Markdown Title\n\nJournal of Nuclear Materials 512 (1999)\n"
         monkeypatch.setattr(
             "nfm_db.services.crossref_metadata.fetch_crossref_metadata",
@@ -255,7 +255,11 @@ class TestResolveDoiBibliography:
         md = "# Markdown Title\n\nJournal of Nuclear Materials 512 (1999)\n"
         monkeypatch.setattr(
             "nfm_db.services.crossref_metadata.fetch_crossref_metadata",
-            lambda doi, **kw: {"title": None, "journal": "Journal of Nuclear Materials", "year": None},
+            lambda doi, **kw: {
+                "title": None,
+                "journal": "Journal of Nuclear Materials",
+                "year": None,
+            },
         )
         resolved = resolve_doi_bibliography("10.1/x", md)
         assert resolved["journal"] == "Journal of Nuclear Materials"
@@ -269,7 +273,9 @@ class TestResolveDoiBibliography:
         resolved = resolve_doi_bibliography("10.1/x", "# Only a title\n\nPlain abstract text.")
         assert resolved == {"title": "Only a title", "journal": None, "year": None}
 
-    def test_abstract_only_markdown_yields_no_journal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_abstract_only_markdown_yields_no_journal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # The regression that motivated NFM-4313: Semantic Scholar
         # abstract-only markdown has no journal citation line, so the
         # markdown regex returns None and — without Crossref — the row

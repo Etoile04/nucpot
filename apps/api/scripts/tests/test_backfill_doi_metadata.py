@@ -85,9 +85,7 @@ class TestRunBackfill:
     def test_fills_null_journal_and_year(self) -> None:
         row = _row()
         session = _FakeSession([row])
-        report = asyncio.run(
-            run_backfill(session, fetch=lambda doi: _meta(), sleep_s=0)
-        )
+        report = asyncio.run(run_backfill(session, fetch=lambda doi: _meta(), sleep_s=0))
         assert report.candidates == 1
         assert report.rows_updated == 1
         assert report.journal_filled == 1
@@ -102,9 +100,7 @@ class TestRunBackfill:
         # journal already curated → only year may be filled.
         row = _row(journal="Curated Journal", year=None)
         session = _FakeSession([row])
-        report = asyncio.run(
-            run_backfill(session, fetch=lambda doi: _meta(), sleep_s=0)
-        )
+        report = asyncio.run(run_backfill(session, fetch=lambda doi: _meta(), sleep_s=0))
         assert report.journal_filled == 0
         assert report.year_filled == 1
         assert report.rows_updated == 1
@@ -142,11 +138,7 @@ class TestRunBackfill:
     def test_fetch_receives_the_doi(self) -> None:
         seen: list[str] = []
         session = _FakeSession([_row(doi="10.1016/j.jnucmat.2018.05.039")])
-        asyncio.run(
-            run_backfill(
-                session, fetch=lambda doi: seen.append(doi) or _meta(), sleep_s=0
-            )
-        )
+        asyncio.run(run_backfill(session, fetch=lambda doi: seen.append(doi) or _meta(), sleep_s=0))
         assert seen == ["10.1016/j.jnucmat.2018.05.039"]
 
     def test_limit_caps_candidate_rows(self) -> None:
@@ -172,9 +164,7 @@ class TestIdempotency:
         # a NULL field. Simulate the post-run state: both fields set →
         # the SELECT returns nothing → zero fetches, zero updates.
         healed_session = _FakeSession([])  # selection now returns no rows
-        report = asyncio.run(
-            run_backfill(healed_session, fetch=lambda doi: _meta(), sleep_s=0)
-        )
+        report = asyncio.run(run_backfill(healed_session, fetch=lambda doi: _meta(), sleep_s=0))
         assert report.candidates == 0
         assert report.rows_updated == 0
         assert healed_session.updates == []
@@ -230,7 +220,5 @@ class TestReport:
         assert "DRY-RUN" not in text
 
     def test_render_flags_dry_run(self) -> None:
-        report = BackfillReport(
-            candidates=1, dry_run=True, would_update_rows=1
-        )
+        report = BackfillReport(candidates=1, dry_run=True, would_update_rows=1)
         assert "DRY-RUN" in report.render()

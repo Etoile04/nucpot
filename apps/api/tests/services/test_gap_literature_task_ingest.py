@@ -22,10 +22,7 @@ from nfm_db.tasks.gap_literature_task import _ingest_and_extract
 
 DOI = "10.1016/j.jnucmat.2018.05.039"
 
-MOCK_MARKDOWN = (
-    "# Irradiation Creep of Ferritic Alloys\n\n"
-    "Abstract text without a citation line.\n"
-)
+MOCK_MARKDOWN = "# Irradiation Creep of Ferritic Alloys\n\nAbstract text without a citation line.\n"
 
 MOCK_CROSSREF = {
     "title": "Irradiation Creep of Ferritic Alloys",

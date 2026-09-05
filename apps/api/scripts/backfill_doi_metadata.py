@@ -37,6 +37,7 @@ Usage
 
 Set ``CROSSREF_MAILTO`` (email) to join Crossref's polite pool.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -161,7 +162,8 @@ async def run_backfill(
             if verbose:
                 logger.debug(
                     "row %s doi=%s — Crossref record adds no missing field",
-                    row_id, doi,
+                    row_id,
+                    doi,
                 )
             continue
 
@@ -170,7 +172,9 @@ async def run_backfill(
             if verbose:
                 logger.debug(
                     "row %s doi=%s — would set %s (dry-run)",
-                    row_id, doi, sorted(fills),
+                    row_id,
+                    doi,
+                    sorted(fills),
                 )
         else:
             set_clause = ", ".join(f"{col} = :{col}" for col in fills)
@@ -186,9 +190,7 @@ async def run_backfill(
             )
             report.rows_updated += 1
             if verbose:
-                logger.debug(
-                    "row %s doi=%s — set %s", row_id, doi, sorted(fills)
-                )
+                logger.debug("row %s doi=%s — set %s", row_id, doi, sorted(fills))
 
         if sleep_s > 0:
             await asyncio.sleep(sleep_s)
