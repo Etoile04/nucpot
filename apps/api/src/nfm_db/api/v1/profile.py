@@ -186,6 +186,7 @@ async def get_stats(
             total_potentials=total_potentials,
             total_types=total_types,
             total_elements=len(element_set),
+            elements=sorted(element_set),
             recent_potentials=recent_potentials,
         ),
     )
