@@ -34,7 +34,7 @@ import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 # Docker API paths arrive as /v1.43/containers/json or /containers/json.
 _VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
@@ -181,7 +181,7 @@ class TargetInfo:
         return None
 
 
-Resolver = Callable[[str], TargetInfo | None]
+Resolver = Callable[[str], Optional[TargetInfo]]
 
 
 def _strip_version(path: str) -> str:
