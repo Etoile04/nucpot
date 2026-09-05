@@ -101,7 +101,7 @@ class TestMigration080Chain:
         down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "082_blog_role_domain_expert"
+        current_head = "084_potentials_list_partial_index"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
