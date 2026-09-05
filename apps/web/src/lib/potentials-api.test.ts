@@ -33,9 +33,6 @@ describe("potentials-api", () => {
     })
     const { getPotential } = await import("./potentials-api")
     await getPotential("abc")
-    expect(global.fetch).toHaveBeenCalledWith(
-      "/api/potentials/abc",
-      expect.any(Object),
-    )
+    expect(global.fetch).toHaveBeenCalledWith("/api/potentials/abc", expect.any(Object))
   })
 })

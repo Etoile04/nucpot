@@ -20,14 +20,13 @@ Paperclip comment. Exits non-zero if --execute is requested without a
 database URL.
 """
 
-# ruff: noqa: T201
 from __future__ import annotations
 
 import argparse
-import uuid
 import asyncio
 import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,8 +44,10 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from nfm_db.models import (  # noqa: E402
-    DFTCalculation,
+    ConflictRecord,
     Dataset,
+    DFTCalculation,
+    EntityMergeLog,
     Material,
     MaterialAlias,
     MaterialComposition,
@@ -62,11 +63,18 @@ class TestMaterialCandidate:
     name: str
     dataset_count: int
     dft_count: int
+    merge_log_count: int
+    conflict_count: int
 
     @property
     def deletable(self) -> bool:
         """Safe to delete without manual review (no dependent real data)."""
-        return self.dataset_count == 0 and self.dft_count == 0
+        return (
+            self.dataset_count == 0
+            and self.dft_count == 0
+            and self.merge_log_count == 0
+            and self.conflict_count == 0
+        )
 
 
 @dataclass(frozen=True)
@@ -104,12 +112,31 @@ async def find_test_materials(db: AsyncSession) -> list[TestMaterialCandidate]:
                 .where(DFTCalculation.material_id == material_id)
             )
         ).scalar_one()
+        merge_log_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(EntityMergeLog)
+                .where(
+                    (EntityMergeLog.canonical_id == material_id)
+                    | (EntityMergeLog.merged_id == material_id)
+                )
+            )
+        ).scalar_one()
+        conflict_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(ConflictRecord)
+                .where(ConflictRecord.material_id == material_id)
+            )
+        ).scalar_one()
         candidates.append(
             TestMaterialCandidate(
                 id=material_id,
                 name=name,
                 dataset_count=dataset_count,
                 dft_count=dft_count,
+                merge_log_count=merge_log_count,
+                conflict_count=conflict_count,
             )
         )
     candidates.sort(key=lambda c: c.name)
@@ -148,16 +175,19 @@ def _render_table(
     candidates: list[TestMaterialCandidate], report: CleanupReport | None
 ) -> str:
     lines = [
-        "| 材料名 | id | datasets | dft | 处置 |",
-        "| --- | --- | --- | --- | --- |",
+        "| 材料名 | id | datasets | dft | merges | conflicts | 处置 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     disposition: dict[str, str] = {name: "已删除" for name in (report.deleted if report else [])}
     disposition.update({name: "跳过(含真实数据,人工复核)" for name in (report.skipped if report else [])})
     for c in candidates:
         action = disposition.get(c.name, "待删除(dry-run)")
-        lines.append(f"| {c.name} | `{c.id!s}` | {c.dataset_count} | {c.dft_count} | {action} |")
+        lines.append(
+            f"| {c.name} | `{c.id!s}` | {c.dataset_count} | {c.dft_count} "
+            f"| {c.merge_log_count} | {c.conflict_count} | {action} |"
+        )
     if not candidates:
-        lines.append("| (无匹配测试数据) | - | - | - | - |")
+        lines.append("| (无匹配测试数据) | - | - | - | - | - | - |")
     return "\n".join(lines)
 
 
