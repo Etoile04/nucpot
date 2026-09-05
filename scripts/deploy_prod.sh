@@ -108,8 +108,24 @@ rm -f "${NFMD_HEALTH_MARKER}"
 # `docker compose` (verified empirically: `docker compose version` →
 # "unknown command"). Symlink the host's compose plugin into the override
 # dir to keep compose available without restoring the keychain.
-ln -sf ~/.docker/cli-plugins/docker-compose \
-  /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
+#
+# NFM-4333 RC10: the deploy SSH runs as nfmdeploy (gate proxy sees uid
+# 502). The host's ~/.docker/cli-plugins/docker-compose is itself a
+# symlink to /Applications/Docker.app/Contents/Resources/cli-plugins/
+# docker-compose — that binary carries com.apple.quarantine (Gatekeeper
+# download flag). macOS BLOCKS non-owner exec of quarantined binaries
+# (see xattr man page / TCC); the chain resolves to a file owned by
+# lwj04, so nfmdeploy's exec fails silently with `docker: unknown
+# command: docker compose`. Copy the binary into nfmdeploy-owned HOME
+# with the quarantine xattr stripped, then symlink DOCKER_CONFIG at it.
+NFMD_DC="${NFMD_DC:-${HOME}/.nfmd/docker-compose}"
+if [ ! -x "${NFMD_DC}" ] || [ "/Users/lwj04/.docker/cli-plugins/docker-compose" -nt "${NFMD_DC}" ]; then
+  mkdir -p "$(dirname "${NFMD_DC}")"
+  cp /Users/lwj04/.docker/cli-plugins/docker-compose "${NFMD_DC}"
+  xattr -d com.apple.quarantine "${NFMD_DC}" 2>/dev/null || true
+  chmod 0755 "${NFMD_DC}"
+fi
+ln -sf "${NFMD_DC}" /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
 docker compose version
 
 # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying commit SHA
