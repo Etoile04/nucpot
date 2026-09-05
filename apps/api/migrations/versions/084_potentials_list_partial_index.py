@@ -18,7 +18,7 @@ partial index is that the default sort stays index-backed (O(log n + k),
 no full-slice sort) as the corpus grows.
 
 Revision ID: 084_potentials_list_partial_index
-Revises: 082_blog_role_domain_expert
+Revises: 083_normalize_potential_file_urls
 Create Date: 2026-09-05
 """
 
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "084_potentials_list_partial_index"
-down_revision: str | Sequence[str] | None = "082_blog_role_domain_expert"
+down_revision: str | Sequence[str] | None = "083_normalize_potential_file_urls"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
