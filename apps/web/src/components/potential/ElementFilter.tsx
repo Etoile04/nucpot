@@ -6,10 +6,27 @@ interface ElementFilterProps {
   readonly allElements: readonly string[]
   readonly selected: readonly string[]
   readonly onToggle: (el: string) => void
+  /**
+   * Optional controlled search text (NFM-4308 ①). When provided together
+   * with `onSearchChange`, the parent owns the input state so a filter
+   * reset can clear it; otherwise the input stays self-contained.
+   */
+  readonly search?: string
+  readonly onSearchChange?: (value: string) => void
 }
 
-export function ElementFilter({ allElements, selected, onToggle }: ElementFilterProps) {
-  const [search, setSearch] = useState('')
+export function ElementFilter({
+  allElements,
+  selected,
+  onToggle,
+  search: controlledSearch,
+  onSearchChange,
+}: ElementFilterProps) {
+  const [internalSearch, setInternalSearch] = useState('')
+  const isControlled = controlledSearch !== undefined && onSearchChange !== undefined
+  const search = isControlled ? controlledSearch : internalSearch
+  const setSearch = isControlled ? onSearchChange : setInternalSearch
+
   const filtered = search
     ? allElements.filter(e => e.toLowerCase().includes(search.toLowerCase()))
     : allElements

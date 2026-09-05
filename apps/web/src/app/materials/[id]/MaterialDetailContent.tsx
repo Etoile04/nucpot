@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Typography, Spin, Alert, Descriptions, Table, Space, Button } from "antd"
 import type { ColumnsType } from "antd/es/table"
 import { request } from "@/lib/api-client"
+import { formatDateTime } from "@/lib/format-date"
 
 const { Title, Text } = Typography
 
@@ -98,6 +100,7 @@ export function MaterialDetailContent({
   materialId,
 }: MaterialDetailContentProps) {
   const [state, setState] = useState<ViewState>(INITIAL_STATE)
+  const router = useRouter()
 
   const fetchData = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
@@ -209,12 +212,13 @@ export function MaterialDetailContent({
               {
                 key: "created_at",
                 label: "创建时间",
-                children: m.created_at,
+                // NFM-4308 ② — localized display, never the raw ISO string
+                children: formatDateTime(m.created_at),
               },
               {
                 key: "updated_at",
                 label: "更新时间",
-                children: m.updated_at,
+                children: formatDateTime(m.updated_at),
               },
               {
                 key: "description",
@@ -225,14 +229,21 @@ export function MaterialDetailContent({
             ]}
           />
 
-          {/* Navigation buttons */}
+          {/* Navigation buttons — button + programmatic navigation.
+              Wrapping a <button> in Link's <a> is invalid HTML (NFM-4308 ④). */}
           <Space className="mb-6">
-            <Link href={`/materials/${materialId}/graph`}>
-              <Button type="primary">查看知识图谱</Button>
-            </Link>
-            <Link href={`/materials/${materialId}/properties`}>
-              <Button type="primary">查看属性</Button>
-            </Link>
+            <Button
+              type="primary"
+              onClick={() => router.push(`/materials/${materialId}/graph`)}
+            >
+              查看知识图谱
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => router.push(`/materials/${materialId}/properties`)}
+            >
+              查看属性
+            </Button>
           </Space>
 
           {/* Aliases table */}

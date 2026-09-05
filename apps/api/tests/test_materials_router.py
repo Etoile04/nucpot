@@ -317,7 +317,7 @@ class TestUpdateMaterialEndpoint:
         async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
-        payload = {"name": "Test"}
+        payload = {"name": "Missing Material"}
 
         resp = await async_client.patch(f"/api/v1/materials/{fake_id}", json=payload)
 

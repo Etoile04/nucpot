@@ -4,12 +4,24 @@ import { MaterialDetailContent } from "../MaterialDetailContent"
 
 // ── API mock (vi.hoisted avoids TDZ in hoisted vi.mock factory) ──────
 
-const { mockRequest } = vi.hoisted(() => ({
+const { mockRequest, mockPush } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
+  mockPush: vi.fn(),
 }))
 
 vi.mock("@/lib/api-client", () => ({
   request: (...args: unknown[]) => mockRequest(...args),
+}))
+
+// ── next/navigation mock (NFM-4308 ④ — buttons navigate via router.push) ──
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: mockPush,
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  }),
 }))
 
 // ── Test data ──────────────────────────────────────────────────────────
@@ -109,11 +121,43 @@ describe("MaterialDetailContent", () => {
       expect(screen.getByText("萤石结构")).toBeInTheDocument()
     })
 
-    const graphLink = screen.getByText("查看知识图谱").closest("a")
-    expect(graphLink).toHaveAttribute("href", "/materials/mat-001/graph")
+    // NFM-4308 ④ — navigation is a button + programmatic navigation
+    // (router.push), not an <a> wrapping a <button>.
+    fireEvent.click(screen.getByRole("button", { name: "查看知识图谱" }))
+    expect(mockPush).toHaveBeenCalledWith("/materials/mat-001/graph")
 
-    const propsLink = screen.getByText("查看属性").closest("a")
-    expect(propsLink).toHaveAttribute("href", "/materials/mat-001/properties")
+    fireEvent.click(screen.getByRole("button", { name: "查看属性" }))
+    expect(mockPush).toHaveBeenCalledWith("/materials/mat-001/properties")
+  })
+
+  it("renders localized timestamps, never raw ISO strings (NFM-4308 ②)", async () => {
+    render(<MaterialDetailContent materialId="mat-001" />)
+
+    await waitFor(() => {
+      expect(screen.getByText("创建时间")).toBeInTheDocument()
+    })
+
+    // 2025-01-01T00:00:00Z must render as local YYYY-MM-DD HH:mm
+    const expected = (() => {
+      const d = new Date("2025-01-01T00:00:00Z")
+      const pad = (n: number) => String(n).padStart(2, "0")
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    })()
+    expect(screen.getByText(expected)).toBeInTheDocument()
+
+    // No raw ISO artifacts anywhere in the descriptions area
+    expect(screen.queryByText(/T00:00:00/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Z$/)).not.toBeInTheDocument()
+  })
+
+  it("has no <button> nested inside an <a> (NFM-4308 ④)", async () => {
+    const { container } = render(<MaterialDetailContent materialId="mat-001" />)
+
+    await waitFor(() => {
+      expect(screen.getByText("萤石结构")).toBeInTheDocument()
+    })
+
+    expect(container.querySelectorAll("a button")).toHaveLength(0)
   })
 
   it("renders back link", async () => {

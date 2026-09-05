@@ -115,8 +115,10 @@ class TestPaginationParamsModel:
             PaginationParams(page=-1)
 
     def test_invalid_per_page_exceeds_max(self) -> None:
-        with pytest.raises(ValidationError):
-            PaginationParams(per_page=101)
+        # NFM-4308 ③ — over-cap values clamp to 100 with truncated=true.
+        params = PaginationParams(per_page=101)
+        assert params.per_page == 100
+        assert params.truncated is True
 
     def test_invalid_per_page_zero(self) -> None:
         with pytest.raises(ValidationError):
@@ -154,12 +156,23 @@ class TestPublicEndpointPaginationValidation:
 
     @pytest.mark.parametrize("endpoint", PUBLIC_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
-    async def test_per_page_exceeds_max_returns_422(self, async_client, endpoint: Endpoint) -> None:
+    async def test_per_page_exceeds_max_clamps_to_100(self, async_client, endpoint: Endpoint) -> None:
+        # NFM-4308 ③ — over-cap page sizes clamp to 100 (200, not 422) and
+        # paginated envelopes echo the effective limit.
         url = f"{endpoint.path}?per_page=101"
         if endpoint.extra_params:
             url += f"&{endpoint.extra_params}"
         response = await async_client.get(url)
-        assert response.status_code == 422
+        assert response.status_code == 200
+        body = response.json()
+        data = body.get("data", body) if isinstance(body, dict) else body
+        if isinstance(data, dict) and "limit" in data:
+            assert data["limit"] == 100
+            # Envelopes that carry the shared PaginatedResponse contract
+            # must also flag the clamp (custom envelopes without the
+            # field are out of this assertion's scope).
+            if "truncated" in data:
+                assert data["truncated"] is True
 
     @pytest.mark.parametrize("endpoint", PUBLIC_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
@@ -201,12 +214,21 @@ class TestAuthEndpointPaginationValidation:
 
     @pytest.mark.parametrize("endpoint", AUTH_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio
-    async def test_per_page_exceeds_max_returns_422(
+    async def test_per_page_exceeds_max_clamps_to_100(
         self, async_client, admin_headers, endpoint: Endpoint
     ) -> None:
+        # NFM-4308 ③ — clamping applies to authed endpoints too; 401/403
+        # remains acceptable when auth fires first.
         url = f"{endpoint.path}?per_page=101"
         response = await async_client.get(url, headers=admin_headers)
-        assert response.status_code in (401, 403, 422)
+        assert response.status_code in (200, 401, 403)
+        if response.status_code == 200:
+            body = response.json()
+            data = body.get("data", body) if isinstance(body, dict) else body
+            if isinstance(data, dict) and "limit" in data:
+                assert data["limit"] == 100
+                if "truncated" in data:
+                    assert data["truncated"] is True
 
     @pytest.mark.parametrize("endpoint", AUTH_ENDPOINTS, ids=lambda e: e.path)
     @pytest.mark.asyncio

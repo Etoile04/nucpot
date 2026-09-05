@@ -8,7 +8,11 @@ export async function GET(request: Request) {
   const elements = searchParams.get("elements");
   const query = searchParams.get("q");
   const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "20");
+  // NFM-4308 ③ — per_page is the canonical page-size param across the API
+  // surface; `limit` stays accepted as a legacy alias (per_page wins).
+  const limit = parseInt(
+    searchParams.get("per_page") || searchParams.get("limit") || "20",
+  );
   const offset = (page - 1) * limit;
 
   // Sorting

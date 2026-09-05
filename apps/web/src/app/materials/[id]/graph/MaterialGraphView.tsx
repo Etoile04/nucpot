@@ -91,18 +91,25 @@ function GraphLoadingSkeleton() {
 }
 
 function NotFoundState({ materialId }: { readonly materialId: string }) {
+  // Buttons navigate programmatically — wrapping a <button> in Link's <a>
+  // is invalid HTML (NFM-4308 ④).
+  const router = useRouter()
   return (
     <Result
       status="warning"
       title="节点未找到"
       subTitle={`材料 "${materialId}" 在知识图谱中未找到。该材料可能尚未被提取到知识图谱中。`}
       extra={[
-        <Link key="back" href={`/materials/${materialId}/properties`}>
-          <Button type="primary">返回材料属性</Button>
-        </Link>,
-        <Link key="browse" href="/browse">
-          <Button>浏览材料</Button>
-        </Link>,
+        <Button
+          key="back"
+          type="primary"
+          onClick={() => router.push(`/materials/${materialId}/properties`)}
+        >
+          返回材料属性
+        </Button>,
+        <Button key="browse" onClick={() => router.push("/browse")}>
+          浏览材料
+        </Button>,
       ]}
     />
   )
