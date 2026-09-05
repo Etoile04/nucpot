@@ -26,7 +26,11 @@ vi.mock("next/link", () => {
     href: string
     [key: string]: unknown
   }) {
-    return <a href={href} {...props}>{children}</a>
+    return (
+      <a href={href} {...props}>
+        {children}
+      </a>
+    )
   }
   MockLink.displayName = "MockLink"
   return { __esModule: true, default: MockLink }
@@ -38,7 +42,11 @@ vi.mock("next/dynamic", () => ({
   __esModule: true,
   default: () => {
     const StubCanvas = (props: { data?: unknown }) => (
-      <div role="application" aria-label="Knowledge graph" data-props={JSON.stringify(props.data ?? null)} />
+      <div
+        role="application"
+        aria-label="Knowledge graph"
+        data-props={JSON.stringify(props.data ?? null)}
+      />
     )
     StubCanvas.displayName = "StubGraphCanvas"
     return StubCanvas
@@ -132,9 +140,12 @@ vi.mock("@/lib/kg-api", () => ({
     nodes: resp.nodes.map((n) => ({
       id: n.id,
       label: n.label,
-      type: n.type === "material" ? "material" as const
-        : n.type === "property" ? "property" as const
-        : "entity" as const,
+      type:
+        n.type === "material"
+          ? ("material" as const)
+          : n.type === "property"
+            ? ("property" as const)
+            : ("entity" as const),
       size: n.id === resp.focal.id ? 20 : 10,
       color: n.id === resp.focal.id ? "#f59e0b" : undefined,
     })),
@@ -177,9 +188,7 @@ describe("MaterialGraphView", () => {
     renderView("test-material")
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("application", { name: /knowledge graph/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
     })
   })
 
@@ -192,9 +201,7 @@ describe("MaterialGraphView", () => {
   })
 
   it("shows not-found state when API returns 404", async () => {
-    mockGetKGGraph.mockRejectedValue(
-      new Error("KG node 'test-material' not found"),
-    )
+    mockGetKGGraph.mockRejectedValue(new Error("KG node 'test-material' not found"))
 
     renderView("test-material")
 
@@ -211,6 +218,22 @@ describe("MaterialGraphView", () => {
     await waitFor(() => {
       expect(screen.getByText("返回材料属性")).toBeInTheDocument()
     })
+  })
+
+  it("renders not-found CTAs as real anchors, no <button> inside an <a> (NFM-4308 ④)", async () => {
+    mockGetKGGraph.mockRejectedValue(new Error("not found"))
+
+    const { container } = renderView("test-material")
+
+    await waitFor(() => {
+      expect(screen.getByText("节点未找到")).toBeInTheDocument()
+    })
+
+    expect(container.querySelectorAll("a button")).toHaveLength(0)
+    const backLink = screen.getByRole("link", { name: /返回材料属性/ })
+    expect(backLink).toHaveAttribute("href", "/materials/test-material/properties")
+    const browseLink = screen.getByRole("link", { name: "浏览材料" })
+    expect(browseLink).toHaveAttribute("href", "/browse")
   })
 
   it("shows error state with retry button on generic failure", async () => {
@@ -238,9 +261,7 @@ describe("MaterialGraphView", () => {
     fireEvent.click(screen.getByRole("button", { name: /重\s*试/ }))
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("application", { name: /knowledge graph/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
     })
     expect(mockGetKGGraph).toHaveBeenCalledTimes(2)
   })
@@ -263,9 +284,7 @@ describe("MaterialGraphView", () => {
   it("does not introduce overflow: hidden on the page-level main (outer layer keeps scroll, not clip)", async () => {
     renderView("test-material")
     await waitFor(() => {
-      expect(
-        screen.getByRole("application", { name: /knowledge graph/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
     })
 
     // The graph view's <main> element should not set an inline
@@ -291,9 +310,7 @@ describe("MaterialGraphView", () => {
     // drops the height prop would cause the canvas to collapse.
     renderView("test-material")
     await waitFor(() => {
-      expect(
-        screen.getByRole("application", { name: /knowledge graph/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
     })
     // The stub canvas renders the props via `data-props` for inspection.
     // (This is an integration check; the production component renders an

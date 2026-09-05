@@ -10,6 +10,30 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+#: Test-data material name pattern (NFM-4308 ⑤). Rejects names that start
+#: with ``Test`` / ``E2E-Test[-_ ]…`` so junk entries like ``Test`` or
+#: ``E2E-Test-Novel-Alloy-X7`` can no longer enter the production table.
+#: The boundary after the prefix must be end-of-string, whitespace, or a
+#: dash/underscore — real materials such as ``Testerite`` stay legal.
+TEST_MATERIAL_NAME_PATTERN = re.compile(
+    r"^(?:e2e[-_ ]?test|test)(?:\s|$|[-_])",
+    re.IGNORECASE,
+)
+
+
+def validate_material_name(name: str) -> str:
+    """Reject obviously-test material names (NFM-4308 ⑤).
+
+    Shared by create/update schemas so every entry path (POST, PATCH,
+    batch import) enforces the same rule.
+    """
+    if TEST_MATERIAL_NAME_PATTERN.match(name.strip()):
+        raise ValueError(
+            "material name looks like test data (Test / E2E-Test-*); "
+            "use a descriptive production name"
+        )
+    return name
+
 
 class MaterialCategoryCreate(BaseModel):
     """Schema for creating a material category."""
@@ -101,6 +125,11 @@ class MaterialCreate(BaseModel):
     description: str | None = None
     is_active: bool = True
 
+    @field_validator("name")
+    @classmethod
+    def name_not_test_data(cls, v: str) -> str:
+        return validate_material_name(v)
+
 
 class MaterialUpdate(BaseModel):
     """Schema for updating a material.
@@ -114,6 +143,13 @@ class MaterialUpdate(BaseModel):
     category_id: UUID | None = None
     description: str | None = None
     is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_test_data(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return validate_material_name(v)
 
 
 class MaterialResponse(BaseModel):

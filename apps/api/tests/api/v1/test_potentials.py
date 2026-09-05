@@ -98,18 +98,41 @@ async def test_list_potentials_returns_published_only(async_client, db_session) 
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Pre-existing pagination divergence (NFM-1366)", strict=False)
 async def test_list_potentials_pagination(async_client, db_session) -> None:
+    # NFM-4308 ③ — the endpoint now uses PaginationParams, so per_page
+    # (and the page_size alias) actually paginate; the old inline
+    # `limit`-aliased param silently ignored the caller's page size
+    # (the NFM-1366 divergence this test used to xfail on).
     for i in range(5):
         await _seed_potential(db_session, name=f"pot-{i}")
 
-    response = await async_client.get("/api/v1/potentials?limit=2&page=2")
+    response = await async_client.get("/api/v1/potentials?per_page=2&page=2")
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["total"] == 5
     assert data["page"] == 2
+    assert data["limit"] == 2
+    assert data["truncated"] is False
     assert data["total_pages"] == 3
     assert len(data["potentials"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_potentials_page_size_alias_and_clamp(
+    async_client, db_session
+) -> None:
+    for i in range(3):
+        await _seed_potential(db_session, name=f"pot-{i}")
+
+    by_alias = await async_client.get("/api/v1/potentials?page_size=2")
+    assert by_alias.status_code == 200
+    assert len(by_alias.json()["data"]["potentials"]) == 2
+
+    clamped = await async_client.get("/api/v1/potentials?page_size=1000")
+    assert clamped.status_code == 200
+    clamped_data = clamped.json()["data"]
+    assert clamped_data["limit"] == 100
+    assert clamped_data["truncated"] is True
 
 
 @pytest.mark.asyncio

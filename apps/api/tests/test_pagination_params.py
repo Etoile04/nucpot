@@ -62,13 +62,39 @@ class TestPaginationParamsValidation:
         with pytest.raises(ValidationError):
             PaginationParams(per_page=0)
 
-    def test_per_page_maximum_is_100(self) -> None:
+
+class TestPaginationParamsPageSizeAlias:
+    """NFM-4308 ③ — ``page_size`` is an accepted alias for ``per_page``."""
+
+    def test_page_size_alias_sets_per_page(self) -> None:
+        params = PaginationParams(page_size=2)
+        assert params.per_page == 2
+        assert params.truncated is False
+
+    def test_explicit_per_page_wins_over_alias(self) -> None:
+        params = PaginationParams(per_page=5, page_size=50)
+        assert params.per_page == 5
+
+    def test_alias_above_cap_clamps_and_flags(self) -> None:
+        params = PaginationParams(page_size=1000)
+        assert params.per_page == 100
+        assert params.truncated is True
+
+    def test_alias_zero_still_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            PaginationParams(per_page=101)
+            PaginationParams(page_size=0)
+
+    def test_per_page_above_100_clamps_instead_of_rejecting(self) -> None:
+        # NFM-4308 ③ — over-cap values clamp to 100 with a truncated flag
+        # instead of 422 so callers never silently miss rows.
+        params = PaginationParams(per_page=101)
+        assert params.per_page == 100
+        assert params.truncated is True
 
     def test_per_page_accepts_100(self) -> None:
         params = PaginationParams(per_page=100)
         assert params.per_page == 100
+        assert params.truncated is False
 
     def test_per_page_accepts_1(self) -> None:
         params = PaginationParams(per_page=1)
@@ -104,4 +130,6 @@ class TestPaginationParamsChineseDescriptions:
 
     def test_per_page_has_chinese_description(self) -> None:
         schema = PaginationParams.model_json_schema()
-        assert schema["properties"]["per_page"]["description"] == "每页数量"
+        assert schema["properties"]["per_page"]["description"] == (
+            "每页数量(1-100;超限按 100 执行并以 truncated 回传)"
+        )

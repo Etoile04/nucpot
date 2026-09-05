@@ -104,6 +104,9 @@ class SearchResponse(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
+    # NFM-4308 ③ — true when the requested page size exceeded the cap and
+    # was clamped (limit echoes the effective value).
+    truncated: bool = Field(default=False)
 
 
 # ---------------------------------------------------------------------------
