@@ -110,5 +110,34 @@ docker image prune -f >/dev/null
 # 4) build cache
 docker builder prune -af >/dev/null 2>&1 || true
 
+# 5) stale anonymous volumes (NFM-4357). Triple safety gate — remove ONLY
+# volumes that are ALL of:
+#   a) dangling (no container references them — `docker volume ls -qf dangling`)
+#   b) anonymous (64-hex name; named volumes are always deliberate)
+#   c) older than 24h (a build's throwaway containers may still be between
+#      create and start; same-day volumes stay)
+# prod data volumes are all named (nucpot-prod_*) so (b) already excludes
+# them; the explicit prefix check below is belt-and-braces (NFM-4273 F1:
+# anonymous prod leftovers would still be caught by the deny audit, but we
+# never even try).
+VOL_REMOVED=0
+NOW_EPOCH=$(date +%s)
+for V in $(docker volume ls -qf dangling=true); do
+  case "${V}" in
+    *nucpot-prod*|*nucpot-staging*) continue ;;
+  esac
+  case "${V}" in
+    ????????????????????????????????????????????????????????????????) : ;;
+    *) continue ;;  # not a 64-char anonymous id
+  esac
+  CREATED="$(docker volume inspect "${V}" --format '{{.CreatedAt}}' 2>/dev/null)" || continue
+  [ -n "${CREATED}" ] || continue
+  V_EPOCH=$(date -j -f '%Y-%m-%dT%H:%M:%S' "${CREATED%%.*}" +%s 2>/dev/null) || continue
+  [ $((NOW_EPOCH - V_EPOCH)) -ge 86400 ] || continue
+  if docker volume rm "${V}" >/dev/null 2>&1; then
+    VOL_REMOVED=$((VOL_REMOVED + 1))
+  fi
+done
+
 DF_AFTER="$(docker system df --format '{{.Size}}' | head -1)"
-echo "NFM-G2-CLEANUP: images ${DF_BEFORE} -> ${DF_AFTER} (candidates keep${KEEP_CANDIDATES}, shas keep${KEEP_SHAS})"
+echo "NFM-G2-CLEANUP: images ${DF_BEFORE} -> ${DF_AFTER} (candidates keep${KEEP_CANDIDATES}, shas keep${KEEP_SHAS}, stale-anon-volumes removed: ${VOL_REMOVED})"
