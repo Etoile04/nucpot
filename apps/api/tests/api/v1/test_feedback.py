@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import func, select
 
 from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority
 
@@ -146,6 +147,43 @@ async def test_submit_feedback_optional_fields_can_be_null(async_client) -> None
     assert response.status_code == 201
     body = response.json()
     assert body["success"] is True
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_submit_feedback_anonymous_creates_row(async_client, db_session) -> None:
+    """Public contract (NFM-4373): anonymous submission persists a row.
+
+    The route documents itself as 公开端点/无需认证, the feedback table has no
+    user linkage, and the FE feedback button renders for anonymous visitors.
+    A stray ``get_current_active_user`` dependency 401'd anonymous submissions
+    in prod while conftest auto-auth masked the behaviour in CI — this test
+    drops the auto-auth override so the real dependency chain runs, and goes
+    further than a 201 assertion: it verifies the row actually landed
+    (NFM-4380 enum-persistence class of regressions is invisible to
+    status-code-only checks on SQLite).
+
+    Posts via the nginx ``/api`` alias mount (#1211) — the path the FE client
+    uses in prod — so persistence is pinned end-to-end on the FE-facing route.
+    """
+    payload = {
+        "feedback_type": "bug_report",
+        "title": "Anonymous visitor report",
+        "description": "Submitted without any session cookie",
+        "contact_email": "visitor@example.com",
+    }
+    response = await async_client.post("/api/feedback", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["feedback_type"] == "bug_report"
+
+    count = await db_session.scalar(select(func.count()).select_from(Feedback))
+    assert count == 1
+    row = (await db_session.execute(select(Feedback))).scalar_one()
+    assert row.title == "Anonymous visitor report"
+    assert row.contact_email == "visitor@example.com"
+    assert row.status == FeedbackStatus.OPEN
 
 
 # ---------------------------------------------------------------------------
