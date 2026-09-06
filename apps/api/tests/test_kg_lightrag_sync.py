@@ -325,14 +325,14 @@ class TestTrackIdPersistence:
 
     @staticmethod
     def _mock_session_factory() -> MagicMock:
-        """Build an async-context-manager mock for ``async_session_factory``."""
+        """Build the factory mock behind a patched ``get_session_factory``."""
         session = MagicMock()
         session.execute = AsyncMock(return_value=MagicMock())
         session.commit = AsyncMock(return_value=None)
 
         factory = MagicMock()
-        # ``async with async_session_factory() as session`` — return
-        # an object whose ``__aenter__`` yields ``session``.
+        # ``async with get_session_factory()() as session`` — the accessor
+        # returns this factory, whose ``__aenter__`` yields ``session``.
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=session)
         cm.__aexit__ = AsyncMock(return_value=None)

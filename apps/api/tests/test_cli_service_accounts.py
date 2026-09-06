@@ -14,7 +14,7 @@ Validates:
 
 The tests use Click's ``CliRunner`` for the CLI surface and the same
 in-memory SQLite engine that ``conftest.py`` exposes for HTTP-level
-tests, swapped into the module-level ``async_session_factory``.
+tests, swapped in via the CLI module's ``get_session_factory`` accessor.
 """
 
 from __future__ import annotations
