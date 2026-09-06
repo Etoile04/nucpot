@@ -123,16 +123,11 @@ async function attemptRefresh(): Promise<boolean> {
  * the request once.  If the refresh fails or the retry also 401s, throws
  * the original error message so the UI can prompt re-authentication.
  */
-export async function request<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...options,
     credentials: "include",
-    headers: buildHeaders(
-      options.headers as Record<string, string> | undefined,
-    ),
+    headers: buildHeaders(options.headers as Record<string, string> | undefined),
   })
 
   if (response.status === 401) {
@@ -142,9 +137,7 @@ export async function request<T>(
       const retry = await fetch(path, {
         ...options,
         credentials: "include",
-        headers: buildHeaders(
-          options.headers as Record<string, string> | undefined,
-        ),
+        headers: buildHeaders(options.headers as Record<string, string> | undefined),
       })
       if (retry.ok) {
         if (retry.status === 204) return undefined as T
@@ -278,7 +271,11 @@ interface BlogPostUpdatePayload {
 }
 
 export const blogApi = {
-  list: (params?: { status?: string; limit?: number; offset?: number }): Promise<readonly BlogPostResponse[]> => {
+  list: (params?: {
+    status?: string
+    limit?: number
+    offset?: number
+  }): Promise<readonly BlogPostResponse[]> => {
     const query = new URLSearchParams()
     if (params?.status) query.set("status", params.status)
     if (params?.limit) query.set("limit", String(params.limit))
@@ -312,16 +309,13 @@ export const blogApi = {
     action: string,
     rejectionReason?: string,
   ): Promise<WorkflowActionResponse> =>
-    request<WorkflowActionResponse>(
-      `/api/v1/admin/blog/posts/${slug}/workflow`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          action,
-          rejection_reason: rejectionReason,
-        }),
-      },
-    ),
+    request<WorkflowActionResponse>(`/api/v1/admin/blog/posts/${slug}/workflow`, {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        rejection_reason: rejectionReason,
+      }),
+    }),
 } as const
 
 // ─── V1 Extraction API types ──────────────────────────────────────
@@ -379,9 +373,7 @@ interface ExtractionEnvelope<T> {
 
 export const extractionApi = {
   /** POST /api/v1/extraction/trigger — Trigger extraction for a literature source */
-  trigger: async (
-    payload: ExtractionTriggerRequest,
-  ): Promise<ExtractionTriggerResponse> => {
+  trigger: async (payload: ExtractionTriggerRequest): Promise<ExtractionTriggerResponse> => {
     const envelope = await request<ExtractionEnvelope<ExtractionTriggerResponse>>(
       "/api/v1/extraction/trigger",
       {
@@ -393,9 +385,7 @@ export const extractionApi = {
   },
 
   /** GET /api/v1/extraction/status/{jobId} — Check extraction job status */
-  getStatus: async (
-    jobId: string,
-  ): Promise<ExtractionStatusResponse> => {
+  getStatus: async (jobId: string): Promise<ExtractionStatusResponse> => {
     const envelope = await request<ExtractionEnvelope<ExtractionStatusResponse>>(
       `/api/v1/extraction/status/${jobId}`,
     )
@@ -407,12 +397,7 @@ export const extractionApi = {
 
 /** Lifecycle states for a literature item (mirrors backend parse_status). */
 export type LiteratureStatus =
-  | "uploaded"
-  | "parsing"
-  | "extracting"
-  | "completed"
-  | "failed"
-  | (string & {})
+  "uploaded" | "parsing" | "extracting" | "completed" | "failed" | (string & {})
 
 export interface LiteratureListItem {
   readonly id: string
@@ -541,7 +526,9 @@ function buildLiteratureListQuery(p: LiteratureListParams): string {
 
 export const literatureApi = {
   /** GET /api/v1/literature — paginated list with filters */
-  list: async (params: LiteratureListParams = {}): Promise<{
+  list: async (
+    params: LiteratureListParams = {},
+  ): Promise<{
     readonly items: readonly LiteratureListItem[]
     readonly total: number
   }> => {
@@ -604,31 +591,26 @@ export const literatureApi = {
 
   /** POST /api/v1/literature/from-doi — fetch paper by DOI */
   fromDoi: async (doi: string): Promise<LiteratureUploadResponse> => {
-    const env = await request<LiteratureUploadEnvelope>(
-      "/api/v1/literature/from-doi",
-      {
-        method: "POST",
-        body: JSON.stringify({ doi } satisfies DoiRequest),
-      },
-    )
+    const env = await request<LiteratureUploadEnvelope>("/api/v1/literature/from-doi", {
+      method: "POST",
+      body: JSON.stringify({ doi } satisfies DoiRequest),
+    })
     return env.data
   },
 
   /** POST /api/v1/literature/{id}/reextract — trigger re-extraction */
   reextract: async (id: string): Promise<LiteratureReextractResponse> => {
-    const env = await request<LiteratureReextractEnvelope>(
-      `/api/v1/literature/${id}/reextract`,
-      { method: "POST" },
-    )
+    const env = await request<LiteratureReextractEnvelope>(`/api/v1/literature/${id}/reextract`, {
+      method: "POST",
+    })
     return env.data
   },
 
   /** DELETE /api/v1/literature/{id} — delete literature + associated data */
   delete: async (id: string): Promise<{ readonly message: string }> => {
-    const env = await request<LiteratureDeleteEnvelope>(
-      `/api/v1/literature/${id}`,
-      { method: "DELETE" },
-    )
+    const env = await request<LiteratureDeleteEnvelope>(`/api/v1/literature/${id}`, {
+      method: "DELETE",
+    })
     return env.data
   },
 } as const
