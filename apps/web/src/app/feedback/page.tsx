@@ -2,18 +2,14 @@
 
 import { useState, FormEvent } from 'react'
 import { useAuth } from '@/components/AuthProvider'
+import { FEEDBACK_TYPES, submitFeedback } from '@/lib/feedback-api'
 
-const TYPES = [
-  { value: 'bug', label: 'Bug 报告' },
-  { value: 'feature', label: '功能建议' },
-  { value: 'data', label: '数据纠错' },
-  { value: 'other', label: '其他' },
-]
+const TYPES = FEEDBACK_TYPES
 
 export default function FeedbackPage() {
   const { user } = useAuth()
   const [form, setForm] = useState({
-    type: 'bug',
+    type: 'bug_report',
     title: '',
     description: '',
     email: user?.email || '',
@@ -28,22 +24,23 @@ export default function FeedbackPage() {
       setMsg({ type: 'err', text: '请填写标题' })
       return
     }
+    if (!form.description.trim()) {
+      setMsg({ type: 'err', text: '请填写详细描述' })
+      return
+    }
     setSubmitting(true)
     try {
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      await submitFeedback({
+        feedback_type: form.type,
+        title: form.title.trim(),
+        description: form.description.trim(),
+        contact_email: form.email || undefined,
+        page_url: window.location.href,
       })
-      const data = await res.json()
-      if (res.ok) {
-        setMsg({ type: 'ok', text: '感谢您的反馈！' })
-        setForm({ type: 'bug', title: '', description: '', email: user?.email || '' })
-      } else {
-        setMsg({ type: 'err', text: data.error || '提交失败' })
-      }
-    } catch {
-      setMsg({ type: 'err', text: '网络错误' })
+      setMsg({ type: 'ok', text: '感谢您的反馈！' })
+      setForm({ type: 'bug_report', title: '', description: '', email: user?.email || '' })
+    } catch (err) {
+      setMsg({ type: 'err', text: err instanceof Error ? err.message : '网络错误' })
     } finally {
       setSubmitting(false)
     }
@@ -104,6 +101,7 @@ export default function FeedbackPage() {
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                 placeholder="请提供更多细节…"
                 rows={5}
+                required
                 className={inputClass + ' resize-y'}
               />
             </div>

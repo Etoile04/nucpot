@@ -220,3 +220,111 @@ async def test_list_feedback_filters_by_type(db_session: AsyncSession) -> None:
     data = response.json()
     assert data["data"]["total"] == 1
     assert data["data"]["items"][0]["feedback_type"] == "bug_report"
+
+
+# ---------------------------------------------------------------------------
+# NFM-4380 — auth semantics + /api alias mount.
+#
+# History: POST carried a ``Depends(get_current_active_user)`` that contradicted
+# its documented "public endpoint" contract (the pre-Sprint-3 Next.js BFF route
+# inserted anonymously), so every production submission from the FE path 404'd
+# and every direct submission 401'd. GET claimed "admin only" in its docs but
+# enforced nothing, leaking contact_email PII once rows exist. These tests run
+# against the real auth chain (no_auto_auth) to pin both behaviors.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_submit_feedback_alias_path_is_public(db_session: AsyncSession) -> None:
+    """Anonymous POST /api/feedback (FE path, no /v1) returns 201 (NFM-4380)."""
+    from nfm_db.database import get_db
+    from nfm_db.main import app
+
+    app.dependency_overrides[get_db] = _override_get_db(db_session)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/feedback",
+            json={
+                "feedback_type": "usage_inquiry",
+                "title": "匿名提交测试",
+                "description": "未登录用户也可以提交反馈",
+            },
+        )
+
+    app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["feedback_type"] == "usage_inquiry"
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_submit_feedback_canonical_path_is_public(
+    db_session: AsyncSession,
+) -> None:
+    """Anonymous POST /api/v1/feedback returns 201 — public on the canonical path too."""
+    from nfm_db.database import get_db
+    from nfm_db.main import app
+
+    app.dependency_overrides[get_db] = _override_get_db(db_session)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/feedback",
+            json={
+                "feedback_type": "feature_request",
+                "title": "公开端点契约",
+                "description": "docstring 声明的公开语义必须与实现一致",
+            },
+        )
+
+    app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 201
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_list_feedback_requires_authentication(
+    db_session: AsyncSession,
+) -> None:
+    """Anonymous GET /api/v1/feedback returns 401 — contact_email PII is admin-only."""
+    from nfm_db.database import get_db
+    from nfm_db.main import app
+
+    app.dependency_overrides[get_db] = _override_get_db(db_session)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/feedback")
+
+    app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_list_feedback_allows_admin_via_real_auth_chain(
+    db_session: AsyncSession, admin_headers: dict
+) -> None:
+    """Authenticated ADMIN passes require_admin and reaches the listing."""
+    from nfm_db.database import get_db
+    from nfm_db.main import app
+
+    app.dependency_overrides[get_db] = _override_get_db(db_session)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/feedback", headers=admin_headers)
+
+    app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["total"] == 0

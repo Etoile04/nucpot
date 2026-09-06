@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import get_current_active_user
+from nfm_db.api.v1.auth import require_admin
 from nfm_db.database import get_db
 from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
 from nfm_db.models.user import User
@@ -30,7 +30,6 @@ router = APIRouter(tags=["反馈管理"])
 )
 async def submit_feedback(
     payload: FeedbackCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     """提交用户反馈（公开端点）.
@@ -51,6 +50,7 @@ async def submit_feedback(
     description="分页查询反馈列表，支持按状态、优先级和类型筛选（仅管理员）。\n\nList feedback entries with filtering and pagination (admin endpoint).",
 )
 async def list_feedback_endpoint(
+    _admin: Annotated[User, Depends(require_admin)],
     status: FeedbackStatus | None = Query(default=None),
     priority: Priority | None = Query(default=None),
     feedback_type: FeedbackType | None = Query(default=None),

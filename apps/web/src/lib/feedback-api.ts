@@ -1,6 +1,7 @@
 /**
  * API client for the feedback endpoint.
- * Uses same-origin BFF route (consistent with potentials-api). */
+ * Calls the FastAPI backend via the nginx /api proxy (NFM-4380: the backend
+ * now mounts the feedback router at /api as well as /api/v1). */
 
 export const FEEDBACK_TYPES = [
   { value: "bug_report", label: "Bug 报告" },
@@ -42,5 +43,16 @@ export async function submitFeedback(
     throw new Error(message)
   }
 
-  return (await response.json()) as FeedbackCreateResult
+  // Backend wraps payloads in an ApiResponse envelope: { success, data, error }.
+  const envelope = (await response.json()) as {
+    success: boolean
+    data?: FeedbackCreateResult
+    error?: string | null
+  }
+
+  if (!envelope.success || !envelope.data) {
+    throw new Error(envelope.error ?? "提交失败，请稍后重试")
+  }
+
+  return envelope.data
 }
