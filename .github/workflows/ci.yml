@@ -56,45 +56,12 @@ jobs:
       - name: Build
         run: pnpm run build
 
-  e2e:
-    name: E2E Tests (Live)
-    runs-on: ubuntu-latest
-    needs: frontend
-    timeout-minutes: 20
-    if: github.event_name == 'push'
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run E2E tests against live site
-        run: pnpm exec playwright test --project=chromium
-        env:
-          E2E_TARGET: live
-          BASE_URL: https://nucpot.dpdns.org
-          API_BASE_URL: https://verify.nucpot.dpdns.org
-          CI: true
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: playwright-report
-          path: apps/web/playwright-report/
-          retention-days: 30
+  # NOTE (NFM-4385): the push-only `E2E Tests (Live)` job used to live here.
+  # It raced the `Production Deployment` workflow triggered by the same push
+  # (~22-43 min rollout vs a ~4 min E2E job), so any merge whose live specs
+  # asserted NEW frontend behavior deterministically failed its first run
+  # against the stale prod bundle. Live E2E now runs AFTER the deploy
+  # completes — see .github/workflows/e2e-post-deploy.yml (workflow_run).
 
   backend:
     name: Backend — Lint, Type-check, Test
@@ -322,7 +289,7 @@ jobs:
   ci-failure-triage:
     name: CI Failure Triage
     runs-on: ubuntu-latest
-    needs: [frontend, backend, docker-build, e2e, schema-drift-guard]
+    needs: [frontend, backend, docker-build, schema-drift-guard]
     if: failure() && github.event_name == 'push'
     permissions:
       issues: write
@@ -336,17 +303,16 @@ jobs:
             const sha = context.sha.slice(0, 7);
             const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-            // Determine which jobs failed
+            // Determine which jobs failed (E2E lives in e2e-post-deploy.yml
+            // since NFM-4385 — it is no longer a job of this workflow)
             const frontendResult = '${{ needs.frontend.result }}';
             const backendResult = '${{ needs.backend.result }}';
             const dockerBuildResult = '${{ needs.docker-build.result }}';
-            const e2eResult = '${{ needs.e2e.result }}';
 
             const failed = [];
             if (frontendResult === 'failure') failed.push('Frontend');
             if (backendResult === 'failure') failed.push('Backend');
             if (dockerBuildResult === 'failure') failed.push('Docker-Build');
-            if (e2eResult === 'failure') failed.push('E2E');
 
             if (failed.length === 0) {
               core.info('No jobs actually failed, skipping triage.');
@@ -418,8 +384,7 @@ jobs:
                   `### Failed Jobs\n` +
                   `- Frontend: ${frontendResult}\n` +
                   `- Backend: ${backendResult}\n` +
-                  `- Docker-Build: ${dockerBuildResult}\n` +
-                  `- E2E: ${e2eResult}\n\n` +
+                  `- Docker-Build: ${dockerBuildResult}\n\n` +
                   `### Actions\n` +
                   `1. [View failed run](${runUrl})\n` +
                   `2. Download artifacts for detailed logs\n` +
@@ -437,8 +402,9 @@ jobs:
             TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
             RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             SHA="${{ github.sha }}"
-            FAILED_JOBS="Frontend=${{ needs.frontend.result }}, Backend=${{ needs.backend.result }}, Docker-Build=${{ needs.docker-build.result }}, E2E=${{ needs.e2e.result }}"
+            FAILED_JOBS="Frontend=${{ needs.frontend.result }}, Backend=${{ needs.backend.result }}, Docker-Build=${{ needs.docker-build.result }}"
             # NFM-848: include Docker-Build in the alert (was silently omitted)
+            # NFM-4385: E2E removed — it runs post-deploy in e2e-post-deploy.yml
 
             curl -sf -X POST "$WEBHOOK_URL" \
               -H 'Content-Type: application/json' \
@@ -465,7 +431,7 @@ jobs:
   ci-recovery:
     name: CI Recovery — close stale issues
     runs-on: ubuntu-latest
-    needs: [frontend, backend, docker-build, e2e, schema-drift-guard]
+    needs: [frontend, backend, docker-build, schema-drift-guard]
     if: success() && github.event_name == 'push'
     permissions:
       issues: write
