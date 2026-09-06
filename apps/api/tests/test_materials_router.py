@@ -317,7 +317,7 @@ class TestUpdateMaterialEndpoint:
         async_client: AsyncClient,
     ) -> None:
         fake_id = uuid.uuid4()
-        payload = {"name": "Test"}
+        payload = {"name": "Missing Material"}
 
         resp = await async_client.patch(f"/api/v1/materials/{fake_id}", json=payload)
 
@@ -585,5 +585,24 @@ class TestUncategorizedMaterialCountEndpoint:
         resp = await async_client.get(
             "/api/v1/material-categories/uncategorized-count",
         )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_excludes_retired_merged_fragments(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """NFM-4312 — retired duplicates do not inflate the notice count."""
+        await _seed_uncategorized_material(db_session, name="Uncat-Active")
+        await _seed_uncategorized_material(
+            db_session, name="Retired fragment", is_active=False
+        )
+
+        resp = await async_client.get(
+            "/api/v1/material-categories/uncategorized-count",
+        )
+
         assert resp.status_code == 200
         assert resp.json()["data"]["count"] == 1

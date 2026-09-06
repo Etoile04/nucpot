@@ -10,7 +10,10 @@ export interface Potential {
   system_tags: string[] | null
   description: string | null
   applicability: Applicability | null
-  references: Reference[]
+  // F3 / NFM-4343 — three Hunan University potentials (22d980dc, c6591f31,
+  // c19b8325) store references as bare citation strings; canonical rows use
+  // the Reference object shape. Both render correctly downstream.
+  references: (Reference | string)[]
   developers: Developer[]
   verified_props: Record<string, unknown>
   sim_software: string[]

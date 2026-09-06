@@ -262,6 +262,42 @@ async def test_list_material_properties_isolates_by_material(async_client, db_se
 
 
 # ---------------------------------------------------------------------------
+# Association — measurements from MULTIPLE datasets of one material
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_material_properties_aggregates_across_datasets(async_client, db_session) -> None:
+    """NFM-4312 (BUG-32): the page must surface every dataset of the material.
+
+    Association is indirect (measurement → dataset.material_id), so a
+    material whose literature arrived through several datasets/sources —
+    the exact production shape the backfill creates — must show all rows,
+    not just the first dataset's.
+    """
+    mat = await _seed_material(db_session)
+    src_a = await _seed_source(db_session, title="Owen 2023")
+    src_b = await _seed_source(db_session, title="Terricabras 2015")
+    cat = await _seed_category(db_session)
+    pt = await _seed_property_type(db_session, cat.id, name="密度", slug="density")
+    ds_a = await _seed_dataset(db_session, mat.id, src_a.id, title="dataset A")
+    ds_b = await _seed_dataset(db_session, mat.id, src_b.id, title="dataset B")
+    await _seed_measurement(db_session, ds_a.id, pt.id, value_scalar=1.0)
+    await _seed_measurement(db_session, ds_a.id, pt.id, value_scalar=2.0)
+    await _seed_measurement(db_session, ds_b.id, pt.id, value_scalar=3.0)
+
+    response = await async_client.get(API.format(material_id=mat.id))
+
+    assert response.status_code == 200
+    inner = response.json()["data"]
+    assert inner["meta"]["total"] == 3
+    values = sorted(row["value"] for row in inner["data"])
+    assert values == ["1.0", "2.0", "3.0"]
+    sources = {row["source"]["title"] for row in inner["data"]}
+    assert sources == {"Owen 2023", "Terricabras 2015"}
+
+
+# ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
 

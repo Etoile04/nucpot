@@ -70,7 +70,7 @@ The structural smell: an interactive, autonomy-leaning desktop harness shares a 
 
 - **No duplicate of [NFM-4265](/NFM/issues/NFM-4265):** that issue (LE, in_progress) fixes the stale `PROD_IMAGE_TAG` env-file landmine and makes host-side compose fail loudly on stale tags. G1/G2 gate *contexts*; NFM-4265 removes *one landmine*. Orthogonal; both ship.
 - **No sandbox mandate for `terminal.backend`:** switching the desktop harness to a sandboxed backend is a product-level change to the operator's harness with broad blast radius; G1's scoped blocklist gets the risk reduction at a fraction of the cost.
-- **No adversarial-security claim:** these guardrails convert *silent accidental/autonomous-drift* prod mutation into *loud, deliberate, attributed* bypass. A host-user-level actor can ultimately defeat host-level gates; G4 exists for that residual.
+- **No adversarial-security claim:** these guardrails convert *silent accidental/autonomous-drift* prod mutation into *loud, deliberate, attributed* bypass. A host-user-level actor can ultimately defeat host-level gates; G4 exists for that residual. NFM-4297 raises the effort bar for that actor (gated entries serialize on an exclusive lock, bind `DEPLOY_SHA`/recorded baselines to origin/main reachability, and pin interpreters so a caller's PATH selects nothing — macOS sudo has no secure_path), but the disclaimer stands: this is tamper *resistance*, not tamper *impossibility*.
 
 ## 4. Risks & trade-offs
 

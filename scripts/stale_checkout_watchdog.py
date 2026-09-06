@@ -29,7 +29,12 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+try:  # py3.11+; fallback for the py3.9 CommandLineTools interpreter on the runner
+    from datetime import UTC
+except ImportError:  # pragma: no cover
+    from datetime import timezone as _tz
+    UTC = _tz.utc
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode

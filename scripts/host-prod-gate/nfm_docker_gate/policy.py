@@ -23,6 +23,15 @@ volume names). Opaque ids are resolved through an injected resolver
 callback that asks the daemon (read-only GET) who the target actually is;
 network ids have no resolver path, so opaque ones fail closed.
 
+Exec acceptance note (NFM-4297 CR F9): interactive exec into prod is
+intentionally NOT text-scope-checkable. ``POST /containers/{id}/exec`` is
+caught by the container-mutation deny above, and the follow-up
+``POST /exec/{id}/start`` carries only an opaque daemon id with no
+name-able target — it lands in unrecognized-mutation fail-closed deny. exec
+is therefore reachable solely through the full gate socket, where ADR-013
+G3 audits every byte; the ro gate accepts that residual rather than
+pretending an exec payload can be scope-checked.
+
 This module is pure logic: no sockets, no I/O. Everything here is
 exercised by scripts/tests/test_nfm_docker_gate_policy.py.
 """
@@ -34,18 +43,39 @@ import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import unquote
 
 # Docker API paths arrive as /v1.43/containers/json or /containers/json.
 _VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
 # /containers/{id}/json — {id} may contain [a-zA-Z0-9][a-zA-Z0-9_.-]*
 _CONTAINER_SUB = re.compile(
-    r"^containers/(?P<id>[^/]+)/(?P<action>json|logs|stats|top|changes|export|ports)$"
+    r"^containers/(?P<id>[^/]+)/(?P<action>json|logs|stats|top|changes|export|archive|ports)$"
 )
+# /images/{name}/history — image layer-history read (NFM-4297 CR F9).
+# {name} keeps the single-segment shape the other image rules use;
+# multi-segment refs (repo/library/tag) simply don't match and stay
+# unrecognized-deny. /json is handled by _IMAGE_INSPECT above (NFM-4333
+# RC2 sanctioned it for `docker compose up`); F9's prod-name and
+# opaque-ref deny on /json was withdrawn in favour of RC2's allow.
+_IMAGE_SUB = re.compile(r"^images/(?P<name>[^/]+)/history$")
 _CONTAINER_MUTATION = re.compile(
     r"^containers/(?P<id>[^/]+)/(?P<action>start|stop|kill|restart|pause|unpause|wait|update|rename|exec|attach|archive)$"
 )
 _IMAGE_NAME_ACTION = re.compile(r"^images/(?P<name>[^/]+)/(?P<action>tag|push)$")
+# GET images/{name}/json — single-image inspect. {name} is multi-segment
+# for registry refs (e.g. pgvector/pgvector:pg16), hence ".+".
+_IMAGE_INSPECT = re.compile(r"^images/(?P<name>.+)/json$")
+# GET exec/{id}/json — exec-instance inspect (compose v5's `exec` reads the
+# exit code after start). Hex-id shape only: daemon-minted exec ids are hex
+# (NFM-4357 RC12 guard), so non-hex shapes stay unrecognized (fail-closed).
+# Same shape as _IMAGE_INSPECT: an item read of an
+# object the caller already created through an audited endpoint.
+_EXEC_INSPECT = re.compile(r"^exec/(?P<id>[0-9a-f]+)/json$")
+# POST exec/{id}/start — execute an exec instance the caller already
+# created via POST containers/{id}/exec (which carries the prod
+# scope-check). The start call carries no container reference of its own.
+_EXEC_START = re.compile(r"^exec/(?P<id>[^/]+)/start$")
 _NETWORK_ACTION = re.compile(r"^networks/(?P<id>[^/]+)/(?P<action>connect|disconnect)$")
 
 # GET endpoints the read-only context may hit. Anything else: denied
@@ -181,7 +211,10 @@ class TargetInfo:
         return None
 
 
-Resolver = Callable[[str], TargetInfo | None]
+# A module-level alias is RUNTIME code — `from __future__ import
+# annotations` does not defer it — so PEP 604 `|` here crashes the
+# py3.9 interpreter the launchd proxies run under (NFM-4320).
+Resolver = Callable[[str], Optional[TargetInfo]]
 
 
 def _strip_version(path: str) -> str:
@@ -399,27 +432,78 @@ def classify(
                         target=name,
                     )
             return Decision(True, "read-only endpoint")
+        if _IMAGE_INSPECT.match(path):
+            # Single-image inspect — a sanctioned read (NFM-4333: this was
+            # fail-closed in BOTH modes and `docker compose up` — the
+            # sanctioned deploy path — could not resolve a single service
+            # image). The full list (images/json) is already allowed and
+            # returns the same metadata for every image, so the item
+            # endpoint exposes strictly less data. Layer/export channels
+            # (images/get) stay scope-guarded above.
+            return Decision(True, "read-only endpoint")
+        if _EXEC_INSPECT.match(path):
+            # Exec-instance inspect — a sanctioned read (NFM-4357 / NFM-4333
+            # RC12: fail-closed in BOTH modes, `docker compose exec` reads
+            # the probe's exit code via GET exec/{id}/json after
+            # create+start, so scripts/prod_migrate.sh's pg_isready
+            # readiness loop could never pass and run 34002594090 aborted
+            # pre-cutover). The exec's owning container is already fully
+            # inspectable (containers/{id}/json is an allowed read), so the
+            # exec item endpoint exposes strictly less data. Exec create
+            # stays mutation-classified below; start is allowed in the
+            # POST section (RC8).
+            return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")
         if any(path.startswith(prefix) for prefix in _GET_ALLOW_PREFIX):
             return Decision(True, "read-only endpoint")
         match = _CONTAINER_SUB.match(path)
         if match:
-            if match.group("action") == "export":
-                # A prod container's whole filesystem as a tar — read-only
-                # in verb but exfiltration in effect; opaque ids fail
-                # closed alongside (NFM-4273 CR F1).
+            if match.group("action") in ("export", "archive"):
+                # A prod container's whole filesystem as a tar (export), or
+                # any single file out of it (archive = `docker cp` out) —
+                # read-only in verb but exfiltration in effect; opaque ids
+                # fail closed alongside (NFM-4273 CR F1; archive added by
+                # NFM-4297 CR F9 — it used to be denied only by falling
+                # through to unrecognized-GET, guarded by accident rather
+                # than by design).
                 ident = match.group("id")
                 violation = TargetInfo(name=ident).prod_violation(cfg)
                 if violation or _OPAQUE_ID_RE.match(ident.lower()):
+                    action = match.group("action")
                     return Decision(
                         False,
-                        f"export denied ({violation or 'opaque id fail-closed'})"
+                        f"{action} denied ({violation or 'opaque id fail-closed'})"
                         " (exfiltration guard)",
                         scope="prod" if violation else "n/a",
                         audit=True,
                         target=ident,
                     )
+            return Decision(True, "read-only endpoint")
+        image_sub = _IMAGE_SUB.match(path)
+        if image_sub:
+            # Image layer-history read (NFM-4297 CR F9): /images/{name}/history
+            # returns the Dockerfile RUN lines (build args, secrets) of an
+            # image — same exfiltration surface as images/get, same V1
+            # fail-closed rule on opaque refs. /json is allowed unconditionally
+            # upstream by _IMAGE_INSPECT (NFM-4333 RC2, post-dates F9 spec).
+            name = image_sub.group("name")
+            if _OPAQUE_IMAGE_REF_RE.match(name.lower()):
+                return Decision(
+                    False,
+                    f"opaque image ref {name!r} cannot be scope-checked (fail-closed)",
+                    scope="n/a",
+                    audit=True,
+                    target=name,
+                )
+            if name.startswith(cfg.prod_image_prefixes):
+                return Decision(
+                    False,
+                    f"layer-history read of prod image {name!r} denied (exfiltration guard)",
+                    scope="prod",
+                    audit=True,
+                    target=name,
+                )
             return Decision(True, "read-only endpoint")
         return Decision(False, f"unrecognized GET endpoint {path!r} (fail-closed)", audit=True)
 
@@ -432,17 +516,34 @@ def classify(
     # ---- ro mode mutations -------------------------------------------------
     params = parse_query(query)
 
-    # R3 (fail-closed): scope-relevant query values must be readable as
-    # sent — the daemon percent-decodes them server-side, so an encoded
-    # name could scope-check as innocent here and resolve as prod there.
+    # R3 (fail-closed): scope checks must see EXACTLY what the daemon
+    # resolves. The daemon percent-decodes query values server-side, so
+    # an encoded name could scope-check as innocent here and resolve as
+    # prod there. Decode each scope-relevant value once — what the daemon
+    # sees after its own single decode — and keep failing closed when a
+    # value is still encoded afterwards: a double-encoded ref is never
+    # sent by the docker CLI and can only be an evasion attempt.
+    # (NFM-4333 RC4: `docker build`'s base-image pull sends
+    # repo=docker.io%2Flibrary%2Fpython — a sanctioned image-layer op the
+    # old blanket refusal on '%' blocked.)
+    decoded: dict[str, list[str]] = {}
     for key in ("name", "fromImage", "fromSrc", "ref", "repo", "tag", "names"):
-        for value in params.get(key, []):
+        values = params.get(key, [])
+        if not values:
+            continue
+        checked = []
+        for value in values:
             if "%" in value:
-                return Decision(
-                    False,
-                    f"percent-encoded {key!r} value cannot be scope-checked (fail-closed)",
-                    audit=True,
-                )
+                value = unquote(value)
+                if "%" in value:
+                    return Decision(
+                        False,
+                        f"double-encoded {key!r} value cannot be scope-checked (fail-closed)",
+                        audit=True,
+                    )
+            checked.append(value)
+        decoded = {**decoded, key: checked}
+    params = {**params, **decoded}
 
     if method == "POST" and path == "build":
         tags = params.get("t") or params.get("tag") or []
@@ -717,6 +818,24 @@ def classify(
         return Decision(True, "volume rm (non-prod)", scope="non-prod", audit=True, target=name)
 
     # ---- everything else that mutates: fail closed ------------------------------
+    if method == "POST":
+        exec_match = _EXEC_START.match(path)
+        if exec_match:
+            # POST exec/{id}/start — execute an exec instance the caller
+            # created via POST containers/{id}/exec, which already
+            # prod-scope-checked the target container. The start call
+            # carries no container reference of its own (the binding lives
+            # on the exec instance), so there is nothing further to
+            # scope-check here (NFM-4333: `docker exec` from the ro
+            # context — e.g. the pre-deploy assert smoke — died here with
+            # the exec never starting).
+            return Decision(
+                True,
+                "exec start (instance created via audited endpoint)",
+                audit=True,
+                target=exec_match.group("id"),
+            )
+
     if method in ("POST", "PUT", "DELETE", "PATCH"):
         return Decision(False, f"unrecognized mutation {method} /{path} (fail-closed)", audit=True)
 

@@ -36,7 +36,11 @@ SANCTIONED = [
     "run-worker-inspect.sh",
     "run-sql.sh",
     "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
+    "run-cleanup.sh",  # NFM-4357: sanctioned image retention cleanup
 ]
+
+# Hermetic sha satisfying HEAD==DEPLOY_SHA in entry tests.
+_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
 
 
 # ---- syntax -------------------------------------------------------------------
@@ -128,15 +132,26 @@ class EntryHarness:
     """Runs entry scripts with a fake deploy identity and fake docker."""
 
     def __init__(self, tmp_path: Path) -> None:
+        self.tmp = tmp_path
         self.bin_dir = tmp_path / "fakebin"
         self.bin_dir.mkdir()
         self.repo = tmp_path / "fakerepo"
         (self.repo / "tools" / "pre-deploy-assert-smoke").mkdir(parents=True)
         self.docker_calls = tmp_path / "docker-calls.txt"
+        self.entry_lock = tmp_path / "entry.lock"
         self._write_executable("id", 'printf "nfmdeploy\\n"')
         self._write_executable(
             "docker",
             f"printf '%s\\n' \"$*\" >> {self.docker_calls}\nexit 0\n",
+        )
+        # Default fake git (NFM-4297 CR F7): satisfies the entries' SHA
+        # binding (merge-base reachable) + HEAD==DEPLOY_SHA (rev-parse)
+        # unless a test overrides it.
+        self._write_executable(
+            "git",
+            'if [ "$1" = "merge-base" ]; then exit 0; fi\n'
+            f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\n'
+            "exit 1\n",
         )
         # stub of the real assert.sh — records argv, exits 0
         stub = self.repo / "tools" / "pre-deploy-assert-smoke" / "assert.sh"
@@ -156,6 +171,19 @@ class EntryHarness:
         env = dict(os.environ)
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         env.setdefault("NFM_G2_REPO", str(self.repo))  # test hook; env_reset kills it in prod
+        # NFM-4297 CR F7: entries pin interpreters/lock to absolute paths
+        # via NFM_G2_* hooks. Wire any fake present in fakebin to its hook
+        # so fakes stay exercised; env_extra (applied last) overrides.
+        for tool, hook in (
+            ("git", "NFM_G2_GIT_BIN"),
+            ("python3", "NFM_G2_PYTHON_BIN"),
+            ("bash", "NFM_G2_BASH_BIN"),
+            ("id", "NFM_G2_ID_BIN"),
+        ):
+            fake = self.bin_dir / tool
+            if fake.exists():
+                env.setdefault(hook, str(fake))
+        env.setdefault("NFM_G2_ENTRY_LOCK", str(self.entry_lock))
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
@@ -314,12 +342,17 @@ def test_run_sql_rejects_bad_db_names(entry):
 
 
 class RecorderSpy:
-    """Stubs python3 for run-record-manifest.sh: records env + argv."""
+    """Stubs python3 for run-record-manifest.sh: records env + argv.
+
+    The entry's flock probe (``python3 -c 'import fcntl; …'``) must reach the
+    REAL python3 — fd 9 has to be genuinely flocked or every lock test is a
+    no-op — so ``-c`` invocations pass through untouched."""
 
     def __init__(self, harness):
         self.calls = harness.repo / "recorder-calls.log"
         harness._write_executable(
             "python3",
+            'if [ "$1" = "-c" ]; then exec /usr/bin/python3 "$@"; fi\n'
             f'printf "%s\\n" "$*" >> {self.calls}\n'
             f'printf "manifest=%s world=%s\\n" "$NFM_DEPLOY_MANIFEST" '
             f'"$NFM_DEPLOY_MANIFEST_WORLD_READABLE" >> {self.calls}\nexit 0\n',
@@ -402,9 +435,144 @@ def test_run_record_manifest_accepts_short_sha(entry):
     assert result.returncode == 0, result.stderr
 
 
-# ---- NFM-4273 wiring: semantic sudoers parse + behavioral forwarding ----------
+# ---- NFM-4297 (CR F7 hardening): lock, SHA binding, pinned interpreters --------
 
-_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+
+def test_run_deploy_refuses_sha_unreachable_from_main(entry):
+    """CR F7 SHA binding: HEAD==DEPLOY_SHA alone qualifies ANY local commit
+    (or rewritten history) — the deploy must also require DEPLOY_SHA to be
+    reachable from origin/main. Fake git refuses the ancestry → deploy body
+    never execs."""
+    entry._write_executable(
+        "git",
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\n'
+        "exit 1\n",  # merge-base --is-ancestor → NOT reachable
+    )
+    entry._write_executable(
+        "bash",
+        f"printf 'body ran\\n' >> {entry.docker_calls}\nexit 0\n",
+    )
+    result = entry.run("run-deploy.sh", env_extra={"DEPLOY_SHA": _SHA})
+    assert result.returncode == 1
+    assert "not reachable from origin/main" in result.stderr
+    assert not entry.docker_calls.exists() or "body ran" not in entry.docker_calls.read_text()
+
+
+def test_run_record_manifest_refuses_unreachable_sha(entry):
+    """CR F7 manifest-poisoning guard: a recorded baseline matching rogue
+    live state would SILENCE the drift alarm — the recorder entry must
+    refuse a --deploy-sha that is not reachable from origin/main."""
+    RecorderSpy(entry)
+    entry._write_executable(
+        "git",
+        'if [ "$1" = "merge-base" ]; then exit 1; fi\nexit 0\n',
+    )
+    result = entry.run("run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", "gh-runner:lwj04")
+    assert result.returncode == 1
+    assert "not reachable from origin/main" in result.stderr
+    assert not (entry.repo / "recorder-calls.log").exists()
+
+
+def test_entry_lock_excludes_overlapping_record(entry):
+    """CR F7 entry lock: an exclusive flock shared by run-deploy.sh and
+    run-record-manifest.sh serializes them — while held, the record entry
+    stands down (75) without touching anything; released, it proceeds."""
+    import fcntl
+
+    RecorderSpy(entry)
+    lock = entry.entry_lock
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    # the hold must span the entry subprocess — no context manager
+    holder = open(lock, "a+")  # noqa: SIM115
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = entry.run(
+            "run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", "gh-runner:lwj04"
+        )
+        assert result.returncode == 75
+        assert "another gated entry holds" in result.stderr
+        assert not (entry.repo / "recorder-calls.log").exists()
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+
+    result = entry.run("run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", "gh-runner:lwj04")
+    assert result.returncode == 0, result.stderr
+    assert (entry.repo / "recorder-calls.log").exists()
+
+
+def test_run_deploy_pinned_bash_ignores_path_shim(entry, tmp_path):
+    """CR F7 pinned interpreters + PATH sanitize: a caller-controlled PATH
+    must never select a binary that runs as nfmdeploy (macOS sudo has no
+    secure_path). A PATH bash shim must NOT run; the pinned bash must — and
+    it must see a TRUSTED-only PATH."""
+    pinned = tmp_path / "pinned-bash"
+    pinned.write_text(
+        f'#!/bin/bash\nprintf "PINNED path=[%s]\\n" "$PATH" >> {entry.docker_calls}\nexit 0\n'
+    )
+    pinned.chmod(0o755)
+    # the PATH shim would win under PATH resolution (fakebin is PATH-first)
+    entry._write_executable("bash", f"printf 'PATHSHIM ran\\n' >> {entry.docker_calls}\nexit 0\n")
+    result = entry.run(
+        "run-deploy.sh",
+        env_extra={"DEPLOY_SHA": _SHA, "NFM_G2_BASH_BIN": str(pinned)},
+    )
+    assert result.returncode == 0, result.stderr
+    log = entry.docker_calls.read_text()
+    assert "PATHSHIM" not in log
+    assert "PINNED" in log
+    # the deploy body's PATH is the trusted list only — no caller dirs
+    body_path = log.split("path=[", 1)[1].split("]", 1)[0]
+    assert str(entry.bin_dir) not in body_path
+    assert body_path.startswith("/usr/local/bin:")
+
+
+def test_record_entry_pinned_python_ignores_path_shim(entry, tmp_path):
+    """CR F7 pinned interpreters, record side: the recorder must exec via
+    the pinned python3, never a PATH-resolved shim."""
+    pinned = tmp_path / "pinned-python3"
+    pinned.write_text(
+        f'#!/bin/bash\nprintf "PINNED-RECORDER %s\\n" "$*" >> {entry.docker_calls}\nexit 0\n'
+    )
+    pinned.chmod(0o755)
+    entry._write_executable(
+        "python3", f"printf 'PATHSHIM-RECORDER ran\\n' >> {entry.docker_calls}\nexit 0\n"
+    )
+    result = entry.run(
+        "run-record-manifest.sh",
+        "--deploy-sha",
+        _SHA,
+        "--actor",
+        "gh-runner:lwj04",
+        env_extra={"NFM_G2_PYTHON_BIN": str(pinned)},
+    )
+    assert result.returncode == 0, result.stderr
+    log = entry.docker_calls.read_text()
+    assert "PATHSHIM-RECORDER" not in log
+    assert "PINNED-RECORDER scripts/record_deploy_manifest.py" in log
+
+
+def test_entry_preflight_ignores_path_shims(entry):
+    """CR F7 follow-up: the trusted-PATH export must precede EVERY external
+    binary the entries run as nfmdeploy, not just the exec'd interpreter.
+    `mkdir` (entry-lock setup) and `id` (identity check) used to resolve
+    from the inherited caller PATH before the export — a PATH shim placed
+    ahead of them must not run."""
+    entry._write_executable("mkdir", f"printf 'MKDIRSHIM ran\\n' >> {entry.docker_calls}\nexit 0\n")
+    entry._write_executable("bash", f"printf 'body ran\\n' >> {entry.docker_calls}\nexit 0\n")
+    result = entry.run("run-deploy.sh", env_extra={"DEPLOY_SHA": _SHA})
+    assert result.returncode == 0, result.stderr
+
+    RecorderSpy(entry)
+    result = entry.run("run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", "gh-runner:lwj04")
+    assert result.returncode == 0, result.stderr
+    assert (entry.repo / "recorder-calls.log").exists()
+
+    log = entry.docker_calls.read_text() if entry.docker_calls.exists() else ""
+    assert "MKDIRSHIM" not in log
+
+
+# ---- NFM-4273 wiring: semantic sudoers parse + behavioral forwarding ----------
 
 
 def test_sudoers_env_keep_scoped_to_deploy_entry_only():
@@ -430,7 +598,8 @@ def test_run_deploy_forwards_actor_env_into_deploy_body(entry):
     `bash` stands in for the deploy body and records what it inherited)."""
     entry._write_executable(
         "git",
-        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\nexit 1\n',
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\n'
+        'if [ "$1" = "merge-base" ]; then exit 0; fi\nexit 1\n',
     )
     entry._write_executable(
         "bash",
@@ -452,7 +621,8 @@ def test_run_deploy_defaults_actor_to_empty_for_manual_runs(entry):
     (deploy_prod.sh then defaults it), never leave it unset (set -u trap)."""
     entry._write_executable(
         "git",
-        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\nexit 1\n',
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\n'
+        'if [ "$1" = "merge-base" ]; then exit 0; fi\nexit 1\n',
     )
     entry._write_executable(
         "bash",

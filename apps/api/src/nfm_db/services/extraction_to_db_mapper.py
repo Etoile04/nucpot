@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import case, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,7 @@ from nfm_db.models import (
     Dataset,
     DataSource,
     Material,
+    MaterialAlias,
     MeasurementCondition,
     PropertyCategory,
     PropertyMeasurement,
@@ -234,6 +235,12 @@ class MappingResult:
     # ``skipped_unknown_properties`` so operators can alert on the specific
     # "extractor schema-drift" signal.
     skipped_unknown_materials: int = 0
+    # NFM-4312 (BUG-32): per-stage hits of the staged material
+    # resolution ("formula" / "normalized_formula" / "alias" / "name").
+    # Lets operators watch where ingest resolution lands — a spike in
+    # "alias" means curators are steering, a flat zero across all stages
+    # with rising ``created_materials`` means fragmentation is back.
+    material_resolution_counts: dict[str, int] = field(default_factory=dict)
     validation_errors: int = 0
     # NFM-4013 / Path (a): capture list populated at the unknown-property
     # drop site. Each entry is a dict with the keys below — see
@@ -685,6 +692,8 @@ async def map_and_persist(
     skipped_duplicate_measurements = 0
     skipped_unknown_properties = 0
     skipped_unknown_materials = 0  # NFM-3919
+    # NFM-4312 — staged-resolution hit counters (see MappingResult).
+    material_resolution_counts: dict[str, int] = {}
     # NFM-4013 / Path (a): accumulate structured unknown-property records so
     # ``MappingResult.skipped_unknown_details`` enumerates the LLM-only
     # names dropped by ``_lookup_property_type``.
@@ -823,18 +832,35 @@ async def map_and_persist(
         # and ``item.composition`` are truthy here, so we no longer fall back
         # to ``"Unknown Material"`` — that fallback was the root cause of the
         # pollution where every heuristic run inserted a fresh row.
+        #
+        # NFM-4312 (BUG-32): the single exact-formula probe above let prose
+        # compositions ("amorphous UO2") spawn fragment rows on every run
+        # while real measurements piled onto the sentinel.  Resolution is
+        # now staged — see ``_resolve_existing_material`` — and each stage
+        # hit is counted for observability.
         if m_key not in material_map:
             material_name = item.material_name
             formula = item.composition
 
-            existing_mat = await _find_material_by_formula(db, formula)
-            if existing_mat:
+            existing_mat, resolution_stage = await _resolve_existing_material(
+                db, item
+            )
+            if existing_mat is not None:
                 material_map[m_key] = existing_mat
                 reused_entities += 1
+                if resolution_stage is not None:
+                    material_resolution_counts[resolution_stage] = (
+                        material_resolution_counts.get(resolution_stage, 0) + 1
+                    )
             else:
                 material = Material(
                     name=material_name,
                     formula=formula,
+                    crystal_structure=(
+                        "amorphous"
+                        if _detect_amorphous_phase(formula, material_name)
+                        else None
+                    ),
                     is_active=True,
                 )
                 db.add(material)
@@ -1002,6 +1028,7 @@ async def map_and_persist(
         skipped_duplicate_measurements=skipped_duplicate_measurements,
         skipped_unknown_properties=skipped_unknown_properties,
         skipped_unknown_materials=skipped_unknown_materials,
+        material_resolution_counts=material_resolution_counts,
         validation_errors=validation_error_count,
         skipped_unknown_details=skipped_unknown_details,
     )
@@ -1210,19 +1237,225 @@ async def _find_material_by_formula(
     db: AsyncSession,
     formula: str | None,
 ) -> Material | None:
-    """Find existing Material by formula.
+    """Find an active Material by exact formula.
 
     NFM-3919: tolerates duplicate ``formula`` rows that exist in the
     database from prior batches. ``scalar_one_or_none()`` would raise
     ``MultipleResultsFound`` and fail the entire ingest batch the moment
     a second row with the same formula was inserted (e.g. legacy
     ``Unknown Material`` pollution). We instead use ``.limit(1)`` plus
-    ``scalars().first()`` so the lookup returns one row deterministically.
+    ``scalars().first()`` so the lookup returns one row deterministically
+    (oldest-first via ``ORDER BY created_at``).
+
+    NFM-4312 CR-R2: only ``is_active`` rows are eligible.  A retired
+    duplicate keeps its formula as audit residue after a merge; letting
+    stage-1 hit it would re-attach new datasets to the hidden fragment.
     """
     if not formula:
         return None
-    stmt = select(Material).where(Material.formula == formula).limit(1)
+    stmt = (
+        select(Material)
+        .where(Material.formula == formula)
+        .where(Material.is_active.is_(True))
+        .order_by(Material.created_at.asc())
+        .limit(1)
+    )
     return (await db.execute(stmt)).scalars().first()
+
+
+# NFM-4312 (BUG-32) — staged material resolution.
+#
+# Root cause of the empty material-property pages: the mapper resolved
+# the extraction item's material via a single exact ``formula`` match on
+# ``item.composition``.  The heuristic extractor passes prose phrases
+# ("amorphous UO2", "UO2 (undoped and Cr-doped)") as both material_name
+# and composition, so the exact match missed and every run spawned a
+# fresh fragment material row (prod: 2x "amorphous UO2", 6x
+# "Cr-doped UO2", formula strings like "U->15at%Mo") while the real
+# measurements piled up on the "Unknown Material (canonical)" sentinel.
+#
+# The fix keeps association topology (measurement -> dataset.material_id)
+# and widens *resolution* only, in conservative stages that never fold
+# scientifically distinct phases together:
+#
+#   1. exact formula          — existing behaviour (fast path)
+#   2. normalized formula     — case / whitespace / underscore / unicode
+#                               subscript folding ("UO₂" == "uo2" == "UO2").
+#                               Deliberately does NOT strip phase or doping
+#                               qualifiers: "amorphous UO2" must never
+#                               resolve onto the crystalline UO2 row.
+#   3. material_aliases       — curated alias table (empty in prod today;
+#                               gives curation a lever without code changes)
+#   4. exact name             — re-runs emitting the same display name
+#
+# A new material is created only when every stage misses.  Each stage
+# hit is counted in ``MappingResult`` so operators can watch where
+# resolution lands.
+#
+# CR-R2 invariant: retired rows (``is_active=False``) are invisible to
+# every stage.  A retired duplicate is "merged audit residue" — its
+# datasets have been moved onto the canonical row and its (source,
+# material) slot is empty, so nothing downstream would catch a re-attach.
+# New data always lands on an active (canonical) row, or creates a fresh
+# active one.
+
+#: Unicode subscript/superscript digits → ASCII, applied to the
+#: *candidate* string only (the DB side stays as stored).
+_SUBSCRIPT_FOLDS: dict[str, str] = {
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+}
+
+#: Phase qualifier detected on the CREATE path.  When the winning
+#: composition/name carries it, the new material row records its phase
+#: so fragment rows self-describe instead of arriving with a NULL
+#: crystal_structure.  The short "a-uo2" form is matched separately as
+#: a standalone token so phase-prefixed identities ("alpha-UO2",
+#: "beta-UO2", "Na-UO2") do not trip it.
+_AMORPHOUS_MARKERS: tuple[str, ...] = ("amorphous", "amorph.")
+_AMORPHOUS_TOKEN_PATTERN: re.Pattern[str] = re.compile(r"\ba-uo2\b")
+
+
+def _normalize_formula_candidate(raw: str | None) -> str | None:
+    """Fold a candidate formula for tolerant comparison.
+
+    Casefolds, strips whitespace/underscores, and maps unicode
+    subscript/superscript digits to ASCII.  Returns ``None`` for empty
+    input.  This is intentionally *lossy* about typography only — never
+    about chemistry (qualifiers are preserved verbatim).
+    """
+    if not raw:
+        return None
+    folded = raw.casefold()
+    for sub, ascii_digit in _SUBSCRIPT_FOLDS.items():
+        folded = folded.replace(sub, ascii_digit)
+    compact = re.sub(r"[\s_]+", "", folded)
+    return compact or None
+
+
+async def _find_material_by_normalized_formula(
+    db: AsyncSession,
+    composition: str | None,
+) -> Material | None:
+    """Stage-2 lookup: typography-insensitive formula match.
+
+    Compares the normalized candidate against SQL-side
+    ``lower(replace(replace(formula, ' ', ''), '_', ''))``.  Handles the
+    observed production variants ("UO2 " / "uo2" / "UO₂").  Strings that
+    differ only by phase qualifiers ("amorphous UO2" vs "UO2") stay
+    distinct on purpose.  Active rows only (CR-R2) — a retired fragment
+    must never absorb new data through a typography fold.
+    """
+    normalized = _normalize_formula_candidate(composition)
+    if not normalized:
+        return None
+    sql_side = func.lower(
+        func.replace(
+            func.replace(func.coalesce(Material.formula, ""), " ", ""),
+            "_",
+            "",
+        )
+    )
+    stmt = (
+        select(Material)
+        .where(sql_side == normalized)
+        .where(Material.is_active.is_(True))
+        .order_by(Material.created_at.asc())
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _find_material_by_alias(
+    db: AsyncSession,
+    item: ExtractedProperty,
+) -> Material | None:
+    """Stage-3 lookup: curated ``material_aliases`` rows.
+
+    Tries the composition first, then the display name, so either field
+    can carry the alias.  Deterministic (oldest alias row wins) to keep
+    re-runs stable when a curator registers the same alias text twice
+    under different types.  Active rows only (CR-R2) — a stale alias
+    left pointing at a merged-away fragment must not resurrect it.
+    """
+    candidates = [
+        c for c in (item.composition, item.material_name) if c
+    ]
+    for candidate in candidates:
+        stmt = (
+            select(Material)
+            .join(MaterialAlias, MaterialAlias.material_id == Material.id)
+            .where(MaterialAlias.alias_name == candidate)
+            .where(Material.is_active.is_(True))
+            .order_by(MaterialAlias.created_at.asc())
+            .limit(1)
+        )
+        hit = (await db.execute(stmt)).scalars().first()
+        if hit is not None:
+            return hit
+    return None
+
+
+async def _find_material_by_name(
+    db: AsyncSession,
+    name: str | None,
+) -> Material | None:
+    """Stage-4 lookup: exact display-name match (re-run stability).
+
+    Active rows only (CR-R2) — the name stage must not short-circuit
+    resolution onto a retired fragment that happens to keep the only
+    exact display name.
+    """
+    if not name:
+        return None
+    stmt = (
+        select(Material)
+        .where(Material.name == name)
+        .where(Material.is_active.is_(True))
+        .order_by(Material.created_at.asc())
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _resolve_existing_material(
+    db: AsyncSession,
+    item: ExtractedProperty,
+) -> tuple[Material | None, str | None]:
+    """Run the staged resolution; return ``(material, stage)``.
+
+    ``stage`` is ``None`` when nothing matched (caller creates).  The
+    stages are ordered cheapest-and-safest first; the first hit wins so
+    a curated alias can deliberately outrank a normalized-formula
+    accident only by being reachable when earlier stages miss.
+    """
+    existing = await _find_material_by_formula(db, item.composition)
+    if existing is not None:
+        return existing, "formula"
+
+    existing = await _find_material_by_normalized_formula(db, item.composition)
+    if existing is not None:
+        return existing, "normalized_formula"
+
+    existing = await _find_material_by_alias(db, item)
+    if existing is not None:
+        return existing, "alias"
+
+    existing = await _find_material_by_name(db, item.material_name)
+    if existing is not None:
+        return existing, "name"
+
+    return None, None
+
+
+def _detect_amorphous_phase(*strings: str | None) -> bool:
+    """True when any identity string marks the material as amorphous."""
+    joined = " ".join(s for s in strings if s).casefold()
+    if any(marker in joined for marker in _AMORPHOUS_MARKERS):
+        return True
+    return _AMORPHOUS_TOKEN_PATTERN.search(joined) is not None
 
 
 def _parse_float(value: str) -> float | None:

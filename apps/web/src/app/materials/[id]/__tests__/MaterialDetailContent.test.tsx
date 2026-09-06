@@ -109,11 +109,44 @@ describe("MaterialDetailContent", () => {
       expect(screen.getByText("萤石结构")).toBeInTheDocument()
     })
 
-    const graphLink = screen.getByText("查看知识图谱").closest("a")
+    // NFM-4308 ④ — CTAs are real anchors (antd Button href renders a
+    // single <a>), preserving open-in-new-tab / Cmd+click semantics with
+    // no <button> nested inside an <a>.
+    const graphLink = screen.getByRole("link", { name: "查看知识图谱" })
     expect(graphLink).toHaveAttribute("href", "/materials/mat-001/graph")
 
-    const propsLink = screen.getByText("查看属性").closest("a")
+    const propsLink = screen.getByRole("link", { name: "查看属性" })
     expect(propsLink).toHaveAttribute("href", "/materials/mat-001/properties")
+  })
+
+  it("renders localized timestamps, never raw ISO strings (NFM-4308 ②)", async () => {
+    render(<MaterialDetailContent materialId="mat-001" />)
+
+    await waitFor(() => {
+      expect(screen.getByText("创建时间")).toBeInTheDocument()
+    })
+
+    // 2025-01-01T00:00:00Z must render as local YYYY-MM-DD HH:mm
+    const expected = (() => {
+      const d = new Date("2025-01-01T00:00:00Z")
+      const pad = (n: number) => String(n).padStart(2, "0")
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    })()
+    expect(screen.getByText(expected)).toBeInTheDocument()
+
+    // No raw ISO artifacts anywhere in the descriptions area
+    expect(screen.queryByText(/T00:00:00/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Z$/)).not.toBeInTheDocument()
+  })
+
+  it("has no <button> nested inside an <a> (NFM-4308 ④)", async () => {
+    const { container } = render(<MaterialDetailContent materialId="mat-001" />)
+
+    await waitFor(() => {
+      expect(screen.getByText("萤石结构")).toBeInTheDocument()
+    })
+
+    expect(container.querySelectorAll("a button")).toHaveLength(0)
   })
 
   it("renders back link", async () => {

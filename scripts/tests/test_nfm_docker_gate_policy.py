@@ -744,16 +744,34 @@ def test_percent_encoded_path_denied():
 
 
 def test_percent_encoded_scope_query_value_denied():
-    """The scope keys are checked as SENT: %2D decodes to '-' server-side,
-    so `nucpot%2Dprod-x` would scope-check innocent and land as prod."""
+    """NFM-4333 RC4 semantics: scope keys are percent-DECODED once and
+    checked on what the daemon will resolve — an encoded prod name
+    (`%2D` = '-') is caught BY SCOPE, not by encoding shape."""
+    result = decide("POST", "/v1.43/containers/create", "name=nucpot%2Dprod-api-1", body={})
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_percent_encoded_pull_of_registry_ref_allowed():
+    """The RC4 fix's whole point: `docker build`/`docker pull` send
+    multi-segment image refs percent-encoded in images/create — a
+    sanctioned image-layer op that the old blanket '%' refusal blocked
+    (candidate build died: "percent-encoded 'repo' value cannot be
+    scope-checked")."""
     for query in (
-        "name=nucpot%2Dprod-api-1",  # containers/create
-        "fromImage=nucpot%2Dprod-api",  # images/create
-        "fromSrc=nucpot%2Dprod",  # build
+        "fromImage=docker.io%2Flibrary%2Fpython&tag=3.12-slim",
+        "fromImage=pgvector%2Fpgvector&tag=pg16",
+        "repo=docker.io%2Flibrary%2Fpython&tag=latest",
     ):
-        result = decide("POST", "/v1.43/containers/create", query, body={})
-        assert not result.allowed, query
-        assert "cannot be scope-checked" in result.reason
+        result = decide("POST", "/v1.43/images/create", query)
+        assert result.allowed, query
+
+
+def test_double_encoded_scope_value_denied_fail_closed():
+    """One decode, never two: %25 (a literal '%') can only be an evasion
+    attempt — the docker CLI never double-encodes."""
+    result = decide("POST", "/v1.43/images/create", "fromImage=a%252Fb")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
 
 
 def test_percent_encoded_read_filter_still_allowed():
@@ -801,6 +819,118 @@ def test_images_get_opaque_id_or_digest_denied_fail_closed():
         assert not result.allowed and "fail-closed" in result.reason, names
 
 
+# ---- NFM-4333: single-image inspect is a sanctioned read ---------------------
+# `docker compose up` resolves every service image via GET
+# images/{ref}/json; it was fail-closed in BOTH modes and blocked all
+# sanctioned deploys. The full list (images/json) is already an allowed
+# read returning the same metadata per image — the item endpoint exposes
+# strictly less data.
+
+
+def test_get_image_inspect_allowed_ro_mode():
+    for ref in ("nucpot-prod-api:latest", "alpine:3.20", "pgvector/pgvector:pg16"):
+        result = decide("GET", f"/v1.43/images/{ref}/json")
+        assert result.allowed, ref
+
+
+def test_get_image_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/images/nucpot-prod-api:c96b8c4d1/json", full=True)
+    assert result.allowed
+
+
+def test_get_image_inspect_does_not_widen_layer_export():
+    # The read fix must not touch the images/get exfiltration guard.
+    assert not decide("GET", "/v1.43/images/get", "names=nucpot-prod-api:latest").allowed
+
+
+def test_get_image_other_subresources_still_fail_closed():
+    # Only inspect (json) and history (per F9) are allowed; e.g. arbitrary
+    # per-image subresources like /images/{ref}/get stay unrecognized-deny.
+    # (Per-image /get is rejected at the unrecognized-GET layer; the
+    # /images/get multi-image export is denied by the F1 exfil guard.)
+    result = decide("GET", "/v1.43/images/alpine:3.20/ftpmount")
+    assert not result.allowed and result.audit
+
+
+# ---- NFM-4333: exec inspect + start are sanctioned ----------------------------
+# compose v5's `exec` flow: POST containers/{id}/exec (audited, prod
+# scope-checked) -> POST exec/{id}/start -> GET exec/{id}/json (read the
+# exit code). Both follow-ups were fail-closed, so every
+# `docker compose exec` / `docker exec` — including prod_migrate.sh's
+# pg_isready probe (120s timeout) and the assert smoke (30s timeout) —
+# failed with the exec never "finishing".
+
+
+def test_get_exec_inspect_allowed_ro_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json")
+    assert result.allowed
+
+
+def test_get_exec_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json", full=True)
+    assert result.allowed
+
+
+def test_post_exec_start_allowed_ro_mode():
+    result = decide("POST", "/v1.43/exec/" + "a1" * 32 + "/start")
+    assert result.allowed and result.audit
+
+
+def test_post_exec_create_on_prod_container_still_denied():
+    # The exec entry point keeps its prod scope-check.
+    result = decide(
+        "POST",
+        "/v1.43/containers/nucpot-prod-db/exec",
+        "",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not result.allowed and result.audit
+
+
+def test_exec_other_subresources_still_fail_closed():
+    # Only inspect (GET json) and start (POST) are allowed; e.g. resize
+    # and DELETE stay unrecognized.
+    exec_id = "b2" * 32
+    assert not decide("POST", f"/v1.43/exec/{exec_id}/resize", "h=40").allowed
+    assert not decide("GET", f"/v1.43/exec/{exec_id}/logs").allowed
+
+# ---- NFM-4357 (RC12): exec-instance inspect is a sanctioned read --------------
+# `docker compose exec` reads the probe's exit code via GET
+# exec/{id}/json after create+start; the read allowlist did not know the
+# endpoint, so it was fail-closed in BOTH ro and full modes (gate-full.log
+# 2026-09-06T01:34-01:36Z: create allowed, start allowed, inspect DENIED
+# "unrecognized GET endpoint" x60) and scripts/prod_migrate.sh's readiness
+# loop could never pass — run 34002594090 aborted pre-cutover. The exec's
+# owning container is already fully inspectable (containers/{id}/json is an
+# allowed read returning strictly more), so the exec item endpoint exposes
+# strictly less data.
+
+EXEC_ID = "2e38c9e58b53a023ca88ef56f2ec7d36948952b3ef22dfc5ec1c0591e60d1f28"
+
+
+def test_get_exec_inspect_allowed_ro_mode():
+    assert decide("GET", f"/v1.43/exec/{EXEC_ID}/json").allowed
+
+
+def test_get_exec_inspect_allowed_full_mode():
+    assert decide("GET", f"/v1.43/exec/{EXEC_ID}/json", full=True).allowed
+
+
+def test_get_exec_inspect_non_hex_id_still_fail_closed():
+    # Only daemon-shaped hex exec ids are recognizable; anything else must
+    # keep failing closed rather than widen the allowlist by pattern.
+    result = decide("GET", "/v1.43/exec/not-a-hex-id/json")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_get_exec_inspect_does_not_widen_exec_create():
+    # The read fix must not touch mutation classification: exec create
+    # stays a container mutation (denied for prod in ro mode).
+    created = decide("POST", "/v1.43/containers/nucpot-prod-db/exec", body={"Cmd": ["true"]})
+    assert not created.allowed
+
+
 # ---- CR F4: opaque volume ids -------------------------------------------------------
 
 
@@ -835,3 +965,77 @@ def test_unknown_post_fail_closed():
     assert not decide("POST", "/v1.43/swarm/init").allowed
     assert not decide("POST", "/v1.43/plugins/pull").allowed
     assert not decide("PATCH", "/v1.43/whatever").allowed
+
+
+# ---- NFM-4297 CR F9: docker-cp-out + image-history GET surface ---------------------
+# /images/{name}/json is allowed unconditionally upstream by _IMAGE_INSPECT
+# (NFM-4333 RC2, post-dates F9 spec); F9's prod-name and opaque-ref deny on
+# /json was withdrawn in favour of RC2's allow. F9 still owns the per-image
+# layer-history surface (/images/{name}/history) below.
+
+
+def test_get_container_archive_plain_name_allowed():
+    """`docker cp <container>:/path -` is GET /containers/{id}/archive — a
+    legitimate non-prod developer flow. It used to be denied only by
+    falling through to unrecognized-GET (fail-closed by ACCIDENT); F9 adds
+    it to the catalogued read surface with the export-mirror guard."""
+    assert decide("GET", "/v1.43/containers/staging-toolbox/archive", "path=/etc/hostname").allowed
+
+
+def test_get_container_archive_prod_name_denied():
+    """The export guard, mirrored: copying a file OUT of a prod container is
+    exfiltration however read-only the verb."""
+    result = decide("GET", "/v1.43/containers/nucpot-prod-api/archive", "path=/app/.env")
+    assert not result.allowed and result.scope == "prod" and result.audit
+    assert "exfiltration" in result.reason
+    assert "unrecognized" not in result.reason  # guarded by design now
+
+
+def test_get_container_archive_opaque_hex_id_denied_fail_closed():
+    result = decide("GET", "/v1.43/containers/abc123/archive", "path=/x")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_get_image_history_non_prod_allowed():
+    assert decide("GET", "/v1.43/images/staging-toolbox/history").allowed
+
+
+def test_get_image_history_prod_denied():
+    """images/{name}/history returns the Dockerfile RUN lines of an image
+    (build args, secrets) — same exfiltration surface as images/get (F9)."""
+    result = decide("GET", "/v1.43/images/nucpot-prod-lightrag/history")
+    assert not result.allowed and result.scope == "prod"
+    assert "exfiltration" in result.reason
+
+
+def test_get_image_history_opaque_ref_denied_fail_closed():
+    """V1 rule on the history surface: an id/digest ref resolves to the
+    underlying image whatever its tags say — text scope checks don't apply."""
+    digest = "sha256:" + "b2" * 32
+    for path in (f"/v1.43/images/{digest}/history", f"/v1.43/images/{'a' * 64}/history"):
+        result = decide("GET", path)
+        assert not result.allowed and "fail-closed" in result.reason, path
+
+
+def test_post_exec_start_allowed_but_create_stays_scoped():
+    """NFM-4333 RC8 supersedes the F9 acceptance note: POST /exec/{id}/start
+    carries only an opaque daemon id with no container reference of its own —
+    the prod scope-check happened at exec creation (POST containers/{id}/exec,
+    still denied for prod containers in ro mode). Denying start left every
+    sanctioned `docker exec` (e.g. the pre-deploy assert smoke against the
+    throwaway postgres) dead at start, while the full-gate socket path
+    (ADR-013 G3) audits the same operation anyway. Interactive exec into prod
+    remains unreachable: creation on a prod container is denied, and the
+    exec instance binding cannot be forged past creation."""
+    started = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
+    assert started.allowed and started.audit
+
+    # The scope boundary is enforced where the container ref is visible:
+    # exec creation on a prod-labelled container stays denied in ro mode.
+    prod_create = decide(
+        "POST",
+        f"/v1.43/containers/{'c' * 64}/exec",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not prod_create.allowed

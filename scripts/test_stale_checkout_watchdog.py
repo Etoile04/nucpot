@@ -5,7 +5,12 @@
 import logging
 import os
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+try:  # py3.11+; fallback for the py3.9 CommandLineTools interpreter on the runner
+    from datetime import UTC
+except ImportError:  # pragma: no cover
+    from datetime import timezone as _tz
+    UTC = _tz.utc
 from unittest.mock import MagicMock
 
 from stale_checkout_watchdog import (

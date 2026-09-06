@@ -1,17 +1,34 @@
-'use client'
+"use client"
 
-import { useState } from 'react'
+import { useState } from "react"
 
 interface ElementFilterProps {
   readonly allElements: readonly string[]
   readonly selected: readonly string[]
   readonly onToggle: (el: string) => void
+  /**
+   * Optional controlled search text (NFM-4308 ①). When provided together
+   * with `onSearchChange`, the parent owns the input state so a filter
+   * reset can clear it; otherwise the input stays self-contained.
+   */
+  readonly search?: string
+  readonly onSearchChange?: (value: string) => void
 }
 
-export function ElementFilter({ allElements, selected, onToggle }: ElementFilterProps) {
-  const [search, setSearch] = useState('')
+export function ElementFilter({
+  allElements,
+  selected,
+  onToggle,
+  search: controlledSearch,
+  onSearchChange,
+}: ElementFilterProps) {
+  const [internalSearch, setInternalSearch] = useState("")
+  const isControlled = controlledSearch !== undefined && onSearchChange !== undefined
+  const search = isControlled ? controlledSearch : internalSearch
+  const setSearch = isControlled ? onSearchChange : setInternalSearch
+
   const filtered = search
-    ? allElements.filter(e => e.toLowerCase().includes(search.toLowerCase()))
+    ? allElements.filter((e) => e.toLowerCase().includes(search.toLowerCase()))
     : allElements
 
   return (
@@ -19,29 +36,27 @@ export function ElementFilter({ allElements, selected, onToggle }: ElementFilter
       <input
         type="text"
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={(e) => setSearch(e.target.value)}
         placeholder="搜索元素..."
         className="w-full px-2 py-1.5 mb-2 rounded bg-gray-700 border border-gray-600 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
         aria-label="搜索元素"
       />
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="元素选择">
-        {filtered.map(el => (
+        {filtered.map((el) => (
           <button
             key={el}
             onClick={() => onToggle(el)}
             className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${
               selected.includes(el)
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-blue-500/50'
+                ? "bg-blue-600 border-blue-500 text-white"
+                : "bg-gray-700 border-gray-600 text-gray-300 hover:border-blue-500/50"
             }`}
             aria-pressed={selected.includes(el)}
           >
             {el}
           </button>
         ))}
-        {filtered.length === 0 && (
-          <span className="text-xs text-gray-500">无匹配元素</span>
-        )}
+        {filtered.length === 0 && <span className="text-xs text-gray-500">无匹配元素</span>}
       </div>
     </div>
   )

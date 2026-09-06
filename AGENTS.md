@@ -176,6 +176,32 @@ full governance specification.
 
 ---
 
+## Merge integrity — verify content, never trust the merge marker (NFM-4357)
+
+A merged PR is NOT proof its changes landed. Twice on 2026-09-06 (#1200, #1201),
+a squash merge recorded the PR title while the tree did NOT contain the diff —
+the merge head was a commit from a different (stale / checked-out-over) branch.
+The empty merge passed every gate: commit subject valid, CI green, state MERGED.
+
+**Rule: after EVERY merge (batch or single), verify the change actually shipped:**
+
+```bash
+# content-level check (what matters), not metadata-level:
+git fetch origin && git show origin/main:<changed/file> | grep -c '<unique new line>'
+# or diff-count against the pre-merge sha:
+gh api repos/<owner>/<repo>/compare/<prev>...main --jq '.files[].additions'
+```
+
+- `MERGED` state or green CI proves process, not content — CI ran on the PR
+  head, but the squash commit may point elsewhere.
+- Never batch-merge across branch switches. Checkout, re-verify the working
+  tree still holds your edits (`grep` before `git commit`), push, open PR,
+  merge — then re-verify on `origin/main` before starting the next PR.
+- Multi-agent hosts: another agent can check out over your branch between your
+  edit and your push. Re-verify immediately before every push.
+
+---
+
 ## See also
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — the same rule written for human readers.
@@ -183,3 +209,4 @@ full governance specification.
   — accepted decision, full rationale, KR-1 metric discussion.
 - `scripts/okr/commit_efficiency.py` — the metric implementation; `_ISSUE_REF_PATTERN`
   defines what counts as a reference.
+

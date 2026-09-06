@@ -32,6 +32,23 @@ set -euo pipefail
 # hermetic tests can prepend a fake docker that then wins.
 export PATH="${PATH:+${PATH}:}/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# NFM-4357: as the deploy identity (nfmdeploy), bare `git` must NOT be
+# Homebrew git — its libintl dylib lives in a 0700 Cellar that
+# /var/lib/nfmdeploy cannot traverse (dyld abort trap 6, observed twice
+# 2026-09-06: host_setup git config call, then run 34032116050 deploy
+# exit 134 at the identity branch's first `git rev-parse HEAD`).
+# Preference: explicit override > PATH resolution (hermetic test shims
+# keep working) > any Homebrew hit relocated to the absolute Apple git
+# binary. Non-identity callers keep plain git.
+if [ "$(id -un)" = "nfmdeploy" ]; then
+  GIT_BIN="${NFM_G2_GIT_BIN:-$(command -v git)}"
+  case "${GIT_BIN}" in
+    /opt/homebrew/*|/usr/local/Homebrew/*) GIT_BIN=/usr/bin/git ;;
+  esac
+else
+  GIT_BIN="${NFM_G2_GIT_BIN:-git}"
+fi
+
 # --- Input validation (empty variable = loud failure, never a mangled cmd) --
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
 : "${PROXY_PORT:=7897}"
@@ -89,18 +106,56 @@ mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
 printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
 
 # NFM-3777/#1050: stale-marker poisoning (seen 2026-08-18 and in NFM-3845
-# UPDATE 4) — a leftover /tmp/nfmd_prod_health_passed from a PRIOR deploy made
+# UPDATE 4) — a leftover health marker from a PRIOR deploy made
 # the emit fragment report "health-gate-first-poll-passed true" for a deploy
 # that never cut over. Scrub it at the top of every deploy so the marker can
 # only ever attest to THIS run's health gate.
-rm -f /tmp/nfmd_prod_health_passed
+#
+# NFM-4333 RC8: marker must live under $HOME, NOT /tmp. /tmp is mode 1777
+# sticky; a marker left over from a prior lwj04-as-runner run (e.g. an
+# aborted workflow step or an `ops-script` accidentally running as lwj04)
+# would be unremovable by nfmdeploy (sticky bit + non-owner = EACCES on
+# unlink). Placing it under $HOME (nfmdeploy-owned) makes the rm + touch
+# round-trip hermetic regardless of who else might have written to /tmp.
+NFMD_HEALTH_MARKER="${NFMD_HEALTH_MARKER:-${HOME}/.nfmd/nfmd_prod_health_passed}"
+mkdir -p "$(dirname "${NFMD_HEALTH_MARKER}")"
+rm -f "${NFMD_HEALTH_MARKER}"
 
 # NFM-3328: an otherwise-empty DOCKER_CONFIG dir SILENTLY REMOVES
 # `docker compose` (verified empirically: `docker compose version` →
 # "unknown command"). Symlink the host's compose plugin into the override
 # dir to keep compose available without restoring the keychain.
-ln -sf ~/.docker/cli-plugins/docker-compose \
-  /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
+#
+# NFM-4333 RC10: the deploy SSH runs as nfmdeploy (gate proxy sees uid
+# 502). The host's ~/.docker/cli-plugins/docker-compose is itself a
+# symlink to /Applications/Docker.app/Contents/Resources/cli-plugins/
+# docker-compose — that binary carries com.apple.quarantine (Gatekeeper
+# download flag). macOS BLOCKS non-owner exec of quarantined binaries
+# (see xattr man page / TCC); the chain resolves to a file owned by
+# lwj04, so nfmdeploy's exec fails silently with `docker: unknown
+# command: docker compose`. Copy the binary into nfmdeploy-owned HOME
+# with the quarantine xattr stripped, then symlink DOCKER_CONFIG at it.
+#
+# NFM-4333 RC11: the RC10 copy step hardcoded /Users/lwj04/... — on the
+# ubuntu-latest Batch 1 runner (and any non-deploy host) that path does
+# not exist, so `cp` failed under set -e and killed deploy_prod.sh inside
+# scripts/tests (main red since #1186, 2026-09-05). Source the plugin
+# from the running user's HOME (host_setup.sh already symlinks the
+# lwj04-owned plugin into nfmdeploy's ~/.docker/cli-plugins/) and guard
+# the copy: no local plugin -> fall back to the pre-RC10 dangling
+# symlink, which is inert wherever `docker compose` is never invoked
+# (the Batch 1 hermetic tests stub docker and never execute the link).
+NFMD_DC_SRC="${NFMD_DC_SRC:-${HOME}/.docker/cli-plugins/docker-compose}"
+NFMD_DC="${NFMD_DC:-${HOME}/.nfmd/docker-compose}"
+if [ -x "${NFMD_DC_SRC}" ]; then
+  if [ ! -x "${NFMD_DC}" ] || [ "${NFMD_DC_SRC}" -nt "${NFMD_DC}" ]; then
+    mkdir -p "$(dirname "${NFMD_DC}")"
+    cp "${NFMD_DC_SRC}" "${NFMD_DC}"
+    xattr -d com.apple.quarantine "${NFMD_DC}" 2>/dev/null || true
+    chmod 0755 "${NFMD_DC}"
+  fi
+fi
+ln -sf "${NFMD_DC}" /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
 docker compose version
 
 # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying commit SHA
@@ -115,7 +170,7 @@ if [ "${NFM_G2_DEPLOY_IDENTITY:-0}" = "1" ]; then
   # (GH Actions does `git reset --hard <github.sha>` as lwj04 before invoking
   # the sudo entry). No git mutations here — verify the tree is exactly the
   # SHA being deployed, then proceed.
-  HEAD_SHA="$(git rev-parse HEAD)"
+  HEAD_SHA="$("${GIT_BIN}" rev-parse HEAD)"
   if [ "${HEAD_SHA}" != "${DEPLOY_SHA}" ]; then
     echo "FATAL (NFM-4270): repo HEAD ${HEAD_SHA} != DEPLOY_SHA ${DEPLOY_SHA} — refusing to deploy an unsynced tree" >&2
     echo "  Sync as the repo owner: cd ~/Projects/nucpot && git fetch origin && git reset --hard ${DEPLOY_SHA}" >&2
@@ -124,11 +179,11 @@ if [ "${NFM_G2_DEPLOY_IDENTITY:-0}" = "1" ]; then
   echo "==> NFM-4270: sanctioned deploy identity at ${HEAD_SHA:0:12} (git sync skipped, HEAD verified)"
 else
   for i in 1 2 3 4 5; do
-    git fetch origin main && break
+    "${GIT_BIN}" fetch origin main && break
     [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
     echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
   done
-  git reset --hard origin/main
+  "${GIT_BIN}" reset --hard origin/main
 fi
 
 # NFM-4265 (NFM-4264 follow-up): stale-tag landmine guard. On 2026-09-04 a
@@ -232,9 +287,9 @@ bash tools/post-deploy-cutover-assert/assert.sh \
 # runs on a self-hosted runner on the same Mac Studio host, so the runner's
 # /tmp is the host's /tmp.
 echo "Checking API health..."
-rm -f /tmp/nfmd_prod_health_passed
+rm -f "${NFMD_HEALTH_MARKER}"
 if curl -f http://localhost:8001/api/v1/health; then
-  touch /tmp/nfmd_prod_health_passed
+  touch "${NFMD_HEALTH_MARKER}"
 else
   exit 1
 fi
