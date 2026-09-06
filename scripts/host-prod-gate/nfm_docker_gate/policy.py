@@ -66,6 +66,9 @@ _IMAGE_NAME_ACTION = re.compile(r"^images/(?P<name>[^/]+)/(?P<action>tag|push)$"
 # GET images/{name}/json — single-image inspect. {name} is multi-segment
 # for registry refs (e.g. pgvector/pgvector:pg16), hence ".+".
 _IMAGE_INSPECT = re.compile(r"^images/(?P<name>.+)/json$")
+# GET exec/{id}/json — exec-instance inspect. Exec ids are daemon-minted
+# hex (like container ids); non-hex shapes stay unrecognized (fail-closed).
+_EXEC_INSPECT = re.compile(r"^exec/(?P<id>[0-9a-f]+)/json$")
 _NETWORK_ACTION = re.compile(r"^networks/(?P<id>[^/]+)/(?P<action>connect|disconnect)$")
 
 # GET endpoints the read-only context may hit. Anything else: denied
@@ -430,6 +433,17 @@ def classify(
             # returns the same metadata for every image, so the item
             # endpoint exposes strictly less data. Layer/export channels
             # (images/get) stay scope-guarded above.
+            return Decision(True, "read-only endpoint")
+        if _EXEC_INSPECT.match(path):
+            # Exec-instance inspect — a sanctioned read (NFM-4357 / NFM-4333
+            # RC12: fail-closed in BOTH modes, `docker compose exec` reads
+            # the probe's exit code via GET exec/{id}/json after
+            # create+start, so scripts/prod_migrate.sh's pg_isready
+            # readiness loop could never pass and run 34002594090 aborted
+            # pre-cutover). The exec's owning container is already fully
+            # inspectable (containers/{id}/json is an allowed read), so the
+            # exec item endpoint exposes strictly less data. Exec create /
+            # start stay mutation-classified below.
             return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")
