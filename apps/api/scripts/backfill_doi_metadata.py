@@ -59,7 +59,7 @@ if str(_SRC_DIR) not in sys.path:
 from sqlalchemy import bindparam, text  # noqa: E402
 
 from nfm_db.config import get_settings  # noqa: E402
-from nfm_db.database import async_session_factory  # noqa: E402
+from nfm_db.database import get_session_factory  # noqa: E402
 from nfm_db.services.crossref_metadata import fetch_crossref_metadata  # noqa: E402
 
 logger = logging.getLogger("backfill_doi_metadata")
@@ -246,7 +246,7 @@ async def _main(args: argparse.Namespace) -> int:
 
     settings = get_settings()
     logger.info("connecting to %s", _redact_url(settings.database_url))
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         report = await run_backfill(
             session,
             dry_run=args.dry_run,

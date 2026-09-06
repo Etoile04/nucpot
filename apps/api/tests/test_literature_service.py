@@ -669,23 +669,24 @@ class TestFailureStatusPersistsAcrossAbortedSession:
             poisoned.mark_extract_called()
             raise ontology_error
 
-        # In production ``async_session_factory`` is bound to the real
-        # Postgres engine. Bind it to this test's SQLite engine so the
-        # failure-handler's FRESH session operates on the same DB the
-        # test fixture populated.
+        # In production the provider's ``fresh_session`` channel is bound
+        # to the real Postgres engine. Bind it to this test's SQLite
+        # engine so the failure-handler's FRESH session operates on the
+        # same DB the test fixture populated.
         @contextlib.asynccontextmanager
         async def _sqlite_passthrough_factory():
             yield db_session
 
-        # CRITICAL: the factory must be patched BEFORE process_literature
-        # is invoked — the fix calls ``async_session_factory()`` from
-        # inside the except block, which runs during the call below.
+        # CRITICAL: the fresh-session channel must be patched BEFORE
+        # process_literature is invoked — the fallback calls
+        # ``fresh_session()`` from inside the except block, which runs
+        # during the call below.
         with (
             patch(
                 "nfm_db.services.extraction_pipeline.ontofuel_extract",
                 new=_fake_extract,
             ),
-            patch.object(lit_svc, "async_session_factory", _sqlite_passthrough_factory),
+            patch.object(lit_svc, "fresh_session", _sqlite_passthrough_factory),
         ):
             # The upstream LLM extract raises. The contract is simply
             # that *some* RuntimeError propagates so the Celery
@@ -831,11 +832,10 @@ class TestSyncWrapper:
     async def test_sync_wrapper_accepts_uuid_string(self, db_session: AsyncSession) -> None:
         """A plain UUID-string round-trips through the sync bridge.
 
-        ``process_literature_sync`` opens its own session via the
-        module-level :func:`async_session_factory` (which in production
-        points at Postgres).  For this unit test we patch the factory to
-        yield the test's SQLite ``db_session`` fixture so the row we
-        insert is the row the wrapper sees.
+        ``process_literature_sync`` opens its own session.  Per ADR-NFM-4076
+        D5 the bridge accepts an injected session factory; here the test's
+        SQLite ``db_session`` is injected so the row we insert is the row
+        the wrapper sees — no module-attribute monkeypatch anywhere.
         """
         import concurrent.futures
         import contextlib
@@ -850,20 +850,18 @@ class TestSyncWrapper:
         )
         ds_id_str = str(ds.id)
 
-        with (
-            patch(
-                "nfm_db.services.literature_service.async_session_factory",
-                _yield_test_session,
-            ),
-            patch(
-                "nfm_db.services.extraction_pipeline.ontofuel_extract",
-                new=AsyncMock(return_value=[]),
-            ),
+        with patch(
+            "nfm_db.services.extraction_pipeline.ontofuel_extract",
+            new=AsyncMock(return_value=[]),
         ):
             # process_literature_sync calls asyncio.run() internally,
             # so it must run in a thread to avoid nesting with pytest-asyncio's loop.
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(lit_svc.process_literature_sync, ds_id_str)
+                future = pool.submit(
+                    lit_svc.process_literature_sync,
+                    ds_id_str,
+                    session_factory=_yield_test_session,
+                )
                 result = future.result()
 
         assert result["datasource_id"] == ds_id_str
@@ -872,6 +870,75 @@ class TestSyncWrapper:
         # Verify the row landed as completed
         await db_session.refresh(ds)
         assert ds.parse_status == "completed"
+
+    async def test_sync_bridge_runs_without_any_monkeypatch(
+        self, db_session: AsyncSession
+    ) -> None:
+        """验收不变式 a(ADR-NFM-4076 D6):注入工厂即可跑通,零 monkeypatch。
+
+        与上一条的区别是刻意不做任何 ``patch``:如果实现仍从模块属性读
+        工厂(而不是接受参数),本测试就会去连 settings 指向的真实库而失败。
+        """
+        import concurrent.futures
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _yield_test_session():
+            yield db_session
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# already parsed\n\nnothing to do",
+        )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                lit_svc.process_literature_sync,
+                str(ds.id),
+                session_factory=_yield_test_session,
+            )
+            result = future.result()
+
+        assert result["status"] == "completed"
+
+    async def test_sync_bridge_failure_marks_datasource_via_injected_factory(
+        self, db_session: AsyncSession
+    ) -> None:
+        """桥的失败兜底走 mark_parse_failed,并复用注入的工厂(ADR D4/D5)。
+
+        抽取抛错 → process_literature 标 failed 并重抛 → 桥的 except 再经
+        mark_parse_failed 兜底(幂等)→ 原始异常不被掩盖。
+        """
+        import concurrent.futures
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _yield_test_session():
+            yield db_session
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# already parsed\n\nnothing to do",
+        )
+
+        async def _exploding_extract(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("extract boom")
+
+        with patch(
+            "nfm_db.services.extraction_pipeline.ontofuel_extract",
+            new=_exploding_extract,
+        ):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    lit_svc.process_literature_sync,
+                    str(ds.id),
+                    session_factory=_yield_test_session,
+                )
+                with pytest.raises(RuntimeError, match="extract boom"):
+                    future.result()
+
+        await db_session.refresh(ds)
+        assert ds.parse_status == lit_svc.PARSE_STATUS_FAILED
 
 
 # ---------------------------------------------------------------------------

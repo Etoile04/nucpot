@@ -243,7 +243,7 @@ def _drive_all(datasource_ids: list[str]) -> list[dict[str, Any]]:
     """
     from uuid import UUID
 
-    from nfm_db.database import async_session_factory, engine
+    from nfm_db.database import get_engine, get_session_factory
     from nfm_db.services.literature_service import process_literature
 
     async def _run_all() -> list[dict[str, Any]]:
@@ -254,7 +254,7 @@ def _drive_all(datasource_ids: list[str]) -> list[dict[str, Any]]:
             except ValueError:
                 logger.warning("Skipping invalid UUID: %s", ds_id)
                 continue
-            async with async_session_factory() as session:
+            async with get_session_factory()() as session:
                 logger.info(
                     "Driving process_literature for datasource_id=%s",
                     ds_id,
@@ -288,7 +288,7 @@ def _drive_all(datasource_ids: list[str]) -> list[dict[str, Any]]:
         try:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(engine.dispose())
+                loop.run_until_complete(get_engine().dispose())
             finally:
                 loop.close()
         except Exception:

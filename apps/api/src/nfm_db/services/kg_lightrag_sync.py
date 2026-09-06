@@ -207,7 +207,7 @@ async def ingest_kg_to_lightrag(
         return
 
     try:
-        from nfm_db.database import async_session_factory
+        from nfm_db.database import get_session_factory
         from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
         from nfm_db.services.rag_provider import LightRAGProvider
 
@@ -218,7 +218,7 @@ async def ingest_kg_to_lightrag(
 
         # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
         if extraction_job_id is not None and track_id is not None:
-            async with async_session_factory() as session:
+            async with get_session_factory()() as session:
                 from sqlalchemy import update
 
                 from nfm_db.models.extraction_job import ExtractionJob
