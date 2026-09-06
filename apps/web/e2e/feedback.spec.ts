@@ -153,3 +153,71 @@ test.describe("Feedback — responsive", { tag: "@integration" }, () => {
     expect(filterRealErrors(consoleErrors)).toEqual([])
   })
 })
+
+test.describe("Feedback — real submission wiring (NFM-4380)", { tag: "@integration" }, () => {
+  test("form submits the backend schema to /api/feedback and unwraps the success envelope", async ({ page }) => {
+    const consoleErrors = collectConsoleErrors(page)
+
+    // Intercept instead of hitting the network: CI runs e2e against the live
+    // site (E2E_TARGET=live) and a real submit would write a prod feedback row
+    // on every run. The NFM-4380 regression was exactly this request (wrong
+    // path + Supabase-era field names), so pinning the outgoing request is
+    // the assertion that matters.
+    let captured: { pathname: string; method: string; body: Record<string, unknown> } | null = null
+    await page.route("**/api/feedback", async (route) => {
+      const request = route.request()
+      captured = {
+        pathname: new URL(request.url()).pathname,
+        method: request.method(),
+        body: request.postDataJSON() as Record<string, unknown>,
+      }
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: "00000000-0000-0000-0000-00000000e2e0",
+            feedback_type: "bug_report",
+            priority: "medium",
+            status: "open",
+            created_at: "2026-09-07T00:00:00Z",
+          },
+          error: null,
+        }),
+      })
+    })
+
+    await page.goto("/feedback")
+    await page.waitForLoadState("domcontentloaded")
+
+    await page.getByPlaceholder("简要描述您的反馈").fill("E2E 提交链路验证")
+    await page.getByPlaceholder("请提供更多细节…").fill("NFM-4380: 表单应 POST /api/feedback 并按后端 schema 组装字段")
+    await page.getByRole("button", { name: "提交反馈" }).click()
+
+    // Success banner only renders after the ApiResponse envelope is unwrapped.
+    await expect(page.getByText("感谢您的反馈！")).toBeVisible()
+
+    expect(captured).not.toBeNull()
+    expect(captured!.method).toBe("POST")
+    expect(captured!.pathname).toBe("/api/feedback")
+    expect(captured!.body.feedback_type).toBe("bug_report")
+    expect(captured!.body.title).toBe("E2E 提交链路验证")
+    expect(captured!.body.description).toContain("NFM-4380")
+    expect(String(captured!.body.page_url)).toContain("/feedback")
+
+    expect(filterRealErrors(consoleErrors)).toEqual([])
+  })
+
+  test("whitespace-only description is rejected client-side", async ({ page }) => {
+    await page.goto("/feedback")
+    await page.waitForLoadState("domcontentloaded")
+
+    await page.getByPlaceholder("简要描述您的反馈").fill("只有标题")
+    // Spaces pass native `required` but must still fail the trimmed guard.
+    await page.getByPlaceholder("请提供更多细节…").fill("   ")
+    await page.getByRole("button", { name: "提交反馈" }).click()
+
+    await expect(page.getByText("请填写详细描述")).toBeVisible()
+  })
+})
