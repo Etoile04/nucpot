@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 VALID_LICENSE_TYPES = ("own_work", "author_permission", "open_license")
 
@@ -55,6 +55,19 @@ class PotentialDetail(PotentialSummary):
     verification_status: str = "unverified"
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def download_count(self) -> int:
+        """Proxy download hits (``extra.download_count``; 0 when never downloaded).
+
+        Derived from ``extra`` rather than stored on the model — NFM-4309
+        keeps the counter inside the JSON blob so no migration is needed.
+        """
+        value = self.extra.get("download_count")
+        if isinstance(value, bool) or not isinstance(value, int):
+            return 0
+        return value
 
 
 class PotentialListResponse(BaseModel):

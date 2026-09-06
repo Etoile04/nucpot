@@ -263,13 +263,25 @@ async def attach_potential_file(
     dest_path.write_bytes(data)
 
     file_hash = _compute_hash(data)
-    file_url = f"/uploads/{potential_id}/{sanitized}"
+    # NFM-4309 (BUG-37): canonical proxy URL + explicit storage reference —
+    # never a site-relative or container path in the public file_url field.
+    from nfm_db.services.potential_file_resolver import (
+        canonical_file_url,
+        validate_persistable_file_url,
+    )
+
+    file_url = canonical_file_url(potential_id)
+    validate_persistable_file_url(file_url)
     file_size = len(data)
 
     # Update row via service layer (avoid extra round-trip)
     potential.file_url = file_url
     potential.file_hash = file_hash
     potential.file_size = file_size
+    potential.extra = {
+        **(potential.extra or {}),
+        "file_storage": {"kind": "uploads", "key": f"{potential_id}/{sanitized}"},
+    }
     await db.commit()
 
     return {

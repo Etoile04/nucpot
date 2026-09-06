@@ -92,8 +92,10 @@ class TestRevisionMetadata:
         orphan bridge: U-10Mo dataset edges + U-3Si/PuO2 stub nodes)
         extends it further — 080 (NFM-4185) was the head until 081
  (NFM-4180, feature_flags table for the DataLossNotice runtime
- flag) chained after it, and 082 (NFM-4089, blog_role
- domain_expert) chained after 081 — 082 is the current head.
+ flag) chained after it, 082 (NFM-4089, blog_role
+ domain_expert) chained after 081, and 083 (NFM-4309,
+ normalize_potential_file_urls for the BUG-37 file_url
+ governance) chained after 082 — 083 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.

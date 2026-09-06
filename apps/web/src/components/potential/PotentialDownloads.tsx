@@ -4,7 +4,7 @@ import { Card, Button, Empty, Space, Typography } from "antd"
 import { DownloadOutlined, FileOutlined } from "@ant-design/icons"
 import Link from "next/link"
 import type { PotentialDetail } from "@/lib/potentials-api"
-import { resolveFileUrl } from "@/lib/file-url"
+import { resolveFileName, resolveFileUrl } from "@/lib/file-url"
 
 const { Text } = Typography
 
@@ -18,29 +18,19 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
-function fileNameFromUrl(fileUrl: string): string {
-  const cleaned = fileUrl.split("?")[0]?.split("#")[0] ?? fileUrl
-  const segments = cleaned.split("/")
-  return segments[segments.length - 1] || fileUrl
-}
-
 export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
   const { file_url, file_size, file_hash, format, source } = detail
 
   if (!file_url) {
     return (
       <Empty description="暂无可下载文件，请从原始来源获取">
-        {source && (
-          <Text type="secondary">
-            数据来源：{source}
-          </Text>
-        )}
+        {source && <Text type="secondary">数据来源：{source}</Text>}
       </Empty>
     )
   }
 
   const url = resolveFileUrl(file_url)
-  const fileName = fileNameFromUrl(file_url)
+  const fileName = resolveFileName(file_url, detail.extra)
 
   return (
     <Card title="文件下载">
@@ -72,9 +62,7 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
           </div>
         )}
 
-        {source && (
-          <Text type="secondary">数据来源：{source}</Text>
-        )}
+        {source && <Text type="secondary">数据来源：{source}</Text>}
       </Space>
     </Card>
   )
