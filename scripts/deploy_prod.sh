@@ -118,12 +118,25 @@ rm -f "${NFMD_HEALTH_MARKER}"
 # lwj04, so nfmdeploy's exec fails silently with `docker: unknown
 # command: docker compose`. Copy the binary into nfmdeploy-owned HOME
 # with the quarantine xattr stripped, then symlink DOCKER_CONFIG at it.
+#
+# NFM-4333 RC11: the RC10 copy step hardcoded /Users/lwj04/... — on the
+# ubuntu-latest Batch 1 runner (and any non-deploy host) that path does
+# not exist, so `cp` failed under set -e and killed deploy_prod.sh inside
+# scripts/tests (main red since #1186, 2026-09-05). Source the plugin
+# from the running user's HOME (host_setup.sh already symlinks the
+# lwj04-owned plugin into nfmdeploy's ~/.docker/cli-plugins/) and guard
+# the copy: no local plugin -> fall back to the pre-RC10 dangling
+# symlink, which is inert wherever `docker compose` is never invoked
+# (the Batch 1 hermetic tests stub docker and never execute the link).
+NFMD_DC_SRC="${NFMD_DC_SRC:-${HOME}/.docker/cli-plugins/docker-compose}"
 NFMD_DC="${NFMD_DC:-${HOME}/.nfmd/docker-compose}"
-if [ ! -x "${NFMD_DC}" ] || [ "/Users/lwj04/.docker/cli-plugins/docker-compose" -nt "${NFMD_DC}" ]; then
-  mkdir -p "$(dirname "${NFMD_DC}")"
-  cp /Users/lwj04/.docker/cli-plugins/docker-compose "${NFMD_DC}"
-  xattr -d com.apple.quarantine "${NFMD_DC}" 2>/dev/null || true
-  chmod 0755 "${NFMD_DC}"
+if [ -x "${NFMD_DC_SRC}" ]; then
+  if [ ! -x "${NFMD_DC}" ] || [ "${NFMD_DC_SRC}" -nt "${NFMD_DC}" ]; then
+    mkdir -p "$(dirname "${NFMD_DC}")"
+    cp "${NFMD_DC_SRC}" "${NFMD_DC}"
+    xattr -d com.apple.quarantine "${NFMD_DC}" 2>/dev/null || true
+    chmod 0755 "${NFMD_DC}"
+  fi
 fi
 ln -sf "${NFMD_DC}" /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
 docker compose version
