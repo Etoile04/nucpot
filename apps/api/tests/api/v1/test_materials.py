@@ -89,6 +89,33 @@ async def test_list_materials_returns_paginated(async_client, db_session) -> Non
 
 
 @pytest.mark.asyncio
+async def test_list_materials_hides_inactive_merged_fragments(async_client, db_session) -> None:
+    """NFM-4312 — retired duplicates leave the public list, stay reachable.
+
+    The backfill retires merged duplicate fragments with
+    ``is_active=False``; the list must hide them while direct UUID
+    access (detail + properties) keeps working for curation/audit.
+    """
+    active = await _seed_material(db_session, name="UO2")
+    retired = await _seed_material(
+        db_session, name="amorphous UO2 (undoped and Cr-doped)", is_active=False
+    )
+
+    response = await async_client.get("/api/v1/materials?per_page=50")
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    names = [item["name"] for item in items]
+    assert "UO2" in names
+    assert all(item["name"] != retired.name for item in items)
+
+    detail = await async_client.get(f"/api/v1/materials/{retired.id}")
+    assert detail.status_code == 200
+    assert detail.json()["data"]["id"] == str(retired.id)
+    assert active  # keep linters honest about both seeds
+
+
+@pytest.mark.asyncio
 async def test_list_materials_category_filter(async_client, db_session) -> None:
     cat = await _seed_category(db_session)
     await _seed_material(db_session, name="In-Cat", category_id=cat.id)
@@ -283,6 +310,24 @@ async def test_search_materials_paginated(async_client, db_session) -> None:
     data = response.json()["data"]
     assert data["total"] == 5
     assert len(data["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_materials_hides_inactive_merged_fragments(
+    async_client, db_session
+) -> None:
+    """NFM-4312 — retired duplicates leave search results, not just the list."""
+    active = await _seed_material(db_session, name="amorphous UO2 (canonical)")
+    retired = await _seed_material(
+        db_session, name="amorphous UO2 (undoped and Cr-doped)", is_active=False
+    )
+
+    response = await async_client.get("/api/v1/materials/search?q=amorphous")
+
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()["data"]["items"]]
+    assert active.name in names
+    assert retired.name not in names
 
 
 # ---------------------------------------------------------------------------
