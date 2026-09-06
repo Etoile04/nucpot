@@ -177,10 +177,12 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
 fi
 
 # git refuses repos owned by another user (dubious-ownership) — allow both
-# the symlinked and real paths.
+# the symlinked and real paths. Absolute /usr/bin/git: PATH may resolve
+# Homebrew git, whose dylibs (libintl from a 0700 Cellar) are unreadable by
+# the deploy identity — Apple git has no such dependency (NFM-4295 errno=13).
 for P in "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"; do
-  if ! sudo -u "${DEPLOY_USER}" -H git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
-    sudo -u "${DEPLOY_USER}" -H git config --global --add safe.directory "${P}"
+  if ! sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
+    sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
   fi
 done
 
@@ -194,7 +196,7 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest start-proxy start-watchdog; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup start-proxy start-watchdog; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place

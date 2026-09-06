@@ -36,6 +36,7 @@ SANCTIONED = [
     "run-worker-inspect.sh",
     "run-sql.sh",
     "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
+    "run-cleanup.sh",  # NFM-4357: sanctioned image retention cleanup
 ]
 
 # Hermetic sha satisfying HEAD==DEPLOY_SHA in entry tests.
