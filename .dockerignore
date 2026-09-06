@@ -32,3 +32,23 @@ docs/
 .venv
 .gitnexus
 .git
+# NFM-4333: legacy builder (DOCKER_BUILDKIT=0) runs `docker build` as the
+# nfmdeploy identity via the G2 gate; host-side dot-directories with
+# 0600 user files (e.g. .claude/skills/**/SKILL.md, mode 600 owned by
+# lwj04) make the build-context scan fail with "no permission to read".
+.claude
+.mimosa
+.tmp
+
+# NFM-4333 supplement (RC11 follow-up census, 2026-09-06): same failure
+# class — every remaining non-world-readable path outside apps/packages
+# (host-side chmod a+r covers tracked source; agent dirs are ignored
+# here instead of chmod'd). Root .env* backups stay 600 AND must never
+# enter an image (secret hygiene); they are not matched by **/.env above.
+memory
+.serena
+.hermes
+.zcode
+.video_agent
+gui-test-screenshots
+.env*
