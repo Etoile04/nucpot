@@ -91,19 +91,21 @@ class TestMigration080Chain:
         )
 
     def test_080_is_single_head(self, script_directory: ScriptDirectory) -> None:
-        """Exactly one head exists — 083 (BUG-37) chained after 082 is it.
+        """Exactly one head exists — 084 (BUG-30) chained after 083 is it.
 
         080 was the head until 081_create_feature_flags_table (NFM-4180,
         backend feature-flag service for the DataLossNotice rollout)
         extended the chain; 082_blog_role_domain_expert (BUG-08,
         blog_role_enum + CHECK for the domain_expert role) extended it
         again; 083_normalize_potential_file_urls (NFM-4309 / BUG-37,
-        potentials.file_url canonical proxy normalization + sweep) is
-        the current head. This keeps asserting "exactly one head" so a
-        future bad down_revision still fails loudly here.
+        potentials.file_url canonical proxy normalization + sweep) extended
+        it again; 084_potentials_list_partial_index (NFM-4311 / BUG-30,
+        potentials list default-sort partial index) is the current head.
+        This keeps asserting "exactly one head" so a future bad
+        down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "083_normalize_potential_file_urls"
+        current_head = "084_potentials_list_partial_index"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 

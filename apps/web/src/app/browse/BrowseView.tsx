@@ -259,7 +259,25 @@ export function BrowseView() {
         <div className="flex-1 min-w-0">
           <Spin spinning={state.loading} tip="加载中...">
             {state.error ? (
-              <Empty description={`加载失败：${state.error}`} />
+              <div
+                role="alert"
+                className="p-6 rounded-lg bg-gray-800 border border-red-500/50 text-center space-y-3"
+              >
+                <p className="text-red-300 text-base">
+                  ⚠️ 加载失败：{state.error}
+                </p>
+                <p className="text-gray-400 text-xs">
+                  已自动重试一次仍未成功，请检查网络后手动重试。
+                </p>
+                <button
+                  onClick={() =>
+                    void loadPage(selectedElements, selectedTypes, sort, state.page)
+                  }
+                  className="px-4 py-1.5 rounded bg-red-500/10 border border-red-500/50 text-red-300 text-sm hover:bg-red-500/20 transition"
+                >
+                  重试
+                </button>
+              </div>
             ) : state.potentials.length === 0 && !state.loading ? (
               <Empty description="暂无势函数数据" />
             ) : (
