@@ -210,4 +210,3 @@ gh api repos/<owner>/<repo>/compare/<prev>...main --jq '.files[].additions'
 - `scripts/okr/commit_efficiency.py` — the metric implementation; `_ISSUE_REF_PATTERN`
   defines what counts as a reference.
 
-# self-test marker line for NFM-4357 rule validation — safe to revert
