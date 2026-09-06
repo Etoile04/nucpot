@@ -24,7 +24,7 @@ from starlette.background import BackgroundTask
 from nfm_db.api.v1.auth import get_current_active_user
 from nfm_db.database import get_db
 from nfm_db.models.user import User
-from nfm_db.schemas.common import ApiResponse
+from nfm_db.schemas.common import ApiResponse, PaginationParams
 from nfm_db.schemas.potential import (
     PotentialCreateRequest,
     PotentialDetail,
@@ -202,32 +202,32 @@ async def _record_download(db: AsyncSession, potential_id: UUID) -> None:
         )
 
 
-@router.get(
-    "/potentials",
-    response_model=ApiResponse[PotentialListResponse],
-    summary="分页查询势函数列表",
-    description="返回分页的势函数列表，支持按类型、元素和关键词筛选。\n\nReturn a paginated, filtered list of interatomic potentials.",
-)
+@router.get("/potentials", response_model=ApiResponse[PotentialListResponse], summary="分页查询势函数列表", description="返回分页的势函数列表，支持按类型、元素和关键词筛选。\n\nReturn a paginated, filtered list of interatomic potentials.\n\n分页契约 (NFM-4308): `page_size` 是 `per_page` 的别名；超过上限 100 时按 100 执行，`data.limit` 回传实际生效值并置 `data.truncated: true`。")
 async def list_potentials_endpoint(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100, alias="per_page"),
+    pagination: PaginationParams = Depends(PaginationParams),
     type: str | None = Query(None),
     elements: str | None = Query(None, description="Comma-separated element symbols"),
     q: str | None = Query(None),
     sort: str = Query("updated", pattern="^(updated|name|type)$"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PotentialListResponse]:
+    """Return a paginated, filtered list of interatomic potentials.
+
+    分页契约 (NFM-4308 ③): ``page_size`` 为 ``per_page`` 别名（显式非默认
+    ``per_page`` 优先）；默认 20，上限 100。超限值按 100 执行并在
+    ``data.limit`` / ``data.truncated`` 回传实际生效值与截断标志。
+    """
     elements_list = [e for e in (elements.split(",") if elements else [])] or None
     result = await list_potentials(
         db,
-        page=page,
-        limit=limit,
+        page=pagination.page,
+        limit=pagination.per_page,
         type_filter=type,
         elements=elements_list,
         query=q,
         sort=sort,
     )
-    return ApiResponse(success=True, data=result)
+    return ApiResponse(success=True, data=result.model_copy(update={"truncated": pagination.truncated}))
 
 
 @router.post(

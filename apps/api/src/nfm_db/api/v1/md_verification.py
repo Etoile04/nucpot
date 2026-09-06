@@ -107,6 +107,9 @@ class MDVerificationJobListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    # NFM-4308 ③ — true when the requested page size exceeded the cap and
+    # was clamped (limit echoes the effective value).
+    truncated: bool = False
 
 
 class JobStatusResponse(BaseModel):
@@ -310,6 +313,7 @@ async def list_md_verification_jobs(
             total=len(jobs),
             limit=effective_limit,
             offset=effective_offset,
+            truncated=pagination.truncated,
         )
 
     except Exception as e:

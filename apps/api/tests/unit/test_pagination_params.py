@@ -51,9 +51,12 @@ class TestPaginationParamsValidation:
         with pytest.raises(ValidationError):
             PaginationParams(page=-1)
 
-    def test_per_page_le_one_hundred_raises_on_101(self) -> None:
-        with pytest.raises(ValidationError):
-            PaginationParams(per_page=101)
+    def test_per_page_over_100_clamps_with_truncated_flag(self) -> None:
+        # NFM-4308 ③ — over-cap page sizes clamp to 100 and flag truncation
+        # instead of raising, so pagination callers never silently miss rows.
+        params = PaginationParams(per_page=101)
+        assert params.per_page == 100
+        assert params.truncated is True
 
     def test_per_page_ge_one_raises_on_zero(self) -> None:
         with pytest.raises(ValidationError):

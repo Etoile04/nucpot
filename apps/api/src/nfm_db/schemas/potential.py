@@ -36,7 +36,12 @@ class PotentialDetail(PotentialSummary):
     system_name: str | None = None
     system_tags: list[str] = []
     applicability: dict = {}
-    references: list[dict] = []
+    # F3 / NFM-4343 — three Hunan University potentials (22d980dc,
+    # c6591f31, c19b8325) store references as bare citation strings
+    # (e.g. "J. Nucl. Mater. 541 (2020) 152421") rather than the canonical
+    # [{"doi": ..., "citation": ...}] dict list. We accept both shapes; the
+    # FE render layer (PotentialOverview, /compare page) handles each.
+    references: list[dict | str] = []
     developers: list[dict] = []
     verified_props: dict | None = None
     sim_software: list[str] = []
@@ -66,13 +71,18 @@ class PotentialDetail(PotentialSummary):
 
 
 class PotentialListResponse(BaseModel):
-    """Paginated list of potentials."""
+    """Paginated list of potentials.
+
+    ``limit`` echoes the effective page size; ``truncated`` is true when
+    the request exceeded the server cap and was clamped (NFM-4308 ③).
+    """
 
     potentials: list[PotentialSummary]
     total: int
     page: int
     limit: int
     total_pages: int
+    truncated: bool = False
 
 
 class PotentialCreateRequest(BaseModel):
@@ -91,7 +101,9 @@ class PotentialCreateRequest(BaseModel):
     description: str
     system_tags: list[str] = []
     applicability: dict = {}
-    references: list[dict] = []
+    # See PotentialDetail.references — accept dict or bare-string entries so
+    # the create path matches the read path for legacy Hnu rows.
+    references: list[dict | str] = []
     developers: list[dict] = []
     lammps_config: dict = {}
     tags: list[str] = []

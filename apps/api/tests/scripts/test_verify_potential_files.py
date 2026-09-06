@@ -18,6 +18,7 @@ test_migration_083_normalize_potential_file_urls.py) and a stubbed
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -153,6 +154,43 @@ def test_object_fetch_url_foreign_origin_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _normalize_extra — JSON-string vs dict passthrough (F1 regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_extra_dict_passthrough() -> None:
+    ref = {"file_storage": {"kind": "supabase", "objects": ["x.mtp"]}}
+    assert sweep_mod._normalize_extra(ref) is ref
+
+
+def test_normalize_extra_string_parses_to_dict() -> None:
+    ref = {"file_storage": {"kind": "supabase", "objects": ["x.mtp"]}}
+    assert sweep_mod._normalize_extra(json.dumps(ref)) == ref
+
+
+def test_normalize_extra_empty_string_returns_empty_dict() -> None:
+    assert sweep_mod._normalize_extra("") == {}
+    assert sweep_mod._normalize_extra("   ") == {}
+
+
+def test_normalize_extra_invalid_json_returns_empty_dict() -> None:
+    # Malformed JSON is treated as no extra — matches the migration 083
+    # contract (the migration parses identically and falls through to {}).
+    assert sweep_mod._normalize_extra("{not-json") == {}
+
+
+def test_normalize_extra_non_dict_json_returns_empty_dict() -> None:
+    # A top-level list or scalar is not a valid extra payload — coerce
+    # to {} so resolve_storage_ref sees no ref (matches migration 083).
+    assert sweep_mod._normalize_extra("[1, 2, 3]") == {}
+    assert sweep_mod._normalize_extra(json.dumps(42)) == {}
+
+
+def test_normalize_extra_none_returns_empty_dict() -> None:
+    assert sweep_mod._normalize_extra(None) == {}
+
+
+# ---------------------------------------------------------------------------
 # sweep() end-to-end on SQLite — what --apply clears vs leaves untouched
 # ---------------------------------------------------------------------------
 
@@ -215,6 +253,38 @@ def _seed_sweep_db(db_path: Path, upload_dir: Path) -> dict[str, str]:
                 ),
                 {"id": row_id, "name": name, "url": url, "extra": "{}"},
             )
+        # Canonical-form row (post-migration-083 state) — ``file_url``
+        # is the proxy path and ``extra.file_storage`` carries the
+        # backing storage ref.  ``extra`` is stored as a *string* here on
+        # purpose: raw ``sa.text()`` SELECTs return JSONB columns as
+        # strings on asyncpg unless an explicit JSON cast is in place,
+        # so the sweep must parse the string to recover ``file_storage``.
+        # Prior to the F1 fix, ``isinstance(row.extra, dict) else {}``
+        # dropped the ref, the resolver returned ``None`` for the
+        # canonical URL, and ``--apply`` blanked the row.  The
+        # dict-input shape is covered by the ``_normalize_extra`` unit
+        # test below (SQLite binds params as strings regardless, so the
+        # end-to-end sweep test pins the prod-shaped str case directly).
+        canonical_objects = ["potentials/library/Al_Mendelev_2008.eam.fs"]
+        canonical_extra = json.dumps(
+            {"file_storage": {"kind": "supabase", "objects": canonical_objects}}
+        )
+        canonical_name = "canon-extra-str"
+        canonical_id = uuid.uuid4().hex
+        ids[canonical_name] = canonical_id
+        canonical_url = f"/api/v1/potentials/{canonical_id}/file"
+        conn.execute(
+            sa.text(
+                "INSERT INTO potentials (id, name, file_url, extra) "
+                "VALUES (:id, :name, :url, :extra)"
+            ),
+            {
+                "id": canonical_id,
+                "name": canonical_name,
+                "url": canonical_url,
+                "extra": canonical_extra,
+            },
+        )
         conn.commit()
     engine.dispose()
 
@@ -259,6 +329,9 @@ async def test_sweep_apply_clears_only_definitive_misses(
     stub_supabase[_public_url("potentials/multi-b.mtp")] = 400
     stub_supabase[_public_url("potentials/multi-flaky-gone.mtp")] = 404
     stub_supabase[_public_url("potentials/multi-flaky-503.mtp")] = 503
+    # Canonical-row fixture points at this object — the sweep must
+    # recover it from ``extra.file_storage`` and treat it as ``ok``.
+    stub_supabase[_public_url("potentials/library/Al_Mendelev_2008.eam.fs")] = 200
 
     monkeypatch.setenv("NFM_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setattr(upload_service, "_UPLOAD_DIR_OVERRIDE", upload_dir)
@@ -290,6 +363,16 @@ async def test_sweep_apply_clears_only_definitive_misses(
         "/storage/v1/object/public/potentials/multi-gone0.mtp,"
         "/storage/v1/object/public/potentials/multi-ok1.mtp"
     )
+    # F1 fix: canonical-form row (post-migration-083 state) MUST NOT be
+    # blanked. Prior to the fix, ``isinstance(row.extra, dict) else {}``
+    # dropped the string-typed ref, the resolver returned ``None`` for
+    # the canonical proxy URL, and ``--apply`` blanked the row — the
+    # exact regression that would re-introduce BUG-37 in prod.  The
+    # dict-input shape is pinned by ``test_normalize_extra_dict_passthrough``
+    # below; SQLite stores ``extra`` as a TEXT string regardless.
+    assert urls["canon-extra-str"].startswith("/api/v1/potentials/")
+    assert urls["canon-extra-str"].endswith("/file")
+    assert urls["canon-extra-str"] != ""
 
 
 @pytest.mark.asyncio

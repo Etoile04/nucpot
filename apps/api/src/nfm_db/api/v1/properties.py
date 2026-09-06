@@ -70,7 +70,11 @@ async def list_properties_endpoint(
         material_id=material_id,
         property_type_id=property_type_id,
     )
-    return ApiResponse(success=True, data=result)
+    # NFM-4308 ③ — echo clamped page sizes via data.truncated.
+    return ApiResponse(
+        success=True,
+        data=result.model_copy(update={"truncated": pagination.truncated}),
+    )
 
 
 @router.get("/properties/stats", summary="物性测量汇总统计", description="获取物性测量数据的汇总统计信息。\n\nReturn aggregate statistics about measurements.")
@@ -147,7 +151,11 @@ async def list_property_measurements_with_attribution_endpoint(
         page=pagination.page,
         per_page=pagination.per_page,
     )
-    return ApiResponse(success=True, data=result)
+    # NFM-4308 ③ — echo clamped page sizes via data.truncated.
+    return ApiResponse(
+        success=True,
+        data=result.model_copy(update={"truncated": pagination.truncated}),
+    )
 
 
 @router.post(

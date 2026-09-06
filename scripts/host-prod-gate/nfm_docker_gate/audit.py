@@ -15,9 +15,10 @@ import threading
 from typing import Any
 
 try:  # py3.11+ fast path; fall back for the py3.9 launchd interpreter
-    from datetime import UTC  # noqa: F401
+    from datetime import UTC
 except ImportError:  # pragma: no cover — py<3.11
     from datetime import timezone as _tz
+
     UTC = _tz.utc
 
 

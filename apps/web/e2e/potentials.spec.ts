@@ -25,6 +25,20 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     await expect(page.locator("body")).toBeVisible()
   })
 
+  // BUG-10 regression guard (NFM-4313 回票): production 404'd on bare
+  // /potential after #1141 claimed the fix — the merged redirect was fine
+  // but nothing pinned it, so a stale deploy or accidental route removal
+  // had no test to catch it. page.goto follows the redirect, so the
+  // response is /browse's 200; a 404 route would fail both assertions.
+  test("/potential top-level redirects to /browse (BUG-10, NFM-4313)", async ({ page }) => {
+    const response = await page.goto("/potential", {
+      waitUntil: "domcontentloaded",
+    })
+    expect(response?.status()).toBe(200)
+    await expect(page).toHaveURL(/\/browse/)
+    await expect(page.locator("nav").first()).toBeVisible()
+  })
+
   test("/search page loads", async ({ page }) => {
     await page.goto("/search", { waitUntil: "domcontentloaded" })
     await expect(page.locator("body")).toBeVisible()
@@ -32,9 +46,7 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     await expect(page.locator("nav").first()).toBeVisible()
   })
 
-  test("/upload page renders the upload form", async ({
-    page,
-  }) => {
+  test("/upload page renders the upload form", async ({ page }) => {
     await page.goto("/upload", { waitUntil: "domcontentloaded" })
     await expect(page.locator("body")).toBeVisible()
     // Upload page now has a full form with name, type, elements fields
@@ -42,9 +54,7 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     await expect(page.locator('button:has-text("上 传")')).toBeVisible()
   })
 
-  test("/potential/[id] detail page shell loads (deep-link smoke)", async ({
-    page,
-  }) => {
+  test("/potential/[id] detail page shell loads (deep-link smoke)", async ({ page }) => {
     // Deep-link to an arbitrary id. The page renders an Empty state rather
     // than 404 when the id is unknown / API is down, so this is a safe shell
     // render check that does not depend on a seeded DB.
@@ -59,9 +69,7 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     await expect(page.locator("main").first()).toBeVisible()
   })
 
-  test("/potential/[id] reachable via /browse card click when data exists", async ({
-    page,
-  }) => {
+  test("/potential/[id] reachable via /browse card click when data exists", async ({ page }) => {
     // Navigate from /browse. If the API is reachable and returns potentials,
     // clicking the first card should land on a /potential/<id> URL. If the
     // API is down, no card renders and we skip gracefully (test still passes

@@ -49,6 +49,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 # Make `nfm_db` importable when invoked as a bare script inside the container
@@ -83,6 +84,29 @@ def _is_uuid(value: str) -> bool:
     except (ValueError, AttributeError):
         return False
     return True
+
+
+def _normalize_extra(raw: object) -> dict[str, Any]:
+    """Normalize a raw ``extra`` column value into a dict.
+
+    Mirrors migration 083's local helper: raw ``sa.text()`` SELECTs return
+    the JSONB column as a *string* on asyncpg unless an explicit JSON
+    cast is in place. Without this normalization the canonical-row
+    ``extra.file_storage`` (the only thing that distinguishes a
+    migrated row from a missing one) is discarded as ``{}``, the resolver
+    returns ``None`` for the canonical proxy URL, and ``--apply`` blanks
+    every non-empty ``file_url`` — the exact BUG-37 regression this
+    sweep was added to prevent.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 async def _verify_uploads(key: str) -> tuple[str, str]:
@@ -168,8 +192,8 @@ async def sweep(apply: bool) -> int:
         return 2
     engine = create_async_engine(database_url)
 
-    findings: list[dict] = []
-    unverifiable: list[dict] = []
+    findings: list[dict[str, Any]] = []
+    unverifiable: list[dict[str, Any]] = []
     cleared = 0
     try:
         async with engine.connect() as conn:
@@ -185,7 +209,7 @@ async def sweep(apply: bool) -> int:
             logger.info("checking %d potentials with non-empty file_url", len(rows))
             for row in rows:
                 pid = str(row.id)
-                extra = row.extra if isinstance(row.extra, dict) else {}
+                extra = _normalize_extra(row.extra)
                 ref = resolve_storage_ref(extra, str(row.file_url))
                 if ref is None:
                     findings.append(
@@ -257,12 +281,12 @@ async def sweep(apply: bool) -> int:
         apply,
     )
     if unverifiable:
-        for row in unverifiable:
+        for entry in unverifiable:
             logger.error(
                 "UNVERIFIABLE %s (%s): %s — left untouched, re-run later",
-                row["name"],
-                row["id"],
-                row["error"],
+                entry["name"],
+                entry["id"],
+                entry["error"],
             )
     if findings or unverifiable:
         for finding in findings:

@@ -138,6 +138,9 @@ ignore = [
 "tests/test_extraction_rules.py" = ["RUF001", "RUF002"]
 "tests/test_phase_rules.py" = ["RUF001", "RUF002"]
 "tests/test_v4_mapper.py" = ["RUF001", "RUF002"]
+# NFM-4313: Greek α/γ are verbatim Crossref title data in fixtures
+# (e.g. "α and γ uranium") — RUF001 would corrupt the test data.
+"tests/test_crossref_metadata.py" = ["RUF001"]
 # Multiplication sign × is intentional in alloy-population math docs (NFM-1681)
 "tests/test_design_optimization.py" = ["RUF001", "RUF002"]
 # NFM-4095: multiplication sign × is intentional in kg-node coverage arithmetic

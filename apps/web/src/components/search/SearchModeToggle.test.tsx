@@ -28,12 +28,13 @@ describe('SearchModeToggle', () => {
     expect(onChange).toHaveBeenCalledWith('text')
   })
 
-  it('applies block and max-width class', () => {
+  it('does not cap or force the Segmented width (NFM-4330)', () => {
     const { container } = render(
       <SearchModeToggle value="text" onChange={vi.fn()} />,
     )
 
     const segmented = container.querySelector('.ant-segmented')
-    expect(segmented?.className).toContain('ant-segmented-block')
+    expect(segmented?.className).not.toContain('max-w-xs')
+    expect(segmented?.className).not.toContain('ant-segmented-block')
   })
 })

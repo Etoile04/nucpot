@@ -55,6 +55,11 @@ known-first-party = ["nfm_db"]
 # NFM-4269: hyphenated tool directory name mirrors the shipped Hermes
 # plugin distribution (`tools/hermes-prod-guard/`).
 "tools/hermes-prod-guard/*" = ["N999"]
+# NFM-4320: the launchd proxies run under /usr/bin/python3 = 3.9, so the
+# gate package must NOT adopt py3.10+/3.11+ forms — keep Optional (UP045),
+# timezone.utc (UP017), and socket.timeout (UP041). Enforced by
+# scripts/tests/test_nfm_docker_gate_py39_compat.py.
+"scripts/host-prod-gate/nfm_docker_gate/*" = ["UP017", "UP045", "UP041"]
 
 [tool.mypy]
 python_version = "3.12"
