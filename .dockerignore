@@ -32,3 +32,10 @@ docs/
 .venv
 .gitnexus
 .git
+# NFM-4333: legacy builder (DOCKER_BUILDKIT=0) runs `docker build` as the
+# nfmdeploy identity via the G2 gate; host-side dot-directories with
+# 0600 user files (e.g. .claude/skills/**/SKILL.md, mode 600 owned by
+# lwj04) make the build-context scan fail with "no permission to read".
+.claude
+.mimosa
+.tmp
