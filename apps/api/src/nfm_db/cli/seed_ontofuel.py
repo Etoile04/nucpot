@@ -67,12 +67,12 @@ from nfm_db.services.seed_ontofuel import seed_ontofuel
 )
 def seed_ontofuel_cmd(dry_run: bool, force: bool, json_path: str | None) -> None:
     """Seed the OntoFuel ontology into the KG."""
-    from nfm_db.database import async_session_factory
+    from nfm_db.database import get_session_factory
 
     path = Path(json_path) if json_path else None
 
     async def _run() -> None:
-        async with async_session_factory() as session:
+        async with get_session_factory()() as session:
             stats = await seed_ontofuel(
                 session,
                 json_path=path,

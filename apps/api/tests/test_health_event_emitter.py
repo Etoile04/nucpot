@@ -20,13 +20,20 @@ EMITTER = "nfm_db.services.health_event_emitter"
 
 
 def _factory(session):
-    """Mimic ``async with async_session_factory() as s``."""
-    factory = MagicMock()
-    ctx = AsyncMock()
-    ctx.__aenter__.return_value = session
-    ctx.__aexit__.return_value = False
-    factory.return_value = ctx
-    return factory
+    """Mimic the two-level ``task_session_factory`` provider contract:
+    calling it returns an async CM yielding a factory whose call yields
+    the session."""
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _task_factory():
+        @contextlib.asynccontextmanager
+        async def _session_cm():
+            yield session
+
+        yield _session_cm
+
+    return _task_factory
 
 
 def _session():
@@ -64,7 +71,7 @@ class TestEmitHealthEventSuccess:
     @pytest.mark.asyncio
     async def test_adds_row_and_commits(self):
         s = _session()
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)):
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)):
             result = await emit_health_event(
                 event_type="fallback_triggered",
                 severity=SEVERITY_WARNING,
@@ -78,7 +85,7 @@ class TestEmitHealthEventSuccess:
     @pytest.mark.asyncio
     async def test_forwards_all_fields_to_model(self):
         s = _session()
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)), patch(
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)), patch(
             f"{EMITTER}.HealthEvent"
         ) as MockModel:
             await emit_health_event(
@@ -96,7 +103,7 @@ class TestEmitHealthEventSuccess:
     @pytest.mark.asyncio
     async def test_default_context_gets_timestamp(self):
         s = _session()
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)), patch(
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)), patch(
             f"{EMITTER}.HealthEvent"
         ) as MockModel:
             await emit_health_event(
@@ -111,7 +118,7 @@ class TestEmitHealthEventSuccess:
         """The caller's dict must not gain a timestamp key as a side effect."""
         s = _session()
         caller_context = {"error": "boom"}
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)):
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)):
             await emit_health_event(
                 event_type="test_event",
                 severity=SEVERITY_INFO,
@@ -123,7 +130,7 @@ class TestEmitHealthEventSuccess:
     @pytest.mark.asyncio
     async def test_unknown_severity_is_coerced_to_error(self):
         s = _session()
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)), patch(
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)), patch(
             f"{EMITTER}.HealthEvent"
         ) as MockModel:
             await emit_health_event(
@@ -138,7 +145,7 @@ class TestEmitHealthEventFallback:
     @pytest.mark.asyncio
     async def test_logs_and_returns_false_when_db_unreachable(self, caplog):
         factory = MagicMock(side_effect=RuntimeError("DB unavailable"))
-        with patch(f"{EMITTER}.async_session_factory", factory), caplog.at_level(
+        with patch(f"{EMITTER}.task_session_factory", factory), caplog.at_level(
             logging.WARNING
         ):
             result = await emit_health_event(
@@ -157,7 +164,7 @@ class TestEmitHealthEventFallback:
     async def test_commit_failure_does_not_propagate(self, caplog):
         s = _session()
         s.commit = AsyncMock(side_effect=Exception("commit error"))
-        with patch(f"{EMITTER}.async_session_factory", _factory(s)), caplog.at_level(
+        with patch(f"{EMITTER}.task_session_factory", _factory(s)), caplog.at_level(
             logging.WARNING
         ):
             result = await emit_health_event(

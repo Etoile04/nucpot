@@ -1091,11 +1091,11 @@ async def _dispatch_rerun_step(
     Runs on its own DB session because the request-scoped session is
     closed by the time this fires.
     """
-    from nfm_db.database import async_session_factory
+    from nfm_db.database import get_session_factory
     from nfm_db.models.extraction_step import ExtractionStep
 
     try:
-        async with async_session_factory() as session:
+        async with get_session_factory()() as session:
             step_row = (
                 await session.execute(
                     select(ExtractionStep).where(

@@ -358,8 +358,8 @@ class TestTrackIdPersistence:
                 return_value=mock_provider,
             ),
             patch(
-                "nfm_db.database.async_session_factory",
-                session_factory,
+                "nfm_db.database.get_session_factory",
+                return_value=session_factory,
             ),
         ):
             node = _make_node(label="UO2")
@@ -410,8 +410,8 @@ class TestTrackIdPersistence:
                 return_value=mock_provider,
             ),
             patch(
-                "nfm_db.database.async_session_factory",
-                session_factory,
+                "nfm_db.database.get_session_factory",
+                return_value=session_factory,
             ),
         ):
             node = _make_node()
@@ -447,8 +447,8 @@ class TestTrackIdPersistence:
                 return_value=mock_provider,
             ),
             patch(
-                "nfm_db.database.async_session_factory",
-                session_factory,
+                "nfm_db.database.get_session_factory",
+                return_value=session_factory,
             ),
         ):
             node = _make_node()
@@ -489,8 +489,8 @@ class TestTrackIdPersistence:
                 return_value=mock_provider,
             ),
             patch(
-                "nfm_db.database.async_session_factory",
-                session_factory,
+                "nfm_db.database.get_session_factory",
+                return_value=session_factory,
             ),
         ):
             node = _make_node()

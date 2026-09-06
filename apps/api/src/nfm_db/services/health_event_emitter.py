@@ -17,8 +17,9 @@ become the reason a request fails — if the insert cannot be done the
 event is written to the log instead, so the information is still
 recoverable.
 
-The emitter deliberately opens its **own** session via
-``async_session_factory`` rather than reusing the caller's. Several call
+The emitter deliberately opens its **own** session via the provider's
+task-scoped adapter (:func:`nfm_db.database.task_session_factory`) rather
+than reusing the caller's. Several call
 sites emit precisely because the caller's session has just failed (e.g. a
 rollback error), so reusing it would lose the event.
 
@@ -47,7 +48,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from nfm_db.database import async_session_factory
+from nfm_db.database import task_session_factory
 from nfm_db.models.health_event import HealthEvent
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,10 @@ async def emit_health_event(
     severity, payload = _prepare(severity, source_service, event_type, context)
 
     try:
-        async with async_session_factory() as session:
+        # The emitter runs in both FastAPI request loops and Celery task
+        # loops; a task-scoped engine (fresh per call, disposed at exit)
+        # is the only channel that is loop-safe in both worlds.
+        async with task_session_factory() as factory, factory() as session:
             session.add(
                 HealthEvent(
                     event_type=event_type,

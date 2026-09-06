@@ -105,14 +105,14 @@ async def cli_db_session() -> AsyncGenerator[AsyncSession, None]:
         expire_on_commit=False,
     )
 
-    original_factory = sa_module.async_session_factory
-    sa_module.async_session_factory = session_factory
+    original_get_factory = sa_module.get_session_factory
+    sa_module.get_session_factory = lambda: session_factory
 
     try:
         async with session_factory() as session:
             yield session
     finally:
-        sa_module.async_session_factory = original_factory
+        sa_module.get_session_factory = original_get_factory
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
