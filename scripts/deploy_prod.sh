@@ -32,6 +32,23 @@ set -euo pipefail
 # hermetic tests can prepend a fake docker that then wins.
 export PATH="${PATH:+${PATH}:}/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# NFM-4357: as the deploy identity (nfmdeploy), bare `git` must NOT be
+# Homebrew git — its libintl dylib lives in a 0700 Cellar that
+# /var/lib/nfmdeploy cannot traverse (dyld abort trap 6, observed twice
+# 2026-09-06: host_setup git config call, then run 34032116050 deploy
+# exit 134 at the identity branch's first `git rev-parse HEAD`).
+# Preference: explicit override > PATH resolution (hermetic test shims
+# keep working) > any Homebrew hit relocated to the absolute Apple git
+# binary. Non-identity callers keep plain git.
+if [ "$(id -un)" = "nfmdeploy" ]; then
+  GIT_BIN="${NFM_G2_GIT_BIN:-$(command -v git)}"
+  case "${GIT_BIN}" in
+    /opt/homebrew/*|/usr/local/Homebrew/*) GIT_BIN=/usr/bin/git ;;
+  esac
+else
+  GIT_BIN="${NFM_G2_GIT_BIN:-git}"
+fi
+
 # --- Input validation (empty variable = loud failure, never a mangled cmd) --
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
 : "${PROXY_PORT:=7897}"
@@ -153,7 +170,7 @@ if [ "${NFM_G2_DEPLOY_IDENTITY:-0}" = "1" ]; then
   # (GH Actions does `git reset --hard <github.sha>` as lwj04 before invoking
   # the sudo entry). No git mutations here — verify the tree is exactly the
   # SHA being deployed, then proceed.
-  HEAD_SHA="$(git rev-parse HEAD)"
+  HEAD_SHA="$("${GIT_BIN}" rev-parse HEAD)"
   if [ "${HEAD_SHA}" != "${DEPLOY_SHA}" ]; then
     echo "FATAL (NFM-4270): repo HEAD ${HEAD_SHA} != DEPLOY_SHA ${DEPLOY_SHA} — refusing to deploy an unsynced tree" >&2
     echo "  Sync as the repo owner: cd ~/Projects/nucpot && git fetch origin && git reset --hard ${DEPLOY_SHA}" >&2
@@ -162,11 +179,11 @@ if [ "${NFM_G2_DEPLOY_IDENTITY:-0}" = "1" ]; then
   echo "==> NFM-4270: sanctioned deploy identity at ${HEAD_SHA:0:12} (git sync skipped, HEAD verified)"
 else
   for i in 1 2 3 4 5; do
-    git fetch origin main && break
+    "${GIT_BIN}" fetch origin main && break
     [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
     echo "git fetch failed (attempt $i), retrying in 15s..."; sleep 15
   done
-  git reset --hard origin/main
+  "${GIT_BIN}" reset --hard origin/main
 fi
 
 # NFM-4265 (NFM-4264 follow-up): stale-tag landmine guard. On 2026-09-04 a
