@@ -341,7 +341,14 @@ jobs:
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
+      # NFM-4355 RC12: Azure storage suffixes go DIRECT. upload-artifact's
+      # blob PUT would otherwise ride the local bridge proxy (127.0.0.1:7897,
+      # a crash-looping python process) and die with ECONNREFUSED whenever
+      # it flaps — redding the run AFTER a successful deploy. Direct egress
+      # to *.blob.core.windows.net verified reachable from this host. The
+      # twirp leg (results-receiver.actions.github.com) does NOT resolve via
+      # local DNS and must stay on the proxy — see the pre-upload wait step.
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
       # ADR §5 D2 "distinct exit code". 64 = EX_USAGE (sysexits.h).
       # The smoke-test job uses a different value (42) so the two jobs
       # never collide on a single exit-code namespace.
@@ -515,7 +522,10 @@ jobs:
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
+      # NFM-4355 RC12: Azure storage suffixes go DIRECT (see deploy-prod env
+      # note) so artifact uploads stop dying with ECONNREFUSED when the
+      # local bridge proxy flaps.
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
       - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
@@ -612,7 +622,10 @@ jobs:
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
+      # NFM-4355 RC12: Azure storage suffixes go DIRECT (see deploy-prod env
+      # note) so artifact uploads stop dying with ECONNREFUSED when the
+      # local bridge proxy flaps.
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
     steps:
       - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
         # Mirror of the migration-on-main-assert fix. Direct github.com
@@ -771,7 +784,14 @@ jobs:
     env:
       HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
       HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
+      # NFM-4355 RC12: Azure storage suffixes go DIRECT. upload-artifact's
+      # blob PUT would otherwise ride the local bridge proxy (127.0.0.1:7897,
+      # a crash-looping python process) and die with ECONNREFUSED whenever
+      # it flaps — redding the run AFTER a successful deploy. Direct egress
+      # to *.blob.core.windows.net verified reachable from this host. The
+      # twirp leg (results-receiver.actions.github.com) does NOT resolve via
+      # local DNS and must stay on the proxy — see the pre-upload wait step.
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
       # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
       # commit SHA. The deploy heredoc re-exports this on the host so the
       # compose step and the manual rollback recipe both use the same tag.
@@ -1014,6 +1034,31 @@ jobs:
 
           _prod_emit "$SUCCESS" "$FIRST_POLL"
           exit 0
+
+      - name: Wait for local proxy bridge before artifact upload (NFM-4355 RC12)
+        if: always()
+        env:
+          PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
+        run: |
+          # The fragment upload's twirp leg (results-receiver.actions
+          # .github.com) only resolves via the bridge proxy, so a flapping
+          # bridge (python process, crash-loops) reddens the run AFTER a
+          # successful deploy with a bare "Unable to make request:
+          # ECONNREFUSED". Probe FORWARDING health (not just TCP) and give
+          # the bridge up to 90s to come back before handing off to the
+          # upload step. Warning-only on exhaustion: the upload itself keeps
+          # the strict drift-alarm contract (if-no-files-found: error) and
+          # decides pass/fail.
+          for i in $(seq 1 18); do
+            if curl -sf -x "http://127.0.0.1:${PROXY_PORT}" --max-time 6 \
+                 -o /dev/null https://www.gstatic.com/generate_204; then
+              echo "proxy bridge forwarding (attempt $i)"
+              exit 0
+            fi
+            echo "proxy bridge not forwarding (attempt $i), waiting 5s..."
+            sleep 5
+          done
+          echo "::warning::bridge proxy 127.0.0.1:${PROXY_PORT} not forwarding after 90s; artifact upload may fail (NFM-4355 RC12)"
 
       - name: Upload prod deploy-event fragment
         if: always()
