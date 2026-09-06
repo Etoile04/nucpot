@@ -123,37 +123,13 @@ def reset_for_tests() -> None:
         _default_factory = None
 
 
-class _LazyDefaultSessionFactory:
-    """Compat alias for the historical ``async_session_factory`` attribute.
-
-    Callers (and tests) still do ``async_session_factory()``; the proxy
-    defers engine construction to the first call.  T2/T4 migrate call
-    sites onto :func:`get_session_factory` / :func:`task_session_factory`;
-    T5 removes this alias once no caller remains (ADR-NFM-4076 D2/D5).
-
-    Deliberately defines ONLY ``__call__``: no ``__getattr__`` forwarding —
-    ``unittest.mock.patch`` inspects the original attribute value, and a
-    forwarding ``__getattr__`` would route that inspection through the
-    engine-building lock path (the same-thread lock re-entry that once
-    hung the mapper tests).
-    """
-
-    def __call__(self, *args: Any, **kwargs: Any) -> AsyncSession:
-        return get_session_factory()(*args, **kwargs)
-
-
-async_session_factory = _LazyDefaultSessionFactory()
-
-
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Yield an async database session (the FastAPI adapter).
 
-    Resolves the default factory through the module attribute at call
-    time, mirroring the historical wiring: existing tests that replace
-    ``async_session_factory`` keep working unchanged until they migrate
-    onto ``dependency_overrides`` / :func:`get_session_factory` (T2+).
+    Tests override this dependency via ``app.dependency_overrides`` or
+    patch :func:`get_session_factory` — never a module attribute.
     """
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         try:
             yield session
             await session.commit()

@@ -7,15 +7,15 @@ task-scoped 工厂、parse 失败标记、惰性 engine。不探测 engine 内�
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
-import sys
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import literal, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import nfm_db.database as database_module
 from nfm_db.database import (
     fresh_session,
     mark_parse_failed,
@@ -220,34 +220,28 @@ class TestFreshSession:
 class TestLazyEngine:
     """ADR-NFM-4076 D2:import nfm_db.database 不得构造 engine;首用才建。
 
-    用「摘出 sys.modules 再重导入」观察 import 期行为:探针替换
-    sqlalchemy 的 create_async_engine 后重新 import 模块体,顶层若建
-    engine 即被捕获。teardown 把原模块对象放回 sys.modules——外界
-    (路由、其他测试)持有的引用始终是原对象,不受本次观察影响。
-    (不用 importlib.reload:那会更换模块对象身份,使同进程后收集的
-    测试拿到新的 get_db 对象、静默失去 dependency_overrides 匹配。)
+    用 AST 静态检查模块体:顶层任何 ``create_async_engine(...)`` 调用
+    (即 import 期建引擎的写法)都会被捕获。刻意不在进程内二次导入或
+    reload 模块 —— 那会更换模块对象身份、污染同进程后续测试的
+    dependency_overrides 匹配(已实证过一次)。
     """
 
-    def test_module_import_defers_engine_construction(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import sqlalchemy.ext.asyncio as sa_async
+    def test_no_top_level_engine_construction(self) -> None:
+        import ast
 
-        saved = sys.modules.pop("nfm_db.database")
-        calls: list[int] = []
-        real_create = sa_async.create_async_engine
+        source = Path(database_module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
 
-        def spy(*args: object, **kwargs: object) -> object:
-            calls.append(1)
-            return real_create(*args, **kwargs)  # type: ignore[arg-type]
+        offenders: list[int] = []
+        for node in tree.body:  # 只看顶层语句
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue  # 函数/类体内的调用是惰性路径,合法
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call):
+                    name = getattr(call.func, "id", None) or getattr(
+                        call.func, "attr", None
+                    )
+                    if name == "create_async_engine":
+                        offenders.append(node.lineno)
 
-        monkeypatch.setattr(sa_async, "create_async_engine", spy)
-        try:
-            fresh = importlib.import_module("nfm_db.database")
-            assert calls == [], "engine constructed during import"
-
-            fresh.get_engine()
-            assert calls, "engine not constructed on first use"
-        finally:
-            monkeypatch.undo()
-            sys.modules["nfm_db.database"] = saved
+        assert offenders == [], f"import 期构造 engine 的顶层调用:行 {offenders}"

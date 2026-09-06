@@ -192,7 +192,7 @@ import sqlalchemy as sa  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from nfm_db.config import get_settings  # noqa: E402
-from nfm_db.database import async_session_factory  # noqa: E402
+from nfm_db.database import get_session_factory  # noqa: E402
 
 
 logger = logging.getLogger("backfill_material_category")
@@ -937,7 +937,7 @@ async def _main(args: argparse.Namespace) -> int:
 
     settings = get_settings()
     logger.info("connecting to %s", _redact_url(settings.database_url))
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         report = await run_backfill(
             session, dry_run=args.dry_run, verbose=args.verbose,
         )

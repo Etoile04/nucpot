@@ -69,18 +69,19 @@ class TestLoadAgeExtension:
 
 
 def _patched_default_factory(mock_session: AsyncMock):
-    """Patch the module-attribute factory to yield ``mock_session``.
+    """Patch the factory accessor so ``get_db`` yields ``mock_session``.
 
-    Mirrors the historical patch point (``async_session_factory``), which
-    ``get_db`` still resolves at call time for compat (ADR-NFM-4076 D2);
-    T2+ migrates these onto ``get_session_factory`` / overrides.
+    ADR-NFM-4076 D2/T5: ``get_db`` resolves sessions via
+    ``get_session_factory``; the accessor is the patch point (the
+    historical module-attribute alias is gone).
     """
     mock_factory_cm = AsyncMock()
     mock_factory_cm.__aenter__.return_value = mock_session
     mock_factory_cm.__aexit__.return_value = None
+    mock_factory = MagicMock(return_value=mock_factory_cm)
     return patch(
-        "nfm_db.database.async_session_factory",
-        return_value=mock_factory_cm,
+        "nfm_db.database.get_session_factory",
+        return_value=mock_factory,
     )
 
 
