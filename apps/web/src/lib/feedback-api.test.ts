@@ -67,4 +67,26 @@ describe("submitFeedback (NFM-4380)", () => {
 
     await expect(submitFeedback(payload)).rejects.toThrow("提交失败 (429)")
   })
+
+  it("renders a readable message when FastAPI returns a 422 detail array (NFM-4389)", async () => {
+    // FastAPI validation errors put an *array* of error objects in `detail`.
+    // The error path must fall back to a readable status message instead of
+    // stringifying the array ("[object Object]").
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        detail: [
+          {
+            type: "string_too_short",
+            loc: ["body", "description"],
+            msg: "String should have at least 1 character",
+          },
+        ],
+      }),
+    })
+    const { submitFeedback } = await import("./feedback-api")
+
+    await expect(submitFeedback(payload)).rejects.toThrow("提交失败 (422)")
+  })
 })
