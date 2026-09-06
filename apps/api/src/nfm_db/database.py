@@ -33,7 +33,7 @@ _PARSE_ERROR_MAX_LEN = 500
 
 # 收编前的兼容类型:async_sessionmaker 满足它;测试的鸭子类型工厂也满足它。
 # T2+ 迁移完成后评估是否收窄为 async_sessionmaker。
-class _SessionFactory(Protocol):
+class SessionFactory(Protocol):
     def __call__(self) -> AbstractAsyncContextManager[AsyncSession]: ...
 
 _engine: AsyncEngine | None = None
@@ -187,7 +187,7 @@ async def mark_parse_failed(
     datasource_id: uuid.UUID | str,
     err: BaseException,
     *,
-    session_factory: _SessionFactory | None = None,
+    session_factory: SessionFactory | None = None,
 ) -> None:
     """Best-effort failure mark on a DataSource row (CONTEXT.md: parse 失败标记).
 
@@ -217,7 +217,7 @@ async def mark_parse_failed(
 
 
 async def _write_parse_failed(
-    factory: _SessionFactory,
+    factory: SessionFactory,
     ds_id: uuid.UUID | str,
     err: BaseException,
 ) -> None:

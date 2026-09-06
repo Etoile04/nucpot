@@ -31,9 +31,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
+    from nfm_db.database import SessionFactory
     from nfm_db.services.storage import StorageBackend
 
-from nfm_db.database import async_session_factory
+from nfm_db.database import fresh_session, mark_parse_failed, task_session_factory
 from nfm_db.models.source import DataSource
 from nfm_db.services.health_event_emitter import (
     SEVERITY_ERROR,
@@ -47,11 +48,6 @@ logger = logging.getLogger(__name__)
 
 # Re-exported for mypy; the emitter validates at write time.
 EVENT_GENERIC_SILENT_CATCH = "generic_silent_catch"
-
-# BUG-22 (NFM-4076): sentinel capturing the pristine module-level factory.
-# ``process_literature_sync`` compares the live module attribute against
-# this to detect test monkeypatching (patched factory → use it as-is).
-_DEFAULT_SESSION_FACTORY = async_session_factory
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -1173,8 +1169,9 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # stuck at ``'extracting'`` forever (the bug the worker hit in
         # prod). Try the input session first (cheap path for the common
         # case); if it raises — typically because the transaction is
-        # poisoned — open a FRESH session via :func:`async_session_factory`
-        # as a fallback so the failure-status write cannot be blocked.
+        # poisoned — open a FRESH session via the provider's
+        # :func:`nfm_db.database.fresh_session` channel as a fallback so
+        # the failure-status write cannot be blocked.
         err_msg = str(exc)[:MAX_ERROR_LEN]
         original_exc = exc
         status_persisted = await _persist_failure_status(
@@ -1185,17 +1182,17 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         if not status_persisted:
             logger.warning(
                 "process_literature: input session refused failure-status "
-                "write for datasource_id=%s; falling back to a fresh "
-                "async_session_factory session (NFM-3322)",
+                "write for datasource_id=%s; falling back to a provider "
+                "fresh session (NFM-3322)",
                 datasource_id,
             )
             try:
-                async with async_session_factory() as fresh_session:
-                    fresh = await fresh_session.get(DataSource, datasource_id)
+                async with fresh_session() as rescue:
+                    fresh = await rescue.get(DataSource, datasource_id)
                     if fresh is not None:
                         fresh.parse_status = PARSE_STATUS_FAILED
                         fresh.parse_error = err_msg
-                        await fresh_session.commit()
+                        await rescue.commit()
             except Exception:
                 logger.exception(
                     "process_literature: failed to persist failure status "
@@ -1203,7 +1200,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                     datasource_id,
                 )
                 try:
-                    async with async_session_factory() as rollback_session:
+                    async with fresh_session() as rollback_session:
                         await rollback_session.rollback()
                 except Exception as rollback_exc:
                     # A failed rollback on a FRESH session means the DB
@@ -1244,8 +1241,8 @@ async def _persist_failure_status(
 
     Returns ``True`` when the write succeeded, ``False`` if the input
     session refused the operation (typically because its transaction is
-    aborted upstream). NFM-3322 callers should fall back to a fresh
-    :func:`async_session_factory` session on ``False``.
+    aborted upstream). NFM-3322 callers should fall back to the
+    provider's :func:`nfm_db.database.fresh_session` channel on ``False``.
 
     This is a no-op when the row was deleted between extract-failure
     and re-load — the worker logs and moves on rather than 500ing.
@@ -1290,7 +1287,11 @@ async def _persist_failure_status(
 # ---------------------------------------------------------------------------
 
 
-def process_literature_sync(datasource_id: UUID | str) -> dict[str, Any]:
+def process_literature_sync(
+    datasource_id: UUID | str,
+    *,
+    session_factory: SessionFactory | None = None,
+) -> dict[str, Any]:
     """Synchronous bridge for Celery → :func:`process_literature`.
 
     Spins up its own :class:`AsyncSession` (the Celery task body runs in a
@@ -1299,111 +1300,56 @@ def process_literature_sync(datasource_id: UUID | str) -> dict[str, Any]:
     that exercise this helper from inside an ``async def`` test still
     get a clean run.
 
-    BUG-22 (NFM-4076): the module-level ``engine``'s asyncpg pool binds
-    its connections to the event loop that first used them.  Celery
-    prefork workers call this helper once per task, each through a fresh
-    ``asyncio.run`` loop — a later task on the same worker process then
-    fails with ``Future attached to a different loop`` and, worse, the
-    DataSource row is left stuck in ``parsing`` forever because the
-    failure happens outside ``process_literature``'s own try/except.
+    Session acquisition (ADR-NFM-4076 D5): callers may inject a session
+    factory; without one, each invocation runs on the provider's
+    task-scoped adapter — a task-local NullPool engine bound to this
+    task's loop and disposed afterwards.  BUG-22 (NFM-4076): the shared
+    engine's asyncpg pool binds its connections to the loop that first
+    used them, so reusing it across ``asyncio.run`` tasks fails with
+    ``Future attached to a different loop`` and, worse, the DataSource
+    row is left stuck in ``parsing`` forever.  The historical "is the
+    module factory test-patched?" probe is gone: tests inject through
+    the parameter instead of monkeypatching the module attribute.
 
-    Fix: run each task on a task-local NullPool engine bound to that
-    task's loop and dispose it afterwards, so no cross-loop state leaks
-    between tasks — unless the module-level factory has been patched
-    (unit tests redirect it to a SQLite session), in which case the
-    patched factory wins.  A belt-and-braces ``except`` marks the
-    DataSource ``failed`` so a crash can never leave a row spinning.
+    On any failure the DataSource is best-effort marked ``failed`` via
+    :func:`nfm_db.database.mark_parse_failed` (reusing the injected
+    factory when one was provided) before the original exception is
+    re-raised — the mark must never mask the real cause.
     """
     if isinstance(datasource_id, str):
         datasource_id = UUID(datasource_id)
 
-    def _factory_is_patched() -> bool:
-        # The module-level factory is a stock async_sessionmaker whose
-        # .bind is the shared engine. Tests monkeypatch the *module
-        # attribute*, so any non-default object means "use the patched
-        # one" — that keeps TestSyncWrapper working unchanged.
-        import nfm_db.services.literature_service as _mod
-
-        return _mod.async_session_factory is not _DEFAULT_SESSION_FACTORY
-
-    def _fresh_engine() -> Any:
-        import sqlalchemy as _sa
-        from sqlalchemy.ext.asyncio import create_async_engine as _cae
-
-        from nfm_db.config import get_settings as _gs
-
-        return _cae(
-            _gs().database_url,
-            echo=_gs().debug,
-            poolclass=_sa.pool.NullPool,
-        )
-
-    async def _mark_failed_async(err: Exception) -> None:
-        import sqlalchemy as _sa
-
-        fb = _fresh_engine()
-        try:
-            async with fb.begin() as conn:
-                await conn.execute(
-                    _sa.text(
-                        "UPDATE data_sources SET parse_status = 'failed', "
-                        "parse_error = :err, updated_at = now() "
-                        "WHERE id = :ds_id"
-                    ),
-                    {"err": str(err)[:500], "ds_id": str(datasource_id)},
-                )
-        finally:
-            await fb.dispose()
-
-    def _mark_datasource_failed(err: Exception) -> None:
-        """Best-effort: swallow everything — must never mask the raise."""
-        try:
-            asyncio.run(_mark_failed_async(err))
-        except Exception:
-            logger.exception(
-                "BUG-22 fallback: could not mark datasource %s failed",
-                datasource_id,
-            )
-
-    _task_engine = None
-    _session_factory_local: Any
-    if not _factory_is_patched():
-        _task_engine = _fresh_engine()
-        from sqlalchemy.ext.asyncio import (
-            async_sessionmaker as _asm,
-        )
-
-        _session_factory_local = _asm(
-            _task_engine, class_=AsyncSession, expire_on_commit=False
-        )
-    else:
-        _session_factory_local = async_session_factory
-
     async def _run() -> dict[str, Any]:
-        async with _session_factory_local() as session:
-            return await process_literature(session, datasource_id)
-
-    async def _run_wrapper() -> dict[str, Any]:
-        try:
-            return await _run()
-        finally:
-            if _task_engine is not None:
-                await _task_engine.dispose()
+        if session_factory is not None:
+            async with session_factory() as session:
+                return await process_literature(session, datasource_id)
+        async with task_session_factory() as task_factory:
+            async with task_factory() as session:
+                return await process_literature(session, datasource_id)
 
     try:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             # Normal Celery context: no loop running. asyncio.run is safe.
-            return asyncio.run(_run_wrapper())
+            return asyncio.run(_run())
 
         # Already inside an event loop (e.g. pytest-asyncio).  Run in a
         # worker thread with its own loop so we don't nest.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, _run_wrapper())
+            future = pool.submit(asyncio.run, _run())
             return future.result()
     except Exception as exc:
-        _mark_datasource_failed(exc)
+        try:
+            asyncio.run(
+                mark_parse_failed(datasource_id, exc, session_factory=session_factory)
+            )
+        except Exception:
+            # Best-effort: swallow everything — must never mask the raise.
+            logger.exception(
+                "BUG-22 fallback: could not mark datasource %s failed",
+                datasource_id,
+            )
         raise
 
 
@@ -1414,7 +1360,6 @@ __all__ = [
     "PARSE_STATUS_FAILED",
     "PARSE_STATUS_PARSING",
     "PARSE_STATUS_UPLOADED",
-    "async_session_factory",
     "process_literature",
     "process_literature_sync",
 ]
