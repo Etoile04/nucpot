@@ -740,3 +740,44 @@ command-text logging for prod-touching commands, NFM-4267) is the
 compensating control for that vector. The pre-existing
 `prod-drift-watchdog.sh` (NFM-3777 phantom-cutover heuristic) is
 orthogonal and may stay or be retired at SRE's discretion.
+
+## 9. Potential-file post-deploy sweep (NFM-4309 / BUG-37)
+
+Migration `083_normalize_potential_file_urls` rewrites every non-empty
+`potentials.file_url` to the canonical proxy form
+(`/api/v1/potentials/{id}/file`) and archives the pre-migration
+inventory to `/var/log/nfmd/potential_file_url_inventory_083.json`
+(留档). The migration deliberately does **not** probe the filesystem —
+volume visibility depends on the deploy host.
+
+After the deploy that carries migration 083, run the sweep **inside the
+prod API container** (it sees both the DB and the `prod-uploads`
+volume):
+
+```bash
+# 1. Dry-run report (exit 1 lists missing files — read-only)
+docker exec nucpot-prod-api python scripts/verify_potential_files.py
+
+# 2. Apply: blank unrecoverable rows with extra.file_url_note
+docker exec nucpot-prod-api python scripts/verify_potential_files.py --apply
+```
+
+`--apply` only blanks rows whose file is **definitively** gone (missing from
+the uploads volume, or Supabase answers 400/404 / an empty object).
+Legacy multi-object rows are probed object by object and blanked only when
+*every* object is definitively gone — a row with any surviving object keeps
+its download card. Transient upstream failures (network errors, 403
+access-denied, 429/5xx) and foreign-origin
+URLs (never fetched server-side — SSRF guard) are reported as
+`UNVERIFIABLE`, left untouched, and keep the exit code at 1: re-run the
+sweep once Supabase/egress is healthy instead of re-applying.
+
+Acceptance (BUG-37): every potential whose `file_url` is non-empty must
+anonymously `GET` its download URL with HTTP 200 and bytes > 0:
+
+```bash
+curl -s "http://localhost:8001/api/v1/potentials/<id>/file" | wc -c   # > 0
+```
+
+Findings are also written to
+`/var/log/nfmd/potential_file_verify_report.json` inside the container.

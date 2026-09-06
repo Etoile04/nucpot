@@ -433,7 +433,13 @@ class TestAttachPotentialFile:
         assert result["file_name"] == "potential.eam"
         assert result["file_hash"] == _compute_hash(data)
         assert result["file_size"] == len(data)
-        assert "/uploads/" in result["file_url"]
+        # NFM-4309: canonical proxy URL + explicit storage reference
+        assert result["file_url"] == f"/api/v1/potentials/{potential.id}/file"
+        assert (tmp_path / str(potential.id) / "potential.eam").read_bytes() == data
+        assert potential.extra["file_storage"] == {
+            "kind": "uploads",
+            "key": f"{potential.id}/potential.eam",
+        }
 
     @pytest.mark.asyncio
     async def test_attach_file_sanitizes_filename(
@@ -464,7 +470,10 @@ class TestAttachPotentialFile:
             data=b"data",
         )
 
-        assert "my_file.eam" in result["file_url"]
+        # NFM-4309: sanitization now lives in extra.file_storage.key
+        assert result["file_url"] == f"/api/v1/potentials/{potential.id}/file"
+        assert potential.extra["file_storage"]["key"] == f"{potential.id}/my_file.eam"
+        assert (tmp_path / str(potential.id) / "my_file.eam").is_file()
 
     @pytest.mark.asyncio
     async def test_attach_file_rejects_bad_extension(
