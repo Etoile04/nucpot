@@ -21,6 +21,13 @@
 # =============================================================================
 set -euo pipefail
 
+# NFM-4357: the G2 docker gate (ADR-013, installed 2026-09-04) rejects
+# buildkit's buildx boot container (Privileged=true is an escape-hatch
+# config). Force the classic builder — image-layer ops pass the ro gate.
+# Explicit opt-out preserved for non-gated hosts.
+export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-0}"
+export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-0}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.staging.yml"
