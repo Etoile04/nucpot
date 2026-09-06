@@ -852,6 +852,48 @@ def test_get_image_other_subresources_still_fail_closed():
     assert not result.allowed and result.audit
 
 
+# ---- NFM-4333: exec inspect + start are sanctioned ----------------------------
+# compose v5's `exec` flow: POST containers/{id}/exec (audited, prod
+# scope-checked) -> POST exec/{id}/start -> GET exec/{id}/json (read the
+# exit code). Both follow-ups were fail-closed, so every
+# `docker compose exec` / `docker exec` — including prod_migrate.sh's
+# pg_isready probe (120s timeout) and the assert smoke (30s timeout) —
+# failed with the exec never "finishing".
+
+
+def test_get_exec_inspect_allowed_ro_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json")
+    assert result.allowed
+
+
+def test_get_exec_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json", full=True)
+    assert result.allowed
+
+
+def test_post_exec_start_allowed_ro_mode():
+    result = decide("POST", "/v1.43/exec/" + "a1" * 32 + "/start")
+    assert result.allowed and result.audit
+
+
+def test_post_exec_create_on_prod_container_still_denied():
+    # The exec entry point keeps its prod scope-check.
+    result = decide(
+        "POST",
+        "/v1.43/containers/nucpot-prod-db/exec",
+        "",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not result.allowed and result.audit
+
+
+def test_exec_other_subresources_still_fail_closed():
+    # Only inspect (GET json) and start (POST) are allowed; e.g. resize
+    # and DELETE stay unrecognized.
+    exec_id = "b2" * 32
+    assert not decide("POST", f"/v1.43/exec/{exec_id}/resize", "h=40").allowed
+    assert not decide("GET", f"/v1.43/exec/{exec_id}/logs").allowed
+
 # ---- NFM-4357 (RC12): exec-instance inspect is a sanctioned read --------------
 # `docker compose exec` reads the probe's exit code via GET
 # exec/{id}/json after create+start; the read allowlist did not know the
@@ -882,14 +924,11 @@ def test_get_exec_inspect_non_hex_id_still_fail_closed():
     assert "fail-closed" in result.reason
 
 
-def test_get_exec_inspect_does_not_widen_exec_create_or_start():
+def test_get_exec_inspect_does_not_widen_exec_create():
     # The read fix must not touch mutation classification: exec create
-    # stays a container mutation (denied for prod in ro mode) and start
-    # stays a non-GET (ro mode) path.
+    # stays a container mutation (denied for prod in ro mode).
     created = decide("POST", "/v1.43/containers/nucpot-prod-db/exec", body={"Cmd": ["true"]})
     assert not created.allowed
-    started = decide("POST", f"/v1.43/exec/{EXEC_ID}/start", body={})
-    assert not started.allowed
 
 
 # ---- CR F4: opaque volume ids -------------------------------------------------------
@@ -979,11 +1018,24 @@ def test_get_image_history_opaque_ref_denied_fail_closed():
         assert not result.allowed and "fail-closed" in result.reason, path
 
 
-def test_post_exec_start_stays_fail_closed():
-    """The exec acceptance note (F9): POST /exec/{id}/start carries only an
-    opaque daemon id — unscope-checkable from text, so it stays
-    unrecognized-mutation deny; interactive exec belongs to the full gate
-    socket (ADR-013 G3 audits it there)."""
-    result = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
-    assert not result.allowed and result.audit
-    assert "fail-closed" in result.reason
+def test_post_exec_start_allowed_but_create_stays_scoped():
+    """NFM-4333 RC8 supersedes the F9 acceptance note: POST /exec/{id}/start
+    carries only an opaque daemon id with no container reference of its own —
+    the prod scope-check happened at exec creation (POST containers/{id}/exec,
+    still denied for prod containers in ro mode). Denying start left every
+    sanctioned `docker exec` (e.g. the pre-deploy assert smoke against the
+    throwaway postgres) dead at start, while the full-gate socket path
+    (ADR-013 G3) audits the same operation anyway. Interactive exec into prod
+    remains unreachable: creation on a prod container is denied, and the
+    exec instance binding cannot be forged past creation."""
+    started = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
+    assert started.allowed and started.audit
+
+    # The scope boundary is enforced where the container ref is visible:
+    # exec creation on a prod-labelled container stays denied in ro mode.
+    prod_create = decide(
+        "POST",
+        f"/v1.43/containers/{'c' * 64}/exec",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not prod_create.allowed
