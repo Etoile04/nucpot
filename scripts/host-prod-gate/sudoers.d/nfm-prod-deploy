@@ -23,6 +23,7 @@
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-worker-inspect.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-sql.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-record-manifest.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-cleanup.sh
 
 # sudo env_reset strips the caller environment; the deploy entry needs
 # exactly these three (DEPLOY_ACTOR is NFM-4273: GH-runner provenance for
