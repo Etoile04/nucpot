@@ -20,6 +20,7 @@ server (the "test target" of the --selftest acceptance criterion): the same
 code path, real HTTP, canned responses.
 """
 
+from __future__ import annotations
 import json
 import os
 import shutil

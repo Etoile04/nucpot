@@ -78,6 +78,15 @@ if ! dscl . -read "/Groups/${DEPLOY_GROUP}" >/dev/null 2>&1; then
   dscl . -create "/Groups/${DEPLOY_GROUP}"
   dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
 else
+  # Record exists — but a bare/partial record (e.g. created by an earlier
+  # interrupted run: dscl -create succeeded, property writes didn't) lacks
+  # PrimaryGroupID, which later chgrp/chown steps need. Backfill it.
+  # (eDSRecordAlreadyExists on the raw -create killed set -e here before.)
+  if ! dscl . -read "/Groups/${DEPLOY_GROUP}" PrimaryGroupID >/dev/null 2>&1; then
+    GID="$(next_id /Groups PrimaryGroupID 400)"
+    log "backfilling PrimaryGroupID=${GID} on partial ${DEPLOY_GROUP} record"
+    dscl . -create "/Groups/${DEPLOY_GROUP}" PrimaryGroupID "${GID}"
+  fi
   log "group ${DEPLOY_GROUP} already exists"
 fi
 
@@ -92,11 +101,28 @@ if ! dscl . -read "/Users/${DEPLOY_USER}" >/dev/null 2>&1; then
   dscl . -create "/Users/${DEPLOY_USER}" RealName "NFMD deploy identity (NFM-4270)"
   dscl . -create "/Users/${DEPLOY_USER}" Password '*'
 else
-  log "user ${DEPLOY_USER} already exists"
+  # Same partial-record hazard as the group above: an interrupted first run
+  # leaves a bare user record (dscl -create + accountPolicyData only, no
+  # UniqueID) that breaks `sudo -u nfmdeploy` and the id(1) probe. Backfill
+  # every required property idempotently.
+  log "user ${DEPLOY_USER} record exists — backfilling missing properties"
+  if ! dscl . -read "/Users/${DEPLOY_USER}" UniqueID >/dev/null 2>&1; then
+    UID_="$(next_id /Users UniqueID 501)"
+    dscl . -create "/Users/${DEPLOY_USER}" UniqueID "${UID_}"
+  fi
+  dscl . -read "/Users/${DEPLOY_USER}" PrimaryGroupID >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" PrimaryGroupID 20
+  dscl . -read "/Users/${DEPLOY_USER}" NFSHomeDirectory >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" NFSHomeDirectory "${DEPLOY_HOME}"
+  dscl . -read "/Users/${DEPLOY_USER}" UserShell >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" UserShell /bin/zsh
+  dscl . -read "/Users/${DEPLOY_USER}" RealName >/dev/null 2>&1 \
+    || dscl . -create "/Users/${DEPLOY_USER}" RealName "NFMD deploy identity (NFM-4270)"
 fi
 
 if ! dscl . -read "/Groups/${DEPLOY_GROUP}" GroupMembership 2>/dev/null | tr ' ' '\n' | grep -qx "${DEPLOY_USER}"; then
-  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}"
+  dscl . -append "/Groups/${DEPLOY_GROUP}" GroupMembership "${DEPLOY_USER}" 2>/dev/null \
+    || log "GroupMembership append returned nonzero (likely already a member) — continuing"
 fi
 
 # =============================================================================
@@ -130,9 +156,23 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
   chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${REPO_REAL}"
   find "${REPO_REAL}" -type d -name .git -prune -o -type d -print0 2>/dev/null \
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit"
+  # NFM-4333 RC7: the prune above skips .git/ entirely — but nfmdeploy still
+  # needs to traverse INTO .git/ to read .git/HEAD (run-deploy.sh does
+  # `git rev-parse HEAD`). Without this ACE, the per-file `allow read` on
+  # COMMIT_EDITMSG etc. is unreachable (parent dir blocks entry) and the
+  # deploy dies with "fatal: not a git repository". Walk .git/ subdirs
+  # here too (skip worktrees/ — not needed for rev-parse and may pin
+  # fragile state if mutated mid-deploy).
+  chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${REPO_REAL}/.git"
+  find "${REPO_REAL}/.git" -type d -not -path "${REPO_REAL}/.git" -not -path "*/worktrees*" 2>/dev/null \
+    | while read -r d; do
+        if ! ls -led "${d}" 2>/dev/null | grep -q "nfmdeploy"; then
+          chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${d}"
+        fi
+      done
   # secrets and any non-other-readable file the deploy reads directly
   find "${REPO_REAL}/docker" "${REPO_REAL}/scripts" "${REPO_REAL}/tools" \
-       "${REPO_REAL}/.git" -type f ! -perm -o=r -print0 2>/dev/null \
+       "${REPO_REAL}/.git" -type f ! -perm -o=r -not -path "*/worktrees/*" -print0 2>/dev/null \
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
 fi
 

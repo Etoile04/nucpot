@@ -71,7 +71,12 @@ import os
 import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime
+try:  # py3.11+ fast path; fall back for the py3.9 CommandLineTools interpreter
+    from datetime import UTC  # noqa: F401
+except ImportError:  # pragma: no cover — py<3.11
+    from datetime import timezone as _tz
+    UTC = _tz.utc
 from pathlib import Path
 
 DEFAULT_COMPOSE_PROJECT = "nucpot-prod"

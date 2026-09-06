@@ -16,7 +16,7 @@ import {
 
 const { Title, Text } = Typography
 
-const TYPES: readonly string[] = ['EAM', 'MEAM', 'ML', 'MTP', 'ACE', 'Buckingham', 'other']
+const TYPES: readonly string[] = ["EAM", "MEAM", "ML", "MTP", "ACE", "Buckingham", "other"]
 
 type SortField = "updated" | "name" | "type"
 
@@ -51,69 +51,78 @@ const INITIAL_STATE: BrowseState = {
 export function BrowseView() {
   const [allElements, setAllElements] = useState<string[]>([])
   const [selectedElements, setSelectedElements] = useState<string[]>([])
+  const [elementSearch, setElementSearch] = useState<string>("")
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<SortField>("updated")
+  // NFM-4308 ① — bumped on reset so the load effect re-fires even when
+  // every filter was already at its default (e.g. user only paginated).
+  const [filterVersion, setFilterVersion] = useState(0)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [state, setState] = useState<BrowseState>(INITIAL_STATE)
 
   useEffect(() => {
-    fetch('/api/stats')
-      .then(res => res.json() as Promise<StatsData>)
-      .then(data => setAllElements([...data.elements]))
-      .catch(() => { /* ignore stats load error */ })
+    fetch("/api/stats")
+      .then((res) => res.json() as Promise<StatsData>)
+      .then((data) => setAllElements([...data.elements]))
+      .catch(() => {
+        /* ignore stats load error */
+      })
   }, [])
 
-  const loadPage = useCallback(async (elements: string[], types: Set<string>, sortBy: SortField, page: number) => {
-    setState((prev) => ({ ...prev, loading: true, error: null }))
-    const params: ListParams = {
-      page,
-      limit: PAGE_SIZE,
-      sort: sortBy,
-    }
-    if (elements.length > 0) params.elements = [...elements]
-    if (types.size > 0 && types.size < TYPES.length) {
-      // Filter to only non-empty selected types
-      const active = TYPES.filter(t => types.has(t))
-      if (active.length === 1) params.type = active[0]
-      else if (active.length > 1) params.type = active.join(',')
-    }
-    try {
-      const result: PotentialListResult = await listPotentials(params)
-      setState({
-        potentials: result.potentials,
-        total: result.total,
-        page: result.page,
-        loading: false,
-        error: null,
-      })
-    } catch (err) {
-      setState({
-        potentials: [],
-        total: 0,
+  const loadPage = useCallback(
+    async (elements: string[], types: Set<string>, sortBy: SortField, page: number) => {
+      setState((prev) => ({ ...prev, loading: true, error: null }))
+      const params: ListParams = {
         page,
-        loading: false,
-        error: err instanceof Error ? err.message : "加载失败",
-      })
-    }
-  }, [])
+        limit: PAGE_SIZE,
+        sort: sortBy,
+      }
+      if (elements.length > 0) params.elements = [...elements]
+      if (types.size > 0 && types.size < TYPES.length) {
+        // Filter to only non-empty selected types
+        const active = TYPES.filter((t) => types.has(t))
+        if (active.length === 1) params.type = active[0]
+        else if (active.length > 1) params.type = active.join(",")
+      }
+      try {
+        const result: PotentialListResult = await listPotentials(params)
+        setState({
+          potentials: result.potentials,
+          total: result.total,
+          page: result.page,
+          loading: false,
+          error: null,
+        })
+      } catch (err) {
+        setState({
+          potentials: [],
+          total: 0,
+          page,
+          loading: false,
+          error: err instanceof Error ? err.message : "加载失败",
+        })
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     void loadPage(selectedElements, selectedTypes, sort, 1)
-  }, [selectedElements, selectedTypes, sort, loadPage])
+  }, [selectedElements, selectedTypes, sort, loadPage, filterVersion])
 
   const onPageChange: PaginationProps["onChange"] = (page) => {
     void loadPage(selectedElements, selectedTypes, sort, page)
   }
 
   const toggleElement = useCallback((el: string) => {
-    setSelectedElements(prev =>
-      prev.includes(el) ? prev.filter(e => e !== el) : [...prev, el]
+    setSelectedElements((prev) =>
+      prev.includes(el) ? prev.filter((e) => e !== el) : [...prev, el],
     )
   }, [])
 
   const toggleType = useCallback((t: string) => {
-    setSelectedTypes(prev => {
+    setSelectedTypes((prev) => {
       const next = new Set(prev)
       if (next.has(t)) next.delete(t)
       else next.add(t)
@@ -121,23 +130,35 @@ export function BrowseView() {
     })
   }, [])
 
+  // NFM-4308 ① — reset must restore EVERY filter control (element search
+  // input, selected elements, function-form checkboxes, sort) to its
+  // default; the elements/types/sort state changes re-trigger the load
+  // effect, refreshing the list back to the unfiltered first page. The
+  // filterVersion bump covers the all-defaults edge case: when every
+  // setter receives an identical value the state-based deps alone would
+  // not re-fire, so reset would strand the user on page N.
   const resetFilters = useCallback(() => {
+    setElementSearch("")
     setSelectedElements([])
     setSelectedTypes(new Set())
+    setSort("updated")
+    setFilterVersion((v) => v + 1)
   }, [])
 
   const toggleCompare = useCallback((id: string) => {
-    setCompareIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 4 ? [...prev, id] : prev
+    setCompareIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length < 4 ? [...prev, id] : prev,
     )
   }, [])
 
   const sidebar = (
     <aside className="space-y-4">
       <div>
-        <Text type="secondary" className="text-xs uppercase tracking-wider">函数形式</Text>
+        <Text type="secondary" className="text-xs uppercase tracking-wider">
+          函数形式
+        </Text>
         <div className="mt-1.5 space-y-1">
-          {TYPES.map(t => (
+          {TYPES.map((t) => (
             <label key={t} className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -152,25 +173,33 @@ export function BrowseView() {
       </div>
 
       <div>
-        <Text type="secondary" className="text-xs uppercase tracking-wider">元素筛选</Text>
+        <Text type="secondary" className="text-xs uppercase tracking-wider">
+          元素筛选
+        </Text>
         <div className="mt-1.5">
           <ElementFilter
             allElements={allElements}
             selected={selectedElements}
             onToggle={toggleElement}
+            search={elementSearch}
+            onSearchChange={setElementSearch}
           />
         </div>
       </div>
 
       <div>
-        <Text type="secondary" className="text-xs uppercase tracking-wider">排序</Text>
+        <Text type="secondary" className="text-xs uppercase tracking-wider">
+          排序
+        </Text>
         <select
           value={sort}
-          onChange={e => setSort(e.target.value as SortField)}
+          onChange={(e) => setSort(e.target.value as SortField)}
           className="mt-1.5 w-full px-2 py-1.5 rounded bg-gray-700 border border-gray-600 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
         >
-          {SORT_OPTIONS.map(o => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
         </select>
       </div>
@@ -200,15 +229,13 @@ export function BrowseView() {
       {/* Mobile filter toggle */}
       <div className="md:hidden mb-4">
         <button
-          onClick={() => setMobileFilterOpen(v => !v)}
+          onClick={() => setMobileFilterOpen((v) => !v)}
           className="px-3 py-1.5 rounded bg-gray-700 border border-gray-600 text-sm text-gray-300"
         >
-          {mobileFilterOpen ? '收起筛选' : '展开筛选'}
+          {mobileFilterOpen ? "收起筛选" : "展开筛选"}
         </button>
         {mobileFilterOpen && (
-          <div className="mt-2 p-3 rounded-lg bg-gray-800 border border-gray-700">
-            {sidebar}
-          </div>
+          <div className="mt-2 p-3 rounded-lg bg-gray-800 border border-gray-700">{sidebar}</div>
         )}
       </div>
 
@@ -257,9 +284,9 @@ export function BrowseView() {
       <CompareBar
         selectedIds={compareIds}
         potentials={Object.fromEntries(
-          state.potentials.map(p => [p.id, { name: p.name, display_name: p.display_name }])
+          state.potentials.map((p) => [p.id, { name: p.name, display_name: p.display_name }]),
         )}
-        onRemove={(id) => setCompareIds(prev => prev.filter(x => x !== id))}
+        onRemove={(id) => setCompareIds((prev) => prev.filter((x) => x !== id))}
         onClear={() => setCompareIds([])}
       />
       {compareIds.length > 0 && <div className="h-16" />}

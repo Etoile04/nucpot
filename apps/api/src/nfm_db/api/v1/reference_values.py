@@ -269,6 +269,7 @@ async def list_pending_review(
             total=total,
             page=pagination.page,
             per_page=pagination.per_page,
+            truncated=pagination.truncated,
         ).model_dump(),
     }
 

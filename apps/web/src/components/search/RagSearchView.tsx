@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { Typography } from "antd"
-import { ragApi, isAuthExpiredError, RAG_AUTH_EXPIRED_MESSAGE } from "@/lib/rag-api"
+import { ragApi, isAuthExpiredError, RAG_LOGIN_REQUIRED_MESSAGE } from "@/lib/rag-api"
 import type { RagCitation } from "@/lib/rag-api"
 import Link from "next/link"
 import { SemanticSearchResults } from "./SemanticSearchResults"
@@ -64,7 +64,7 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
       })
     } catch (err: unknown) {
       const message = isAuthExpiredError(err)
-        ? RAG_AUTH_EXPIRED_MESSAGE
+        ? RAG_LOGIN_REQUIRED_MESSAGE
         : err instanceof Error
           ? err.message
           : "语义检索失败，请重试"
@@ -113,12 +113,12 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
           </button>
         </div>
         <Text type="secondary" className="block mt-2 text-xs">
-          输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答
+          需登录 · 输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答
         </Text>
       </div>
 
-      {/* Auth-expired: show login link instead of generic error */}
-      {state.error === RAG_AUTH_EXPIRED_MESSAGE ? (
+      {/* Login required: show login link instead of generic error */}
+      {state.error === RAG_LOGIN_REQUIRED_MESSAGE ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 p-5">
           <p className="text-amber-200 text-sm">{state.error}</p>
           <Link

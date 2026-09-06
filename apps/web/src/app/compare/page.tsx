@@ -153,21 +153,31 @@ function CompareContent() {
           render: p =>
             p.references?.length ? (
               <ul className="space-y-1">
-                {p.references.map((ref, i) => (
-                  <li key={i} className="text-xs">
-                    {ref.citation || ref.doi || '—'}
-                    {ref.doi && (
-                      <a
-                        href={`https://doi.org/${ref.doi}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 ml-1"
-                      >
-                        [DOI]
-                      </a>
-                    )}
-                  </li>
-                ))}
+                {p.references.map((ref, i) => {
+                  // F3 / NFM-4343 — bare citation strings for legacy Hnu rows.
+                  if (typeof ref === 'string') {
+                    return (
+                      <li key={`bare-${i}-${ref}`} className="text-xs">
+                        {ref}
+                      </li>
+                    )
+                  }
+                  return (
+                    <li key={i} className="text-xs">
+                      {ref.citation || ref.doi || '—'}
+                      {ref.doi && (
+                        <a
+                          href={`https://doi.org/${ref.doi}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 ml-1"
+                        >
+                          [DOI]
+                        </a>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             ) : (
               '—'

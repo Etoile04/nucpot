@@ -252,10 +252,14 @@ class TestListNodes:
         self,
         async_client: AsyncClient,
     ) -> None:
-        """AC-4: per_page > 100 → 422."""
+        """AC-4 (NFM-4308 ③ revision): per_page > 100 clamps to 100 with
+        ``truncated: true`` in the response metadata instead of 422."""
         response = await async_client.get("/api/v1/hub/nodes/?per_page=101")
 
-        assert response.status_code == 422, response.text
+        assert response.status_code == 200, response.text
+        body = response.json()["data"]
+        assert body["limit"] == 100
+        assert body["truncated"] is True
 
     @pytest.mark.asyncio
     async def test_list_pagination_per_page_0_returns_422(
