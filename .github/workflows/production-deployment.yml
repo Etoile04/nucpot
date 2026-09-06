@@ -346,8 +346,10 @@ jobs:
       # a crash-looping python process) and die with ECONNREFUSED whenever
       # it flaps — redding the run AFTER a successful deploy. Direct egress
       # to *.blob.core.windows.net verified reachable from this host. The
-      # twirp leg (results-receiver.actions.github.com) does NOT resolve via
-      # local DNS and must stay on the proxy — see the pre-upload wait step.
+      # twirp host results-receiver.actions.github.com does not resolve via
+      # the system resolver while the local bridge stack is down, so the
+      # upload keeps a transitive bridge dependency — see the pre-upload
+      # wait step (NFM-4355 RC12).
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
       # ADR §5 D2 "distinct exit code". 64 = EX_USAGE (sysexits.h).
       # The smoke-test job uses a different value (42) so the two jobs
@@ -789,8 +791,10 @@ jobs:
       # a crash-looping python process) and die with ECONNREFUSED whenever
       # it flaps — redding the run AFTER a successful deploy. Direct egress
       # to *.blob.core.windows.net verified reachable from this host. The
-      # twirp leg (results-receiver.actions.github.com) does NOT resolve via
-      # local DNS and must stay on the proxy — see the pre-upload wait step.
+      # twirp host results-receiver.actions.github.com does not resolve via
+      # the system resolver while the local bridge stack is down, so the
+      # upload keeps a transitive bridge dependency — see the pre-upload
+      # wait step (NFM-4355 RC12).
       NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
       # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
       # commit SHA. The deploy heredoc re-exports this on the host so the
@@ -1040,25 +1044,34 @@ jobs:
         env:
           PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
         run: |
-          # The fragment upload's twirp leg (results-receiver.actions
-          # .github.com) only resolves via the bridge proxy, so a flapping
-          # bridge (python process, crash-loops) reddens the run AFTER a
-          # successful deploy with a bare "Unable to make request:
-          # ECONNREFUSED". Probe FORWARDING health (not just TCP) and give
-          # the bridge up to 90s to come back before handing off to the
-          # upload step. Warning-only on exhaustion: the upload itself keeps
-          # the strict drift-alarm contract (if-no-files-found: error) and
-          # decides pass/fail.
-          for i in $(seq 1 18); do
+          # The artifact upload transitively depends on the local bridge
+          # stack: the failing run's upload died with "Unable to make
+          # request: ECONNREFUSED" (connect to the dead 127.0.0.1
+          # forwarder), and results-receiver.actions.github.com does NOT
+          # resolve via the system resolver while the bridge stack is down
+          # (verified 2026-09-06). Wait, deadline-capped at 90s, for either
+          # bridge forwarding health or name resolution before the
+          # drift-critical fragment upload. Warning-only on exhaustion: the
+          # upload step itself keeps the strict drift-alarm contract
+          # (if-no-files-found: error) and decides pass/fail.
+          i=0
+          END=$(( $(date +%s) + 90 ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            i=$(( i + 1 ))
             if curl -sf -x "http://127.0.0.1:${PROXY_PORT}" --max-time 6 \
                  -o /dev/null https://www.gstatic.com/generate_204; then
-              echo "proxy bridge forwarding (attempt $i)"
+              echo "bridge forwarding (attempt $i)"
               exit 0
             fi
-            echo "proxy bridge not forwarding (attempt $i), waiting 5s..."
+            if dscacheutil -q host -a name results-receiver.actions.github.com 2>/dev/null \
+                 | grep -q ip_address; then
+              echo "results-receiver resolvable via system resolver (attempt $i)"
+              exit 0
+            fi
+            echo "bridge stack not healthy (attempt $i), waiting 5s..."
             sleep 5
           done
-          echo "::warning::bridge proxy 127.0.0.1:${PROXY_PORT} not forwarding after 90s; artifact upload may fail (NFM-4355 RC12)"
+          echo "::warning::bridge stack (127.0.0.1:${PROXY_PORT} forwarder + results-receiver DNS) not healthy after 90s; artifact upload may fail (NFM-4355 RC12)"
 
       - name: Upload prod deploy-event fragment
         if: always()
