@@ -23,13 +23,34 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
 
+from nfm_db.database import task_session_factory
 from nfm_db.services.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _task_db_session() -> AsyncIterator[Any]:
+    """Yield a task-scoped session (ADR-NFM-4076 D1 Phase B).
+
+    This task body runs once per Celery task through its own
+    ``asyncio.run`` loop — exactly the BUG-22 exposure shape: a shared
+    engine's connections bind to the loop that first used them, so the
+    next task's loop fails with ``Future attached to a different loop``
+    (reproduced in CI with aiosqlite).  Each acquisition therefore gets
+    its own NullPool engine, bound to the caller's loop and disposed at
+    exit; the session is the caller's transaction boundary.
+    """
+    async with task_session_factory() as factory:
+        async with factory() as session:
+            yield session
+
 
 _CROSSREF_API = "https://api.crossref.org/works"
 _CROSSREF_ROWS = 5
@@ -123,7 +144,6 @@ async def _ingest_and_extract(
     """Ingest the DOI through the standard pipeline and mark the request."""
     from sqlalchemy import select
 
-    from nfm_db.database import async_session_factory
     from nfm_db.models.data_collection_request import DataCollectionRequest
     from nfm_db.models.source import DataSource
     from nfm_db.services.doi_fetcher import (
@@ -136,7 +156,7 @@ async def _ingest_and_extract(
     )
     from nfm_db.services.storage import get_storage
 
-    async with async_session_factory() as db:
+    async with _task_db_session() as db:
         req = (
             await db.execute(
                 select(DataCollectionRequest).where(
@@ -253,11 +273,10 @@ async def _mark_request(
 
     from sqlalchemy import select
 
-    from nfm_db.database import async_session_factory
     from nfm_db.models.data_collection_request import DataCollectionRequest
 
     try:
-        async with async_session_factory() as db:
+        async with _task_db_session() as db:
             req = (
                 await db.execute(
                     select(DataCollectionRequest).where(
