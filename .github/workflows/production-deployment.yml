@@ -432,6 +432,14 @@ jobs:
             export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
             mkdir -p /tmp/nfm848-no-cred-docker-config
             printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+            # NFM-4333: ADR-013 G2 wall — the socket watchdog forces the
+            # desktop docker socket 060 group-only (owner has no access),
+            # and this scratch DOCKER_CONFIG drops the nfm-ro context the
+            # desktop user normally defaults to. Pin the read-only gate
+            # endpoint explicitly: docker build/tag are sanctioned
+            # image-layer ops through it; the default /var/run/docker.sock
+            # fallback is permission-denied.
+            export DOCKER_HOST=unix:///var/run/nfm-g2/docker-ro.sock
             for i in 1 2 3 4 5; do
               git fetch origin main && break
               [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
@@ -452,11 +460,18 @@ jobs:
             HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
             docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
 
-            # Tag as :latest so deploy-prod's `up -d` (without --build)
-            # starts the image the assertion just inspected. The candidate
-            # tag is preserved as the rollback primitive (D1 follow-up).
-            docker tag "${CANDIDATE_TAG}" nucpot-prod-api:latest
-            echo "===> Candidate image ready:"
+            # NFM-4333 RC6: do NOT `docker tag ... :latest` here. The
+            # RO gate (ADR-013 G2) denies re-tagging prod-named images
+            # under the exfiltration guard (`POST images/<prod>/tag`
+            # fails closed in both modes), and the tag is also dead
+            # code for the deploy path now: deploy_prod.sh (NFM-4265
+            # D1) rebuilds `nucpot-prod-api:${DEPLOY_SHA}` itself as
+            # nfmdeploy via the full gate, and docker-compose.prod.yml
+            # consumes `${PROD_IMAGE_TAG:-latest}` with PROD_IMAGE_TAG
+            # exported from DEPLOY_SHA — so compose never reads
+            # `:latest`. The candidate tag (short SHA) is the rollback
+            # primitive, retained as-is.
+            echo "===> Candidate image ready (rollback primitive only):"
             docker images --format '  {{.Repository}}:{{.Tag}} ({{.CreatedSince}}, {{.Size}})' \
               | grep '^nucpot-prod-api' || true
           ENDSSH
@@ -694,6 +709,12 @@ jobs:
           mkdir -p "$DOCKER_CONFIG"
           printf '{}' > "$DOCKER_CONFIG/config.json"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG (credsStore-free)"
+          # NFM-4333: same G2 context-loss as the build-candidate step —
+          # scratch DOCKER_CONFIG drops the nfm-ro context, and the default
+          # /var/run/docker.sock is 060 group-only under the G2 watchdog.
+          # Pin the ro gate endpoint (image ls/pull are sanctioned reads /
+          # image-layer ops; image inspect falls to the advisory pull path).
+          export DOCKER_HOST=unix:///var/run/nfm-g2/docker-ro.sock
           # Skip pull if images already cached locally — avoids any network
           # round-trip; credential helper is already bypassed above.
           # NFM-2564 follow-up (run 32612021153): pulling through Docker
@@ -723,6 +744,8 @@ jobs:
         # keychain prompt.
         env:
           DOCKER_CONFIG: /tmp/no-cred-docker-config
+          # NFM-4333: pin the ro gate endpoint — see the pre-pull step.
+          DOCKER_HOST: unix:///var/run/nfm-g2/docker-ro.sock
         run: |
           bash tools/pre-deploy-assert-smoke/smoke.sh
 
@@ -925,7 +948,8 @@ jobs:
       #   never-fail contract).
       # - if: always() so a failing SSH step / smoke step / celery verify
       #   still emits — that's failure mode 6.
-      # - The marker file /tmp/nfmd_prod_health_passed is the prod analog
+      # - The marker file /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed
+      #   is the prod analog
       #   of staging's first-poll gate; the deploy step writes it on success.
       # =======================================================================
       - name: Emit prod deploy-event fragment
@@ -954,8 +978,13 @@ jobs:
 
           # First-poll gate: the deploy heredoc's internal API curl succeeded.
           # The marker file lives on the Mac Studio (same fs as the runner).
+          # NFM-4333 RC8: moved out of /tmp (sticky bit + cross-identity
+          # ownership makes /tmp unsafe for markers written by nfmdeploy and
+          # read by the runner). nfmdeploy's $HOME is /var/lib/nfmdeploy,
+          # mode 755 group-readable (lwj04 in staff), so the runner can read
+          # the marker nfmdeploy wrote without EACCES.
           FIRST_POLL="false"
-          if [ -f /tmp/nfmd_prod_health_passed ]; then
+          if [ -f /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed ]; then
             FIRST_POLL="true"
           fi
 

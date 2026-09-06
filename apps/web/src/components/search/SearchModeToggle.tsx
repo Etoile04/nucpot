@@ -20,8 +20,6 @@ export function SearchModeToggle({ value, onChange }: SearchModeToggleProps) {
       options={MODE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
       value={value}
       onChange={(v) => onChange(v as SearchMode)}
-      block
-      className="max-w-xs"
     />
   )
 }
