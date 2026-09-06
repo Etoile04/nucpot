@@ -82,7 +82,10 @@ elif [ -f "${HOME}/Projects/nucpot/docker/.env.prod" ]; then
 fi
 # Non-prod mutations must still reach the daemon (probe name that does not
 # exist; the daemon's own 404 proves the request got through unfiltered).
-OUT="$(docker rm -f g2probe-nonprod 2>&1)"
+# Plain `rm`, not `rm -f`: docker CLI 29 (prod host runs 29.7.2) treats
+# force-removing a missing container as idempotent success — rc=0, no
+# output — so the daemon 404 never surfaces and this check can never pass.
+OUT="$(docker rm g2probe-nonprod 2>&1)"
 if printf '%s' "$OUT" | grep -qi "No such container"; then
   ok "G2.2 non-prod mutation path reaches daemon (by design)"
 else
