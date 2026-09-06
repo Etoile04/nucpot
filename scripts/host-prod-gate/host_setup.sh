@@ -177,10 +177,12 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
 fi
 
 # git refuses repos owned by another user (dubious-ownership) — allow both
-# the symlinked and real paths.
+# the symlinked and real paths. Absolute /usr/bin/git: PATH may resolve
+# Homebrew git, whose dylibs (libintl from a 0700 Cellar) are unreadable by
+# the deploy identity — Apple git has no such dependency (NFM-4295 errno=13).
 for P in "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"; do
-  if ! sudo -u "${DEPLOY_USER}" -H git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
-    sudo -u "${DEPLOY_USER}" -H git config --global --add safe.directory "${P}"
+  if ! sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
+    sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
   fi
 done
 
