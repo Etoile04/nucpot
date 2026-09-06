@@ -140,6 +140,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
+          # NFM-4367: exact pin skips the raw.githubusercontent.com
+          # version-data fetch, which failed transiently on GitHub-hosted
+          # runners and redded Python Lint on main (run 34039534897 +
+          # rerun). 0.12.10 = the version green run 34039202661 resolved.
+          version: "0.12.10"
           enable-cache: true
 
       - name: Install dependencies
@@ -204,6 +209,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
+          # NFM-4367: exact pin skips the raw.githubusercontent.com
+          # version-data fetch, which failed transiently on GitHub-hosted
+          # runners and redded Python Lint on main (run 34039534897 +
+          # rerun). 0.12.10 = the version green run 34039202661 resolved.
+          version: "0.12.10"
           enable-cache: true
 
       - name: Install dependencies
@@ -240,6 +250,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
+          # NFM-4367: exact pin skips the raw.githubusercontent.com
+          # version-data fetch, which failed transiently on GitHub-hosted
+          # runners and redded Python Lint on main (run 34039534897 +
+          # rerun). 0.12.10 = the version green run 34039202661 resolved.
+          version: "0.12.10"
           enable-cache: true
 
       - name: Install dependencies
