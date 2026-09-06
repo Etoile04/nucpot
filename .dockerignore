@@ -39,3 +39,16 @@ docs/
 .claude
 .mimosa
 .tmp
+
+# NFM-4333 supplement (RC11 follow-up census, 2026-09-06): same failure
+# class — every remaining non-world-readable path outside apps/packages
+# (host-side chmod a+r covers tracked source; agent dirs are ignored
+# here instead of chmod'd). Root .env* backups stay 600 AND must never
+# enter an image (secret hygiene); they are not matched by **/.env above.
+memory
+.serena
+.hermes
+.zcode
+.video_agent
+gui-test-screenshots
+.env*
