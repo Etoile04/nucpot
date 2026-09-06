@@ -50,6 +50,14 @@ _IMAGE_NAME_ACTION = re.compile(r"^images/(?P<name>[^/]+)/(?P<action>tag|push)$"
 # GET images/{name}/json — single-image inspect. {name} is multi-segment
 # for registry refs (e.g. pgvector/pgvector:pg16), hence ".+".
 _IMAGE_INSPECT = re.compile(r"^images/(?P<name>.+)/json$")
+# GET exec/{id}/json — single-exec inspect (compose v5's `exec` reads the
+# exit code after start). Same shape as _IMAGE_INSPECT: an item read of an
+# object the caller already created through an audited endpoint.
+_EXEC_INSPECT = re.compile(r"^exec/(?P<id>[^/]+)/json$")
+# POST exec/{id}/start — execute an exec instance the caller already
+# created via POST containers/{id}/exec (which carries the prod
+# scope-check). The start call carries no container reference of its own.
+_EXEC_START = re.compile(r"^exec/(?P<id>[^/]+)/start$")
 _NETWORK_ACTION = re.compile(r"^networks/(?P<id>[^/]+)/(?P<action>connect|disconnect)$")
 
 # GET endpoints the read-only context may hit. Anything else: denied
@@ -415,6 +423,15 @@ def classify(
             # endpoint exposes strictly less data. Layer/export channels
             # (images/get) stay scope-guarded above.
             return Decision(True, "read-only endpoint")
+        if _EXEC_INSPECT.match(path):
+            # Single-exec inspect (NFM-4333: compose v5's `exec` reads the
+            # instance's exit code via GET exec/{id}/json after start; this
+            # was fail-closed in BOTH modes, so every sanctioned
+            # `docker compose exec` — including prod_migrate.sh's
+            # pg_isready probe — timed out with the exec never "finishing").
+            # The read exposes only the status of an exec the caller already
+            # created through the audited POST containers/{id}/exec.
+            return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")
         if any(path.startswith(prefix) for prefix in _GET_ALLOW_PREFIX):
@@ -750,6 +767,24 @@ def classify(
         return Decision(True, "volume rm (non-prod)", scope="non-prod", audit=True, target=name)
 
     # ---- everything else that mutates: fail closed ------------------------------
+    if method == "POST":
+        exec_match = _EXEC_START.match(path)
+        if exec_match:
+            # POST exec/{id}/start — execute an exec instance the caller
+            # created via POST containers/{id}/exec, which already
+            # prod-scope-checked the target container. The start call
+            # carries no container reference of its own (the binding lives
+            # on the exec instance), so there is nothing further to
+            # scope-check here (NFM-4333: `docker exec` from the ro
+            # context — e.g. the pre-deploy assert smoke — died here with
+            # the exec never starting).
+            return Decision(
+                True,
+                "exec start (instance created via audited endpoint)",
+                audit=True,
+                target=exec_match.group("id"),
+            )
+
     if method in ("POST", "PUT", "DELETE", "PATCH"):
         return Decision(False, f"unrecognized mutation {method} /{path} (fail-closed)", audit=True)
 

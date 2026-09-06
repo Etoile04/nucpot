@@ -849,6 +849,49 @@ def test_get_image_other_subresources_still_fail_closed():
     assert not result.allowed and result.audit
 
 
+# ---- NFM-4333: exec inspect + start are sanctioned ----------------------------
+# compose v5's `exec` flow: POST containers/{id}/exec (audited, prod
+# scope-checked) -> POST exec/{id}/start -> GET exec/{id}/json (read the
+# exit code). Both follow-ups were fail-closed, so every
+# `docker compose exec` / `docker exec` — including prod_migrate.sh's
+# pg_isready probe (120s timeout) and the assert smoke (30s timeout) —
+# failed with the exec never "finishing".
+
+
+def test_get_exec_inspect_allowed_ro_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json")
+    assert result.allowed
+
+
+def test_get_exec_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json", full=True)
+    assert result.allowed
+
+
+def test_post_exec_start_allowed_ro_mode():
+    result = decide("POST", "/v1.43/exec/" + "a1" * 32 + "/start")
+    assert result.allowed and result.audit
+
+
+def test_post_exec_create_on_prod_container_still_denied():
+    # The exec entry point keeps its prod scope-check.
+    result = decide(
+        "POST",
+        "/v1.43/containers/nucpot-prod-db/exec",
+        "",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not result.allowed and result.audit
+
+
+def test_exec_other_subresources_still_fail_closed():
+    # Only inspect (GET json) and start (POST) are allowed; e.g. resize
+    # and DELETE stay unrecognized.
+    exec_id = "b2" * 32
+    assert not decide("POST", f"/v1.43/exec/{exec_id}/resize", "h=40").allowed
+    assert not decide("GET", f"/v1.43/exec/{exec_id}/logs").allowed
+
+
 # ---- CR F4: opaque volume ids -------------------------------------------------------
 
 
