@@ -52,7 +52,8 @@ describe("SearchView failure vs empty state (NFM-4311)", () => {
     mockListPotentials.mockReset()
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ elements: ["U", "Mo"] }), // /api/stats
+      // /api/stats — envelope contract consumed by useElementOptions (NFM-4310)
+      json: async () => ({ success: true, data: { elements: ["U", "Mo"] } }),
     })
   })
 
