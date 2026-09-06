@@ -442,13 +442,16 @@ def classify(
             # (images/get) stay scope-guarded above.
             return Decision(True, "read-only endpoint")
         if _EXEC_INSPECT.match(path):
-            # Single-exec inspect (NFM-4333: compose v5's `exec` reads the
-            # instance's exit code via GET exec/{id}/json after start; this
-            # was fail-closed in BOTH modes, so every sanctioned
-            # `docker compose exec` — including prod_migrate.sh's
-            # pg_isready probe — timed out with the exec never "finishing").
-            # The read exposes only the status of an exec the caller already
-            # created through the audited POST containers/{id}/exec.
+            # Exec-instance inspect — a sanctioned read (NFM-4357 / NFM-4333
+            # RC12: fail-closed in BOTH modes, `docker compose exec` reads
+            # the probe's exit code via GET exec/{id}/json after
+            # create+start, so scripts/prod_migrate.sh's pg_isready
+            # readiness loop could never pass and run 34002594090 aborted
+            # pre-cutover). The exec's owning container is already fully
+            # inspectable (containers/{id}/json is an allowed read), so the
+            # exec item endpoint exposes strictly less data. Exec create
+            # stays mutation-classified below; start is allowed in the
+            # POST section (RC8).
             return Decision(True, "read-only endpoint")
         if path in _GET_ALLOW_EXACT:
             return Decision(True, "read-only endpoint")

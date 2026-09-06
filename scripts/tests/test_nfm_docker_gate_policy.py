@@ -894,6 +894,42 @@ def test_exec_other_subresources_still_fail_closed():
     assert not decide("POST", f"/v1.43/exec/{exec_id}/resize", "h=40").allowed
     assert not decide("GET", f"/v1.43/exec/{exec_id}/logs").allowed
 
+# ---- NFM-4357 (RC12): exec-instance inspect is a sanctioned read --------------
+# `docker compose exec` reads the probe's exit code via GET
+# exec/{id}/json after create+start; the read allowlist did not know the
+# endpoint, so it was fail-closed in BOTH ro and full modes (gate-full.log
+# 2026-09-06T01:34-01:36Z: create allowed, start allowed, inspect DENIED
+# "unrecognized GET endpoint" x60) and scripts/prod_migrate.sh's readiness
+# loop could never pass — run 34002594090 aborted pre-cutover. The exec's
+# owning container is already fully inspectable (containers/{id}/json is an
+# allowed read returning strictly more), so the exec item endpoint exposes
+# strictly less data.
+
+EXEC_ID = "2e38c9e58b53a023ca88ef56f2ec7d36948952b3ef22dfc5ec1c0591e60d1f28"
+
+
+def test_get_exec_inspect_allowed_ro_mode():
+    assert decide("GET", f"/v1.43/exec/{EXEC_ID}/json").allowed
+
+
+def test_get_exec_inspect_allowed_full_mode():
+    assert decide("GET", f"/v1.43/exec/{EXEC_ID}/json", full=True).allowed
+
+
+def test_get_exec_inspect_non_hex_id_still_fail_closed():
+    # Only daemon-shaped hex exec ids are recognizable; anything else must
+    # keep failing closed rather than widen the allowlist by pattern.
+    result = decide("GET", "/v1.43/exec/not-a-hex-id/json")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
+
+
+def test_get_exec_inspect_does_not_widen_exec_create():
+    # The read fix must not touch mutation classification: exec create
+    # stays a container mutation (denied for prod in ro mode).
+    created = decide("POST", "/v1.43/containers/nucpot-prod-db/exec", body={"Cmd": ["true"]})
+    assert not created.allowed
+
 
 # ---- CR F4: opaque volume ids -------------------------------------------------------
 
