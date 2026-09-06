@@ -982,11 +982,24 @@ def test_get_image_history_opaque_ref_denied_fail_closed():
         assert not result.allowed and "fail-closed" in result.reason, path
 
 
-def test_post_exec_start_stays_fail_closed():
-    """The exec acceptance note (F9): POST /exec/{id}/start carries only an
-    opaque daemon id — unscope-checkable from text, so it stays
-    unrecognized-mutation deny; interactive exec belongs to the full gate
-    socket (ADR-013 G3 audits it there)."""
-    result = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
-    assert not result.allowed and result.audit
-    assert "fail-closed" in result.reason
+def test_post_exec_start_allowed_but_create_stays_scoped():
+    """NFM-4333 RC8 supersedes the F9 acceptance note: POST /exec/{id}/start
+    carries only an opaque daemon id with no container reference of its own —
+    the prod scope-check happened at exec creation (POST containers/{id}/exec,
+    still denied for prod containers in ro mode). Denying start left every
+    sanctioned `docker exec` (e.g. the pre-deploy assert smoke against the
+    throwaway postgres) dead at start, while the full-gate socket path
+    (ADR-013 G3) audits the same operation anyway. Interactive exec into prod
+    remains unreachable: creation on a prod container is denied, and the
+    exec instance binding cannot be forged past creation."""
+    started = decide("POST", f"/v1.43/exec/{'e' * 64}/start", body={})
+    assert started.allowed and started.audit
+
+    # The scope boundary is enforced where the container ref is visible:
+    # exec creation on a prod-labelled container stays denied in ro mode.
+    prod_create = decide(
+        "POST",
+        f"/v1.43/containers/{'c' * 64}/exec",
+        body={"AttachStdout": True, "Cmd": ["pg_isready"]},
+    )
+    assert not prod_create.allowed

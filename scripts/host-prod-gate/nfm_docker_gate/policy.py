@@ -66,10 +66,12 @@ _IMAGE_NAME_ACTION = re.compile(r"^images/(?P<name>[^/]+)/(?P<action>tag|push)$"
 # GET images/{name}/json — single-image inspect. {name} is multi-segment
 # for registry refs (e.g. pgvector/pgvector:pg16), hence ".+".
 _IMAGE_INSPECT = re.compile(r"^images/(?P<name>.+)/json$")
-# GET exec/{id}/json — single-exec inspect (compose v5's `exec` reads the
-# exit code after start). Same shape as _IMAGE_INSPECT: an item read of an
+# GET exec/{id}/json — exec-instance inspect (compose v5's `exec` reads the
+# exit code after start). Hex-id shape only: daemon-minted exec ids are hex
+# (NFM-4357 RC12 guard), so non-hex shapes stay unrecognized (fail-closed).
+# Same shape as _IMAGE_INSPECT: an item read of an
 # object the caller already created through an audited endpoint.
-_EXEC_INSPECT = re.compile(r"^exec/(?P<id>[^/]+)/json$")
+_EXEC_INSPECT = re.compile(r"^exec/(?P<id>[0-9a-f]+)/json$")
 # POST exec/{id}/start — execute an exec instance the caller already
 # created via POST containers/{id}/exec (which carries the prod
 # scope-check). The start call carries no container reference of its own.
