@@ -106,7 +106,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["082_blog_role_domain_expert"], (
+        assert heads == ["083_normalize_potential_file_urls"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."

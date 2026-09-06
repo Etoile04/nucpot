@@ -159,3 +159,46 @@ describe("PotentialOverview empty-value placeholders (NFM-4314)", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0)
   })
 })
+
+describe("PotentialOverview bare-string references (F3 / NFM-4343)", () => {
+  it("renders bare citation strings without crashing or filtering", () => {
+    const bareRef = "J. Nucl. Mater. 541 (2020) 152421"
+    render(
+      <PotentialOverview detail={{ ...baseDetail, references: [bareRef] }} />,
+    )
+    expect(screen.getByText(bareRef)).toBeDefined()
+  })
+
+  it("renders mixed dict + bare-string reference lists", () => {
+    const bareRef = "Phys. Rev. B 102 (2020) 014101"
+    render(
+      <PotentialOverview
+        detail={{
+          ...baseDetail,
+          references: [
+            { doi: "10.1234/canonical", citation: "Canonical ref" },
+            bareRef,
+          ],
+        }}
+      />,
+    )
+    expect(screen.getByText("Canonical ref")).toBeDefined()
+    expect(screen.getByText(bareRef)).toBeDefined()
+  })
+
+  it("does not fall back to references[0].doi when entry is a bare string", () => {
+    const bareRef = "J. Nucl. Mater. 541 (2020) 152421"
+    render(
+      <PotentialOverview
+        detail={{
+          ...baseDetail,
+          references: [bareRef],
+          source_doi: undefined,
+        }}
+      />,
+    )
+    // The DOI row should render as — placeholder, not a doi.org link.
+    const doiLinks = screen.queryAllByRole("link", { name: /doi\.org/i })
+    expect(doiLinks).toHaveLength(0)
+  })
+})

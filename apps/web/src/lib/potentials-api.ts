@@ -27,7 +27,8 @@ export interface PotentialDetail extends PotentialSummary {
   system_name?: string
   system_tags: string[]
   applicability: Record<string, unknown>
-  references: Record<string, unknown>[]
+  // F3 / NFM-4343 — entries may be dicts or bare citation strings.
+  references: (Record<string, unknown> | string)[]
   developers: Record<string, unknown>[]
   verified_props: Record<string, unknown> | null
   sim_software: string[]
@@ -66,7 +67,9 @@ export async function listPotentials(params: ListParams = {}): Promise<Potential
   if (params.elements?.length) sp.set("elements", params.elements.join(","))
   if (params.q) sp.set("q", params.q)
   sp.set("page", String(params.page ?? 1))
-  sp.set("limit", String(params.limit ?? 20))
+  // NFM-4308 ③ — the API's canonical page-size param is per_page; the old
+  // `limit` key was silently ignored, desyncing client/server pagination.
+  sp.set("per_page", String(params.limit ?? 20))
   sp.set("sort", params.sort ?? "updated")
   const response = await fetch(`/api/potentials?${sp.toString()}`, {
     headers: { "Content-Type": "application/json" },
