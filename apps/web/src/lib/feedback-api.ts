@@ -1,6 +1,17 @@
 /**
  * API client for the feedback endpoint.
- * Uses same-origin BFF route (consistent with potentials-api). */
+ *
+ * NFM-4373: posts to the real backend route `/api/v1/feedback` (the v1
+ * router mount) via the shared `request()` client. The previous
+ * `fetch("/api/feedback")` targeted a route that exists nowhere — nginx
+ * forwards `/api/*` straight to the backend in prod and Next has no
+ * `/api/feedback` BFF fallback — so every submission 404'd site-wide.
+ * The endpoint is public (anonymous submissions allowed), and `request()`
+ * still attaches session cookies and handles 401 refresh for logged-in
+ * users.
+ */
+
+import { request, type ApiResponse } from "./api-client"
 
 export const FEEDBACK_TYPES = [
   { value: "bug_report", label: "Bug 报告" },
@@ -25,22 +36,11 @@ interface FeedbackCreateResult {
   created_at: string
 }
 
-export async function submitFeedback(
-  payload: FeedbackPayload,
-): Promise<FeedbackCreateResult> {
-  const response = await fetch(`/api/feedback`, {
+export async function submitFeedback(payload: FeedbackPayload): Promise<FeedbackCreateResult> {
+  const envelope = await request<ApiResponse<FeedbackCreateResult>>("/api/v1/feedback", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null)
-    const message =
-      errorBody?.error ??
-      `提交失败 (${response.status})`
-    throw new Error(message)
-  }
-
-  return (await response.json()) as FeedbackCreateResult
+  return envelope.data
 }

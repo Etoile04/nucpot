@@ -1,11 +1,9 @@
 """Feedback API endpoints: public submit and admin list."""
 
-from typing import Annotated
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import get_current_active_user
+from nfm_db.api.v1.auth import require_admin
 from nfm_db.database import get_db
 from nfm_db.models.feedback import FeedbackStatus, FeedbackType, Priority
 from nfm_db.models.user import User
@@ -30,12 +28,14 @@ router = APIRouter(tags=["反馈管理"])
 )
 async def submit_feedback(
     payload: FeedbackCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)],
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    """提交用户反馈（公开端点）.
+    """提交用户反馈（公开端点，NFM-4373：与文档契约对齐，移除多余的认证依赖）.
 
-    Submit user feedback (public endpoint)."""
+    Submit user feedback (public endpoint, NFM-4373: drop the stray auth
+    dependency so the implementation matches the documented public contract
+    — the feedback table records no user identity and anonymous visitors
+    see the feedback button)."""
     feedback = await create_feedback(session, payload)
 
     return ApiResponse(
@@ -64,6 +64,7 @@ async def list_feedback_endpoint(
         description="已弃用: 请使用 per_page 参数",
     ),
     session: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_admin),
 ) -> ApiResponse:
     """List feedback entries with filtering and pagination (admin endpoint).
 

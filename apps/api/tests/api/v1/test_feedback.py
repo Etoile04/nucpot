@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import func, select
 
 from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority
 
@@ -148,9 +149,57 @@ async def test_submit_feedback_optional_fields_can_be_null(async_client) -> None
     assert body["success"] is True
 
 
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_submit_feedback_anonymous_creates_row(async_client, db_session) -> None:
+    """Public contract (NFM-4373): submission works without authentication.
+
+    The route documents itself as 公开端点/无需认证, the feedback table has no
+    user linkage, and the FE feedback button renders for anonymous visitors.
+    A stray ``get_current_active_user`` dependency 401'd anonymous submissions
+    in prod while conftest auto-auth masked the behaviour in CI — this test
+    drops the auto-auth override so the real dependency chain runs.
+    """
+    payload = {
+        "feedback_type": "bug_report",
+        "title": "Anonymous visitor report",
+        "description": "Submitted without any session cookie",
+        "contact_email": "visitor@example.com",
+    }
+    response = await async_client.post("/api/v1/feedback", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["feedback_type"] == "bug_report"
+
+    count = await db_session.scalar(select(func.count()).select_from(Feedback))
+    assert count == 1
+    row = (await db_session.execute(select(Feedback))).scalar_one()
+    assert row.title == "Anonymous visitor report"
+    assert row.contact_email == "visitor@example.com"
+    assert row.status == FeedbackStatus.OPEN
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/feedback — list with filters and pagination
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.no_auto_auth
+@pytest.mark.asyncio
+async def test_list_feedback_anonymous_rejected(async_client, db_session) -> None:
+    """Admin contract: anonymous callers must not enumerate feedback rows.
+
+    The route documents itself as 仅管理员/admin endpoint and the rows carry
+    contact_email, page_url, and free-text descriptions — without the admin
+    dependency anyone could list them. Auto-auth in CI previously masked the
+    missing gate, so this drops the override and runs the real auth chain.
+    """
+    await _seed_feedback(db_session, title="Leaky row", contact_email="user@example.com")
+
+    response = await async_client.get("/api/v1/feedback")
+
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
