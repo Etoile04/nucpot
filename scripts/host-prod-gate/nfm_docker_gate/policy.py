@@ -23,6 +23,15 @@ volume names). Opaque ids are resolved through an injected resolver
 callback that asks the daemon (read-only GET) who the target actually is;
 network ids have no resolver path, so opaque ones fail closed.
 
+Exec acceptance note (NFM-4297 CR F9): interactive exec into prod is
+intentionally NOT text-scope-checkable. ``POST /containers/{id}/exec`` is
+caught by the container-mutation deny above, and the follow-up
+``POST /exec/{id}/start`` carries only an opaque daemon id with no
+name-able target — it lands in unrecognized-mutation fail-closed deny. exec
+is therefore reachable solely through the full gate socket, where ADR-013
+G3 audits every byte; the ro gate accepts that residual rather than
+pretending an exec payload can be scope-checked.
+
 This module is pure logic: no sockets, no I/O. Everything here is
 exercised by scripts/tests/test_nfm_docker_gate_policy.py.
 """
@@ -41,8 +50,15 @@ from urllib.parse import unquote
 _VERSION_PREFIX = re.compile(r"^/v[0-9]+\.[0-9]+/")
 # /containers/{id}/json — {id} may contain [a-zA-Z0-9][a-zA-Z0-9_.-]*
 _CONTAINER_SUB = re.compile(
-    r"^containers/(?P<id>[^/]+)/(?P<action>json|logs|stats|top|changes|export|ports)$"
+    r"^containers/(?P<id>[^/]+)/(?P<action>json|logs|stats|top|changes|export|archive|ports)$"
 )
+# /images/{name}/history — image layer-history read (NFM-4297 CR F9).
+# {name} keeps the single-segment shape the other image rules use;
+# multi-segment refs (repo/library/tag) simply don't match and stay
+# unrecognized-deny. /json is handled by _IMAGE_INSPECT above (NFM-4333
+# RC2 sanctioned it for `docker compose up`); F9's prod-name and
+# opaque-ref deny on /json was withdrawn in favour of RC2's allow.
+_IMAGE_SUB = re.compile(r"^images/(?P<name>[^/]+)/history$")
 _CONTAINER_MUTATION = re.compile(
     r"^containers/(?P<id>[^/]+)/(?P<action>start|stop|kill|restart|pause|unpause|wait|update|rename|exec|attach|archive)$"
 )
@@ -421,21 +437,51 @@ def classify(
             return Decision(True, "read-only endpoint")
         match = _CONTAINER_SUB.match(path)
         if match:
-            if match.group("action") == "export":
-                # A prod container's whole filesystem as a tar — read-only
-                # in verb but exfiltration in effect; opaque ids fail
-                # closed alongside (NFM-4273 CR F1).
+            if match.group("action") in ("export", "archive"):
+                # A prod container's whole filesystem as a tar (export), or
+                # any single file out of it (archive = `docker cp` out) —
+                # read-only in verb but exfiltration in effect; opaque ids
+                # fail closed alongside (NFM-4273 CR F1; archive added by
+                # NFM-4297 CR F9 — it used to be denied only by falling
+                # through to unrecognized-GET, guarded by accident rather
+                # than by design).
                 ident = match.group("id")
                 violation = TargetInfo(name=ident).prod_violation(cfg)
                 if violation or _OPAQUE_ID_RE.match(ident.lower()):
+                    action = match.group("action")
                     return Decision(
                         False,
-                        f"export denied ({violation or 'opaque id fail-closed'})"
+                        f"{action} denied ({violation or 'opaque id fail-closed'})"
                         " (exfiltration guard)",
                         scope="prod" if violation else "n/a",
                         audit=True,
                         target=ident,
                     )
+            return Decision(True, "read-only endpoint")
+        image_sub = _IMAGE_SUB.match(path)
+        if image_sub:
+            # Image layer-history read (NFM-4297 CR F9): /images/{name}/history
+            # returns the Dockerfile RUN lines (build args, secrets) of an
+            # image — same exfiltration surface as images/get, same V1
+            # fail-closed rule on opaque refs. /json is allowed unconditionally
+            # upstream by _IMAGE_INSPECT (NFM-4333 RC2, post-dates F9 spec).
+            name = image_sub.group("name")
+            if _OPAQUE_IMAGE_REF_RE.match(name.lower()):
+                return Decision(
+                    False,
+                    f"opaque image ref {name!r} cannot be scope-checked (fail-closed)",
+                    scope="n/a",
+                    audit=True,
+                    target=name,
+                )
+            if name.startswith(cfg.prod_image_prefixes):
+                return Decision(
+                    False,
+                    f"layer-history read of prod image {name!r} denied (exfiltration guard)",
+                    scope="prod",
+                    audit=True,
+                    target=name,
+                )
             return Decision(True, "read-only endpoint")
         return Decision(False, f"unrecognized GET endpoint {path!r} (fail-closed)", audit=True)
 
