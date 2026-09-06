@@ -52,3 +52,20 @@ memory
 .video_agent
 gui-test-screenshots
 .env*
+
+# NFM-4333 RC7: deploy identity is nfmdeploy (ADR-013 G2); it cannot read
+# lwj04-owned 0600 agent-session artifacts, and secrets must never enter a
+# build context at all. These paths are untracked local state on the host
+# canonical copy (~/Projects/nucpot); git never ships them.
+.env*
+docker/.env*
+**/.claude
+**/.mimosa
+**/.zcode
+.tmp
+.video_agent
+gui-test-screenshots
+wt-sre-branch-protection-spec-v2
+**/.venv
+**/__pycache__
+**/.pytest_cache
