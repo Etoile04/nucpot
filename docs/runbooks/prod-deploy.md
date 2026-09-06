@@ -595,11 +595,14 @@ NFM-4264: 6h of attribution with zero audit trail).
   nfmdeploy-owned `0755` `/usr/local/var/nfm-g2` dir: world-readable because
   the drift cron runs as the desktop user. Writes are identity-separated —
   the root-owned `run-record-manifest.sh` entry running as the deploy
-  identity is the sole sanctioned write route — but this is separation, not
-  tamper resistance (`%admin` can invoke the entry as `nfmdeploy` too;
-  ADR-013 §3 disclaims adversarial resistance — the drift alarm covers that
-  residual). Pre-gate hosts keep file `0600` in a `0700` dir created by the
-  recorder — there the same-user residual is the drift alarm's job.
+  identity is the sole sanctioned write route. NFM-4297 hardened that
+  entry (`--deploy-sha` must be reachable from `origin/main`, an entry
+  lock serializes records against deploys, interpreters pinned), so it
+  offers tamper *resistance*, not tamper *impossibility* — ADR-013 §3
+  keeps the authoritative disclaimer (`%admin` can still invoke the entry
+  as `nfmdeploy`; the drift alarm covers that residual). Pre-gate hosts
+  keep file `0600` in a `0700` dir created by the recorder — there the
+  same-user residual is the drift alarm's job.
 - **Write semantics:** collect-everything-then-write, tmp file + `fsync` +
   atomic `os.replace`. A failed collection aborts non-zero and leaves the
   previous manifest byte-identical — never a silently-wrong manifest. A
@@ -633,7 +636,10 @@ zero audit trail).
   FROZEN precedence (`RepoDigests[0]` else `.Image` — identical to the
   recorder). Flags: digest mismatch, manifest service missing from live
   state, live prod container absent from the manifest, container-set
-  mismatch (unsanctioned scale-up/rename), and a missing/unreadable
+  mismatch (unsanctioned scale-up/rename), `container_anomaly` (a
+  prod-project container that cannot be verified — missing service label
+  or malformed/underivable digest — filed as its own drift entry instead
+  of blinding the whole alarm, NFM-4297 F6/F8), and a missing/unreadable
   baseline manifest.
 - **Alarm routing:** divergence auto-files a Paperclip issue assigned to
   the SRE Monitor agent, title prefix `[DEPLOY-DRIFT]`, body with
@@ -642,7 +648,15 @@ zero audit trail).
   (sha256 of the entry fingerprint, embedded in the body); repeat
   intervals comment-append; a new signature — including post-resolution
   regression — files a new issue. Dedupe survives state-file loss by
-  searching OPEN `[DEPLOY-DRIFT]` issues for the signature line.
+  searching OPEN `[DEPLOY-DRIFT]` issues for the signature line (the
+  search paginates past the API's silent 1000-row page cap, NFM-4297 F8).
+  **Family dedupe (NFM-4297 F6):** an EVOLVING incident — a partial
+  rollback widening/narrowing the affected-service set — changes the exact
+  signature but is one incident: an OPEN tracked issue whose service
+  family overlaps gets a `+added/-removed` comment and the tracked
+  signature is re-pointed, instead of double-filing. Disjoint families
+  file separately; closed issues never family-adopt (the `family:` line
+  embedded in filed bodies is the state-loss fallback).
 - **No-noise during sanctioned deploys (AC-G4b.2):** (1) `deploy_prod.sh`
   holds the deploy lock for the whole deploy (trap-removed on ANY exit — a
   crashed deploy must alarm); the checker stands down while the lock is
@@ -658,6 +672,17 @@ zero audit trail).
 - **Exit codes:** 0 = in sync / tolerated; 1 = divergence (issue filed);
   2 = operational error (docker/API unavailable) — never files, so a
   transient failure cannot cry wolf.
+- **Dead-alarm visibility (NFM-4297 F8):** consecutive exit-2 failures are
+  counted in the state file; after `--escalate-after-failures` (default 24
+  ≈ 6h at the registered 15-min interval, ≈ 2h at the 5m incident-response
+  cadence; env `NFM_DRIFT_ESCALATE_AFTER`) an
+  `[DEPLOY-DRIFT-OPS]` alarm is filed/adopted to SRE Monitor — a dead
+  alarm must be visible, not a silent forever-exit-2. A healthy pass
+  resets the counter. Overlapping cron instances (possible at the 5m
+  incident-response interval vs the 300s recheck sleep) stand down via an
+  exclusive flock on
+  `<state>.runlock`; a mapped issue hard-deleted server-side (GET 404)
+  re-files instead of retrying the dead mapping.
 
 ### Cron registration (Release Engineer)
 
@@ -715,3 +740,44 @@ command-text logging for prod-touching commands, NFM-4267) is the
 compensating control for that vector. The pre-existing
 `prod-drift-watchdog.sh` (NFM-3777 phantom-cutover heuristic) is
 orthogonal and may stay or be retired at SRE's discretion.
+
+## 9. Potential-file post-deploy sweep (NFM-4309 / BUG-37)
+
+Migration `083_normalize_potential_file_urls` rewrites every non-empty
+`potentials.file_url` to the canonical proxy form
+(`/api/v1/potentials/{id}/file`) and archives the pre-migration
+inventory to `/var/log/nfmd/potential_file_url_inventory_083.json`
+(留档). The migration deliberately does **not** probe the filesystem —
+volume visibility depends on the deploy host.
+
+After the deploy that carries migration 083, run the sweep **inside the
+prod API container** (it sees both the DB and the `prod-uploads`
+volume):
+
+```bash
+# 1. Dry-run report (exit 1 lists missing files — read-only)
+docker exec nucpot-prod-api python scripts/verify_potential_files.py
+
+# 2. Apply: blank unrecoverable rows with extra.file_url_note
+docker exec nucpot-prod-api python scripts/verify_potential_files.py --apply
+```
+
+`--apply` only blanks rows whose file is **definitively** gone (missing from
+the uploads volume, or Supabase answers 400/404 / an empty object).
+Legacy multi-object rows are probed object by object and blanked only when
+*every* object is definitively gone — a row with any surviving object keeps
+its download card. Transient upstream failures (network errors, 403
+access-denied, 429/5xx) and foreign-origin
+URLs (never fetched server-side — SSRF guard) are reported as
+`UNVERIFIABLE`, left untouched, and keep the exit code at 1: re-run the
+sweep once Supabase/egress is healthy instead of re-applying.
+
+Acceptance (BUG-37): every potential whose `file_url` is non-empty must
+anonymously `GET` its download URL with HTTP 200 and bytes > 0:
+
+```bash
+curl -s "http://localhost:8001/api/v1/potentials/<id>/file" | wc -c   # > 0
+```
+
+Findings are also written to
+`/var/log/nfmd/potential_file_verify_report.json` inside the container.

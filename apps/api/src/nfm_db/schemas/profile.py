@@ -69,6 +69,10 @@ class StatsResponse(BaseModel):
     total_potentials: int
     total_types: int
     total_elements: int
+    # NFM-4310 (BUG-29): distinct element symbols present in the library,
+    # sorted for stable filter-option ordering. The element filter on
+    # /browse and /search renders its candidate chips from this list.
+    elements: list[str] = Field(default_factory=list)
     recent_potentials: list[RecentPotentialItem] = Field(default_factory=list)
 
 

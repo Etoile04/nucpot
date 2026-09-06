@@ -24,6 +24,11 @@ export default defineConfig({
     // suite can complete the actual work — the inner `waitFor` timeouts
     // still bound each individual assertion.
     testTimeout: 30000,
+    // hookTimeout stays at the 10s default unless raised here; suites that
+    // dynamically import heavy component modules inside `beforeAll` (e.g.
+    // v4-extraction) can exceed it under full-suite parallel transform load
+    // and fail before running a single test. Match the per-test budget.
+    hookTimeout: 30000,
     include: [
       "src/**/*.test.{ts,tsx}",
       "__tests__/**/*.test.{ts,tsx}",

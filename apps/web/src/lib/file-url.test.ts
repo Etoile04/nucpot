@@ -1,7 +1,23 @@
 import { describe, it, expect } from "vitest"
-import { resolveFileUrl } from "./file-url"
+import { resolveFileName, resolveFileUrl } from "./file-url"
 
-describe("resolveFileUrl (NFM-3317)", () => {
+describe("resolveFileUrl (NFM-3317 / NFM-4309)", () => {
+  it("passes the canonical proxy path through unchanged (NFM-4309)", () => {
+    expect(
+      resolveFileUrl("/api/v1/potentials/14607d0a-1a7b-49fd-9b22-1cd5671864c8/file"),
+    ).toBe("/api/v1/potentials/14607d0a-1a7b-49fd-9b22-1cd5671864c8/file")
+  })
+
+  it("passes absolute Supabase object URLs through unchanged (NFM-4309)", () => {
+    expect(
+      resolveFileUrl(
+        "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/potentials/library/Al_Mendelev_2008.eam.fs",
+      ),
+    ).toBe(
+      "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/potentials/library/Al_Mendelev_2008.eam.fs",
+    )
+  })
+
   it("prefixes Supabase Storage paths with the project origin", () => {
     expect(
       resolveFileUrl(
@@ -42,5 +58,63 @@ describe("resolveFileUrl (NFM-3317)", () => {
         process.env.NEXT_PUBLIC_SUPABASE_URL = prev
       }
     }
+  })
+})
+
+describe("resolveFileName (NFM-4309 canonical proxy URLs)", () => {
+  const proxyUrl = "/api/v1/potentials/14607d0a-1a7b-49fd-9b22-1cd5671864c8/file"
+
+  it("derives the name from an uploads storage key", () => {
+    expect(
+      resolveFileName(proxyUrl, {
+        file_storage: { kind: "uploads", key: "14607d0a-1a7b-49fd-9b22-1cd5671864c8.tersoff" },
+      }),
+    ).toBe("14607d0a-1a7b-49fd-9b22-1cd5671864c8.tersoff")
+  })
+
+  it("derives the name from the first supabase object path (nested keys)", () => {
+    expect(
+      resolveFileName(proxyUrl, {
+        file_storage: {
+          kind: "supabase",
+          objects: ["potentials/huda/Ag2S_MTP.mtp"],
+        },
+      }),
+    ).toBe("Ag2S_MTP.mtp")
+  })
+
+  it("strips the supabase origin and marker from absolute object URLs", () => {
+    expect(
+      resolveFileName(proxyUrl, {
+        file_storage: {
+          kind: "supabase",
+          objects: [
+            "https://gzhiqyopzlmnkdzammhx.supabase.co/storage/v1/object/public/potentials/library/Al_Mendelev_2008.eam.fs",
+          ],
+        },
+      }),
+    ).toBe("Al_Mendelev_2008.eam.fs")
+  })
+
+  it("keeps a foreign absolute object URL's own filename", () => {
+    expect(
+      resolveFileName(proxyUrl, {
+        file_storage: { kind: "supabase", objects: ["https://example.com/some/pot.dat"] },
+      }),
+    ).toBe("pot.dat")
+  })
+
+  it("falls back to the URL's last segment without a storage ref", () => {
+    expect(resolveFileName("/uploads/abc-123.eam.alloy", {})).toBe("abc-123.eam.alloy")
+    expect(resolveFileName("/uploads/abc-123.eam.alloy", undefined)).toBe("abc-123.eam.alloy")
+  })
+
+  it("falls back when the storage ref carries no usable name", () => {
+    expect(
+      resolveFileName("/uploads/abc-123.eam.alloy", { file_storage: { kind: "uploads" } }),
+    ).toBe("abc-123.eam.alloy")
+    expect(
+      resolveFileName("/uploads/abc-123.eam.alloy", { file_storage: { kind: "supabase", objects: [] } }),
+    ).toBe("abc-123.eam.alloy")
   })
 })

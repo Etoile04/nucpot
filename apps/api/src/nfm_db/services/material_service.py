@@ -60,6 +60,12 @@ async def list_materials(
     # open (see ``get_material`` and the per-material properties endpoint).
     stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
+    # NFM-4312 — retired materials (duplicate fragments merged into a
+    # canonical row by the backfill) stay queryable by UUID but leave
+    # the public list. All prod rows are is_active=True today, so this
+    # only affects future merges.
+    stmt = stmt.where(Material.is_active.is_(True))
+
     if category_id is not None:
         stmt = stmt.where(Material.category_id == category_id)
 
@@ -158,6 +164,11 @@ async def search_materials(
     # canonical row, defeating the CPO Option-2 decision.
     stmt = stmt.where(Material.name != PLACEHOLDER_CANONICAL_NAME)
 
+    # NFM-4312 — retired fragments leave search results too, mirroring
+    # ``list_materials`` so a retired duplicate cannot re-enter through
+    # the name/formula/alias ILIKE path.
+    stmt = stmt.where(Material.is_active.is_(True))
+
     if query:
         pattern = f"%{query}%"
         stmt = stmt.where(
@@ -228,6 +239,7 @@ async def count_uncategorized_materials(
         .select_from(Material)
         .where(
             Material.category_id.is_(None),
+            Material.is_active.is_(True),
         )
     )
     total = (await db.execute(stmt)).scalar_one()

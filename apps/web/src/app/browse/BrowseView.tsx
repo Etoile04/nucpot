@@ -6,6 +6,7 @@ import { Pagination, Spin, Empty, Space, Typography } from "antd"
 import type { PaginationProps } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
 import { ElementFilter } from "@/components/potential/ElementFilter"
+import { useElementOptions } from "@/components/potential/useElementOptions"
 import { CompareBar } from "@/components/potential/CompareBar"
 import {
   listPotentials,
@@ -28,10 +29,6 @@ const SORT_OPTIONS: readonly { readonly label: string; readonly value: SortField
 
 const PAGE_SIZE = 12
 
-interface StatsData {
-  readonly elements: readonly string[]
-}
-
 interface BrowseState {
   readonly potentials: readonly PotentialSummary[]
   readonly total: number
@@ -49,7 +46,12 @@ const INITIAL_STATE: BrowseState = {
 }
 
 export function BrowseView() {
-  const [allElements, setAllElements] = useState<string[]>([])
+  const {
+    elements: allElements,
+    loading: elementsLoading,
+    error: elementsError,
+    retry: retryElements,
+  } = useElementOptions()
   const [selectedElements, setSelectedElements] = useState<string[]>([])
   const [elementSearch, setElementSearch] = useState<string>("")
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
@@ -60,15 +62,6 @@ export function BrowseView() {
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [state, setState] = useState<BrowseState>(INITIAL_STATE)
-
-  useEffect(() => {
-    fetch("/api/stats")
-      .then((res) => res.json() as Promise<StatsData>)
-      .then((data) => setAllElements([...data.elements]))
-      .catch(() => {
-        /* ignore stats load error */
-      })
-  }, [])
 
   const loadPage = useCallback(
     async (elements: string[], types: Set<string>, sortBy: SortField, page: number) => {
@@ -177,13 +170,28 @@ export function BrowseView() {
           元素筛选
         </Text>
         <div className="mt-1.5">
-          <ElementFilter
-            allElements={allElements}
-            selected={selectedElements}
-            onToggle={toggleElement}
-            search={elementSearch}
-            onSearchChange={setElementSearch}
-          />
+          {elementsError ? (
+            <div className="flex items-center gap-2 text-xs text-red-400" role="alert">
+              <span>{elementsError}</span>
+              <button
+                type="button"
+                onClick={retryElements}
+                className="px-2 py-0.5 rounded bg-gray-700 border border-red-500/50 text-gray-300 hover:border-red-400 transition"
+              >
+                重试
+              </button>
+            </div>
+          ) : elementsLoading ? (
+            <span className="text-xs text-gray-500">元素加载中...</span>
+          ) : (
+            <ElementFilter
+              allElements={allElements}
+              selected={selectedElements}
+              onToggle={toggleElement}
+              search={elementSearch}
+              onSearchChange={setElementSearch}
+            />
+          )}
         </div>
       </div>
 
@@ -251,7 +259,25 @@ export function BrowseView() {
         <div className="flex-1 min-w-0">
           <Spin spinning={state.loading} tip="加载中...">
             {state.error ? (
-              <Empty description={`加载失败：${state.error}`} />
+              <div
+                role="alert"
+                className="p-6 rounded-lg bg-gray-800 border border-red-500/50 text-center space-y-3"
+              >
+                <p className="text-red-300 text-base">
+                  ⚠️ 加载失败：{state.error}
+                </p>
+                <p className="text-gray-400 text-xs">
+                  已自动重试一次仍未成功，请检查网络后手动重试。
+                </p>
+                <button
+                  onClick={() =>
+                    void loadPage(selectedElements, selectedTypes, sort, state.page)
+                  }
+                  className="px-4 py-1.5 rounded bg-red-500/10 border border-red-500/50 text-red-300 text-sm hover:bg-red-500/20 transition"
+                >
+                  重试
+                </button>
+              </div>
             ) : state.potentials.length === 0 && !state.loading ? (
               <Empty description="暂无势函数数据" />
             ) : (
