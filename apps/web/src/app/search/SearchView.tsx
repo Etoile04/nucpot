@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Spin, Empty, Typography } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
 import { ElementFilter } from "@/components/potential/ElementFilter"
+import { useElementOptions } from "@/components/potential/useElementOptions"
 import { useDebounce } from "@/components/potential/useDebounce"
 import {
   listPotentials,
@@ -29,10 +30,6 @@ const TYPE_OPTIONS = [
   { label: "other", value: "other" },
 ]
 
-interface StatsData {
-  readonly elements: readonly string[]
-}
-
 interface SearchState {
   readonly potentials: readonly PotentialSummary[]
   readonly total: number
@@ -48,19 +45,17 @@ const INITIAL_STATE: SearchState = {
 }
 
 export function SearchView() {
-  const [allElements, setAllElements] = useState<string[]>([])
+  const {
+    elements: allElements,
+    loading: elementsLoading,
+    error: elementsError,
+    retry: retryElements,
+  } = useElementOptions()
   const [keyword, setKeyword] = useState<string>("")
   const [selectedElements, setSelectedElements] = useState<string[]>([])
   const [selectedType, setSelectedType] = useState<string>("")
   const debouncedKeyword = useDebounce(keyword.trim(), DEBOUNCE_MS)
   const [state, setState] = useState<SearchState>(INITIAL_STATE)
-
-  useEffect(() => {
-    fetch('/api/stats')
-      .then(res => res.json() as Promise<StatsData>)
-      .then(data => setAllElements([...data.elements]))
-      .catch(() => { /* ignore */ })
-  }, [])
 
   const runSearch = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }))
@@ -132,11 +127,26 @@ export function SearchView() {
         {/* Elements */}
         <div>
           <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">元素筛选</label>
-          <ElementFilter
-            allElements={allElements}
-            selected={selectedElements}
-            onToggle={toggleElement}
-          />
+          {elementsError ? (
+            <div className="flex items-center gap-2 text-xs text-red-400" role="alert">
+              <span>{elementsError}</span>
+              <button
+                type="button"
+                onClick={retryElements}
+                className="px-2 py-0.5 rounded bg-gray-700 border border-red-500/50 text-gray-300 hover:border-red-400 transition"
+              >
+                重试
+              </button>
+            </div>
+          ) : elementsLoading ? (
+            <span className="text-xs text-gray-500">元素加载中...</span>
+          ) : (
+            <ElementFilter
+              allElements={allElements}
+              selected={selectedElements}
+              onToggle={toggleElement}
+            />
+          )}
         </div>
 
         {/* Type + buttons */}

@@ -57,6 +57,19 @@ async def test_list_filters_by_elements_overlap(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_combines_elements_and_type_filters(db_session) -> None:
+    """NFM-4310 AC: element filter composes with the function-form filter."""
+    await _seed(db_session, name="u_eam", type="EAM", elements=["U", "O"])
+    await _seed(db_session, name="u_mtp", type="MTP", elements=["U", "O"])
+    await _seed(db_session, name="zr_eam", type="EAM", elements=["Zr"])
+
+    result = await list_potentials(db_session, page=1, limit=20, elements=["U"], type_filter="EAM")
+
+    assert result.total == 1
+    assert [p.name for p in result.potentials] == ["u_eam"]
+
+
+@pytest.mark.asyncio
 async def test_list_searches_by_query(db_session) -> None:
     await _seed(db_session, name="EAM_U_Zhou", description="EAM potential for uranium")
     await _seed(db_session, name="EAM_Mo_Ack", description="molybdenum")
