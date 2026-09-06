@@ -85,6 +85,30 @@ def _compute_hash(data: bytes) -> str:
 _UPLOAD_DIR_OVERRIDE: Path | None = None
 
 
+def _compute_default_upload_dir(this_file: Path) -> Path:
+    """Pure path computation for ``_default_upload_dir`` (NFM-4309 test seam).
+
+    Repo checkout: ``…/apps/api/src/nfm_db/services/upload_service.py`` —
+    the repo root is 5 levels up, and the shared upload dir lives at
+    ``<repo>/apps/web/public/uploads``. Production image: the package is
+    copied to ``/app/src/nfm_db/…`` (only 5 parents, so ``parents[5]``
+    would raise IndexError — BUG-06 hotfix follow-up, NFM-4087); the
+    repo root inside the image is ``parents[3]`` (``/app``) and the
+    prod-uploads volume is mounted at ``/app/uploads`` (shared with the
+    web container) — NOT a stray ``/uploads`` at the filesystem root,
+    which is where ``parents[-1]`` pointed and made every uploads-backed
+    download 404 in prod (NFM-4309 follow-up).
+    """
+    if len(this_file.parents) > 5:
+        repo_root = this_file.parents[
+            5
+        ]  # [0]=services, [1]=nfm_db, [2]=src, [3]=api, [4]=apps, [5]=root
+        return repo_root / "apps" / "web" / "public" / "uploads"
+    # Container layout: /app/src/nfm_db/services/upload_service.py
+    # → parents = [services, nfm_db, src, /app, /]
+    return this_file.parents[3] / "uploads"
+
+
 def _default_upload_dir() -> Path:
     """Resolve the default upload directory: <repo-root>/apps/web/public/uploads.
 
@@ -93,20 +117,7 @@ def _default_upload_dir() -> Path:
     /app/src/nfm_db/..., so ``parents[5]`` exceeds the path and raises
     IndexError (BUG-06 hotfix follow-up, NFM-4087).
     """
-    this_file = Path(__file__).resolve()  # .../apps/api/src/nfm_db/services/upload_service.py
-    # Walk up to the repo root (5 levels above this file).
-    if len(this_file.parents) > 5:
-        repo_root = this_file.parents[
-            5
-        ]  # [0]=services, [1]=nfm_db, [2]=src, [3]=api, [4]=apps, [5]=root
-        candidate = repo_root / "apps" / "web" / "public" / "uploads"
-    else:
-        # Container layout: /app/src/nfm_db/services/upload_service.py
-        # → parents[2] == /app (repo root inside the image). The
-        # prod-uploads volume is mounted at /app/uploads (shared with the
-        # web container) — write there, NOT to a stray /uploads dir.
-        repo_root = this_file.parents[len(this_file.parents) - 1]
-        candidate = repo_root / "uploads"
+    candidate = _compute_default_upload_dir(Path(__file__).resolve())
     candidate.mkdir(parents=True, exist_ok=True)
     return candidate
 
