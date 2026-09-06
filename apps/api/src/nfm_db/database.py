@@ -182,7 +182,14 @@ async def mark_parse_failed(
             try:
                 ds_id = uuid.UUID(ds_id)
             except ValueError:
-                pass
+                # Not a UUID — pass the raw id through unchanged so the
+                # lookup below reports "not found" rather than silently
+                # swallowing the malformed id.
+                logger.warning(
+                    "parse-failure mark: datasource id %r is not a UUID; "
+                    "passing through unchanged",
+                    ds_id,
+                )
         if session_factory is not None:
             await _write_parse_failed(session_factory, ds_id, err)
         else:
