@@ -17,7 +17,7 @@ describe("submitFeedback (NFM-4380)", () => {
       ok: true,
       json: async () => ({ success: true, data: { id: "fb-1" } }),
     })
-    const { submitFeedback } = await import("./feedback-api")
+    const { submitFeedback } = await import("../feedback-api")
     await submitFeedback(payload)
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -42,7 +42,7 @@ describe("submitFeedback (NFM-4380)", () => {
       ok: true,
       json: async () => ({ success: true, data: result, error: null }),
     })
-    const { submitFeedback } = await import("./feedback-api")
+    const { submitFeedback } = await import("../feedback-api")
 
     await expect(submitFeedback(payload)).resolves.toEqual(result)
   })
@@ -52,7 +52,7 @@ describe("submitFeedback (NFM-4380)", () => {
       ok: true,
       json: async () => ({ success: false, data: null, error: "服务暂时不可用" }),
     })
-    const { submitFeedback } = await import("./feedback-api")
+    const { submitFeedback } = await import("../feedback-api")
 
     await expect(submitFeedback(payload)).rejects.toThrow("服务暂时不可用")
   })
@@ -63,7 +63,7 @@ describe("submitFeedback (NFM-4380)", () => {
       status: 429,
       json: async () => ({ detail: "rate limited" }),
     })
-    const { submitFeedback } = await import("./feedback-api")
+    const { submitFeedback } = await import("../feedback-api")
 
     await expect(submitFeedback(payload)).rejects.toThrow("提交失败 (429)")
   })

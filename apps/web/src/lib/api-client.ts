@@ -33,8 +33,21 @@ export class ApiError extends Error {
  * `ApiError`. Internal-only — external callers should consume `ApiError`.
  */
 interface ApiErrorBody {
-  readonly detail?: string
-  readonly message?: string
+  readonly detail?: unknown
+  readonly message?: unknown
+}
+
+/**
+ * Extract a human-readable message from a non-OK JSON body.
+ *
+ * FastAPI validation errors return `detail` as an *array* of error objects,
+ * not a string — stringifying that yields "[object Object]". Only trust
+ * `detail`/`message` when they are actual strings; otherwise fall back.
+ */
+function errorBodyMessage(body: ApiErrorBody | null, fallback: string): string {
+  if (typeof body?.detail === "string") return body.detail
+  if (typeof body?.message === "string") return body.message
+  return fallback
 }
 
 /**
@@ -144,7 +157,7 @@ export async function request<T>(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as ApiErrorBody | null
-    const message = body?.detail ?? body?.message ?? `请求失败 (${response.status})`
+    const message = errorBodyMessage(body, `请求失败 (${response.status})`)
     throw new ApiError(message, response.status)
   }
 
@@ -579,10 +592,9 @@ export const literatureApi = {
       // (e.g. 403 → permission toast) instead of substring-matching the
       // message body, which would mis-classify a 413 whose byte count
       // happens to contain "403" as a permission error.
+      const detail = errorBodyMessage(body, "")
       throw new ApiError(
-        body?.detail
-          ? `${body.detail} (${response.status})`
-          : `上传失败 (${response.status})`,
+        detail ? `${detail} (${response.status})` : `上传失败 (${response.status})`,
         response.status,
       )
     }

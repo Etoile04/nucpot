@@ -90,6 +90,7 @@ export default function FeedbackPage() {
                 value={form.title}
                 onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
                 placeholder="简要描述您的反馈"
+                maxLength={100}
                 className={inputClass}
                 required
               />
@@ -101,6 +102,7 @@ export default function FeedbackPage() {
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                 placeholder="请提供更多细节…"
                 rows={5}
+                maxLength={2000}
                 required
                 className={inputClass + ' resize-y'}
               />
