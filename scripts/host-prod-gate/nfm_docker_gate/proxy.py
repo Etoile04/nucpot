@@ -35,6 +35,9 @@ from .audit import AuditLog
 from .peercred import peer_identity
 from .policy import REFUSAL_HINT, Decision, ScopeConfig, TargetInfo, classify, parse_json_object
 
+# NB: catch socket.timeout, NOT the built-in TimeoutError — on the gate
+# host's py3.9 they are distinct classes (aliased only since 3.10), so
+# `except TimeoutError` misses real socket timeouts there (NFM-4320).
 _HEAD_LIMIT = 64 * 1024
 _BODY_LIMIT = 2 * 1024 * 1024
 _HEAD_TIMEOUT = 120.0
@@ -146,20 +149,20 @@ class UpstreamResolver:
 
 def _dechunk(body: bytes) -> bytes:
     out = []
-    view = memoryview(body)
+    offset = 0
     while True:
-        nl = view.find(b"\r\n")
+        nl = body.find(b"\r\n", offset)
         if nl < 0:
             break
         try:
-            size = int(bytes(view[:nl]).split(b";")[0], 16)
+            size = int(body[offset:nl].split(b";")[0], 16)
         except ValueError:
             break
         if size == 0:
             break
         start = nl + 2
-        out.append(bytes(view[start : start + size]))
-        view = view[start + size + 2 :]
+        out.append(body[start : start + size])
+        offset = start + size + 2
     return b"".join(out)
 
 
@@ -194,7 +197,7 @@ class DockerGateProxy:
                 probe.connect(self.listen_path)
                 probe.close()
                 raise SystemExit(f"nfm-g2: another instance is listening on {self.listen_path}")
-            except (TimeoutError, ConnectionRefusedError, FileNotFoundError):
+            except (socket.timeout, ConnectionRefusedError, FileNotFoundError):
                 os.unlink(self.listen_path)
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -217,7 +220,7 @@ class DockerGateProxy:
         while not self._shutdown.is_set():
             try:
                 conn, _ = server.accept()
-            except TimeoutError:
+            except socket.timeout:
                 continue
             except OSError:
                 if self._shutdown.is_set():
@@ -282,7 +285,7 @@ class DockerGateProxy:
                 return None
             try:
                 chunk = conn.recv(4096)
-            except TimeoutError:
+            except socket.timeout:
                 return None
             if not chunk:
                 return None
@@ -354,7 +357,7 @@ class DockerGateProxy:
         while len(body) < length:
             try:
                 chunk = conn.recv(min(65536, length - len(body)))
-            except (TimeoutError, OSError):
+            except OSError:  # covers socket.timeout on every interpreter
                 return None
             if not chunk:
                 return None

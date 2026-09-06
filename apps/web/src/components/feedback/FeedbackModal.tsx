@@ -1,25 +1,9 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import {
-  Button,
-  Form,
-  Input,
-  Modal,
-  Radio,
-  App,
-} from "antd"
-import {
-  BugOutlined,
-  BulbOutlined,
-  EditOutlined,
-  QuestionCircleOutlined,
-} from "@ant-design/icons"
-import {
-  FEEDBACK_TYPES,
-  submitFeedback,
-  type FeedbackPayload,
-} from "@/lib/feedback-api"
+import { Button, Form, Input, Modal, Radio, App, Alert } from "antd"
+import { BugOutlined, BulbOutlined, EditOutlined, QuestionCircleOutlined } from "@ant-design/icons"
+import { FEEDBACK_TYPES, submitFeedback, type FeedbackPayload } from "@/lib/feedback-api"
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
   bug_report: <BugOutlined />,
@@ -40,13 +24,18 @@ interface FeedbackFormValues {
   contact_email?: string
 }
 
+type SubmitStatus = "idle" | "submitting" | "success" | "error"
+
 export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
   const [form] = Form.useForm<FeedbackFormValues>()
-  const [submitting, setSubmitting] = useState(false)
+  const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle")
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const { message } = App.useApp()
 
   const handleReset = useCallback(() => {
     form.resetFields()
+    setSubmitStatus("idle")
+    setSubmitError(null)
   }, [form])
 
   const handleClose = useCallback(() => {
@@ -56,7 +45,8 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
 
   const handleSubmit = useCallback(
     async (values: FeedbackFormValues) => {
-      setSubmitting(true)
+      setSubmitStatus("submitting")
+      setSubmitError(null)
       try {
         const payload: FeedbackPayload = {
           ...values,
@@ -64,18 +54,24 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         }
 
         await submitFeedback(payload)
+        setSubmitStatus("success")
         message.success("感谢您的反馈！我们会尽快处理。")
         handleClose()
       } catch (err) {
-        const errorMessage =
-          err instanceof Error ? err.message : "提交失败，请稍后重试"
+        const errorMessage = err instanceof Error ? err.message : "提交失败，请稍后重试"
+        setSubmitStatus("error")
+        setSubmitError(errorMessage)
         message.error(errorMessage)
-      } finally {
-        setSubmitting(false)
       }
     },
     [handleClose, message],
   )
+
+  const handleFinishFailed = useCallback(() => {
+    setSubmitStatus("idle")
+    setSubmitError(null)
+    message.warning("请完善必填项后再提交")
+  }, [message])
 
   return (
     <Modal
@@ -90,9 +86,19 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
+        onFinishFailed={handleFinishFailed}
+        scrollToFirstError
         initialValues={{ feedback_type: "bug_report" }}
         requiredMark
       >
+        {submitStatus === "error" && submitError ? (
+          <Form.Item>
+            <Alert type="error" showIcon message="提交失败" description={submitError} />
+            <Button size="small" danger className="mt-2" onClick={() => form.submit()}>
+              重试
+            </Button>
+          </Form.Item>
+        ) : null}
         <Form.Item
           name="feedback_type"
           label="问题类型"
@@ -101,9 +107,7 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
           <Radio.Group>
             {FEEDBACK_TYPES.map((type) => (
               <Radio key={type.value} value={type.value}>
-                {TYPE_ICONS[type.value]}
-                {" "}
-                {type.label}
+                {TYPE_ICONS[type.value]} {type.label}
               </Radio>
             ))}
           </Radio.Group>
@@ -117,11 +121,7 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
             { max: 100, message: "简要描述不能超过 100 个字符" },
           ]}
         >
-          <Input
-            placeholder="一句话概括您的问题或建议"
-            maxLength={100}
-            showCount
-          />
+          <Input placeholder="一句话概括您的问题或建议" maxLength={100} showCount />
         </Form.Item>
 
         <Form.Item
@@ -143,20 +143,13 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         <Form.Item
           name="contact_email"
           label="联系邮箱（可选）"
-          rules={[
-            { type: "email", message: "请输入有效的邮箱地址" },
-          ]}
+          rules={[{ type: "email", message: "请输入有效的邮箱地址" }]}
         >
           <Input placeholder="方便我们与您联系" />
         </Form.Item>
 
         <Form.Item>
-          <Button
-            type="primary"
-            htmlType="submit"
-            loading={submitting}
-            block
-          >
+          <Button type="primary" htmlType="submit" loading={submitStatus === "submitting"} block>
             提交反馈
           </Button>
         </Form.Item>

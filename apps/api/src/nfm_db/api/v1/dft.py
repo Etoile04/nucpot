@@ -202,6 +202,7 @@ async def list_calculations(
             page=pagination.page,
             limit=pagination.per_page,
             pages=pages,
+            truncated=pagination.truncated,
         ),
     )
 

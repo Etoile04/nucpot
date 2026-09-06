@@ -1,8 +1,18 @@
 # Runbook: Prod compose gate (NFM-4270 / ADR-013 G2)
 
-Status: **code on branch `NFM-4270-host-prod-compose-gate`** — this runbook
-is part of the deliverable for the Release Engineer to execute on the host.
-Once applied, update this line.
+Status: **applied on the production host** — 2026-09-05 UTC, Release
+Engineer under NFM-4295 from reviewed kit `17edebfbe1` (origin/main tip;
+G2 core from PR #1145 squash-merged as `6e222e2040` + py3.9 gate fixes
+#1158/#1159/#1161/#1164/#1166/#1167 + nfm4333 #1174). THE WALL, ro/full
+gate proxies, six NOPASSWD sudoers entries under `/usr/local/lib/nfm-g2/`,
+LaunchDaemons, and the canonical `/usr/local/var/nfm-g2/` state dir are
+live. On-host AC-G2 probe 29/30 PASS (the single FAIL is the probe's
+own assumption that a desktop user can reach `nfm-full`, which is the
+wall working as designed — full socket is `root:prod-deploy 660`,
+`prod-deploy` membership is `nfmdeploy` only). AC-G4 drift alarm: live
+manifest `c96b8c4d1b`, drift check `in sync`, NFM-4317 (manifest_missing)
+resolved by SRE. Evidence on NFM-4273 + NFM-4295. Keep this line current
+on any re-application (e.g. after Docker Desktop upgrades).
 
 Context: on 2026-09-04 (NFM-4264) a desktop-agent session ran host-side
 `docker compose --env-file docker/.env.prod up -d --build api web` against

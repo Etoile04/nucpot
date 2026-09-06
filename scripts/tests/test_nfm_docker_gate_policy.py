@@ -744,16 +744,34 @@ def test_percent_encoded_path_denied():
 
 
 def test_percent_encoded_scope_query_value_denied():
-    """The scope keys are checked as SENT: %2D decodes to '-' server-side,
-    so `nucpot%2Dprod-x` would scope-check innocent and land as prod."""
+    """NFM-4333 RC4 semantics: scope keys are percent-DECODED once and
+    checked on what the daemon will resolve — an encoded prod name
+    (`%2D` = '-') is caught BY SCOPE, not by encoding shape."""
+    result = decide("POST", "/v1.43/containers/create", "name=nucpot%2Dprod-api-1", body={})
+    assert not result.allowed and result.scope == "prod"
+
+
+def test_percent_encoded_pull_of_registry_ref_allowed():
+    """The RC4 fix's whole point: `docker build`/`docker pull` send
+    multi-segment image refs percent-encoded in images/create — a
+    sanctioned image-layer op that the old blanket '%' refusal blocked
+    (candidate build died: "percent-encoded 'repo' value cannot be
+    scope-checked")."""
     for query in (
-        "name=nucpot%2Dprod-api-1",  # containers/create
-        "fromImage=nucpot%2Dprod-api",  # images/create
-        "fromSrc=nucpot%2Dprod",  # build
+        "fromImage=docker.io%2Flibrary%2Fpython&tag=3.12-slim",
+        "fromImage=pgvector%2Fpgvector&tag=pg16",
+        "repo=docker.io%2Flibrary%2Fpython&tag=latest",
     ):
-        result = decide("POST", "/v1.43/containers/create", query, body={})
-        assert not result.allowed, query
-        assert "cannot be scope-checked" in result.reason
+        result = decide("POST", "/v1.43/images/create", query)
+        assert result.allowed, query
+
+
+def test_double_encoded_scope_value_denied_fail_closed():
+    """One decode, never two: %25 (a literal '%') can only be an evasion
+    attempt — the docker CLI never double-encodes."""
+    result = decide("POST", "/v1.43/images/create", "fromImage=a%252Fb")
+    assert not result.allowed and result.audit
+    assert "fail-closed" in result.reason
 
 
 def test_percent_encoded_read_filter_still_allowed():
@@ -799,6 +817,36 @@ def test_images_get_opaque_id_or_digest_denied_fail_closed():
     for names in (f"names={digest}", f"names={digest}&names=alpine:latest"):
         result = decide("GET", "/v1.43/images/get", names)
         assert not result.allowed and "fail-closed" in result.reason, names
+
+
+# ---- NFM-4333: single-image inspect is a sanctioned read ---------------------
+# `docker compose up` resolves every service image via GET
+# images/{ref}/json; it was fail-closed in BOTH modes and blocked all
+# sanctioned deploys. The full list (images/json) is already an allowed
+# read returning the same metadata per image — the item endpoint exposes
+# strictly less data.
+
+
+def test_get_image_inspect_allowed_ro_mode():
+    for ref in ("nucpot-prod-api:latest", "alpine:3.20", "pgvector/pgvector:pg16"):
+        result = decide("GET", f"/v1.43/images/{ref}/json")
+        assert result.allowed, ref
+
+
+def test_get_image_inspect_allowed_full_mode():
+    result = decide("GET", "/v1.43/images/nucpot-prod-api:c96b8c4d1/json", full=True)
+    assert result.allowed
+
+
+def test_get_image_inspect_does_not_widen_layer_export():
+    # The read fix must not touch the images/get exfiltration guard.
+    assert not decide("GET", "/v1.43/images/get", "names=nucpot-prod-api:latest").allowed
+
+
+def test_get_image_other_subresources_still_fail_closed():
+    # Only inspect (json) is allowed; e.g. history stays unrecognized.
+    result = decide("GET", "/v1.43/images/alpine:3.20/history")
+    assert not result.allowed and result.audit
 
 
 # ---- CR F4: opaque volume ids -------------------------------------------------------
