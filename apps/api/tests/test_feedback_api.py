@@ -328,3 +328,25 @@ async def test_list_feedback_allows_admin_via_real_auth_chain(
 
     assert response.status_code == 200
     assert response.json()["data"]["total"] == 0
+
+
+def test_feedback_enum_columns_persist_values_not_names() -> None:
+    """Model enum persistence strings must equal the Postgres enum labels (NFM-4380).
+
+    SQLite-backed tests cannot catch this: SQLAlchemy creates matching VARCHAR
+    constraints for its own .name convention, so round-trips pass while the
+    real Postgres enum types (migration d3ddb691ae20, labels 'bug_report',
+    'medium', 'open', …) reject 'BUG_REPORT' with
+    InvalidTextRepresentationError — verified live on prod 2026-09-06.
+    """
+    from nfm_db.models.feedback import Feedback, FeedbackStatus, FeedbackType, Priority
+
+    columns = {
+        "feedback_type": FeedbackType,
+        "priority": Priority,
+        "status": FeedbackStatus,
+    }
+    for col, py_enum in columns.items():
+        persisted = list(Feedback.__table__.c[col].type.enums)
+        expected = [e.value for e in py_enum]
+        assert persisted == expected, f"{col}: {persisted} != {expected}"

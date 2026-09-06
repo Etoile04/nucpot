@@ -10,6 +10,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from nfm_db.models import Base, TimestampMixin
 
 
+# NFM-4380: Postgres enum types are created by migration d3ddb691ae20 with the
+# enum *values* ('bug_report', 'medium', 'open', …) — the same strings the API
+# schema exchanges. SQLAlchemy's default for a Python enum is to persist the
+# member *name* ('BUG_REPORT', …), which Postgres rejects with
+# InvalidTextRepresentationError. Persist values instead, on every enum column.
+def _enum_values(obj: type[enum.Enum]) -> list[str]:
+    return [e.value for e in obj]
+
+
 class FeedbackType(str, enum.Enum):
     """Type of user feedback."""
 
@@ -49,7 +58,7 @@ class Feedback(TimestampMixin, Base):
         default=uuid.uuid4,
     )
     feedback_type: Mapped[FeedbackType] = mapped_column(
-        Enum(FeedbackType, name="feedback_type_enum"),
+        Enum(FeedbackType, name="feedback_type_enum", values_callable=_enum_values),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -57,12 +66,12 @@ class Feedback(TimestampMixin, Base):
     page_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     priority: Mapped[Priority] = mapped_column(
-        Enum(Priority, name="priority_enum"),
+        Enum(Priority, name="priority_enum", values_callable=_enum_values),
         nullable=False,
         default=Priority.MEDIUM,
     )
     status: Mapped[FeedbackStatus] = mapped_column(
-        Enum(FeedbackStatus, name="feedback_status_enum"),
+        Enum(FeedbackStatus, name="feedback_status_enum", values_callable=_enum_values),
         nullable=False,
         default=FeedbackStatus.OPEN,
     )
