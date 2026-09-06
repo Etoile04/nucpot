@@ -24,9 +24,11 @@ vi.mock("next/navigation", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // /api/stats provides the element palette
+  // /api/stats provides the element palette — served inside the standard
+  // ApiResponse envelope and consumed by useElementOptions() (NFM-4310).
   global.fetch = vi.fn().mockResolvedValue({
-    json: async () => ({ elements: ["U", "Zr"] }),
+    ok: true,
+    json: async () => ({ success: true, data: { elements: ["U", "Zr"] } }),
   })
   mockListPotentials.mockResolvedValue({
     potentials: [],
