@@ -68,6 +68,22 @@ class TestLoadAgeExtension:
 # ---------------------------------------------------------------------------
 
 
+def _patched_default_factory(mock_session: AsyncMock):
+    """Patch the module-attribute factory to yield ``mock_session``.
+
+    Mirrors the historical patch point (``async_session_factory``), which
+    ``get_db`` still resolves at call time for compat (ADR-NFM-4076 D2);
+    T2+ migrates these onto ``get_session_factory`` / overrides.
+    """
+    mock_factory_cm = AsyncMock()
+    mock_factory_cm.__aenter__.return_value = mock_session
+    mock_factory_cm.__aexit__.return_value = None
+    return patch(
+        "nfm_db.database.async_session_factory",
+        return_value=mock_factory_cm,
+    )
+
+
 class TestGetDb:
     """Cover the async session generator including error-handling path."""
 
@@ -80,14 +96,8 @@ class TestGetDb:
         ``await session.commit()`` before StopAsyncIteration.
         """
         mock_session = AsyncMock()
-        mock_factory_cm = AsyncMock()
-        mock_factory_cm.__aenter__.return_value = mock_session
-        mock_factory_cm.__aexit__.return_value = None
 
-        with patch(
-            "nfm_db.database.async_session_factory",
-            return_value=mock_factory_cm,
-        ):
+        with _patched_default_factory(mock_session):
             gen = get_db()
             session = await gen.__anext__()
             assert session is mock_session
@@ -102,14 +112,8 @@ class TestGetDb:
     async def test_rolls_back_on_exception(self) -> None:
         """When the consumer raises inside the async-with, rollback is called."""
         mock_session = AsyncMock()
-        mock_factory_cm = AsyncMock()
-        mock_factory_cm.__aenter__.return_value = mock_session
-        mock_factory_cm.__aexit__.return_value = None
 
-        with patch(
-            "nfm_db.database.async_session_factory",
-            return_value=mock_factory_cm,
-        ):
+        with _patched_default_factory(mock_session):
             gen = get_db()
             session = await gen.__anext__()
             assert session is mock_session
@@ -124,14 +128,8 @@ class TestGetDb:
     async def test_exception_is_re_raised(self) -> None:
         """The original exception propagates after rollback."""
         mock_session = AsyncMock()
-        mock_factory_cm = AsyncMock()
-        mock_factory_cm.__aenter__.return_value = mock_session
-        mock_factory_cm.__aexit__.return_value = None
 
-        with patch(
-            "nfm_db.database.async_session_factory",
-            return_value=mock_factory_cm,
-        ):
+        with _patched_default_factory(mock_session):
             gen = get_db()
             await gen.__anext__()
             # RuntimeError should propagate unchanged
