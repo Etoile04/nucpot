@@ -93,7 +93,7 @@ importers:
         version: 7.0.1(@testing-library/dom@10.4.1)(vitest@5.0.0(@opentelemetry/api@1.9.1)(@types/node@26.1.2)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)))
       '@testing-library/react':
         specifier: ^16.1.0
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@types/d3-force':
         specifier: ^3.0.0
         version: 3.0.10
@@ -113,8 +113,8 @@ importers:
         specifier: ^19.2.17
         version: 19.2.17
       '@types/react-dom':
-        specifier: ^19.2.4
-        version: 19.2.4(@types/react@19.2.17)
+        specifier: ^19.2.7
+        version: 19.2.7(@types/react@19.2.17)
       '@vitejs/plugin-react':
         specifier: ^6.0.5
         version: 6.0.5(vite@8.2.2(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0))
@@ -1468,8 +1468,8 @@ packages:
   '@types/pg@8.6.1':
     resolution: {integrity: sha512-1Kc4oAGzAl7uqUStZCDvaLFqZrW9qWSjXOmBfdgyBP5La7Us6Mg4GBvRlSoaZMhQF/zSj1C8CtKMBkoiT8eL8w==}
 
-  '@types/react-dom@19.2.4':
-    resolution: {integrity: sha512-Bsc+QHgp+P/F02XDzNCY9jnZNCUuLki36KT7VKrTXXLdHf+vHMNZnW1rVu5DNW/rCK+fya3DATySbLM4yhtKUw==}
+  '@types/react-dom@19.2.7':
+    resolution: {integrity: sha512-I8bPpDLcHBv1qiIiXDCy71Rt8eQDKJP0sMSWJphDdAcdqiJ1sGpZamavoEIRZmYzjia9LuEb2HlYdDpmoENpvQ==}
     peerDependencies:
       '@types/react': ^19.2.0
 
@@ -5659,7 +5659,7 @@ snapshots:
     optionalDependencies:
       vitest: 5.0.0(@opentelemetry/api@1.9.1)(@types/node@26.1.2)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0))
 
-  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@testing-library/dom': 10.4.1
@@ -5667,7 +5667,7 @@ snapshots:
       react-dom: 19.2.8(react@19.2.8)
     optionalDependencies:
       '@types/react': 19.2.17
-      '@types/react-dom': 19.2.4(@types/react@19.2.17)
+      '@types/react-dom': 19.2.7(@types/react@19.2.17)
 
   '@tootallnate/quickjs-emscripten@0.23.0': {}
 
@@ -5750,7 +5750,7 @@ snapshots:
       pg-protocol: 1.16.0
       pg-types: 2.2.0
 
-  '@types/react-dom@19.2.4(@types/react@19.2.17)':
+  '@types/react-dom@19.2.7(@types/react@19.2.17)':
     dependencies:
       '@types/react': 19.2.17
 
