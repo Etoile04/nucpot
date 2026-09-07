@@ -1,0 +1,37 @@
+# =============================================================================
+# Release-anchor reconciliation cron (NFM-4452 / ADR-015 §2)
+# =============================================================================
+# Host-side fallback for the CI `tag-released` job: reads the G4a deploy
+# manifest and pushes the `released/<UTCdate>-<sha8>` anchor tag when CI
+# could not (GFW egress flake, pre-ADR-015 deploy, manual deploy). Safe on
+# every tick: idempotent (already-anchored = exit 0, silent), never moves or
+# deletes an existing tag (tag conflict = exit 4 = alarm worth reading),
+# skips non-main live SHAs (a rollback is in progress). See
+# docs/runbooks/prod-deploy.md §10 and docs/adr/ADR-015-NFM-4452-*.
+#
+# Exit-code semantics (only non-zero produces output, except conflicts):
+#   0 ok / already anchored (silent)   2 manifest missing/invalid
+#   3 live SHA not on origin/main      4 TAG CONFLICT — investigate NOW
+#   5 push/fetch failed (retry next tick)   6 config error
+#
+# >>>>> INSTALLATION REQUIRED <<<<<
+#
+# Deploy-host default paths are filled in below. Adjust REPO_DIR if the
+# checkout lives elsewhere.
+#
+#   Linux (deploy host, root crontab / /etc/cron.d):
+#     sudo install -m 0644 scripts/cron/released-anchor-reconcile.cron \
+#       /etc/cron.d/nucpot-released-anchor
+#
+#   macOS (current dev machine, per-user crontab):
+#     crontab scripts/cron/released-anchor-reconcile.cron
+#     (then strip the `root` user field from the cron line — see below)
+#
+# =============================================================================
+
+REPO_DIR=/Users/lwj04/Projects/nucpot
+PYTHON=/usr/bin/python3
+
+# Every 15 min, offset from the 5-min drift checker. On /etc/cron.d keep the
+# `root` user field; in a per-user crontab remove `root`.
+*/15 * * * * root cd "$REPO_DIR" && $PYTHON scripts/tag_released.py 2>&1 | grep -v '^already anchored' || true
