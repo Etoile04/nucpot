@@ -5,6 +5,7 @@
 - ``GET /health/alerts/summary`` — aggregated event counts (NFM-2222).
 """
 
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -61,6 +62,15 @@ async def health_check(
         # operator sees the more informative failure mode.
         snapshot["status"] = "degraded"
     snapshot["recent_uuid_titled_source_blocks"] = recent_uuid_block_count
+    # ADR-015 §4 (NFM-4452): the deployed git SHA, baked into the image at
+    # build time (docker/prod-api.Dockerfile ARG GIT_SHA -> ENV NFM_GIT_SHA)
+    # by deploy_prod.sh. Consumers: the CI smoke identity assertion compares
+    # this to the green tree's sha (mismatch => deploy-identity-drift issue),
+    # and operators verify "prod runs what main says" without shell access.
+    # Empty/absent on images built before ADR-015 or outside the sanctioned
+    # path — reported as None so existing consumers of the 5 fixed keys see
+    # one additive field, nothing removed.
+    snapshot["deploy_sha"] = os.environ.get("NFM_GIT_SHA") or None
     return snapshot
 
 

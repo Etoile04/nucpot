@@ -1,5 +1,12 @@
 FROM python:3.12-slim
 
+# ADR-015 §4 (NFM-4452): the deploying git SHA, injected by deploy_prod.sh
+# (--build-arg GIT_SHA=<DEPLOY_SHA>) and surfaced by /api/v1/health as
+# deploy_sha. Overridable for local/ad-hoc builds; empty string means the
+# image predates ADR-015 or was built outside the sanctioned path.
+ARG GIT_SHA=""
+ENV NFM_GIT_SHA=${GIT_SHA}
+
 WORKDIR /app
 
 # Install build dependencies with retry for flaky mirror proxies (NFM-2502).

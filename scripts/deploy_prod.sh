@@ -209,8 +209,12 @@ python3 scripts/check_prod_image_tag.py \
 echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
 # NFM-2502: clear proxy for Docker build (apt/pip use CN mirrors directly)
 # NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
+# ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
+# it as deploy_sha and the CI smoke identity assertion compares it to the
+# green tree (NFM-3835 class: hot-patched image passing grep-style checks).
 HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
-  docker build --no-cache -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+  docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
+    -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
 
 echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
 DOCKER_BUILDKIT=0 \

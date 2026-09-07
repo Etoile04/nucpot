@@ -24,7 +24,8 @@ async def test_health_check_returns_ok(async_client) -> None:
 @pytest.mark.asyncio
 async def test_health_check_response_body_keys(async_client) -> None:
     """Response should contain the 4 worker_health snapshot keys plus
-    the NFM-4097 AC-4 ``recent_uuid_titled_source_blocks`` counter.
+    the NFM-4097 AC-4 ``recent_uuid_titled_source_blocks`` counter and
+    the ADR-015 §4 ``deploy_sha`` build identity (NFM-4452).
 
     NFM-4097 adds the DB-derived degraded-flip signal but keeps the
     existing snapshot fields so monitoring agents that already
@@ -42,9 +43,31 @@ async def test_health_check_response_body_keys(async_client) -> None:
             "last_success_at",
             "last_error",
             "recent_uuid_titled_source_blocks",
+            "deploy_sha",
         }
         assert isinstance(body["status"], str)
         assert isinstance(body["recent_uuid_titled_source_blocks"], int)
+    finally:
+        worker_health.reset()
+
+
+@pytest.mark.asyncio
+async def test_health_deploy_sha_from_env(async_client, monkeypatch) -> None:
+    """ADR-015 §4 (NFM-4452): ``deploy_sha`` mirrors the baked-in
+    ``NFM_GIT_SHA`` build arg; absent env -> ``None`` (images built before
+    ADR-015 or outside the sanctioned path), never a KeyError.
+    """
+    worker_health.reset()
+    try:
+        monkeypatch.setenv("NFM_GIT_SHA", "abc123def4567890")
+        response = await async_client.get("/api/v1/health")
+        assert response.status_code == 200
+        assert response.json()["deploy_sha"] == "abc123def4567890"
+
+        monkeypatch.delenv("NFM_GIT_SHA", raising=False)
+        response = await async_client.get("/api/v1/health")
+        assert response.status_code == 200
+        assert response.json()["deploy_sha"] is None
     finally:
         worker_health.reset()
 

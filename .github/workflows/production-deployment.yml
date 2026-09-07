@@ -7,8 +7,18 @@ name: Production Deployment
 on:
   push:
     branches: [main]
-    tags:
-      - "v*"
+  # NFM-4452 / ADR-015: `tags: ["v*"]` was REMOVED as a deploy trigger.
+  # Every push to main already deploys, so a version tag re-triggered this
+  # workflow to rebuild + redeploy the SAME sha (~30 min duplicate occupying
+  # the `production-deploy` concurrency slot). Tags are now release ANCHORS:
+  #   * released/<utcdate>-<sha8>  — pushed automatically by the tag-released
+  #     job below after deploy + smoke pass (rollback discovery, ADR-015 §2)
+  #   * v2026.MM.N                 — manual batch tags; release paperwork per
+  #     ADR-015 §3 (changelog + migration list), NOT deploy triggers
+  # A manual deploy of an anchored version remains available via
+  # workflow_dispatch / the host gate runbook — the tag itself carries no
+  # pipeline semantics anymore. (The `notify` job's refs/tags/v branch below
+  # is now dead code by design; it costs one `if` evaluation.)
   workflow_dispatch:
     inputs:
       environment:
@@ -1140,6 +1150,53 @@ jobs:
           API_BASE_URL: https://nucpot.dpdns.org
           CI: true
 
+      # =========================================================================
+      # NFM-4452 / ADR-015 §4 — deploy identity assertion (A3).
+      # The prod image now bakes GIT_SHA (deploy_prod.sh build-arg) and
+      # /api/v1/health exposes it as deploy_sha. Compare it to the sha this
+      # workflow deployed: if prod serves different code than the green tree,
+      # the "deploy succeeded" verdict is false (the NFM-3835 class: hot-patch
+      # behavior with green grep-style checks). Softer than a hard fail on
+      # purpose — mismatch opens a deploy-identity-drift issue for triage;
+      # the G4b drift checker and manifest remain the hard gates. A missing
+      # deploy_sha (images built before this change) is inconclusive, not a
+      # failure.
+      # =========================================================================
+      - name: Assert prod identity == deployed sha (ADR-015 §4)
+        if: always()
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          BASE="${API_BASE_URL:-https://nucpot.dpdns.org}"
+          body="$(curl -sS --max-time 20 "${BASE}/api/v1/health" || true)"
+          served="$(printf '%s' "$body" | python3 -c 'import json,sys; sys.stdout.write((json.load(sys.stdin) or {}).get("deploy_sha","") or "")' 2>/dev/null || true)"
+          echo "expected=${EXPECTED_SHA:0:12} served=${served:0:12}"
+          if [ -z "$served" ]; then
+            echo "::warning::/api/v1/health did not report deploy_sha (pre-ADR-015 image). Identity check inconclusive; enforcement begins once the GIT_SHA image is live."
+            exit 0
+          fi
+          if [ "$served" != "$EXPECTED_SHA" ]; then
+            title="[IDENTITY-DRIFT] prod serves ${served:0:7}, deploy was ${EXPECTED_SHA:0:7}"
+            issue_body="$(printf '%s\n' \
+              '## Deploy identity drift (ADR-015 sec 4)' \
+              '' \
+              "**Expected (workflow sha)**: \`${EXPECTED_SHA:0:12}\`" \
+              "**Served (/api/v1/health deploy_sha)**: \`${served:0:12}\`" \
+              "**Run**: ${RUN_URL}" \
+              '' \
+              'Prod is NOT running the code this green run deployed — hot-patch, stale' \
+              'image re-tag, or rollback without manifest. Hard gates (G4a/G4b) did not' \
+              'catch it; treat as NFM-3835-class drift until attributed.')"
+            gh api "repos/${REPO}/issues" -f title="$title" -f body="$issue_body" -f labels[]="deploy-failure" \
+              || echo "::warning::identity drift detected but issue creation failed — investigate manually: $title"
+            exit 1
+          fi
+          echo "Identity verified: prod is serving the deployed sha."
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1251,6 +1308,61 @@ jobs:
           path: deploy-event.json
           retention-days: 90
           if-no-files-found: error
+
+  # ===========================================================================
+  # NFM-4452 / ADR-015 §2 — release anchor tag (A1).
+  #
+  # After deploy + smoke pass, push a lightweight `released/<utcdate>-<sha8>`
+  # tag so "the previous good version" is a `git describe` hop away instead
+  # of manifest archaeology. Rollback becomes:
+  #   run-recovery.sh rollback --tag $(git describe --match 'released/*' --abbrev=8 HEAD~1)
+  #
+  # Failure semantics: best-effort by design. The tag is a CONVENIENCE anchor
+  # layered on the system of record (G4a manifest + C6.1.1 deploy events);
+  # a failed tag push must not flip a healthy deploy red. Degradation path:
+  # the anchor is derivable at any time from the manifest via
+  # `scripts/tag_released.py` on the host (or tag it manually) — the cron
+  # sync reconciles within its next tick.
+  # ===========================================================================
+  tag-released:
+    name: Tag released anchor (released/<date>-<sha8>)
+    runs-on: ubuntu-latest
+    needs: [deploy-prod, smoke-test]
+    if: >-
+      always() &&
+      needs.deploy-prod.result == 'success' &&
+      needs.smoke-test.result == 'success' &&
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/main')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Push released anchor tag
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          date_part="$(date -u +%Y.%m%d)"
+          sha_part="${SHA:0:8}"
+          candidate="released/${date_part}-${sha_part}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${candidate}" >/dev/null 2>&1; then
+            echo "Anchor ${candidate} already exists (re-run/force-push of same sha) — nothing to do."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if git tag "${candidate}" "${SHA}" 2>/dev/null \
+              && git push origin "refs/tags/${candidate}" 2>&1; then
+              echo "Released anchor: ${candidate} -> ${sha_part}"
+              exit 0
+            fi
+            echo "::warning::tag push attempt ${attempt} failed (egress flake?); retrying in 15 s"
+            sleep 15
+          done
+          echo "::warning::could not push anchor ${candidate} after 3 attempts. Deploy itself is healthy; recover the anchor from the G4a manifest via scripts/tag_released.py or the next cron sync."
 
   # ===========================================================================
   # S2: Deploy notification — GitHub issue + Feishu alert + auto-close
