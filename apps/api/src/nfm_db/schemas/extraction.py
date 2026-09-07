@@ -462,3 +462,105 @@ class V4MultimodalSummary(BaseModel):
         le=1.0,
         description="Average VLM confidence across all multimodal extractions.",
     )
+
+
+# ---------------------------------------------------------------------------
+# OntoFuel service-account ingest (NFM-1972 / NFM-1973)
+# ---------------------------------------------------------------------------
+
+
+class ExtractionIngestRequest(BaseModel):
+    """Request body for ``POST /api/v1/extraction/ingest``.
+
+    OntoFuel's nucpot client (NFM-1972 / NFM-1973) posts a JSON envelope
+    containing extracted material properties plus provenance.  Fields are
+    deliberately permissive so the upstream schema can evolve without
+    requiring an API change here; the authoritative contract lives in
+    ``OntoFuel`` (the upstream producer).  Missing or unknown fields are
+    forwarded to the ingestion pipeline as-is.
+    """
+
+    source_reference: str = Field(
+        max_length=500,
+        description=(
+            "Source identifier OntoFuel used to produce this batch "
+            "(DOI, URL, internal id, file path). Empty strings are "
+            "accepted but cause sync-verification to be SKIPPED."
+        ),
+    )
+    source_type: str = Field(
+        default="doi",
+        max_length=20,
+        description="Type of source_reference: 'doi' | 'url' | 'file' | 'internal_id'.",
+    )
+    corpus_id: str = Field(
+        min_length=1,
+        max_length=100,
+        description=(
+            "External corpus slug the batch belongs to (NFM-1972 AC-5). "
+            "Service accounts may auto-create unknown corpora; human "
+            "callers must reference an already-registered corpus."
+        ),
+    )
+    element_systems: list[str] | None = Field(
+        default=None,
+        description="Element systems OntoFuel extracted for (e.g. ['U', 'Pu']).",
+    )
+    properties: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Material property records extracted by OntoFuel.",
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Provenance / OntoFuel run metadata (model version, timestamp, etc.).",
+    )
+
+
+class ExtractionIngestAck(BaseModel):
+    """Acknowledgement returned by the service-account ingest endpoint.
+
+    Conforms to the OntoFuel integration handoff contract (NFM-1972):
+    the outer envelope is ``{success, data}`` so the OntoFuel client
+    can call ``body.get("data", {}).get("ingested")`` etc.  Field names
+    match the handoff doc exactly (``ingested`` not ``accepted_count``).
+    """
+
+    job_id: UUID = Field(description="Server-assigned id for this ingest batch.")
+    source_reference: str
+    source_type: str
+    corpus_id: str = Field(description="Corpus the batch was tagged with.")
+    ingested: int = Field(description="Number of property records ingested (new).")
+    created_measurements: int = Field(default=0, description="Property measurements persisted.")
+    reused_entities: int = Field(
+        default=0, description="Existing DB entities reused (DataSource/Material already in DB)."
+    )
+    skipped_duplicate_measurements: int = Field(
+        default=0, description="Duplicate measurements skipped (5-tuple dedup)."
+    )
+    skipped_unknown_properties: int = Field(
+        default=0, description="Records skipped because the property is not in property_types."
+    )
+    skipped_unknown_materials: int = Field(
+        default=0,
+        description="[NFM-3919] Records skipped because BOTH material_name and composition are None (extractor schema-drift guard).",
+    )
+    skipped_duplicates: int = Field(
+        default=0,
+        description="[Deprecated] Total skipped. Equals reused_entities + skipped_duplicate_measurements + skipped_unknown_properties.",
+    )
+    validation_errors: int = Field(default=0, description="Records that failed validation.")
+    total_received: int = Field(default=0, description="Total property records in the request.")
+    processing_time_ms: float = Field(
+        default=0, description="Server-side processing time in milliseconds."
+    )
+    verified: bool = Field(
+        default=False,
+        description="AC-R3: True iff the per-request delta in PropertyMeasurement rows tied to source_reference equals created_measurements. Catches silent D1 dead-mode failures.",
+    )
+    db_measurement_count: int = Field(
+        default=0,
+        description="AC-R3: PropertyMeasurement row count tied to source_reference AFTER this request's map_and_persist. Used to derive the per-request delta.",
+    )
+    errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
+    received_at: datetime
+    message: str = "Ingest accepted; queued for processing."

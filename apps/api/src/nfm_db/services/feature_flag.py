@@ -25,14 +25,18 @@ def bucket_for_subject(key: str, subject: str) -> int:
 
 
 def evaluate_flag(flag: FeatureFlag, subject: str) -> FeatureFlagEvaluation:
-    """Evaluate a stored flag for one subject."""
+    """Evaluate a stored flag for one subject.
+
+    `bucket_for_subject()` stays the deterministic core of percentage
+    rollouts; the cohort index itself is intentionally not returned to
+    the caller (NFM-4244).
+    """
     bucket = bucket_for_subject(flag.key, subject)
     return FeatureFlagEvaluation(
         key=flag.key,
         enabled=flag.enabled,
         rollout_percentage=flag.rollout_percentage,
         value=flag.enabled and bucket < flag.rollout_percentage,
-        bucket=bucket,
     )
 
 

@@ -484,7 +484,6 @@ describe("DataLossNotice", (): void => {
       enabled: true,
       rollout_percentage: 100,
       value: true,
-      bucket: 7,
     })
 
     function Tree(): JSX.Element {
