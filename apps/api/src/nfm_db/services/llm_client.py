@@ -317,10 +317,20 @@ class LLMClient:
 
 
 def _get_config() -> dict[str, str]:
-    """Read LLM configuration from environment variables."""
+    """Read LLM configuration from environment variables.
+
+    Provider-aware like :class:`LLMClient`: ``LLM_PROVIDER`` selects a
+    default base URL, and the local Ollama provider works without
+    ``LLM_API_KEY`` (placeholder on the wire).
+    """
+    provider = os.environ.get("LLM_PROVIDER", "openai")
     return {
-        "api_key": os.environ.get("LLM_API_KEY", ""),
-        "base_url": os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"),
+        "api_key": os.environ.get("LLM_API_KEY", "")
+        or ("ollama" if provider == "ollama" else ""),
+        "base_url": os.environ.get(
+            "LLM_BASE_URL",
+            _PROVIDER_DEFAULTS.get(provider, "https://api.openai.com/v1"),
+        ),
         "model": os.environ.get("LLM_MODEL", "gpt-4o"),
     }
 
