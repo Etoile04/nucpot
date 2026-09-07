@@ -207,7 +207,9 @@ async def submit_md_verification_job(
 
         # Submit Celery task for async execution
         try:
-            task_result = celery_app.send_task(
+            from nfm_db.services import task_dispatcher
+
+            task_id = task_dispatcher.dispatch(
                 "nfm_db.services.md_tasks.run_md_verification",
                 args=[
                     str(job.id),
@@ -223,7 +225,7 @@ async def submit_md_verification_job(
                 {"status": JobStatus.SUBMITTED, "submitted_at": datetime.now(UTC)},
             )
 
-            logger.info(f"Submitted MD verification job {job.id} with Celery task {task_result.id}")
+            logger.info(f"Submitted MD verification job {job.id} with Celery task {task_id}")
 
             # Refresh job to get updated status
             updated_job = await service.get_job(job.id, owner_id=current_user.id)
