@@ -781,3 +781,48 @@ curl -s "http://localhost:8001/api/v1/potentials/<id>/file" | wc -c   # > 0
 
 Findings are also written to
 `/var/log/nfmd/potential_file_verify_report.json` inside the container.
+
+## 10. Versioned release anchors (NFM-4452 / ADR-015)
+
+Release semantics live in [ADR-015](../adr/ADR-015-NFM-4452-versioned-release-anchors.md);
+this section is the operator quick-reference.
+
+**Which version is live?** `curl -s https://nucpot.dpdns.org/api/v1/health |
+python3 -m json.tool` → `deploy_sha` (null = image built before ADR-015 or
+outside the sanctioned path — investigate, do not dismiss). Cross-check the
+G4a manifest (§7): `deploy_sha` in both must agree.
+
+**Roll back to the previous good version:**
+
+```bash
+cd ~/Projects/nucpot && git fetch origin --tags
+git describe --match 'released/*' --abbrev=8 origin/main~1   # nearest anchor
+sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <that-sha>
+```
+
+Anchors (`released/<UTC-date>-<sha8>`) are pushed by the `tag-released` CI
+job after deploy + smoke pass; if CI could not push (egress flake), the
+host-side reconciler catches up on its next cron tick, or run it once:
+
+```bash
+cd ~/Projects/nucpot && python3 scripts/tag_released.py --dry-run
+```
+
+**Cut a batch release tag (manual, low-frequency, deploys nothing):**
+
+```bash
+git tag -a v2026.09.1 <verified-main-sha> -F - <<'MSG'
+v2026.09.1
+
+Includes: NFM-####, NFM-####, NFM-####
+Migrations: 084 (index only, non-destructive)
+Notes: <one-line behavior changes worth remembering>
+MSG
+git push origin v2026.09.1
+```
+
+Version tags do NOT trigger deployments (`on.push.tags` removed in
+ADR-015 §5); deploy is main-push-only. Legacy tags (`canary/*`,
+`v2026.318~626` series) are **not rollback targets** — most point at
+non-main upstream commits.
+
