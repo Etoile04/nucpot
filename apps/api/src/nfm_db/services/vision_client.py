@@ -389,6 +389,50 @@ class VisionClient:
 
         return cast(dict[str, Any], body)
 
+    async def vlm_complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        timeout: float = 120.0,
+        max_tokens: int = 1500,
+    ) -> str:
+        """Multimodal chat completion over an arbitrary message list.
+
+        Callable-style adapter consumed by ``mineru_vision_extractor``
+        (``vlm_extract`` / ``vlm_verify``): ``messages`` pass through
+        VERBATIM — multimodal ``image_url`` parts must reach the wire, so
+        this method never normalizes or rebuilds content.  Returns the raw
+        assistant content string; JSON schema handling is the caller's job.
+
+        History: a precursor of this adapter normalized content to plain
+        text and silently dropped images, shipping a "100% HIGH"
+        verification rate that was actually text-only captioning.  The
+        verbatim contract above is the structural fix for that bug.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "stream": False,
+        }
+
+        async with httpx.AsyncClient(timeout=timeout) as http_client:
+            response = await http_client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+
+        response.raise_for_status()
+        body = response.json()
+        return str(body["choices"][0]["message"]["content"])
+
 
 # ---------------------------------------------------------------------------
 # Utilities

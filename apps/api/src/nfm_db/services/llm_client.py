@@ -163,7 +163,13 @@ class LLMClient:
         self.max_retries = max_retries
 
         if not self.api_key:
-            raise ValueError("LLM_API_KEY is required but was not set")
+            if self.provider == "ollama":
+                # Local Ollama ignores auth, but the OpenAI-compat wire
+                # still carries an Authorization header — use a placeholder
+                # so `LLMClient(provider="ollama")` works without LLM_API_KEY.
+                self.api_key = "ollama"
+            else:
+                raise ValueError("LLM_API_KEY is required but was not set")
 
         self._cache: dict[str, dict[str, Any]] = {}
 
