@@ -186,11 +186,16 @@ async def trigger_extraction_job(
     # to process_literature_task. For 'doi' / 'url' / 'file' types the
     # worker still handles them via the same dispatcher (it'll
     # fetch-from-DOI / fetch-from-URL / copy-from-upload accordingly).
-    celery_async = process_literature_task.delay(payload.source_reference)
+    from nfm_db.services import task_dispatcher
+
+    task_id = task_dispatcher.dispatch(
+        process_literature_task.name,
+        kwargs={"datasource_id": payload.source_reference},
+    )
     logger.info(
         "trigger_extraction: dispatched source_reference=%s to celery task_id=%s",
         payload.source_reference,
-        celery_async.id,
+        task_id,
     )
 
     return {
@@ -203,7 +208,7 @@ async def trigger_extraction_job(
             # Celery log entry. The legacy /api/v1/extraction/status/
             # endpoint is no longer used for these jobs — operators
             # should watch the Celery worker log instead.
-            "job_id": celery_async.id,
+            "job_id": task_id,
             "message": "Extraction job queued. Celery worker will process asynchronously.",
         },
     }
