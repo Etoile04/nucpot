@@ -64,9 +64,12 @@ def _send_literature_task(*, task_name: str, datasource_id: str, queue: str) -> 
     """Send the task to Celery with the correct routing.
 
     Wrapped in a tiny function so unit tests can patch it without booting
-    the real broker.
+    the real broker.  Delegates to the shared task-dispatcher seam (C4 /
+    NFM-2564) — the one place that talks to the broker.
     """
-    return celery_app.send_task(
+    from nfm_db.services.task_dispatcher import dispatch
+
+    return dispatch(
         task_name,
         kwargs={"datasource_id": datasource_id},
         queue=queue,

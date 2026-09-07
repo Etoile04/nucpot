@@ -205,8 +205,6 @@ class GapDispatchService:
         # Lazy import so unit tests don't need the Celery broker.
         from celery.exceptions import CeleryError
 
-        from nfm_db.services.celery_app import celery_app
-
         task_name = (
             "nfm_db.tasks.gap_literature_task.process_gap_literature_task"
         )
@@ -217,8 +215,10 @@ class GapDispatchService:
             req.id,
             task_name,
         )
+        from nfm_db.services.task_dispatcher import dispatch
+
         try:
-            async_result = celery_app.send_task(
+            task_id = dispatch(
                 task_name,
                 kwargs={
                     "request_id": str(req.id),
@@ -242,7 +242,6 @@ class GapDispatchService:
             )
             raise
 
-        task_id = getattr(async_result, "id", None) or str(async_result)
         logger.info(
             "Scheduled literature task_id=%s for request %s",
             task_id,

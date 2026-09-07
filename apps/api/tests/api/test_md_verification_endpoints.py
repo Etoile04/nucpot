@@ -191,7 +191,7 @@ def _make_fitting_result(**overrides: object) -> MagicMock:
 class TestSubmitMDVerificationJob:
     """Tests for POST /api/v1/md-verification/jobs."""
 
-    @patch("nfm_db.api.v1.md_verification.celery_app")
+    @patch("nfm_db.services.task_dispatcher.celery_app")
     @patch("nfm_db.api.v1.md_verification.MDVerificationService")
     async def test_submit_job_success(
         self,

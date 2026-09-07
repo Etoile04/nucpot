@@ -184,7 +184,7 @@ def _make_fitting_result(**overrides) -> MagicMock:
 
 
 @pytest.mark.asyncio
-@patch("nfm_db.api.v1.md_verification.celery_app")
+@patch("nfm_db.services.task_dispatcher.celery_app")
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
 async def test_submit_job_success(
     mock_service_cls: MagicMock,
@@ -225,7 +225,7 @@ async def test_submit_job_success(
 
 
 @pytest.mark.asyncio
-@patch("nfm_db.api.v1.md_verification.celery_app")
+@patch("nfm_db.services.task_dispatcher.celery_app")
 @patch("nfm_db.api.v1.md_verification.MDVerificationService")
 async def test_submit_job_with_pk_parameters(
     mock_service_cls: MagicMock,
