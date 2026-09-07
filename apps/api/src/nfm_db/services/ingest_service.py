@@ -147,7 +147,7 @@ async def ingest_extraction_batch(
     verified = False
     source_ref = payload.source_reference or ""
 
-    def _count_q_for_source(ref: str):
+    def _count_q_for_source(ref: str) -> Any:
         return (
             select(func.count(PropertyMeasurement.id))
             .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
