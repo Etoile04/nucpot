@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -419,12 +420,20 @@ async def ontofuel_extract(
     source_type: str,
     element_systems: list[str] | None = None,
     db: AsyncSession | None = None,
+    *,
+    llm_call: Callable[..., Awaitable[dict[str, Any] | list[dict[str, Any]]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract material properties from a literature source using LLM.
 
     Uses an LLM (OpenAI-compatible API) to extract structured property
     data from Markdown source files. Falls back to stub mode when
     EXTRACTION_STUB_MODE is set or when LLM is not configured.
+
+    ``llm_call`` (ADR C2 / NFM-2564, Q2 option a): inject an async
+    callable with :func:`call_llm`'s signature to replace the default
+    stack — unit tests inject a stub and run offline; production callers
+    omit it and get the env-configured ``call_llm`` unchanged.  Injecting
+    also bypasses the env LLM gate above.
 
     ``source_type`` routing:
     - ``"datasource"`` — *source_reference* is a DataSource UUID;
@@ -486,7 +495,9 @@ async def ontofuel_extract(
         return _stub_extraction_results(source_reference)
 
     # Real LLM extraction
-    if not is_llm_configured():
+    if llm_call is None and not is_llm_configured():
+        # An injected llm_call *is* the LLM configuration (test/offline
+        # injection); the env gate only applies to the default stack.
         # DOI without LLM: same as stub DOI behavior (NFM-636)
         if source_type == "doi":
             logger.warning(
@@ -555,7 +566,7 @@ async def ontofuel_extract(
                     f"{f' (part {idx + 1} of {len(chunks)})' if len(chunks) > 1 else ''}:\n\n{chunk}"
                 )
 
-            raw_result = await call_llm(
+            raw_result = await (llm_call or call_llm)(
                 system_prompt=system_prompt,
                 user_message=chunk_message,
             )
