@@ -11,23 +11,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import time
 from datetime import UTC, datetime
-from typing import Annotated, Any
-from uuid import UUID, uuid4
+from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.api.v1.auth import require_editor, require_ingest_authority
 from nfm_db.database import get_db
-from nfm_db.models import Corpus, Dataset, DataSource, ExtractionJob, PropertyMeasurement
+from nfm_db.models import ExtractionJob
 from nfm_db.models.extraction_step import EXTRACTION_STEP_TYPES, ExtractionStep
 from nfm_db.models.user import User
 from nfm_db.schemas.extraction import (
+    ExtractionIngestRequest,
     ExtractionTriggerRequest,
 )
 from nfm_db.services.extraction_pipeline import _extraction_job_to_dict
@@ -37,103 +36,6 @@ from nfm_db.services.literature_dispatcher import (
 from nfm_db.services.rate_limit import ingest_rate_limit
 
 logger = logging.getLogger(__name__)
-
-
-class ExtractionIngestRequest(BaseModel):
-    """Request body for ``POST /api/v1/extraction/ingest``.
-
-    OntoFuel's nucpot client (NFM-1972 / NFM-1973) posts a JSON envelope
-    containing extracted material properties plus provenance.  Fields are
-    deliberately permissive so the upstream schema can evolve without
-    requiring an API change here; the authoritative contract lives in
-    ``OntoFuel`` (the upstream producer).  Missing or unknown fields are
-    forwarded to the ingestion pipeline as-is.
-    """
-
-    source_reference: str = Field(
-        max_length=500,
-        description=(
-            "Source identifier OntoFuel used to produce this batch "
-            "(DOI, URL, internal id, file path). Empty strings are "
-            "accepted but cause sync-verification to be SKIPPED."
-        ),
-    )
-    source_type: str = Field(
-        default="doi",
-        max_length=20,
-        description="Type of source_reference: 'doi' | 'url' | 'file' | 'internal_id'.",
-    )
-    corpus_id: str = Field(
-        min_length=1,
-        max_length=100,
-        description=(
-            "External corpus slug the batch belongs to (NFM-1972 AC-5). "
-            "Service accounts may auto-create unknown corpora; human "
-            "callers must reference an already-registered corpus."
-        ),
-    )
-    element_systems: list[str] | None = Field(
-        default=None,
-        description="Element systems OntoFuel extracted for (e.g. ['U', 'Pu']).",
-    )
-    properties: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Material property records extracted by OntoFuel.",
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None,
-        description="Provenance / OntoFuel run metadata (model version, timestamp, etc.).",
-    )
-
-
-class ExtractionIngestAck(BaseModel):
-    """Acknowledgement returned by the service-account ingest endpoint.
-
-    Conforms to the OntoFuel integration handoff contract (NFM-1972):
-    the outer envelope is ``{success, data}`` so the OntoFuel client
-    can call ``body.get("data", {}).get("ingested")`` etc.  Field names
-    match the handoff doc exactly (``ingested`` not ``accepted_count``).
-    """
-
-    job_id: UUID = Field(description="Server-assigned id for this ingest batch.")
-    source_reference: str
-    source_type: str
-    corpus_id: str = Field(description="Corpus the batch was tagged with.")
-    ingested: int = Field(description="Number of property records ingested (new).")
-    created_measurements: int = Field(default=0, description="Property measurements persisted.")
-    reused_entities: int = Field(
-        default=0, description="Existing DB entities reused (DataSource/Material already in DB)."
-    )
-    skipped_duplicate_measurements: int = Field(
-        default=0, description="Duplicate measurements skipped (5-tuple dedup)."
-    )
-    skipped_unknown_properties: int = Field(
-        default=0, description="Records skipped because the property is not in property_types."
-    )
-    skipped_unknown_materials: int = Field(
-        default=0,
-        description="[NFM-3919] Records skipped because BOTH material_name and composition are None (extractor schema-drift guard).",
-    )
-    skipped_duplicates: int = Field(
-        default=0,
-        description="[Deprecated] Total skipped. Equals reused_entities + skipped_duplicate_measurements + skipped_unknown_properties.",
-    )
-    validation_errors: int = Field(default=0, description="Records that failed validation.")
-    total_received: int = Field(default=0, description="Total property records in the request.")
-    processing_time_ms: float = Field(
-        default=0, description="Server-side processing time in milliseconds."
-    )
-    verified: bool = Field(
-        default=False,
-        description="AC-R3: True iff the per-request delta in PropertyMeasurement rows tied to source_reference equals created_measurements. Catches silent D1 dead-mode failures.",
-    )
-    db_measurement_count: int = Field(
-        default=0,
-        description="AC-R3: PropertyMeasurement row count tied to source_reference AFTER this request's map_and_persist. Used to derive the per-request delta.",
-    )
-    errors: list[str] = Field(default_factory=list, description="Error details for failed records.")
-    received_at: datetime
-    message: str = "Ingest accepted; queued for processing."
 
 
 router = APIRouter(tags=["提取管理"])
@@ -289,263 +191,32 @@ async def ingest_extraction_batch(
     _rate_limit: Annotated[None, Depends(ingest_rate_limit)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
-    """接受服务账号或编辑者提交的提取批次。
+    """接受服务账号或编辑者提交的提取批次(HTTP 边缘)。
 
-    AC-5 missing-corpus behaviour:
-
-    * ``caller.is_service_account`` and corpus absent → row created with
-      ``is_auto_created=True, owner_id=None``.
-    * Human caller and corpus absent → ``HTTP 400`` with the message
-      ``corpus '<id>' not registered; contact admin``.
-
-    The handler performs minimal synchronous validation — assigning a
-    ``job_id``, resolving/creating the corpus, and counting accepted
-    property records — and returns an ack.  Heavy lifting (property
-    mapping, ontology lookup, persistence) is expected to land in a
-    follow-up issue that wires this endpoint to the
-    ``process_literature_task`` Celery pipeline.
+    领域算法(AC-5 语料规则、AC-6 批量上限、DOI 信封规整、AC-R3
+    sync-verification)位于 ``services.ingest_service``;本路由只把领域
+    错误翻译为 HTTP 状态码,响应契约逐字节不变。
     """
-    corpus = (
-        await session.execute(select(Corpus).where(Corpus.corpus_id == payload.corpus_id))
-    ).scalar_one_or_none()
-
-    if corpus is None:
-        if caller.is_service_account:
-            corpus = Corpus(
-                corpus_id=payload.corpus_id,
-                name=payload.corpus_id,
-                description=None,
-                owner_id=None,
-                is_auto_created=True,
-            )
-            session.add(corpus)
-            await session.flush()
-            logger.info(
-                "ingest_extraction_batch: auto-created corpus_id=%s by svc_user=%s",
-                payload.corpus_id,
-                caller.username,
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(f"corpus '{payload.corpus_id}' not registered; contact admin"),
-            )
-
-    # AC-6 (NFM-1982): batch-size cap.
-    if len(payload.properties) > 500:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Batch size {len(payload.properties)} exceeds the "
-                f"maximum of 500 properties per request."
-            ),
-        )
-
-    job_id = uuid4()
-    total_received = len(payload.properties)
-    t_start = time.monotonic()
-    started_at = datetime.now(UTC)
-
-    # NFM-2032 CR Finding #6: normalize the envelope's source_reference
-    # into each property's source_doi when source_type == 'doi'.  Without
-    # this, the dedup key for every property in the batch is empty, so
-    # DataSource.find_or_create creates a new source per ingest and
-    # the 5-tuple dedup can never line up across requests.  This is the
-    # acknowledged root cause that masked NFM-2032's DB-level UNIQUE
-    # from catching duplicates.
-    if payload.source_type == "doi" and payload.source_reference:
-        properties_for_mapper = [
-            {**prop, "source_doi": payload.source_reference} if not prop.get("source_doi") else prop
-            for prop in payload.properties
-        ]
-    else:
-        properties_for_mapper = list(payload.properties)
-
-    # --- Persist properties via map_and_persist (NFM-1983 AC-3) ---
-    created_measurements = 0
-    reused_entities = 0
-    skipped_duplicate_measurements = 0
-    skipped_unknown_properties = 0
-    skipped_unknown_materials = 0  # NFM-3919 — surfaces extractor schema-drift signal
-    skipped_duplicates = 0
-    validation_errors = 0
-    errors: list[str] = []
-    job_status = "completed"
-    error_message: str | None = None
-
-    # AC-R3 (NFM-2009 / NFM-2096 W1): sync verification — re-query DB to
-    # confirm map_and_persist actually wrote the rows it claimed. Catches
-    # silent D1 dead-mode failures where the mapper silently drops writes
-    # (e.g. async LLM 502, validator returning early, transaction rolled
-    # back by a later exception). Without this gate, the API returns
-    # `created_measurements=N` while the row never lands.
-    #
-    # W1 fix (NFM-2096): use a *per-request delta*, not a cumulative
-    # `count == created_measurements` equality.  The cumulative comparison
-    # only holds on the FIRST ingest for a given source_reference; any
-    # subsequent request carrying a distinct, valid, non-duplicate value
-    # trips a false MISMATCH because the cumulative total already includes
-    # the prior request's rows.  Snapshot the count BEFORE map_and_persist
-    # and assert `(after - before) == created_measurements`.
-    db_measurement_count = 0
-    count_before = 0
-    verified = False
-    source_ref = payload.source_reference or ""
-
-    def _count_q_for_source(ref: str):
-        return (
-            select(func.count(PropertyMeasurement.id))
-            .join(Dataset, PropertyMeasurement.dataset_id == Dataset.id)
-            .join(DataSource, Dataset.source_id == DataSource.id)
-            .where(DataSource.doi == ref)
-        )
-
-    if payload.properties:
-        # Snapshot the pre-persist count for the source_reference.  Skipped
-        # silently if source_reference is empty (cannot match by DOI).
-        if source_ref:
-            try:
-                count_before = (await session.execute(_count_q_for_source(source_ref))).scalar_one()
-            except Exception:
-                logger.exception(
-                    "ingest_extraction_batch: pre-persist count failed job_id=%s",
-                    job_id,
-                )
-                count_before = 0
-
-        try:
-            from nfm_db.services.extraction_to_db_mapper import (
-                map_and_persist,
-            )
-
-            mapping_result = await map_and_persist(session, properties_for_mapper)
-            created_measurements = mapping_result.created_measurements
-            reused_entities = mapping_result.reused_entities
-            skipped_duplicate_measurements = mapping_result.skipped_duplicate_measurements
-            skipped_unknown_properties = mapping_result.skipped_unknown_properties
-            skipped_unknown_materials = mapping_result.skipped_unknown_materials  # NFM-3919
-            skipped_duplicates = mapping_result.skipped_duplicates
-            validation_errors = mapping_result.validation_errors
-        except Exception as exc:
-            # Log but do not fail — the ack is always returned.
-            # Future: GraphBuilder isolation (NFM-1972-D) will add KG
-            # node/edge creation here, isolated from measurement writes.
-            logger.exception(
-                "ingest_extraction_batch: map_and_persist failed for job_id=%s",
-                job_id,
-            )
-            errors.append("map_and_persist raised an unexpected error")
-            job_status = "failed"
-            error_message = f"{type(exc).__name__}: {exc}"[:500]
-
-    elapsed_ms = (time.monotonic() - t_start) * 1000
-    completed_at = datetime.now(UTC)
-
-    # AC-R3 post-persist verification: per-request delta vs. claimed
-    # created_measurements.  This is the W1 fix — it survives legitimate
-    # incremental ingests (POST#1 then POST#2 with distinct values under
-    # the same DOI both report verified=True) while still catching silent
-    # drops (mock that claims created_measurements=2 but inserts 0 rows).
-    if payload.properties and source_ref:
-        try:
-            db_measurement_count = (
-                await session.execute(_count_q_for_source(source_ref))
-            ).scalar_one()
-            delta = db_measurement_count - count_before
-            verified = delta == created_measurements
-            if not verified:
-                drift_msg = (
-                    f"sync-verification MISMATCH: claimed created_measurements="
-                    f"{created_measurements} but per-request delta for "
-                    f"source_reference={source_ref!r} is {delta} "
-                    f"(count_before={count_before}, count_after="
-                    f"{db_measurement_count})"
-                )
-                logger.error("ingest_extraction_batch: %s job_id=%s", drift_msg, job_id)
-                errors.append(drift_msg)
-        except Exception:
-            logger.exception(
-                "ingest_extraction_batch: post-persist verification query failed job_id=%s",
-                job_id,
-            )
-            errors.append("sync-verification query raised an unexpected error")
-    elif payload.properties and not source_ref:
-        # No source_reference → cannot match by DOI; flag as unverified.
-        verified = False
-        errors.append("sync-verification SKIPPED: no source_reference")
-
-    # --- NFM-2013 AC-2: persist an ExtractionJob row so the operator can
-    # audit what landed and the new /status endpoint can serve the real
-    # state instead of the in-memory facade.
-    extraction_job = ExtractionJob(
-        id=job_id,
-        source_reference=payload.source_reference,
-        source_type=payload.source_type,
-        corpus_id=corpus.corpus_id,
-        status=job_status,
-        error_message=error_message,
-        total_received=total_received,
-        created_measurements=created_measurements,
-        reused_entities=reused_entities,
-        skipped_duplicate_measurements=skipped_duplicate_measurements,
-        skipped_unknown_properties=skipped_unknown_properties,
-        skipped_duplicates=skipped_duplicates,
-        validation_errors=validation_errors,
-        started_at=started_at,
-        completed_at=completed_at,
+    from nfm_db.services.ingest_service import (
+        BatchTooLargeError,
+        CorpusNotRegisteredError,
     )
-    session.add(extraction_job)
+    from nfm_db.services.ingest_service import (
+        ingest_extraction_batch as run_ingest_batch,
+    )
+
     try:
-        await session.flush()
-    except Exception:
-        logger.exception(
-            "ingest_extraction_batch: failed to persist ExtractionJob %s; "
-            "rolling back to preserve DB invariant",
-            job_id,
-        )
-        await session.rollback()
-        raise
+        ack = await run_ingest_batch(session, payload, caller)
+    except CorpusNotRegisteredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except BatchTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
-    logger.info(
-        "ingest_extraction_batch: job_id=%s source=%s corpus=%s caller=%s "
-        "service=%s total=%d ingested=%d measurements=%d "
-        "skipped_unknown_materials=%d skipped=%d errors=%d",
-        job_id,
-        payload.source_reference,
-        corpus.corpus_id,
-        caller.username,
-        caller.is_service_account,
-        total_received,
-        created_measurements,
-        created_measurements,
-        skipped_unknown_materials,  # NFM-3919
-        skipped_duplicates,
-        len(errors),
-    )
-
-    return {
-        "success": True,
-        "data": ExtractionIngestAck(
-            job_id=job_id,
-            source_reference=payload.source_reference,
-            source_type=payload.source_type,
-            corpus_id=corpus.corpus_id,
-            ingested=created_measurements,
-            created_measurements=created_measurements,
-            reused_entities=reused_entities,
-            skipped_duplicate_measurements=skipped_duplicate_measurements,
-            skipped_unknown_properties=skipped_unknown_properties,
-            skipped_unknown_materials=skipped_unknown_materials,  # NFM-3919
-            skipped_duplicates=skipped_duplicates,
-            validation_errors=validation_errors,
-            total_received=total_received,
-            processing_time_ms=round(elapsed_ms, 1),
-            verified=verified,
-            db_measurement_count=db_measurement_count,
-            errors=errors,
-            received_at=datetime.now(UTC),
-        ).model_dump(),
-    }
+    return {"success": True, "data": ack.model_dump()}
 
 
 # ---------------------------------------------------------------------------
