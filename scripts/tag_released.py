@@ -99,16 +99,19 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="print the intended action, change nothing")
     args = parser.parse_args()
 
-    # Refuse to think about a dirty repo state we cannot trust.
-    branch = subprocess.run(
-        ["git", "symbolic-ref", "--short", "HEAD"], capture_output=True, text=True
-    )
-    if branch.returncode != 0 or branch.stdout.strip() != "main":
-        print(f"exit {EXIT_CONFIG}: not on main (HEAD -> {branch.stdout.strip() or 'detached'}); refusing")
-        sys.exit(EXIT_CONFIG)
-
+    # NOTE: deliberately NO "must be on main" check. The canonical host
+    # checkout spends most of its life on agent ticket branches; tag
+    # correctness is guaranteed by the manifest + the origin/main ancestry
+    # check below, not by where HEAD happens to point.
     manifest_path = resolve_manifest(args.manifest)
     deploy_sha = load_deploy_sha(manifest_path)
+
+    remote_ok = subprocess.run(
+        ["git", "remote", "get-url", args.remote], capture_output=True, text=True
+    )
+    if remote_ok.returncode != 0:
+        print(f"exit {EXIT_CONFIG}: no '{args.remote}' remote here — run in the nucpot checkout")
+        sys.exit(EXIT_CONFIG)
 
     fetch = subprocess.run(
         ["git", "fetch", "--quiet", args.remote, "main", "refs/tags/released/*:refs/tags/released/*"],
