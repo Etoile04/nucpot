@@ -49,7 +49,7 @@ from typing import Any, NoReturn
 import click
 from sqlalchemy import select
 
-from nfm_db.database import async_session_factory
+from nfm_db.database import get_session_factory
 from nfm_db.models.user import User
 from nfm_db.services.auth_service import get_password_hash
 
@@ -103,9 +103,9 @@ def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
       CLI output ordering is preserved.
 
     SQLite/in-memory engines used by tests are per-thread, so the
-    spawned loop sees the same engine that ``async_session_factory``
-    references at call time — the test fixture is responsible for
-    swapping the factory before invoking Click.
+    spawned loop sees the same engine that :func:`get_session_factory`
+    resolves at call time — the test fixture is responsible for
+    swapping the factory accessor before invoking Click.
     """
     try:
         asyncio.get_running_loop()
@@ -122,7 +122,7 @@ async def _create_service_account_async(
     password: str,
 ) -> User:
     """Insert a service-account row and return the persisted ``User``."""
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         # Reject duplicates explicitly so the operator gets a clean error
         # rather than a SQLAlchemy IntegrityError stack trace.
         existing = await session.execute(

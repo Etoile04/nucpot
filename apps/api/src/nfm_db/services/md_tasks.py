@@ -219,9 +219,9 @@ def _run_md_verification_task_impl(
 
         async def _persist_results() -> None:
             """Persist verification results to the database."""
-            from nfm_db.database import async_session_factory
+            from nfm_db.database import task_session_factory
 
-            async with async_session_factory() as session:
+            async with task_session_factory() as factory, factory() as session:
                 try:
                     service = MDVerificationService(session)
 

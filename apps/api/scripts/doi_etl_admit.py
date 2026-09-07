@@ -51,7 +51,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from nfm_db.config import get_settings  # noqa: E402
-from nfm_db.database import async_session_factory  # noqa: E402
+from nfm_db.database import get_session_factory  # noqa: E402
 from nfm_db.models.ref_gap_fill import RefGapFillStaging  # noqa: E402
 from nfm_db.services.doi_etl_admission import (  # noqa: E402
     DOIMetadata,
@@ -315,7 +315,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     settings = get_settings()
     logger.info("connecting to %s", _redact_url(settings.database_url))
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         rows = await _fetch_rows(session)
     if args.limit is not None:
         rows = rows[: args.limit]

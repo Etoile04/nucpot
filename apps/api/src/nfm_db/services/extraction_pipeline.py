@@ -617,7 +617,7 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
         try:
             from sqlalchemy import update
 
-            from nfm_db.database import async_session_factory
+            from nfm_db.database import get_session_factory
             from nfm_db.models.source import DataSource
         except Exception:  # pragma: no cover — defensive
             logger.debug(
@@ -628,7 +628,7 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
 
         try:
             error_text = f"LLM extraction failed: {exc!r}"[:500]
-            async with async_session_factory() as session:
+            async with get_session_factory()() as session:
                 await session.execute(
                     update(DataSource)
                     .where(DataSource.id == ds_id)
