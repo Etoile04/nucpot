@@ -59,7 +59,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "chrome-launcher": "^1.2.1",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^15.5.19",
+    "eslint-config-next": "^16.3.4",
     "jsdom": "^30.0.1",
     "lighthouse": "13",
     "prettier": "^3.9.6",
