@@ -54,7 +54,6 @@ export async function setupDataLossMocks(page: Page): Promise<void> {
         enabled: true,
         rollout_percentage: 100,
         value: true,
-        bucket: 0,
       },
     })
   })

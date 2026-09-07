@@ -36,16 +36,13 @@ class TestBucketing:
         differing = sum(
             1
             for i in range(100)
-            if bucket_for_subject(KEY, f"s-{i}")
-            != bucket_for_subject("OTHER_FLAG", f"s-{i}")
+            if bucket_for_subject(KEY, f"s-{i}") != bucket_for_subject("OTHER_FLAG", f"s-{i}")
         )
         assert differing > 50
 
     def test_distribution_is_approximately_uniform(self) -> None:
         """A 10% rollout must bucket roughly 10% of subjects."""
-        in_cohort = sum(
-            1 for i in range(10_000) if bucket_for_subject(KEY, f"s-{i}") < 10
-        )
+        in_cohort = sum(1 for i in range(10_000) if bucket_for_subject(KEY, f"s-{i}") < 10)
         assert 850 <= in_cohort <= 1_150  # ±15% relative tolerance
 
 
@@ -73,7 +70,9 @@ class TestEvaluateFlag:
         assert evaluation.key == KEY
         assert evaluation.enabled is True
         assert evaluation.rollout_percentage == 10
-        assert evaluation.bucket == bucket_for_subject(KEY, "s-1")
+        # `value` is the cohort decision the public evaluate endpoint
+        # surfaces; the underlying bucket stays internal (NFM-4244).
+        assert evaluation.value == (bucket_for_subject(KEY, "s-1") < 10)
 
 
 class TestRouter:

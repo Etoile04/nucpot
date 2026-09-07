@@ -28,13 +28,17 @@ class FeatureFlagUpdate(BaseModel):
 
 
 class FeatureFlagEvaluation(BaseModel):
-    """Per-subject evaluation result returned to the frontend client."""
+    """Per-subject evaluation result returned to the frontend client.
+
+    `bucket` is intentionally not exposed — it is the deterministic
+    SHA-256 cohort index used internally by percentage rollouts and
+    leaks the bucketing function without being a documented contract.
+    """
 
     key: str
     enabled: bool
     rollout_percentage: int
     value: bool
-    bucket: int = Field(ge=0, le=99)
 
 
 __all__ = [

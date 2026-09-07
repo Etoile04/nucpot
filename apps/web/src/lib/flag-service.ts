@@ -15,13 +15,14 @@
 
 import { request } from "@/lib/api-client"
 
-/** Backend `FeatureFlagEvaluation` schema (snake_case, matches pydantic). */
+/** Backend `FeatureFlagEvaluation` schema (snake_case, matches pydantic).
+ *  `bucket` is intentionally absent: it is a rollout-internal cohort
+ *  index and has no consumer (NFM-4244). */
 export interface FlagEvaluation {
   readonly key: string
   readonly enabled: boolean
   readonly rollout_percentage: number
   readonly value: boolean
-  readonly bucket: number
 }
 
 interface ApiEnvelope {
@@ -38,7 +39,6 @@ function failedEvaluation(key: string): FlagEvaluation {
     enabled: false,
     rollout_percentage: 0,
     value: false,
-    bucket: 0,
   }
 }
 
