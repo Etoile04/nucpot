@@ -66,7 +66,7 @@ if str(_SRC) not in sys.path:
 from sqlalchemy import func, or_, select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-from nfm_db.database import async_session_factory  # noqa: E402
+from nfm_db.database import get_session_factory  # noqa: E402
 from nfm_db.models import Dataset, DataSource, Material, PropertyMeasurement  # noqa: E402
 
 logger = logging.getLogger("backfill_nfm4312")
@@ -436,7 +436,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def _main(args: argparse.Namespace) -> int:
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         try:
             plan = await build_plan(
                 session,

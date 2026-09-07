@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import os
 import uuid
-from contextlib import ExitStack
+from collections.abc import AsyncIterator
+from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -79,6 +81,27 @@ def literature_storage(tmp_path: Path):
     os.environ.pop("LITERATURE_STORAGE_ROOT", None)
 
 
+def _task_session_patch(session: _FakeSession) -> Any:
+    """Patch the gap task's task-scoped factory seam (NFM-4076 T5).
+
+    Production path is ``task_session_factory() -> factory -> session``;
+    this hands the task module a factory whose sessions are always
+    ``session``.
+    """
+
+    @asynccontextmanager
+    async def _factory_cm() -> AsyncIterator[Any]:
+        def _factory() -> _FakeSession:
+            return session
+
+        yield _factory
+
+    return patch(
+        "nfm_db.tasks.gap_literature_task.task_session_factory",
+        _factory_cm,
+    )
+
+
 def _ingest_context(session: _FakeSession) -> ExitStack:
     cm = ExitStack()
     cm.enter_context(
@@ -99,12 +122,7 @@ def _ingest_context(session: _FakeSession) -> ExitStack:
             return_value=MagicMock(id="gap-task-id"),
         ),
     )
-    cm.enter_context(
-        patch(
-            "nfm_db.database.async_session_factory",
-            return_value=session,
-        ),
-    )
+    cm.enter_context(_task_session_patch(session))
     return cm
 
 
@@ -150,12 +168,7 @@ async def test_ingest_survives_crossref_unavailable(literature_storage) -> None:
             return_value=MagicMock(id="gap-task-id"),
         ),
     )
-    cm.enter_context(
-        patch(
-            "nfm_db.database.async_session_factory",
-            return_value=session,
-        ),
-    )
+    cm.enter_context(_task_session_patch(session))
     with cm:
         result = await _ingest_and_extract(
             str(uuid.uuid4()), DOI, "material", "thermal_conductivity"

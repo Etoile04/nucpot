@@ -66,8 +66,7 @@ def client() -> Iterator[TestClient]:
                 await session.rollback()
                 raise
 
-    db_module.engine = async_engine
-    db_module.async_session_factory = factory
+    db_module.get_session_factory = lambda: factory
     app.dependency_overrides[db_module.get_db] = _override_get_db
 
     with TestClient(app) as c:
