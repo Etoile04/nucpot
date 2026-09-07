@@ -1,0 +1,165 @@
+# Post-deploy live E2E (NFM-4385).
+#
+# WHY THIS EXISTS: the old `E2E Tests (Live)` job in ci.yml ran on `push`
+# only (`if: github.event_name == 'push'`), so live-behavior specs first
+# executed AFTER merge — while the `Production Deployment` workflow for the
+# same push was still rolling out (~22-43 min, serialized by its concurrency
+# group). Any merge whose E2E asserted new frontend behavior therefore
+# deterministically failed its first run against the stale prod bundle
+# (PR #1211 / run 34053445198: feedback specs got `feedback_type: undefined`
+# from the pre-deploy JS; same job re-run green ~20 min later once the
+# deploy had landed).
+#
+# Ordering fix: run live E2E only after the Production Deployment for that
+# same commit completes successfully. `workflow_run` is the native mechanism
+# and burns zero runner time while waiting (unlike an in-job poll).
+#
+# Deliberately skipped when the deploy run fails or is cancelled: the red
+# deploy run is already the signal, and prod has not changed. Tag deploys
+# (v*), staging dispatches, AND manual production-environment workflow_dispatch
+# deploys of Production Deployment are filtered out by the guard below — a
+# hotfix dispatched straight to prod gets no automated post-deploy E2E; run
+# this workflow manually via its own workflow_dispatch in that case.
+
+name: E2E Post-Deploy (Live)
+
+on:
+  workflow_run:
+    workflows: ["Production Deployment"]
+    types: [completed]
+  workflow_dispatch:
+
+# cancel-in-progress is false on purpose: a Production Deployment that fails
+# fast (e.g. egress pre-flight probe or yaml-lint) still completes with
+# conclusion=failure, and that completion triggers a workflow_run that joins
+# this group. With cancel-in-progress it would cancel a legitimate in-flight
+# E2E for the previously deployed SHA and then skip itself (job-level `if`
+# filters non-success runs) — silently dropping live coverage for the SHA
+# prod is actually running. The stale-run risk cancel-in-progress guards
+# against is unreachable in practice: production-deploy runs are serialized
+# by their own concurrency group and take 22+ min, while this E2E run takes
+# ~4 min, so a newer successful deploy cannot land inside the E2E window.
+concurrency:
+  group: e2e-post-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  e2e:
+    name: E2E Tests (Live — Post-Deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      # Test the code that was DEPLOYED, not whatever main has moved on to.
+      # For workflow_dispatch, workflow_run.* is empty and github.sha is the
+      # default-branch head.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E tests against live site
+        run: pnpm exec playwright test --project=chromium
+        env:
+          E2E_TARGET: live
+          BASE_URL: https://nucpot.dpdns.org
+          API_BASE_URL: https://verify.nucpot.dpdns.org
+          CI: true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 30
+
+      # Failure reporting mirrors e2e-cron.yml: `e2e-failure` label, NOT
+      # `ci-failure` — the ci-recovery job in ci.yml closes ci-failure issues
+      # on the next green push-CI run, but green push CI does NOT mean live
+      # E2E passed (this workflow runs after deploy). Auto-closing live
+      # failures on an unrelated green push would hide real prod breakage.
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const now = new Date().toISOString();
+            const wr = context.payload.workflow_run || {};
+            const testedSha = (wr.head_sha || context.sha).slice(0, 7);
+            const deployRunUrl = wr.html_url || '(manual run — no deploy)';
+            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['e2e-failure'],
+              state: 'open',
+            });
+
+            if (issues.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `⚠️ **E2E post-deploy tests still failing** at ${now}\n\nDeployed SHA tested: \`${testedSha}\` ([deploy run](${deployRunUrl}))\n[View E2E run](${runUrl})`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🔴 E2E Post-Deploy Tests Failing — ${now.slice(0, 10)}`,
+                body: `## E2E Post-Deploy Failure\n\n**Time**: ${now}\n**Deployed SHA tested**: \`${testedSha}\`\n**Deploy run**: ${deployRunUrl}\n**E2E run**: [${{ github.run_id }}](${runUrl})\n\n### Action Required\n1. Download the Playwright report artifact from the E2E run\n2. Review failed tests and screenshots\n3. Fix or quarantine flaky tests`,
+                labels: ['e2e-failure'],
+              });
+            }
+
+      - name: Send Feishu alert on failure
+        if: failure()
+        run: |
+          if [ -n "$WEBHOOK_URL" ]; then
+            TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+            RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+            curl -sf -X POST "$WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -d "{
+                \"msg_type\": \"interactive\",
+                \"card\": {
+                  \"header\": {
+                    \"title\": { \"tag\": \"plain_text\", \"content\": \"E2E Post-Deploy Failed\" },
+                    \"template\": \"red\"
+                  },
+                  \"elements\": [{
+                    \"tag\": \"markdown\",
+                    \"content\": \"**NucPot E2E post-deploy failed**\\nTime: ${TIMESTAMP}\\n[View Run](${RUN_URL})\"
+                  }]
+                }
+              }" || true
+          fi
+        env:
+          WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK }}

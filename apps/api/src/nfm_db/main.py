@@ -301,6 +301,13 @@ async def _upload_error_handler(_request: Request, exc: PotentialUploadError) ->
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(admin_api.router, prefix="/api/admin", tags=["管理健康监控"])
 app.include_router(feedback.router, prefix="/api/v1", tags=["反馈"])
+# NFM-4380 — the FE feedback client (apps/web/src/lib/feedback-api.ts) submits
+# to /api/feedback (no /v1). The Sprint 3 Supabase→FastAPI migration (b7779765)
+# deleted the Next.js BFF route that used to serve that path, leaving the FE
+# call proxied verbatim by nginx to a nonexistent backend route (404, zero
+# feedback rows in prod since 2026-07-15). Mount the same router at /api too;
+# POST stays public per its documented contract, GET is admin-guarded.
+app.include_router(feedback.router, prefix="/api", tags=["反馈"])
 app.include_router(feature_flags.router, prefix="/api/v1", tags=["功能开关"])
 app.include_router(reference_values.router, prefix="/api/v1", tags=["参考值"])
 app.include_router(reference_gaps.router, prefix="/api/v1", tags=["参考值缺口"])

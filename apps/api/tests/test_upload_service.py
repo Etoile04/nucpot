@@ -208,6 +208,23 @@ class TestUploadDir:
         assert "public" in result.parts
         assert "uploads" in result.parts
 
+    def test_default_upload_dir_container_layout_uses_app_uploads(self) -> None:
+        """GIVEN the 5-parent container layout (prod image: /app/src/nfm_db/…),
+        THEN the upload dir is <root>/uploads (the shared prod-uploads volume
+        mount point), NOT a stray /uploads at the filesystem root.
+
+        NFM-4309 prod follow-up: ``parents[-1]`` is always the filesystem
+        root, so the old code resolved ``/uploads`` in the container
+        writable layer while the files (and the volume) live at
+        ``/app/uploads`` — every uploads-backed download 404'd.
+        """
+        from nfm_db.services.upload_service import _compute_default_upload_dir
+
+        result = _compute_default_upload_dir(
+            Path("/app/src/nfm_db/services/upload_service.py")
+        )
+        assert result == Path("/app/uploads")
+
 
 # ---------------------------------------------------------------------------
 # exceptions
