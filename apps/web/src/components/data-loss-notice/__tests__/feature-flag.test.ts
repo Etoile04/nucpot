@@ -34,10 +34,7 @@ import { evaluateFlag, getCachedEvaluation } from "@/lib/flag-service"
 const mockedEvaluate = vi.mocked(evaluateFlag)
 const mockedGetCached = vi.mocked(getCachedEvaluation)
 
-const MODULE_SOURCE = readFileSync(
-  join(import.meta.dirname, "..", "feature-flag.ts"),
-  "utf8",
-)
+const MODULE_SOURCE = readFileSync(join(import.meta.dirname, "..", "feature-flag.ts"), "utf8")
 
 describe("feature-flag source contract (NFM-4180)", (): void => {
   it("never reads the NEXT_PUBLIC_DATA_LOSS_NOTICE env var", (): void => {
@@ -72,7 +69,6 @@ describe("resolveFeatureFlag", (): void => {
       enabled: true,
       rollout_percentage: 100,
       value: true,
-      bucket: 7,
     })
     expect(resolveFeatureFlag()).toEqual({
       enabled: true,
@@ -86,7 +82,6 @@ describe("resolveFeatureFlag", (): void => {
       enabled: false,
       rollout_percentage: 0,
       value: false,
-      bucket: 7,
     })
     expect(resolveFeatureFlag()).toEqual({
       enabled: false,
@@ -100,7 +95,6 @@ describe("resolveFeatureFlag", (): void => {
       enabled: true,
       rollout_percentage: 100,
       value: true,
-      bucket: 7,
     })
     setRuntimeOverride(false)
     expect(resolveFeatureFlag()).toEqual({ enabled: false, source: "provider" })
@@ -115,7 +109,6 @@ describe("resolveFeatureFlag", (): void => {
       enabled: true,
       rollout_percentage: 100,
       value: true,
-      bucket: 7,
     })
     setRuntimeOverride(false)
     setRuntimeOverride(null)
@@ -137,7 +130,6 @@ describe("refreshFeatureFlag", (): void => {
       enabled: true,
       rollout_percentage: 10,
       value: true,
-      bucket: 3,
     })
     await expect(refreshFeatureFlag()).resolves.toBe(true)
     expect(mockedEvaluate).toHaveBeenCalledWith(FEATURE_FLAG_NAME)
@@ -149,7 +141,6 @@ describe("refreshFeatureFlag", (): void => {
       enabled: false,
       rollout_percentage: 0,
       value: false,
-      bucket: 0,
     })
     await expect(refreshFeatureFlag()).resolves.toBe(false)
   })

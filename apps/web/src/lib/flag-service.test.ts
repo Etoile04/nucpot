@@ -50,7 +50,6 @@ function okEvaluation(value: boolean) {
       enabled: value,
       rollout_percentage: value ? 100 : 0,
       value,
-      bucket: 42,
     },
   }
 }
