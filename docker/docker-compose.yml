@@ -37,8 +37,8 @@ services:
       LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
       # Embedding backend — requires an embedding provider
       EMBEDDING_BINDING: ${EMBEDDING_BINDING:-openai}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
-      EMBEDDING_BINDING_HOST: ${EMBEDDING_BINDING_HOST:-https://api.openai.com/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_BINDING_HOST: ${EMBEDDING_BINDING_HOST:-http://host.docker.internal:11434/v1}
       EMBEDDING_BINDING_API_KEY: ${EMBEDDING_BINDING_API_KEY:-${LLM_BINDING_API_KEY:-}}
       # KG workspace
       WORKSPACE: /app/data
