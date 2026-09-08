@@ -8,8 +8,9 @@
  *
  * Renders the existing GraphCanvas with focal-material + adjacent
  * nodes fetched from the KG graph endpoint. Click handlers:
- *   - material node    → navigate to /materials/<id>
- *   - non-material node → show inline tooltip, no navigation
+ *   - Material node with bridge → navigate to
+ *     /materials/{materials_id}/properties (NFM-4471 W2)
+ *   - non-material / no-bridge node → show inline tooltip, no navigation
  *
  * NFM-4449 Q4: the hand-rolled `useState<ViewState>` + `useEffect`
  * fetch machine is replaced by `useGraphView`, which collapses
@@ -53,9 +54,7 @@ interface SubgraphFetchResult {
  * gap). Translate to `data: null` so useGraphView surfaces it as the
  * "empty" status, not the "error" status.
  */
-async function fetchMaterialSubgraph(
-  materialId: string,
-): Promise<SubgraphFetchResult> {
+async function fetchMaterialSubgraph(materialId: string): Promise<SubgraphFetchResult> {
   try {
     const data = await getMaterialSubgraph(materialId, DEFAULT_DEPTH)
     const focalCandidates = [`${MATERIAL_PREFIX}${materialId}`, materialId]
@@ -102,10 +101,7 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
   const isError = status === "error"
   const isEmpty =
     status === "empty" ||
-    (data !== null &&
-      data !== undefined &&
-      data.data !== null &&
-      data.data.nodes.length === 0)
+    (data !== null && data !== undefined && data.data !== null && data.data.nodes.length === 0)
   const graphData = data?.data ?? null
   const focalLabel = data?.focalLabel ?? null
 
@@ -113,9 +109,15 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
     (node: GraphNode) => {
       // NFM-4445 — resolve via the single decision-packet hook; non-material
       // and no-bridge Material nodes fall through to the tooltip branch.
+      //
+      // NFM-4471 (W2) — the resolver owns the id-space bridge and returns the
+      // bare `/materials/{materials_id}` route; the *destination tab* is a
+      // caller concern, so the `/properties` suffix is appended here (same as
+      // MaterialGraphView) to deep-link into the Properties panel rather than
+      // the bare detail page.
       const decision = resolveMaterialLink(node)
       if (decision.kind === "navigate") {
-        router.push(decision.href)
+        router.push(`${decision.href}/properties`)
         return
       }
       setTooltip(node)
