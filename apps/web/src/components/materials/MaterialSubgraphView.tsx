@@ -133,10 +133,15 @@ export function MaterialSubgraphView({
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
       if (node.type === "material") {
-        const bareId = node.id.startsWith(MATERIAL_PREFIX)
-          ? node.id.slice(MATERIAL_PREFIX.length)
-          : node.id
-        router.push(`/materials/${bareId}`)
+        // NFM-4445 — route to the canonical materials.id (server-supplied
+        // bridge), never to the KG-node UUID.  Same-name cohorts without a
+        // bridge (NFM-4093) fall through to the tooltip branch below.
+        const targetId = node.materials_id
+        if (!targetId) {
+          setState((prev) => ({ ...prev, tooltip: node }))
+          return
+        }
+        router.push(`/materials/${targetId}`)
         return
       }
       setState((prev) => ({ ...prev, tooltip: node }))

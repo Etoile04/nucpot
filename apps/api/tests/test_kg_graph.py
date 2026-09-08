@@ -597,3 +597,263 @@ class TestServiceContract:
             a_key = (a.properties["__depth"], a.label)
             b_key = (b.properties["__depth"], b.label)
             assert a_key <= b_key
+
+
+# ===========================================================================
+# NFM-4445 — KG-node → materials.id reverse bridge exposed in the response
+# ===========================================================================
+
+
+class TestMaterialsIdBridgeResponse:
+    """NFM-4445 — every Material-typed node in the response carries a
+    ``materials_id`` field with the canonical ``materials.id`` UUID, distinct
+    from the KG-node ``id`` already in the payload.  Without a matching row
+    the field is ``null``; ambiguous same-name cohorts stay null too.
+
+    Concrete example: UO2's KG-node is ``496cf283-…`` but its materials row is
+    ``068dc946-…``.  Clicking the Material node in the graph must navigate
+    to ``/materials/{068dc946-…}``, never to ``/materials/{496cf283-…}``.
+    """
+
+    _MAT_UO2_UUID = uuid.UUID("068dc946-0000-0000-0000-000000000001")
+    _MAT_SIC_UUID = uuid.UUID("068dc946-0000-0000-0000-000000000002")
+    _MAT_DUP_UUID = uuid.UUID("068dc946-0000-0000-0000-000000000003")
+
+    _KG_UO2_UUID = uuid.UUID("496cf283-0000-0000-0000-000000000001")
+    _KG_SIC_UUID = uuid.UUID("496cf283-0000-0000-0000-000000000002")
+    _KG_DUP_UUID = uuid.UUID("496cf283-0000-0000-0000-000000000003")
+
+    async def _seed_materials_with_kg_nodes(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Two clean bridges: UO2 and SiC.
+        db_session.add(Material(id=self._MAT_UO2_UUID, name="UO2", is_active=True))
+        db_session.add(Material(id=self._MAT_SIC_UUID, name="SiC", is_active=True))
+        # NFM-4093 same-name cohort: 2x "Cr-doped UO2" materials.
+        # Bridge intentionally ambiguous → both KG nodes must report null.
+        db_session.add(Material(id=self._MAT_DUP_UUID, name="Cr-doped UO2", is_active=True))
+        db_session.add(Material(id=uuid.UUID("068dc946-0000-0000-0000-000000000004"), name="Cr-doped UO2", is_active=True))
+
+        db_session.add(
+            _make_node(node_id=self._KG_UO2_UUID, label="UO2", node_type="Material")
+        )
+        db_session.add(
+            _make_node(node_id=self._KG_SIC_UUID, label="SiC", node_type="Material")
+        )
+        db_session.add(
+            _make_node(
+                node_id=self._KG_DUP_UUID,
+                label="Cr-doped UO2",
+                node_type="Material",
+            )
+        )
+        # Property node (no bridge) and an isolated material with no materials row.
+        db_session.add(
+            _make_node(
+                node_id=uuid.UUID("496cf283-0000-0000-0000-0000000000ff"),
+                label="Density",
+                node_type="Property",
+            )
+        )
+        db_session.add(
+            _make_node(
+                node_id=uuid.UUID("496cf283-0000-0000-0000-0000000000fe"),
+                label="Obtainium",
+                node_type="Material",
+            )
+        )
+        # Edges so BFS traverses Material → neighbor.
+        db_session.add(
+            _make_edge(self._KG_UO2_UUID, self._KG_SIC_UUID, "relatedTo")
+        )
+        db_session.add(
+            _make_edge(self._KG_UO2_UUID, uuid.UUID("496cf283-0000-0000-0000-0000000000ff"), "hasProperty")
+        )
+        await db_session.flush()
+
+    @pytest.mark.asyncio
+    async def test_material_node_carries_materials_id_bridge(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Focal UO2 KG node returns ``materials_id=068dc946-…``."""
+        await self._seed_materials_with_kg_nodes(db_session)
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._KG_UO2_UUID), "depth": 2},
+        )
+        assert resp.status_code == 200
+        nodes = resp.json()["nodes"]
+
+        by_id = {n["id"]: n for n in nodes}
+
+        # UO2 → 068dc946-… (canonical materials row), NOT 496cf283-… (KG id).
+        uo2 = by_id[str(self._KG_UO2_UUID)]
+        assert uo2["materials_id"] == str(self._MAT_UO2_UUID)
+        assert uo2["materials_id"] != uo2["id"]
+
+        # SiC neighbor → its own materials row.
+        sic = by_id[str(self._KG_SIC_UUID)]
+        assert sic["materials_id"] == str(self._MAT_SIC_UUID)
+
+    @pytest.mark.asyncio
+    async def test_non_material_node_has_null_materials_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Property-typed nodes leave ``materials_id`` null — no FK applies."""
+        await self._seed_materials_with_kg_nodes(db_session)
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._KG_UO2_UUID), "depth": 2},
+        )
+        assert resp.status_code == 200
+
+        prop_node = next(
+            n for n in resp.json()["nodes"]
+            if n["id"] == "496cf283-0000-0000-0000-0000000000ff"
+        )
+        # /kg/graph/subgraph returns the raw KG ``node_type`` ("Property");
+        # the frontend mapper (``kg-api.ts::toGraphNodeType``) lowercases
+        # to the public "property" category.  Either way, the bridge must
+        # be null for non-Material nodes.
+        assert prop_node["type"] == "Property"
+        assert prop_node["materials_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_material_without_materials_row_has_null_materials_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A Material KG node whose label has no materials row → null bridge.
+
+        This is the NFM-4093 partial-coverage case for non-duplicate labels.
+        The UI must surface tooltip-only navigation (no /materials/{id}).
+        """
+        await self._seed_materials_with_kg_nodes(db_session)
+        client = _make_client(lambda: db_session)
+
+        # Use the focal = the Obtainium KG node (no materials row).
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={
+                "nodeId": str(uuid.UUID("496cf283-0000-0000-0000-0000000000fe")),
+                "depth": 1,
+            },
+        )
+        assert resp.status_code == 200
+        nodes = resp.json()["nodes"]
+        assert len(nodes) == 1
+        assert nodes[0]["materials_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_same_name_duplicate_cohort_is_null(
+        self, db_session: AsyncSession
+    ) -> None:
+        """NFM-4093: a Material node sharing its name with >1 materials row
+        is intentionally ambiguous — ``materials_id`` stays ``null`` so the
+        UI never silently mis-routes to one of the duplicates.
+        """
+        await self._seed_materials_with_kg_nodes(db_session)
+        client = _make_client(lambda: db_session)
+
+        # Focal = the Cr-doped UO2 KG node (label shared with 2 materials).
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(self._KG_DUP_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        nodes = resp.json()["nodes"]
+        dup_node = next(n for n in nodes if n["id"] == str(self._KG_DUP_UUID))
+        assert dup_node["materials_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_response_schema_includes_materials_id_field(
+        self, db_session: AsyncSession
+    ) -> None:
+        """NFM-4445 contract: every node in the response carries a
+        ``materials_id`` field (even if ``null``) so the frontend can rely
+        on its presence without per-shape narrowing.
+        """
+        await _seed_linear_chain(db_session)
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_A_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        for node in resp.json()["nodes"]:
+            assert "materials_id" in node
+            assert node["materials_id"] is None  # no materials seeded
+
+
+class TestMaterialsIdLookupHelper:
+    """NFM-4445 — service-layer ``lookup_materials_ids_by_labels`` batch
+    resolver.  Skips ambiguous same-name cohorts and missing rows."""
+
+    @pytest.mark.asyncio
+    async def test_empty_input_returns_empty(self, db_session: AsyncSession) -> None:
+        from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
+
+        result = await lookup_materials_ids_by_labels(db_session, [])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_resolves_single_label(self, db_session: AsyncSession) -> None:
+        from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
+
+        mat_uuid = uuid.UUID("068dc946-0000-0000-0000-0000000000aa")
+        db_session.add(Material(id=mat_uuid, name="UO2", is_active=True))
+        await db_session.flush()
+
+        result = await lookup_materials_ids_by_labels(db_session, ["UO2"])
+        assert result == {"UO2": str(mat_uuid)}
+
+    @pytest.mark.asyncio
+    async def test_missing_label_omitted(self, db_session: AsyncSession) -> None:
+        from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
+
+        result = await lookup_materials_ids_by_labels(db_session, ["Nonexistent"])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_same_name_label_omitted(
+        self, db_session: AsyncSession
+    ) -> None:
+        """NFM-4093 same-name cohort (e.g. 8x Cr-doped UO2) is intentionally
+        ambiguous; the helper must omit it rather than silently returning the
+        first match."""
+        from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
+
+        db_session.add(
+            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b1"), name="Cr-doped UO2", is_active=True)
+        )
+        db_session.add(
+            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b2"), name="Cr-doped UO2", is_active=True)
+        )
+        # Single-match sibling still resolves.
+        db_session.add(
+            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b3"), name="SiC", is_active=True)
+        )
+        await db_session.flush()
+
+        result = await lookup_materials_ids_by_labels(
+            db_session, ["Cr-doped UO2", "SiC"]
+        )
+        # Cr-doped UO2 omitted (ambiguous); SiC kept (single match).
+        assert "Cr-doped UO2" not in result
+        assert result["SiC"] == "068dc946-0000-0000-0000-0000000000b3"
+
+    @pytest.mark.asyncio
+    async def test_batch_dedupes_labels(
+        self, db_session: AsyncSession
+    ) -> None:
+        from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
+
+        mat_uuid = uuid.UUID("068dc946-0000-0000-0000-0000000000cc")
+        db_session.add(Material(id=mat_uuid, name="UO2", is_active=True))
+        await db_session.flush()
+
+        result = await lookup_materials_ids_by_labels(
+            db_session, ["UO2", "UO2", "UO2"]
+        )
+        assert result == {"UO2": str(mat_uuid)}

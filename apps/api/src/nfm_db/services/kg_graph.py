@@ -18,6 +18,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import KGEdge, KGNode
+from nfm_db.models.material import Material
 
 logger = logging.getLogger(__name__)
 
@@ -239,3 +240,59 @@ async def build_neighborhood_subgraph(
         nodes=tuple(enriched_nodes),
         edges=filtered_edges,
     )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4445 — reverse KG→materials bridge
+# ---------------------------------------------------------------------------
+#
+# The Material node's `id` is a KG-node UUID (e.g. ``496cf283-…`` for UO2),
+# NOT the canonical ``materials.id`` (``068dc946-…``).  The forward bridge
+# (NFM-4083) translates ``materials.id`` → ``kg_node``; this reverse bridge
+# goes the other way so the frontend can route a Material-typed click to the
+# correct ``/materials/{id}`` page.
+#
+# Contract: ``kg_nodes.label = materials.name`` (exact, case-sensitive).
+# Migration 071/072 seeded 55 such bridges; migration 080 fixed U-10Mo,
+# U-3Si, PuO2.  NFM-4093 same-name duplicate groups (8x Cr-doped UO2,
+# 5x U-Mo) are intentionally NOT bridged — those Material nodes return
+# ``materials_id=None`` and the UI must surface a tooltip instead of
+# navigating.
+
+
+async def lookup_materials_ids_by_labels(
+    session: AsyncSession,
+    labels: list[str],
+) -> dict[str, str]:
+    """Batch-resolve ``kg_nodes.label`` → ``materials.id`` UUID strings.
+
+    Returns an empty dict for empty input.  A label that does not match a
+    material row is **omitted** from the result — callers must default to
+    ``None`` for missing entries.  When multiple materials share a name
+    (the NFM-4093 same-name duplicate cohort) the lookup is ambiguous and
+    those labels are omitted too; surfacing the first match would create
+    silent mis-routes.
+
+    The lookup is a single SQL round trip via ``IN (...)`` so the cost
+    is O(1) network hops regardless of label count.
+    """
+    if not labels:
+        return {}
+
+    # Deduplicate while preserving caller order for deterministic logging.
+    unique_labels = list(dict.fromkeys(labels))
+    stmt = select(Material.name, Material.id).where(Material.name.in_(unique_labels))
+
+    # Detect same-name duplicates — when the same name has >1 material row,
+    # the bridge is ambiguous and we omit that label from the result.
+    # (NFM-4093 leaves 8x Cr-doped UO2 / 5x U-Mo groups unbridged by design.)
+    rows = (await session.execute(stmt)).all()
+    name_to_ids: dict[str, list[uuid.UUID]] = {}
+    for name, mat_id in rows:
+        name_to_ids.setdefault(name, []).append(mat_id)
+
+    return {
+        name: str(mat_ids[0])
+        for name, mat_ids in name_to_ids.items()
+        if len(mat_ids) == 1
+    }

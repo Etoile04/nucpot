@@ -34,6 +34,7 @@ from nfm_db.schemas.kg import (
     RelationEdgeItem,
     SemanticQueryResponse,
 )
+from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
 from nfm_db.services.kg_utils import parse_aliases
 
 logger = logging.getLogger(__name__)
@@ -277,8 +278,21 @@ _NODE_TYPE_MAP: dict[str, str] = {
 }
 
 
-def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> KGGraphNode:
-    """Map a KGNode to a KGGraphNode for the visualization response."""
+def _build_graph_node(
+    node: KGNode,
+    edge_count: dict[str, int],
+    materials_id: str | None = None,
+) -> KGGraphNode:
+    """Map a KGNode to a KGGraphNode for the visualization response.
+
+    NFM-4445 — ``materials_id`` is the bridge to ``materials.id`` for
+    ``Material``-typed nodes so the frontend can navigate to
+    ``/materials/{materials_id}`` instead of using the independent
+    ``kg_nodes.id`` UUID space.  Caller resolves the label→id lookup in
+    batch (see :func:`_resolve_materials_id_map`) and passes the matching
+    value here; ``None`` means no matching ``materials`` row (including
+    the NFM-4093 same-name duplicates intentionally left unbridged).
+    """
     return KGGraphNode(
         id=str(node.id),
         label=node.label,
@@ -287,6 +301,7 @@ def _build_graph_node(node: KGNode, edge_count: dict[str, int]) -> KGGraphNode:
         status=node.status,
         confidence=node.confidence,
         source_id=str(node.source_id) if node.source_id else None,
+        materials_id=materials_id,
     )
 
 
@@ -409,7 +424,28 @@ async def get_kg_graph(
         edge_stmt = select(KGEdge).where(*edge_filter).limit(edge_limit)
         edge_rows = (await session.execute(edge_stmt)).scalars().all()
 
-        graph_nodes = [_build_graph_node(n, edge_count_map) for n in node_rows]
+        # NFM-4445 — batch-resolve Material labels to materials.id so the
+        # frontend can route Material-typed clicks correctly.
+        material_labels = sorted({
+            n.label
+            for n in node_rows
+            if n.node_type == "Material" and n.label
+        })
+        label_to_material_id = (
+            await lookup_materials_ids_by_labels(session, material_labels)
+            if material_labels
+            else {}
+        )
+        graph_nodes = [
+            _build_graph_node(
+                n,
+                edge_count_map,
+                materials_id=label_to_material_id.get(n.label)
+                if n.node_type == "Material"
+                else None,
+            )
+            for n in node_rows
+        ]
         graph_edges = [_build_graph_edge(e) for e in edge_rows]
 
     return ApiResponse(

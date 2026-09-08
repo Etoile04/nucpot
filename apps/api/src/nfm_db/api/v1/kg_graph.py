@@ -34,6 +34,7 @@ from nfm_db.schemas.kg import (
 from nfm_db.services.kg_graph import (
     KGSubgraph,
     build_neighborhood_subgraph,
+    lookup_materials_ids_by_labels,
     resolve_focal_node,
 )
 
@@ -92,7 +93,7 @@ async def get_kg_graph_subgraph(
             detail=f"KG node (or material) '{nodeId}' not found",
         )
     subgraph = await build_neighborhood_subgraph(session, focal, depth, status)
-    return _to_response(focal, subgraph)
+    return await _to_response(session, focal, subgraph)
 
 
 async def _resolve_node_id(
@@ -122,8 +123,8 @@ async def _resolve_node_id(
     match).  Migration ``071_material_kg_bridge_coverage`` closes the
     57/112 baseline gap (2026-09-02 baseline: 55 of 112 materials had a
     working bridge).  The migration is **additive only** — it does not
-    alter the resolution logic.  Same-name duplicate groups (e.g. 8×
-    ``Cr-doped UO2``, 5× ``U-Mo``) are intentionally not given per-material
+    alter the resolution logic.  Same-name duplicate groups (e.g. 8x
+    ``Cr-doped UO2``, 5x ``U-Mo``) are intentionally not given per-material
     kg_nodes; consolidation is tracked separately under
     NFM-4093-DUP-CONSOLIDATE.  Property-slice rows are inserted with
     ``properties.dataset_slice = true`` so the NFM-4093-DATA-CLEANUP
@@ -167,7 +168,8 @@ async def _resolve_node_id(
 # ---------------------------------------------------------------------------
 
 
-def _to_response(
+async def _to_response(
+    session: AsyncSession,
     focal: KGNode,
     subgraph: KGSubgraph,
 ) -> KGGraphResponse:
@@ -176,7 +178,24 @@ def _to_response(
     ``properties.__depth`` is already injected by the service (locked
     contract #3), so this is a direct field mapping.  Nodes come back
     pre-sorted from the service; edges are sorted here for determinism.
+
+    NFM-4445: For nodes of type ``Material`` we additionally populate
+    ``materials_id`` by resolving ``kg_nodes.label`` against the
+    ``materials.name`` column.  The lookup is batched (single SQL round
+    trip) and skips ambiguous same-name cohorts (NFM-4093).  The frontend
+    uses ``materials_id`` for ``/materials/{id}`` routing so the
+    independent KG-node UUID space never leaks into a navigation.
     """
+    # NFM-4445 — single batch lookup of Material labels → materials.id.
+    material_labels = sorted({
+        node.label
+        for node in subgraph.nodes
+        if node.node_type == "Material" and node.label
+    })
+    label_to_material_id = await lookup_materials_ids_by_labels(
+        session, material_labels
+    ) if material_labels else {}
+
     node_items: list[KGGraphNode] = [
         KGGraphNode(
             id=str(node.id),
@@ -186,6 +205,11 @@ def _to_response(
             status=node.status,
             confidence=node.confidence,
             source_id=str(node.source_id) if node.source_id else None,
+            materials_id=(
+                label_to_material_id.get(node.label)
+                if node.node_type == "Material"
+                else None
+            ),
         )
         for node in subgraph.nodes
     ]

@@ -50,6 +50,16 @@ export interface GraphNode {
   readonly size?: number
   readonly color?: string
   readonly childCount?: number
+  /**
+   * NFM-4445 — bridge to ``materials.id`` for nodes of type ``"material"``.
+   * Populated server-side by joining ``kg_nodes.label = materials.name``.
+   * Present only when a matching row exists; absent (``undefined``) for
+   * Material nodes that lack a bridge (NFM-4093 same-name duplicates)
+   * and for non-material nodes.  Frontend routing must use this value
+   * instead of ``id`` so the independent KG-node UUID space never leaks
+   * into a ``/materials/{id}`` navigation.
+   */
+  readonly materials_id?: string
 }
 
 /** A directed edge connecting two nodes (public API). */

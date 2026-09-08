@@ -241,6 +241,14 @@ export interface KgGraphApiNode {
   readonly label: string;
   readonly type: string;
   readonly properties?: Readonly<Record<string, unknown>>;
+  /**
+   * NFM-4445 — bridge to ``materials.id`` for ``Material``-typed nodes.
+   * Server joins ``kg_nodes.label = materials.name``; absent (``undefined``)
+   * for nodes without a matching material row (NFM-4093 same-name dupes).
+   * Frontend routing must use this value instead of ``id`` so the
+   * independent KG-node UUID space never leaks into ``/materials/{id}``.
+   */
+  readonly materials_id?: string | null;
 }
 
 /** Raw API edge shape returned by the KG graph endpoints. */
@@ -295,6 +303,9 @@ export function mapSubgraphResponse(
     id: node.id,
     label: node.label,
     type: toGraphNodeType(node.type),
+    // NFM-4445 — pass through the materials bridge so click handlers
+      // route to /materials/{materials_id} not /materials/{kg_node.id}.
+      materials_id: node.materials_id ?? undefined,
   }));
 
   const edges: GraphEdge[] = payload.edges.map(

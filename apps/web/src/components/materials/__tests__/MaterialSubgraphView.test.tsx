@@ -54,7 +54,7 @@ vi.mock("@/lib/materials-api", () => ({
 }))
 
 import { getMaterialSubgraph } from "@/lib/materials-api"
-import type { GraphData } from "@/components/graph/types"
+import type { GraphData, GraphNode, GraphEdge } from "@/components/graph/types"
 
 /* ------------------------------------------------------------------ */
 /*  Test data — already mapped to GraphData format (simulates what    */
@@ -424,5 +424,168 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
 
     const link = screen.getByRole("link", { name: /NFM-4093/i })
     expect(link).toHaveAttribute("href", "/NFM/issues/NFM-4093")
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  NFM-4445 — KG-node vs materials.id bridge in click routing         */
+/*                                                                     */
+/*  The KG-node UUID (e.g. ``496cf283-…``) is independent from the     */
+/*  canonical materials row (e.g. ``068dc946-…`` for UO2).  The API     */
+/*  must surface the bridge on every Material node via ``materials_id``*/
+/*  and the click handler must route to ``/materials/{materials_id}``,  */
+/*  never to ``/materials/{node.id}``.  Same-name cohorts without a
+/*  bridge (NFM-4093) must show tooltip-only.                          */
+/* ------------------------------------------------------------------ */
+
+const KG_UO2_UUID = "496cf283-0000-0000-0000-000000000001"
+const MAT_UO2_UUID = "068dc946-0000-0000-0000-000000000001"
+const KG_SIC_UUID = "496cf283-0000-0000-0000-000000000002"
+const MAT_SIC_UUID = "068dc946-0000-0000-0000-000000000002"
+const KG_DUP_UUID = "496cf283-0000-0000-0000-000000000003"
+// Cr-doped UO2 same-name cohort (NFM-4093) — bridge intentionally absent.
+
+describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function renderWithGraph(nodes: GraphNode[], edges: GraphEdge[] = []) {
+    const data: GraphData = { nodes, edges }
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue(data)
+    return render(<MaterialSubgraphView materialId="ZrO2" />)
+  }
+
+  it("routes to /materials/{materials_id} when the bridge is supplied", async () => {
+    // The KG-node UUID (496cf283-…) must NOT be used as the URL id — only
+    // the server-supplied materials_id bridge (068dc946-…) is the source
+    // of truth.
+    renderWithGraph([
+      {
+        id: KG_UO2_UUID,
+        label: "UO2",
+        type: "material",
+        materials_id: MAT_UO2_UUID,
+      },
+    ])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Node: UO2/i }),
+      ).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Node: UO2/i }))
+
+    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_UO2_UUID}`)
+    // Specifically: NOT the KG UUID.
+    expect(pushMock).not.toHaveBeenCalledWith(`/materials/${KG_UO2_UUID}`)
+  })
+
+  it("routes neighbour Material nodes via their own bridge", async () => {
+    renderWithGraph([
+      {
+        id: KG_UO2_UUID,
+        label: "UO2",
+        type: "material",
+        materials_id: MAT_UO2_UUID,
+      },
+      {
+        id: KG_SIC_UUID,
+        label: "SiC",
+        type: "material",
+        materials_id: MAT_SIC_UUID,
+      },
+    ], [
+      { id: "e-0", source: KG_UO2_UUID, target: KG_SIC_UUID, type: "RELATED_TO" },
+    ])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Node: SiC/i }),
+      ).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Node: SiC/i }))
+
+    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_SIC_UUID}`)
+    expect(pushMock).not.toHaveBeenCalledWith(`/materials/${KG_SIC_UUID}`)
+  })
+
+  it("shows tooltip-only when Material node lacks a bridge (NFM-4093 cohort)", async () => {
+    // Same-name duplicate cohort (Cr-doped UO2): KG-node exists but
+    // server returned materials_id=null.  Frontend must NOT navigate
+    // (which would silently mis-route to one of the duplicates).
+    renderWithGraph([
+      {
+        id: KG_DUP_UUID,
+        label: "Cr-doped UO2",
+        type: "material",
+        materials_id: undefined,
+      },
+    ])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Node: Cr-doped UO2/i }),
+      ).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Node: Cr-doped UO2/i }))
+
+    expect(pushMock).not.toHaveBeenCalled()
+    expect(screen.getByRole("tooltip")).toBeInTheDocument()
+  })
+
+  it("shows tooltip-only when Material node has no materials_id field at all", async () => {
+    // Defensive: even if the server omits the field entirely, no nav.
+    renderWithGraph([
+      {
+        id: KG_UO2_UUID,
+        label: "UO2",
+        type: "material",
+        // materials_id intentionally undefined (older server response shape)
+      },
+    ])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Node: UO2/i }),
+      ).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Node: UO2/i }))
+
+    expect(pushMock).not.toHaveBeenCalled()
+    expect(screen.getByRole("tooltip")).toBeInTheDocument()
+  })
+
+  it("non-material nodes still show tooltip-only (regression)", async () => {
+    renderWithGraph([
+      {
+        id: KG_UO2_UUID,
+        label: "UO2",
+        type: "material",
+        materials_id: MAT_UO2_UUID,
+      },
+      {
+        id: "property:density",
+        label: "Density",
+        type: "property",
+      },
+    ], [
+      { id: "e-0", source: KG_UO2_UUID, target: "property:density", type: "HAS_PROPERTY" },
+    ])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Node: Density/i }),
+      ).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /Node: Density/i }))
+
+    expect(pushMock).not.toHaveBeenCalled()
+    expect(screen.getByRole("tooltip")).toBeInTheDocument()
   })
 })
