@@ -21,6 +21,7 @@ import logging
 import uuid as _uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.database import get_db
@@ -92,7 +93,7 @@ async def get_kg_graph_subgraph(
             detail=f"KG node (or material) '{nodeId}' not found",
         )
     subgraph = await build_neighborhood_subgraph(session, focal, depth, status)
-    return _to_response(focal, subgraph)
+    return await _to_response(focal, subgraph, session=session)
 
 
 async def _resolve_node_id(
@@ -167,16 +168,48 @@ async def _resolve_node_id(
 # ---------------------------------------------------------------------------
 
 
-def _to_response(
+async def _to_response(
     focal: KGNode,
     subgraph: KGSubgraph,
+    session: AsyncSession | None = None,
 ) -> KGGraphResponse:
     """Project a ``KGSubgraph`` into the API response schema.
 
     ``properties.__depth`` is already injected by the service (locked
     contract #3), so this is a direct field mapping.  Nodes come back
     pre-sorted from the service; edges are sorted here for determinism.
+
+    NFM-4445: for Material-typed nodes, batch-resolve the
+    ``materials.id`` UUID by ``materials.name = kg_nodes.label`` and
+    expose it as ``material_id``. The frontend's MaterialSubgraphView
+    uses this to navigate to ``/materials/<material_id>`` instead of
+    using the KG node UUID (which 404s because the two UUID spaces are
+    independent — see NFM-4083 for the upstream bridge). The bridge is
+    best-effort: Material nodes with no matching ``materials.name`` row
+    get ``material_id = null`` (frontend shows a tooltip rather than
+    navigating). The 57/112 baseline gap was closed by migration
+    071_material_kg_bridge_coverage (2026-09-02).
+
+    The lookup uses one batched ``IN`` query rather than per-node
+    lookups (no N+1). ``session`` is optional for backward compatibility
+    with tests that don't pass one; without it the bridge field is
+    always null (graceful no-op).
     """
+    # NFM-4445: batch-resolve Material nodes → materials.id by name.
+    label_to_material_id: dict[str, str] = {}
+    if session is not None:
+        material_labels = sorted({
+            node.label
+            for node in subgraph.nodes
+            if node.node_type == "Material" and node.label
+        })
+        if material_labels:
+            stmt = select(Material.id, Material.name).where(
+                Material.name.in_(material_labels),
+            )
+            rows = (await session.execute(stmt)).all()
+            label_to_material_id = {row.name: str(row.id) for row in rows}
+
     node_items: list[KGGraphNode] = [
         KGGraphNode(
             id=str(node.id),
@@ -186,6 +219,7 @@ def _to_response(
             status=node.status,
             confidence=node.confidence,
             source_id=str(node.source_id) if node.source_id else None,
+            material_id=label_to_material_id.get(node.label) if node.node_type == "Material" else None,
         )
         for node in subgraph.nodes
     ]

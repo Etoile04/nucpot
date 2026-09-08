@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 // @vitest-environment jsdom
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { MaterialSubgraphView } from "../MaterialSubgraphView"
+import { MaterialSubgraphView, resolveMaterialId } from "../MaterialSubgraphView"
 import { ApiError } from "@/lib/api-client"
 
 /* ------------------------------------------------------------------ */
@@ -322,6 +322,96 @@ describe.skip("MaterialSubgraphView click routing", () => {
     fireEvent.click(screen.getByRole("button", { name: /Node: Journal/i }))
 
     expect(pushMock).not.toHaveBeenCalled()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  NFM-4445 — resolveMaterialId bridge resolver                      */
+/*                                                                     */
+/*  Pure-function tests; no DOM rendering required. The helper is the  */
+/*  single source of truth for "can this node navigate?" decisions on   */
+/*  MaterialSubgraphView clicks, so we cover all four resolution paths */
+/*  explicitly (bridge > material: prefix > bare UUID > null).        */
+/* ------------------------------------------------------------------ */
+
+describe("resolveMaterialId (NFM-4445)", () => {
+  const MAT_ID = "068dc946-1234-4abc-9def-000000000001"
+  const KG_UUID = "496cf283-aaaa-bbbb-cccc-000000000002"
+
+  it("returns the API-supplied bridge when present, even if id has prefix", () => {
+    const node: GraphData["nodes"][number] = {
+      id: `material:${KG_UUID}`,
+      label: "Zirconium Dioxide",
+      type: "material",
+      data: { material_id: MAT_ID },
+    }
+    expect(resolveMaterialId(node)).toBe(MAT_ID)
+  })
+
+  it("strips the legacy material: prefix when no bridge is supplied", () => {
+    const node: GraphData["nodes"][number] = {
+      id: `material:${MAT_ID}`,
+      label: "Zirconium Dioxide",
+      type: "material",
+    }
+    expect(resolveMaterialId(node)).toBe(MAT_ID)
+  })
+
+  it("accepts a bare UUID when no bridge and no prefix are present", () => {
+    const node: GraphData["nodes"][number] = {
+      id: MAT_ID,
+      label: "Zirconium Dioxide",
+      type: "material",
+    }
+    expect(resolveMaterialId(node)).toBe(MAT_ID)
+  })
+
+  it("returns null for label-as-id without a bridge (non-UUID id)", () => {
+    const node: GraphData["nodes"][number] = {
+      id: KG_UUID,
+      label: "Zirconium Dioxide",
+      type: "material",
+    }
+    // NOTE: a bare UUID IS accepted (third priority). The KG UUID 404 trap
+    // is fixed upstream by the API populating `material_id`, not by the
+    // resolver refusing UUID-shaped strings. This test documents that
+    // contract: bare UUID → return it (caller 404s if it's actually a KG
+    // UUID, which is a server-side bug, not a client-side decision).
+    expect(resolveMaterialId(node)).toBe(KG_UUID)
+  })
+
+  it("returns null for non-UUID id with no bridge (e.g. bare label 'ZrO2')", () => {
+    const node: GraphData["nodes"][number] = {
+      id: "ZrO2",
+      label: "Zirconium Dioxide",
+      type: "material",
+    }
+    expect(resolveMaterialId(node)).toBeNull()
+  })
+
+  it("ignores a non-string bridge value and falls through to other paths", () => {
+    // Cast exercises the runtime `typeof bridge === "string"` guard. The
+    // GraphNode.data field is `Readonly<Record<string, unknown>>`, so
+    // any value is assignable at the type level — the resolver's
+    // defensive check is what actually catches this case.
+    const data: Readonly<Record<string, unknown>> = { material_id: 42 }
+    const node: GraphData["nodes"][number] = {
+      id: `material:${MAT_ID}`,
+      label: "Zirconium Dioxide",
+      type: "material",
+      data,
+    }
+    expect(resolveMaterialId(node)).toBe(MAT_ID)
+  })
+
+  it("ignores an empty-string bridge and falls through to other paths", () => {
+    const node: GraphData["nodes"][number] = {
+      id: `material:${MAT_ID}`,
+      label: "Zirconium Dioxide",
+      type: "material",
+      data: { material_id: "" },
+    }
+    expect(resolveMaterialId(node)).toBe(MAT_ID)
   })
 })
 

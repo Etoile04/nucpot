@@ -568,6 +568,132 @@ class TestMaterialIdTranslation:
         assert resp.json()["focal"]["id"] == str(_A_UUID)
 
 
+class TestMaterialIdBridgeField:
+    """NFM-4445: KG Material node response carries ``material_id`` so the
+    frontend can navigate to ``/materials/<id>`` instead of using the
+    KG UUID directly (which 404s because the two are independent UUID
+    spaces — see NFM-4083). The bridge is computed by batch-resolving
+    ``materials.name = kg_nodes.label`` in ``_to_response``.
+    """
+
+    _MATERIAL_UUID = uuid.UUID("068dc946-0000-0000-0000-000000000001")
+    _OTHER_MATERIAL_UUID = uuid.UUID(
+        "068dc946-0000-0000-0000-000000000002",
+    )
+
+    async def test_material_node_includes_material_id_bridge(
+        self, db_session: AsyncSession
+    ) -> None:
+        # The frontend's UAT-3 bug: clicking a Material node 404'd because
+        # the KG node UUID was used as materials.id. Verify the response
+        # now exposes the real materials.id so the frontend can navigate.
+        material = Material(
+            id=self._MATERIAL_UUID,
+            name="UO2",
+            formula="UO2",
+            is_active=True,
+        )
+        db_session.add(material)
+        kg_node = _make_node(
+            node_id=_A_UUID,
+            label="UO2",
+            node_type="Material",
+        )
+        db_session.add(kg_node)
+        db_session.add(_make_node(
+            node_id=_B_UUID,
+            label="MeltingPoint",
+            node_type="Property",
+        ))
+        db_session.add(_make_edge(_A_UUID, _B_UUID, "hasProperty"))
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_A_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        nodes = {n["id"]: n for n in resp.json()["nodes"]}
+
+        # Material node carries the bridge to materials.id (NOT kg uuid).
+        assert nodes[str(_A_UUID)]["material_id"] == str(self._MATERIAL_UUID)
+        assert nodes[str(_A_UUID)]["material_id"] != str(_A_UUID)
+
+        # Property nodes have no bridge (not Material-typed).
+        assert nodes[str(_B_UUID)].get("material_id") is None
+
+    async def test_material_node_without_matching_material_returns_null_bridge(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Coverage gap (NFM-4093): KG Material node exists, but no
+        # materials.name row matches its label. The frontend must show
+        # a tooltip instead of navigating — backend signals this by
+        # leaving material_id = null.
+        kg_node = _make_node(
+            node_id=_A_UUID,
+            label="OrphanMaterial",
+            node_type="Material",
+        )
+        db_session.add(kg_node)
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(_A_UUID), "depth": 1},
+        )
+        assert resp.status_code == 200
+        nodes = resp.json()["nodes"]
+        assert len(nodes) == 1
+        assert nodes[0]["material_id"] is None
+
+    async def test_bridge_is_batched_single_query(
+        self, db_session: AsyncSession
+    ) -> None:
+        # Four Material nodes (depth=3 reaches focal + 3 hops), all bridged.
+        # Verify the bridge field appears on every one — sanity check
+        # that the batch lookup covers all Material labels in the
+        # subgraph, not just the focal node.
+        names = [f"Mat{i}" for i in range(4)]
+        kg_uuids = [
+            uuid.UUID(f"a0000001-0000-0000-0000-{i:012d}")
+            for i in range(4)
+        ]
+        mat_uuids = [
+            uuid.UUID(f"068dc946-0000-0000-0000-{i:012d}")
+            for i in range(4)
+        ]
+        for i in range(4):
+            db_session.add(Material(
+                id=mat_uuids[i], name=names[i], is_active=True,
+            ))
+            db_session.add(_make_node(
+                node_id=kg_uuids[i],
+                label=names[i],
+                node_type="Material",
+            ))
+        # Chain so depth=3 reaches Mat0..Mat3.
+        for i in range(3):
+            db_session.add(_make_edge(kg_uuids[i], kg_uuids[i + 1], "relatedTo"))
+        await db_session.flush()
+
+        client = _make_client(lambda: db_session)
+        resp = client.get(
+            "/kg/graph/subgraph",
+            params={"nodeId": str(kg_uuids[0]), "depth": 3},
+        )
+        assert resp.status_code == 200
+        node_bridges = {
+            n["label"]: n["material_id"] for n in resp.json()["nodes"]
+        }
+        for i, name in enumerate(names):
+            assert node_bridges[name] == str(mat_uuids[i]), (
+                f"Material node {name!r} expected bridge "
+                f"{mat_uuids[i]} got {node_bridges[name]}"
+            )
+
+
 class TestServiceContract:
     """Locked contract #3: ``properties.__depth`` is injected by the service."""
 

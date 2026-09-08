@@ -8,8 +8,12 @@
  *
  * Renders the existing GraphCanvas with focal-material + adjacent
  * nodes fetched from the KG graph endpoint. Click handlers:
- *   - material node    → navigate to /materials/<id>
- *   - non-material node → show inline tooltip, no navigation
+ *   - material node WITH material_id bridge → navigate to
+ *     /materials/<material_id> (NFM-4445).
+ *   - material node WITHOUT bridge           → show inline tooltip,
+ *     no navigation (NFM-4093 coverage gap).
+ *   - non-material node                       → show inline tooltip,
+ *     no navigation.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -25,6 +29,8 @@ const { Title, Text } = Typography
 
 const DEFAULT_DEPTH = 2
 const MATERIAL_PREFIX = "material:"
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -57,6 +63,40 @@ const INITIAL_STATE: ViewState = {
   coverageGap: false,
   tooltip: null,
   focalLabel: null,
+}
+
+// ── NFM-4445: bridge resolver ────────────────────────────────────────
+
+/**
+ * Resolve the `materials.id` UUID for a Material-typed graph node.
+ *
+ * Priority:
+ *   1. The API-supplied `material_id` bridge (NFM-4445). Preferred —
+ *      it bypasses the KG-vs-materials UUID mismatch that caused the
+ *      UAT-3 404 (KG node UUID was used as `materials.id`).
+ *   2. The legacy `material:<uuid>` prefix the older API returned,
+ *      still handled for backward compatibility with cached client
+ *      payloads.
+ *   3. The bare node id, but ONLY when it parses as a UUID. Returns
+ *      null otherwise so the click handler shows a tooltip rather
+ *      than navigating to a label-as-path garbage like
+ *      `/materials/ZrO2`.
+ */
+export function resolveMaterialId(node: GraphNode): string | null {
+  const bridge = node.data?.material_id
+  if (typeof bridge === "string" && bridge.length > 0) {
+    return bridge
+  }
+
+  if (node.id.startsWith(MATERIAL_PREFIX)) {
+    return node.id.slice(MATERIAL_PREFIX.length)
+  }
+
+  if (UUID_PATTERN.test(node.id)) {
+    return node.id
+  }
+
+  return null
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -133,11 +173,17 @@ export function MaterialSubgraphView({
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
       if (node.type === "material") {
-        const bareId = node.id.startsWith(MATERIAL_PREFIX)
-          ? node.id.slice(MATERIAL_PREFIX.length)
-          : node.id
-        router.push(`/materials/${bareId}`)
-        return
+        // NFM-4445: prefer the API-supplied bridge; fall back to the
+        // legacy `material:` prefix; never navigate on a bare KG UUID
+        // that fails to resolve (the original UAT-3 bug — KG UUID is
+        // not a valid materials.id).
+        const resolvedId = resolveMaterialId(node)
+        if (resolvedId) {
+          router.push(`/materials/${resolvedId}`)
+          return
+        }
+        // No bridge + non-UUID id: stay on the page and surface a
+        // tooltip so the click isn't silently swallowed.
       }
       setState((prev) => ({ ...prev, tooltip: node }))
     },

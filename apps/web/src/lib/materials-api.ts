@@ -241,6 +241,20 @@ export interface KgGraphApiNode {
   readonly label: string;
   readonly type: string;
   readonly properties?: Readonly<Record<string, unknown>>;
+  /**
+   * NFM-4445: bridge from the KG node UUID (this.id) to the canonical
+   * `materials.id` UUID. Populated by the backend for type="material"
+   * nodes via a batch lookup against `materials.name`. The frontend's
+   * MaterialSubgraphView click handler uses this to navigate to
+   * `/materials/<material_id>` — using the KG UUID directly 404s
+   * because the two UUID spaces are independent (see NFM-4083).
+   *
+   * Null for non-material nodes, and for material nodes with no
+   * matching `materials.name` row (the 57/112 baseline gap closed by
+   * migration 071_material_kg_bridge_coverage; the frontend falls back
+   * to a tooltip in that case).
+   */
+  readonly material_id?: string | null;
 }
 
 /** Raw API edge shape returned by the KG graph endpoints. */
@@ -279,6 +293,12 @@ export function toGraphNodeType(apiType: string): GraphNodeType {
  * Map a raw KG graph API response to the `GraphData` shape consumed by
  * `GraphCanvas`. Node IDs pass through verbatim (e.g. `material:ZrO2`);
  * edges get a stable `id` synthesized from their source/target.
+ *
+ * NFM-4445: when the API exposes a `material_id` bridge field on a
+ * Material node, propagate it onto the resulting `GraphNode.data` so
+ * `MaterialSubgraphView.handleNodeClick` can navigate to the real
+ * `materials.id` instead of using the KG UUID (which 404s because the
+ * two UUID spaces are independent).
  */
 export function mapSubgraphResponse(
   response: KgGraphApiResponse | { data: KgGraphApiResponse },
@@ -291,11 +311,22 @@ export function mapSubgraphResponse(
       ? (response as any).data
       : response;
 
-  const nodes: GraphNode[] = payload.nodes.map((node: KgGraphApiNode) => ({
-    id: node.id,
-    label: node.label,
-    type: toGraphNodeType(node.type),
-  }));
+  const nodes: GraphNode[] = payload.nodes.map((node: KgGraphApiNode) => {
+    // NFM-4445: surface material_id through the public GraphNode shape
+    // as a `data` field. GraphNode.data is an optional
+    // Readonly<Record<string, unknown>> hook that the click handler
+    // reads to decide whether to navigate. Only attach `data` when we
+    // actually have a bridge value — undefined is the "no-op" case
+    // that downstream renderers already handle.
+    const materialId = node.material_id
+    const graphNode: GraphNode = {
+      id: node.id,
+      label: node.label,
+      type: toGraphNodeType(node.type),
+      ...(materialId != null ? { data: { material_id: materialId } } : {}),
+    };
+    return graphNode;
+  });
 
   const edges: GraphEdge[] = payload.edges.map(
     (edge: KgGraphApiEdge, index: number) => ({

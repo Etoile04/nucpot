@@ -101,6 +101,13 @@ class KGGraphNode(BaseModel):
     status: str
     confidence: float = Field(ge=0.0, le=1.0)
     source_id: str | None = None
+    # NFM-4445: bridge from KG node UUID → materials.id for type=Material
+    # nodes. The frontend's MaterialSubgraphView previously used the KG
+    # node UUID directly as materials.id, which 404'd because the two
+    # are independent UUID spaces. Populated by _to_response via a
+    # batch name lookup; null on non-Material nodes (or Material nodes
+    # with no matching materials.name row — see NFM-4093 coverage gap).
+    material_id: str | None = None
 
 
 class KGGraphEdge(BaseModel):

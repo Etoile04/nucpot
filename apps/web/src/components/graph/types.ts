@@ -50,6 +50,15 @@ export interface GraphNode {
   readonly size?: number
   readonly color?: string
   readonly childCount?: number
+  /**
+   * NFM-4445: optional pass-through for API-supplied metadata the
+   * frontend needs to surface at click time. Currently used to carry
+   * the `material_id` bridge from the KG graph endpoint so
+   * `MaterialSubgraphView` can navigate to the real `materials.id`
+   * instead of the KG UUID. Keep optional and `unknown`-typed — the
+   * renderer treats it as opaque.
+   */
+  readonly data?: Readonly<Record<string, unknown>>
 }
 
 /** A directed edge connecting two nodes (public API). */
