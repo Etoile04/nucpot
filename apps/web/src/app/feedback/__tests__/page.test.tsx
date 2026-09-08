@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen } from "@/test/render-with-providers"
 
 vi.mock("@/components/AuthProvider", () => ({
   useAuth: () => ({ user: null, loading: false }),

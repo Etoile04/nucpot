@@ -36,6 +36,25 @@
   --btn-primary-hover: #1d4ed8;
   --btn-secondary-bg: #374151;
 
+  /* Form feedback (NFM-4456 follow-up to NFM-4477 §1.1)
+   * AA-compliant on the dark surface (#1f2937). Tokens drive
+   * FormAlert/SubmitButton so the treatment is consistent across
+   * every useFormSubmit consumer (FeedbackModal, RegisterNodeModal,
+   * /feedback, /admin/login, blog new/edit, ontology edit, etc).
+   */
+  --alert-error-bg: rgba(127, 29, 29, 0.55);       /* red-900 @ 55% — strong wash */
+  --alert-error-border: #b91c1c;                    /* red-700 — high-contrast edge */
+  --alert-error-text: #fecaca;                      /* red-200 — AA on red-900 wash */
+  --alert-error-text-strong: #fee2e2;              /* red-100 — used for retry */
+  --alert-error-ring: #fca5a5;                      /* red-300 — focus ring */
+
+  --alert-success-bg: rgba(20, 83, 45, 0.55);       /* green-900 @ 55% */
+  --alert-success-border: #15803d;                  /* green-700 */
+  --alert-success-text: #bbf7d0;                    /* green-200 */
+  --alert-success-ring: #86efac;                    /* green-300 */
+
+  --btn-focus-ring: #93c5fd;                        /* blue-300 — matches --color-accent */
+
   /* Confidence Scale (NFM-848 §1) */
   --confidence-high: #10b981;
   --confidence-medium: #f59e0b;

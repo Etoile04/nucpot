@@ -4,11 +4,9 @@ import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import ImageUpload from "@/components/admin/ImageUpload"
-import {
-  useFormDraft,
-  clearFormDraft,
-} from "@/components/session/useFormDraft"
+import { useFormDraft, clearFormDraft } from "@/components/session/useFormDraft"
 import { blogApi } from "@/lib/api-client"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 /** Shape of the persisted blog-new-post draft. */
 interface BlogPostDraft {
@@ -35,17 +33,33 @@ export default function NewBlogPostPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Draft-persisted fields — survive a re-auth round-trip via sessionStorage.
-  const [draft, setDraft] = useFormDraft<BlogPostDraft>(
-    BLOG_NEW_FORM_ID,
-    EMPTY_DRAFT,
-  )
+  const [draft, setDraft] = useFormDraft<BlogPostDraft>(BLOG_NEW_FORM_ID, EMPTY_DRAFT)
   const { title, author, tags, summary, content } = draft
 
   // UI-only state (not persisted across re-auth).
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
   const [isPreviewMode, setIsPreviewMode] = useState(false)
+
+  const submit = useFormSubmit<
+    { title: string; content: string; summary: string; tags: string[]; author_name: string },
+    unknown
+  >({
+    mutationFn: (values) =>
+      blogApi.create({
+        title: values.title,
+        content: values.content,
+        summary: values.summary,
+        tags: values.tags,
+        author_name: values.author_name,
+      }),
+    errorFallback: "创建文章失败",
+    onSuccess: () => {
+      clearFormDraft(BLOG_NEW_FORM_ID)
+      setDraft(EMPTY_DRAFT)
+      setTimeout(() => {
+        router.push("/admin/blog/posts")
+      }, 2000)
+    },
+  })
 
   const handleImageInsert = (markdown: string) => {
     const textarea = textareaRef.current
@@ -53,12 +67,7 @@ export default function NewBlogPostPage() {
 
     const start = textarea.selectionStart
     const end = textarea.selectionEnd
-    const newText =
-      content.substring(0, start) +
-      "\n" +
-      markdown +
-      "\n" +
-      content.substring(end)
+    const newText = content.substring(0, start) + "\n" + markdown + "\n" + content.substring(end)
 
     setDraft({ ...draft, content: newText })
 
@@ -71,29 +80,19 @@ export default function NewBlogPostPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
-    setError(null)
-
     try {
-      await blogApi.create({
+      await submit.submit({
         title,
         content,
         summary,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
         author_name: author,
       })
-
-      setSuccess(true)
-      clearFormDraft(BLOG_NEW_FORM_ID)
-      setDraft(EMPTY_DRAFT)
-
-      setTimeout(() => {
-        router.push("/admin/blog/posts")
-      }, 2000)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "创建文章失败")
-    } finally {
-      setIsSubmitting(false)
+    } catch {
+      // surfaced via submit.error
     }
   }
 
@@ -134,7 +133,7 @@ export default function NewBlogPostPage() {
         </button>
       </div>
 
-      {error && (
+      {submit.status === "error" && submit.error ? (
         <div
           style={{
             marginBottom: "1.5rem",
@@ -144,12 +143,13 @@ export default function NewBlogPostPage() {
             borderRadius: 4,
             color: "#ff4d4f",
           }}
+          role="alert"
         >
-          {error}
+          {submit.error}
         </div>
-      )}
+      ) : null}
 
-      {success && (
+      {submit.status === "success" ? (
         <div
           style={{
             marginBottom: "1.5rem",
@@ -159,10 +159,11 @@ export default function NewBlogPostPage() {
             borderRadius: 4,
             color: "#52c41a",
           }}
+          role="status"
         >
           文章创建成功！正在跳转...
         </div>
-      )}
+      ) : null}
 
       <form onSubmit={handleSubmit} style={{ maxWidth: 800 }}>
         <div style={{ marginBottom: "1.5rem" }}>
@@ -310,19 +311,19 @@ export default function NewBlogPostPage() {
         <div style={{ display: "flex", gap: "1rem" }}>
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={submit.isSubmitting}
             style={{
               padding: "0.625rem 1.25rem",
               fontSize: "1rem",
               fontWeight: 500,
               color: "#fff",
-              background: isSubmitting ? "#bfbfbf" : "#1890ff",
+              background: submit.isSubmitting ? "#bfbfbf" : "#1890ff",
               border: "none",
               borderRadius: 4,
-              cursor: isSubmitting ? "not-allowed" : "pointer",
+              cursor: submit.isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            {isSubmitting ? "保存中..." : "保存文章"}
+            {submit.isSubmitting ? "保存中..." : "保存文章"}
           </button>
           <button
             type="button"
@@ -378,7 +379,8 @@ export default function NewBlogPostPage() {
               {author && <span>作者：{author}</span>}
               {tags && (
                 <span>
-                  标签：{tags
+                  标签：
+                  {tags
                     .split(",")
                     .map((t) => t.trim())
                     .filter(Boolean)

@@ -1,6 +1,25 @@
 import "@testing-library/jest-dom/vitest"
 
 /**
+ * Vitest 5's native config loader does not honor the `define` block in
+ * vitest.config.ts, so `process.env.NODE_ENV` remains "production" in the
+ * CI/deploy shell and React 19 selects its production build — which exports
+ * `act` as a no-op stub and breaks `@testing-library/react`. Pin NODE_ENV
+ * here, before any React import resolves, so the development build is
+ * loaded and `act()` is real (NFM-4456).
+ */
+;(process.env as Record<string, string>).NODE_ENV = "development"
+
+/**
+ * React 19 requires consumers to opt-in to `act()` semantics via the
+ * `IS_REACT_ACT_ENVIRONMENT` flag. Without this, `@testing-library/react`
+ * throws `TypeError: React.act is not a function` on every renderHook and
+ * render call (NFM-4456 surface — also blocks the pre-existing
+ * `use-ontology-hooks.test.tsx`).
+ */
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+/**
  * AntD v5 components that observe the viewport (Descriptions responsive
  * column, Grid Row/Col) call window.matchMedia during render. jsdom does not
  * implement matchMedia, so a missing mock throws inside rc-util's

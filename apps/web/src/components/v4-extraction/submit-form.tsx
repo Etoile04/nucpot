@@ -3,7 +3,6 @@
 import { Form, Input, Select, Button, Radio, message } from "antd"
 import { SendOutlined } from "@ant-design/icons"
 import { useRouter } from "next/navigation"
-import { useMutation } from "@tanstack/react-query"
 import { submitExtractionJob } from "@/lib/v4-extraction/api"
 import { ELEMENT_SYSTEM_PRESETS } from "@/lib/v4-extraction/constants"
 import type {
@@ -13,6 +12,7 @@ import type {
   SourceType,
   V4ExtractionSubmitRequest,
 } from "@/lib/v4-extraction/types"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 const { Option } = Select
 
@@ -46,23 +46,26 @@ export function SubmitForm() {
   const router = useRouter()
   const [messageApi, contextHolder] = message.useMessage()
 
-  const mutation = useMutation({
-    mutationFn: (payload: V4ExtractionSubmitRequest) =>
-      submitExtractionJob(payload),
+  const submit = useFormSubmit<V4ExtractionSubmitRequest, { job_id: string }>({
+    mutationFn: (payload) => submitExtractionJob(payload),
+    errorFallback: "提交失败",
     onSuccess: (data) => {
       messageApi.success("任务提交成功！")
       form.resetFields()
       router.push(`/admin/v4-extraction/status/${data.job_id}`)
     },
-    onError: (error: unknown) => {
-      const errorMessage =
-        error instanceof Error ? error.message : "提交失败"
+    onError: (err) => {
+      const errorMessage = err instanceof Error ? err.message : "提交失败"
       messageApi.error(`任务提交失败: ${errorMessage}`)
     },
   })
 
-  const handleFinish = (values: V4ExtractionSubmitRequest) => {
-    mutation.mutate(values)
+  const handleFinish = async (values: V4ExtractionSubmitRequest) => {
+    try {
+      await submit.submit(values)
+    } catch {
+      // surfaced via submit.error / message.error
+    }
   }
 
   return (
@@ -97,22 +100,14 @@ export function SubmitForm() {
           name="source_reference"
           rules={[{ required: true, message: "请输入来源标识" }]}
         >
-          <Input
-            maxLength={500}
-            showCount
-            placeholder="DOI、URL、文件路径或内部ID"
-          />
+          <Input maxLength={500} showCount placeholder="DOI、URL、文件路径或内部ID" />
         </Form.Item>
 
         <Form.Item<V4ExtractionSubmitRequest>
           label="元素体系 / Element Systems"
           name="element_systems"
         >
-          <Select
-            mode="tags"
-            placeholder="输入或选择元素体系"
-            allowClear
-          >
+          <Select mode="tags" placeholder="输入或选择元素体系" allowClear>
             {ELEMENT_SYSTEM_PRESETS.map((preset) => (
               <Option key={preset.value} value={preset.value}>
                 {preset.label}
@@ -121,10 +116,7 @@ export function SubmitForm() {
           </Select>
         </Form.Item>
 
-        <Form.Item<V4ExtractionSubmitRequest>
-          label="缓存级别 / Cache Level"
-          name="cache_level"
-        >
+        <Form.Item<V4ExtractionSubmitRequest> label="缓存级别 / Cache Level" name="cache_level">
           <Radio.Group>
             {CACHE_LEVEL_OPTIONS.map((opt) => (
               <Radio.Button key={opt.value} value={opt.value}>
@@ -147,10 +139,7 @@ export function SubmitForm() {
           </Select>
         </Form.Item>
 
-        <Form.Item<V4ExtractionSubmitRequest>
-          label="优先级 / Priority"
-          name="priority"
-        >
+        <Form.Item<V4ExtractionSubmitRequest> label="优先级 / Priority" name="priority">
           <Radio.Group>
             {PRIORITY_OPTIONS.map((opt) => (
               <Radio.Button key={opt.value} value={opt.value}>
@@ -164,7 +153,7 @@ export function SubmitForm() {
           <Button
             type="primary"
             htmlType="submit"
-            loading={mutation.isPending}
+            loading={submit.isSubmitting}
             icon={<SendOutlined />}
             size="large"
             block

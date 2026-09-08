@@ -9,14 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import {
-  render,
-  screen,
-  act,
-  waitFor,
-  cleanup,
-  fireEvent,
-} from "@testing-library/react"
+import { render, screen, act, waitFor, cleanup, fireEvent } from "@/test/render-with-providers"
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -54,10 +47,7 @@ interface BlogDraftShape {
 }
 
 function seedDraft(draft: BlogDraftShape): void {
-  window.sessionStorage.setItem(
-    FORM_STORAGE_KEY,
-    JSON.stringify({ v: draft, ts: Date.now() }),
-  )
+  window.sessionStorage.setItem(FORM_STORAGE_KEY, JSON.stringify({ v: draft, ts: Date.now() }))
 }
 
 const POPULATED_DRAFT: BlogDraftShape = {
