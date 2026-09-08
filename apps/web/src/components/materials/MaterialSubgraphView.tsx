@@ -61,9 +61,7 @@ const INITIAL_STATE: ViewState = {
 
 // ── Component ─────────────────────────────────────────────────────────
 
-export function MaterialSubgraphView({
-  materialId,
-}: MaterialSubgraphViewProps) {
+export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) {
   const router = useRouter()
   const [state, setState] = useState<ViewState>(INITIAL_STATE)
 
@@ -79,10 +77,7 @@ export function MaterialSubgraphView({
       const data = await getMaterialSubgraph(materialId, DEFAULT_DEPTH)
 
       // Locate the focal node to source the aria-label.
-      const focalCandidates = [
-        `${MATERIAL_PREFIX}${materialId}`,
-        materialId,
-      ]
+      const focalCandidates = [`${MATERIAL_PREFIX}${materialId}`, materialId]
       const focal =
         data.nodes.find((node) => focalCandidates.includes(node.id)) ??
         data.nodes.find((node) => node.type === "material") ??
@@ -102,8 +97,7 @@ export function MaterialSubgraphView({
       // not a transport failure. Route it to the empty-state banner
       // so users see "this is tracked", not a generic error. 5xx and
       // network failures keep the generic Alert.
-      const isCoverageGap =
-        err instanceof ApiError && err.status === 404
+      const isCoverageGap = err instanceof ApiError && err.status === 404
 
       if (isCoverageGap) {
         setState((prev) => ({
@@ -165,8 +159,7 @@ export function MaterialSubgraphView({
   const isEmpty =
     !state.loading &&
     !state.error &&
-    (state.coverageGap ||
-      (state.data !== null && state.data.nodes.length === 0))
+    (state.coverageGap || (state.data !== null && state.data.nodes.length === 0))
 
   const ariaLabel = state.focalLabel
     ? `Material knowledge graph for ${state.focalLabel}`
@@ -178,9 +171,7 @@ export function MaterialSubgraphView({
       <div className="flex items-center justify-between mb-6">
         <div>
           <Title level={2} className="!m-0 text-white">
-            {state.focalLabel
-              ? `${state.focalLabel} — 知识图谱`
-              : "材料知识图谱"}
+            {state.focalLabel ? `${state.focalLabel} — 知识图谱` : "材料知识图谱"}
           </Title>
           <Text type="secondary">
             显示与该材料相关的属性、实验、条件与相邻材料 (深度 {DEFAULT_DEPTH})
@@ -211,11 +202,7 @@ export function MaterialSubgraphView({
           message="加载知识图谱失败"
           description={state.error}
           action={
-            <Button
-              size="small"
-              icon={<ReloadOutlined />}
-              onClick={handleRetry}
-            >
+            <Button size="small" icon={<ReloadOutlined />} onClick={handleRetry}>
               Retry
             </Button>
           }

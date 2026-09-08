@@ -10,18 +10,8 @@
  * project dependencies — no new packages required.
  */
 
-import {
-  useRef,
-  useState,
-  useCallback,
-  useMemo,
-  useEffect,
-  Component,
-  type ReactNode,
-} from "react"
-import type {
-  SimNode,
-} from "./types"
+import { useRef, useState, useCallback, useMemo, useEffect, Component, type ReactNode } from "react"
+import type { GraphNode, SimNode } from "./types"
 import { toNodeType } from "./types"
 import { useForceGraph } from "./useForceGraph"
 import { useGraphControls } from "./useGraphControls"
@@ -46,10 +36,7 @@ interface ErrorBoundaryProps {
   readonly onRetry?: () => void
 }
 
-class GraphErrorBoundary extends Component<
-  ErrorBoundaryProps,
-  ErrorBoundaryState
-> {
+class GraphErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false, error: null }
@@ -84,9 +71,7 @@ class GraphErrorBoundary extends Component<
         role="alert"
       >
         <span>Graph rendering failed</span>
-        <span style={{ color: "#9ca3af", fontSize: 12 }}>
-          {this.state.error.message}
-        </span>
+        <span style={{ color: "#9ca3af", fontSize: 12 }}>{this.state.error.message}</span>
         <button
           onClick={this.handleRetry}
           style={{
@@ -279,10 +264,7 @@ export function GraphCanvas({
   /*  Keyboard navigation                                              */
   /* ---------------------------------------------------------------- */
 
-  const nodeIds = useMemo(
-    () => graph.simNodes.map((n) => n.id),
-    [graph.simNodes],
-  )
+  const nodeIds = useMemo(() => graph.simNodes.map((n) => n.id), [graph.simNodes])
 
   useGraphKeyboard({
     containerRef: svgRef,
@@ -298,17 +280,41 @@ export function GraphCanvas({
   /*  Callback adapters (SimNode → GraphNode)                          */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * NFM-4445 — the public GraphCanvas click/hover handlers must preserve
+   * the server-supplied bridge fields (notably `materials_id`) that the
+   * `useForceGraph` transform strips when building SimNodes. Without this,
+   * MaterialSubgraphView.handleNodeClick receives a synthetic GraphNode
+   * with `materials_id === undefined` and routes on the wrong id, which
+   * silently 404s every KG node click on the Material subgraph page.
+   *
+   * Build a Map<id, GraphNode> once per `data` change so the synthetic
+   * adapter can forward `materials_id` (and any future public-only fields)
+   * without changing the SimNode contract.
+   */
+  const graphNodesById = useMemo(() => {
+    const map = new Map<string, GraphNode>()
+    for (const node of data.nodes) {
+      map.set(node.id, node)
+    }
+    return map
+  }, [data.nodes])
+
   const handleSimNodeClick = useCallback(
     (simNode: SimNode) => {
       graph.selectNode(simNode.id)
+      const source = graphNodesById.get(simNode.id)
       onNodeClick?.({
         id: simNode.id,
         label: simNode.label,
         type: toNodeType(simNode.category),
         size: simNode.radius,
+        ...(source?.materials_id !== undefined && {
+          materials_id: source.materials_id,
+        }),
       })
     },
-    [graph.selectNode, onNodeClick],
+    [graph.selectNode, onNodeClick, graphNodesById],
   )
 
   const handleSimNodeHover = useCallback(
@@ -322,11 +328,14 @@ export function GraphCanvas({
               type: toNodeType(simNode.category),
               size: simNode.radius,
               childCount: simNode.childCount,
+              ...(graphNodesById.get(simNode.id)?.materials_id !== undefined && {
+                materials_id: graphNodesById.get(simNode.id)!.materials_id,
+              }),
             }
           : null,
       )
     },
-    [graph.hoverNode, onNodeHover],
+    [graph.hoverNode, onNodeHover, graphNodesById],
   )
 
   const handleSimNodeDoubleClick = useCallback(

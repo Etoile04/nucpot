@@ -91,15 +91,11 @@ function makeGraphData(): GraphData {
 describe.skip("MaterialSubgraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeGraphData(),
-    )
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue(makeGraphData())
   })
 
   it("renders loading state initially", () => {
-    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockReturnValue(
-      new Promise(() => {}),
-    )
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}))
 
     const { container } = render(<MaterialSubgraphView materialId="ZrO2" />)
 
@@ -142,14 +138,10 @@ describe.skip("MaterialSubgraphView", () => {
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Silicon Carbide/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Silicon Carbide/i })).toBeInTheDocument()
     })
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Node: Silicon Carbide/i }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: /Node: Silicon Carbide/i }))
 
     expect(pushMock).toHaveBeenCalledWith("/materials/SiC")
   })
@@ -158,9 +150,7 @@ describe.skip("MaterialSubgraphView", () => {
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Density/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Density/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Density/i }))
@@ -170,9 +160,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("renders error state with retry button when fetch rejects", async () => {
-    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("Network down"),
-    )
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network down"))
 
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
@@ -180,9 +168,7 @@ describe.skip("MaterialSubgraphView", () => {
       expect(screen.getByText(/network down/i)).toBeInTheDocument()
     })
 
-    expect(
-      screen.getByRole("button", { name: /retry/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
   })
 
   it("refetches when retry is clicked after error", async () => {
@@ -212,9 +198,7 @@ describe.skip("MaterialSubgraphView", () => {
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/暂无关联节点|no related nodes/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/暂无关联节点|no related nodes/i)).toBeInTheDocument()
     })
   })
 })
@@ -235,53 +219,40 @@ describe.skip("MaterialSubgraphView click routing", () => {
   }
 
   it("strips material: prefix and navigates for material-type node", async () => {
-    renderWithNodes([
-      { id: "material:ZrO2", label: "Zirconium Dioxide", type: "material" },
-    ])
+    renderWithNodes([{ id: "material:ZrO2", label: "Zirconium Dioxide", type: "material" }])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Zirconium Dioxide/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Zirconium Dioxide/i })).toBeInTheDocument()
     })
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Node: Zirconium Dioxide/i }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: /Node: Zirconium Dioxide/i }))
 
     expect(pushMock).toHaveBeenCalledWith("/materials/ZrO2")
   })
 
   it("navigates bare-id material node without prefix", async () => {
-    renderWithNodes([
-      { id: "UO2", label: "Uranium Dioxide", type: "material" },
-    ])
+    renderWithNodes([{ id: "UO2", label: "Uranium Dioxide", type: "material" }])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Uranium Dioxide/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Uranium Dioxide/i })).toBeInTheDocument()
     })
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Node: Uranium Dioxide/i }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: /Node: Uranium Dioxide/i }))
 
     expect(pushMock).toHaveBeenCalledWith("/materials/UO2")
   })
 
   it("shows tooltip for property node (no navigation)", async () => {
-    renderWithNodes([
-      { id: "material:ZrO2", label: "ZrO2", type: "material" },
-      { id: "property:density", label: "Density", type: "property" },
-    ], [
-      { id: "e-0", source: "material:ZrO2", target: "property:density", type: "X" },
-    ])
+    renderWithNodes(
+      [
+        { id: "material:ZrO2", label: "ZrO2", type: "material" },
+        { id: "property:density", label: "Density", type: "property" },
+      ],
+      [{ id: "e-0", source: "material:ZrO2", target: "property:density", type: "X" }],
+    )
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Density/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Density/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Density/i }))
@@ -297,9 +268,7 @@ describe.skip("MaterialSubgraphView click routing", () => {
     ])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Thermal Test/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Thermal Test/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Thermal Test/i }))
@@ -314,9 +283,7 @@ describe.skip("MaterialSubgraphView click routing", () => {
     ])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Journal/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Journal/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Journal/i }))
@@ -348,9 +315,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
 
     // The banner copy explicitly references NFM-4093
     await waitFor(() => {
-      expect(
-        screen.getByText(/No knowledge-graph data yet for this material/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/No knowledge-graph data yet for this material/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
 
@@ -371,9 +336,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
     })
 
     // The generic-error Alert must not be visible on 404.
-    expect(
-      screen.queryByText(/加载知识图谱失败/i),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载知识图谱失败/i)).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument()
   })
 
@@ -385,21 +348,15 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/Internal Server Error/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/Internal Server Error/i)).toBeInTheDocument()
     })
 
-    expect(
-      screen.getByRole("button", { name: /retry/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
     expect(screen.queryByText(/NFM-4093/)).not.toBeInTheDocument()
   })
 
   it("still shows the generic error Alert on network failure (non-ApiError)", async () => {
-    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("Network down"),
-    )
+    ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network down"))
 
     render(<MaterialSubgraphView materialId="ZrO2" />)
 
@@ -470,9 +427,7 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
     ])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: UO2/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: UO2/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: UO2/i }))
@@ -483,27 +438,26 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
   })
 
   it("routes neighbour Material nodes via their own bridge", async () => {
-    renderWithGraph([
-      {
-        id: KG_UO2_UUID,
-        label: "UO2",
-        type: "material",
-        materials_id: MAT_UO2_UUID,
-      },
-      {
-        id: KG_SIC_UUID,
-        label: "SiC",
-        type: "material",
-        materials_id: MAT_SIC_UUID,
-      },
-    ], [
-      { id: "e-0", source: KG_UO2_UUID, target: KG_SIC_UUID, type: "RELATED_TO" },
-    ])
+    renderWithGraph(
+      [
+        {
+          id: KG_UO2_UUID,
+          label: "UO2",
+          type: "material",
+          materials_id: MAT_UO2_UUID,
+        },
+        {
+          id: KG_SIC_UUID,
+          label: "SiC",
+          type: "material",
+          materials_id: MAT_SIC_UUID,
+        },
+      ],
+      [{ id: "e-0", source: KG_UO2_UUID, target: KG_SIC_UUID, type: "RELATED_TO" }],
+    )
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: SiC/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: SiC/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: SiC/i }))
@@ -526,9 +480,7 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
     ])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Cr-doped UO2/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Cr-doped UO2/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Cr-doped UO2/i }))
@@ -549,9 +501,7 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
     ])
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: UO2/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: UO2/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: UO2/i }))
@@ -561,26 +511,25 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
   })
 
   it("non-material nodes still show tooltip-only (regression)", async () => {
-    renderWithGraph([
-      {
-        id: KG_UO2_UUID,
-        label: "UO2",
-        type: "material",
-        materials_id: MAT_UO2_UUID,
-      },
-      {
-        id: "property:density",
-        label: "Density",
-        type: "property",
-      },
-    ], [
-      { id: "e-0", source: KG_UO2_UUID, target: "property:density", type: "HAS_PROPERTY" },
-    ])
+    renderWithGraph(
+      [
+        {
+          id: KG_UO2_UUID,
+          label: "UO2",
+          type: "material",
+          materials_id: MAT_UO2_UUID,
+        },
+        {
+          id: "property:density",
+          label: "Density",
+          type: "property",
+        },
+      ],
+      [{ id: "e-0", source: KG_UO2_UUID, target: "property:density", type: "HAS_PROPERTY" }],
+    )
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Node: Density/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Node: Density/i })).toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole("button", { name: /Node: Density/i }))

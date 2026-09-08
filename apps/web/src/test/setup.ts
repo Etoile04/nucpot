@@ -35,6 +35,26 @@ if (typeof window !== "undefined" && !window.getComputedStyle.toString().include
 }
 
 /**
+ * jsdom doesn't implement ResizeObserver. Components that observe container
+ * size (e.g. GraphCanvas at line 261) crash inside useEffect on mount.
+ * Install a no-op stub that satisfies the ResizeObserver interface used in
+ * the codebase (observe / unobserve / disconnect). Existing test files that
+ * defined their own mock continue to work — they guard with
+ * `if (!("ResizeObserver" in window))` and become no-ops once this stub is
+ * in place.
+ */
+if (typeof window !== "undefined" && !("ResizeObserver" in window)) {
+  class MockResizeObserver {
+    constructor(_callback: ResizeObserverCallback) {}
+    observe(_target: Element): void {}
+    unobserve(_target: Element): void {}
+    disconnect(): void {}
+  }
+  ;(window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+    MockResizeObserver as unknown as typeof ResizeObserver
+}
+
+/**
  * Node 22+ exposes an opt-in `globalThis.localStorage` only when started with
  * `--localstorage-file`; otherwise the property is `undefined`. Vitest's
  * jsdom environment was previously expected to attach its own storage to
@@ -45,10 +65,7 @@ if (typeof window !== "undefined" && !window.getComputedStyle.toString().include
  * store that satisfies the `Storage` interface our code actually uses
  * (`getItem`, `setItem`, `removeItem`, `clear`, `length`, `key`).
  */
-if (
-  typeof window !== "undefined" &&
-  typeof window.localStorage === "undefined"
-) {
+if (typeof window !== "undefined" && typeof window.localStorage === "undefined") {
   const backing = new Map<string, string>()
   const makeStore = (): Storage => {
     const store: Storage = {
