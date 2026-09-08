@@ -1,10 +1,9 @@
 "use client"
 
-import { Card, Button, Empty, Space, Typography } from "antd"
-import { DownloadOutlined, FileOutlined } from "@ant-design/icons"
-import Link from "next/link"
+import { Card, Empty, Space, Typography } from "antd"
+import { FileOutlined } from "@ant-design/icons"
 import type { PotentialDetail } from "@/lib/potentials-api"
-import { resolveFileName, resolveFileUrl } from "@/lib/file-url"
+import { FileLink } from "./FileLink"
 
 const { Text } = Typography
 
@@ -29,9 +28,10 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
     )
   }
 
-  const url = resolveFileUrl(file_url)
-  const fileName = resolveFileName(file_url, detail.extra)
-
+  // NFM-4458: <FileLink> is the single canonical download surface. It
+  // trusts the BFF's canonical proxy URL, derives the browser
+  // `download=` name from `extra.file_storage`, and renders a
+  // "文件缺失" text node if the proxy URL is ever empty.
   return (
     <Card title="文件下载">
       <Space direction="vertical" size="middle" className="w-full">
@@ -39,18 +39,16 @@ export function PotentialDownloads({ detail }: PotentialDownloadsProps) {
           <FileOutlined style={{ fontSize: 24 }} />
           <div>
             <div>
-              <Text strong>{fileName}</Text>
+              <Text strong>
+                <FileLink variant="link" potential={detail} />
+              </Text>
             </div>
             <Text type="secondary">
               {file_size != null ? formatSize(file_size) : "大小未知"}
               {format ? ` · ${format}` : ""}
             </Text>
           </div>
-          <Link href={url} download={fileName}>
-            <Button type="primary" icon={<DownloadOutlined />}>
-              下载
-            </Button>
-          </Link>
+          <FileLink variant="button" potential={detail} />
         </Space>
 
         {file_hash && (

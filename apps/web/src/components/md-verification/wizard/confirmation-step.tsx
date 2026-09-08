@@ -24,6 +24,7 @@ import {
   submitMDVerificationJob,
   type MDVerificationJobSubmitRequest,
 } from "@/lib/md-verification-api"
+import { FileLink } from "@/components/potential/FileLink"
 import {
   HPC_BACKEND_OPTIONS,
   DEFECT_TYPE_LABELS,
@@ -145,6 +146,16 @@ export function ConfirmationStep({
             ))}
           </Space>
         </Descriptions.Item>
+
+        {potential && (
+          <Descriptions.Item label="势函数文件">
+            {/* NFM-4458: surface the canonical download link (or the
+                "文件缺失" sentinel) before submission. Previously the
+                file_url flowed naked through to the backend payload
+                without any UI confirmation. */}
+            <FileLink potential={potential} variant="link" />
+          </Descriptions.Item>
+        )}
 
         <Descriptions.Item label="元素体系">
           {formData.elementSystem}
