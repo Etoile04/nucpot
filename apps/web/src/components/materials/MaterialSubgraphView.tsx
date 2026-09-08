@@ -26,6 +26,7 @@ import { ReloadOutlined } from "@ant-design/icons"
 import { GraphCanvas, type GraphData, type GraphNode } from "@/components/graph"
 import { getMaterialSubgraph } from "@/lib/materials-api"
 import { ApiError } from "@/lib/api-client"
+import { resolveMaterialLink } from "@/lib/material-link"
 import { useGraphView } from "@/hooks/useGraphView"
 
 const { Title, Text } = Typography
@@ -110,16 +111,11 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
-      if (node.type === "material") {
-        // NFM-4445 — route to the canonical materials.id (server-supplied
-        // bridge), never to the KG-node UUID.  Same-name cohorts without a
-        // bridge (NFM-4093) fall through to the tooltip branch below.
-        const targetId = node.materials_id
-        if (!targetId) {
-          setTooltip(node)
-          return
-        }
-        router.push(`/materials/${targetId}`)
+      // NFM-4445 — resolve via the single decision-packet hook; non-material
+      // and no-bridge Material nodes fall through to the tooltip branch.
+      const decision = resolveMaterialLink(node)
+      if (decision.kind === "navigate") {
+        router.push(decision.href)
         return
       }
       setTooltip(node)
