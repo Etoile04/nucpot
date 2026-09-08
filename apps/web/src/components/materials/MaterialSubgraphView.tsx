@@ -237,7 +237,7 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       {tooltip && (
         <div
           role="tooltip"
-          data-testid="material-subgraph-tooltip"
+          data-testid="material-graph-tooltip"
           className="mt-4 p-4 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] flex items-start justify-between gap-4"
         >
           <div>
