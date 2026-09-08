@@ -1,8 +1,9 @@
 "use client"
 
-import { useState, FormEvent } from "react"
+import { useState } from "react"
 import { useAuth } from "@/components/AuthProvider"
 import { FEEDBACK_TYPES, submitFeedback } from "@/lib/feedback-api"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 const TYPES = FEEDBACK_TYPES
 
@@ -14,35 +15,44 @@ export default function FeedbackPage() {
     description: "",
     email: user?.email || "",
   })
-  const [submitting, setSubmitting] = useState(false)
-  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null)
 
-  async function handleSubmit(e: FormEvent) {
+  // NFM-4456: this page used to carry a hand-written duplicate of the
+  // submission state machine (own `submitting` flag + own `msg` slot).
+  // It now uses the same useFormSubmit hook as FeedbackModal, and any
+  // client-side validation messages flow through `failWith` so they
+  // render through the same FormAlert channel.
+  const submit = useFormSubmit<
+    { type: string; title: string; description: string; email: string },
+    unknown
+  >({
+    mutationFn: (values) =>
+      submitFeedback({
+        feedback_type: values.type,
+        title: values.title.trim(),
+        description: values.description.trim(),
+        contact_email: values.email || undefined,
+        page_url: window.location.href,
+      }),
+    errorFallback: "网络错误",
+    onSuccess: () => {
+      setForm({ type: "bug_report", title: "", description: "", email: user?.email || "" })
+    },
+  })
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setMsg(null)
     if (!form.title.trim()) {
-      setMsg({ type: "err", text: "请填写标题" })
+      submit.failWith("请填写标题")
       return
     }
     if (!form.description.trim()) {
-      setMsg({ type: "err", text: "请填写详细描述" })
+      submit.failWith("请填写详细描述")
       return
     }
-    setSubmitting(true)
     try {
-      await submitFeedback({
-        feedback_type: form.type,
-        title: form.title.trim(),
-        description: form.description.trim(),
-        contact_email: form.email || undefined,
-        page_url: window.location.href,
-      })
-      setMsg({ type: "ok", text: "感谢您的反馈！" })
-      setForm({ type: "bug_report", title: "", description: "", email: user?.email || "" })
-    } catch (err) {
-      setMsg({ type: "err", text: err instanceof Error ? err.message : "网络错误" })
-    } finally {
-      setSubmitting(false)
+      await submit.submit(form)
+    } catch {
+      // surfaced via submit.error
     }
   }
 
@@ -59,17 +69,22 @@ export default function FeedbackPage() {
           <p className="text-gray-400 text-sm mt-1">帮助我们改进 NucPot，欢迎提交任何反馈</p>
         </div>
 
-        {msg && (
+        {submit.status === "error" && submit.error ? (
           <div
-            className={`rounded-lg px-4 py-2 text-sm ${
-              msg.type === "ok"
-                ? "bg-green-900/40 border border-green-700 text-green-300"
-                : "bg-red-900/40 border border-red-700 text-red-300"
-            }`}
+            className="rounded-lg px-4 py-2 text-sm bg-red-900/40 border border-red-700 text-red-300"
+            role="alert"
           >
-            {msg.type === "ok" ? "✓" : "✗"} {msg.text}
+            ✗ {submit.error}
           </div>
-        )}
+        ) : null}
+        {submit.status === "success" ? (
+          <div
+            className="rounded-lg px-4 py-2 text-sm bg-green-900/40 border border-green-700 text-green-300"
+            role="status"
+          >
+            ✓ 感谢您的反馈！
+          </div>
+        ) : null}
 
         <div className="bg-gray-900 rounded-xl border border-gray-800">
           <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
@@ -123,10 +138,10 @@ export default function FeedbackPage() {
             </div>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submit.isSubmitting}
               className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition disabled:opacity-50"
             >
-              {submitting ? "提交中…" : "提交反馈"}
+              {submit.isSubmitting ? "提交中…" : "提交反馈"}
             </button>
           </form>
         </div>

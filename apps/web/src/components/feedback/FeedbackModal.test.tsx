@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, act } from "@testing-library/react"
+import { render, screen, fireEvent, act } from "@/test/render-with-providers"
 import { App } from "antd"
 import { FeedbackModal } from "./FeedbackModal"
 import { submitFeedback } from "@/lib/feedback-api"

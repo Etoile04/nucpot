@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import ImageUpload from "@/components/admin/ImageUpload"
 import { blogApi } from "@/lib/api-client"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 export default function EditBlogPostPage() {
   const router = useRouter()
@@ -17,11 +18,36 @@ export default function EditBlogPostPage() {
   const [tags, setTags] = useState("")
   const [summary, setSummary] = useState("")
   const [content, setContent] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [success, setSuccess] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [isPreviewMode, setIsPreviewMode] = useState(false)
+
+  const submit = useFormSubmit<
+    {
+      slug: string
+      title: string
+      content: string
+      summary: string
+      tags: string[]
+      author_name: string
+    },
+    unknown
+  >({
+    mutationFn: (values) =>
+      blogApi.update(values.slug, {
+        title: values.title,
+        content: values.content,
+        summary: values.summary,
+        tags: values.tags,
+        author_name: values.author_name,
+      }),
+    errorFallback: "更新文章失败",
+    onSuccess: () => {
+      setTimeout(() => {
+        router.push("/admin/blog/posts")
+      }, 2000)
+    },
+  })
 
   const handleImageInsert = (markdown: string) => {
     setContent((prev) => {
@@ -52,15 +78,11 @@ export default function EditBlogPostPage() {
 
       setTitle(post.title)
       setAuthor(post.author_name ?? "")
-      setTags(
-        Array.isArray(post.tags)
-          ? post.tags.join(", ")
-          : String(post.tags ?? ""),
-      )
+      setTags(Array.isArray(post.tags) ? post.tags.join(", ") : String(post.tags ?? ""))
       setSummary(post.summary ?? "")
       setContent(post.content ?? "")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载文章失败")
+      setLoadError(err instanceof Error ? err.message : "加载文章失败")
     } finally {
       setLoading(false)
     }
@@ -68,27 +90,20 @@ export default function EditBlogPostPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
-    setError(null)
-
     try {
-      await blogApi.update(slug, {
+      await submit.submit({
+        slug,
         title,
         content,
         summary,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
         author_name: author,
       })
-
-      setSuccess(true)
-
-      setTimeout(() => {
-        router.push("/admin/blog/posts")
-      }, 2000)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "更新文章失败")
-    } finally {
-      setIsSubmitting(false)
+    } catch {
+      // surfaced via submit.error
     }
   }
 
@@ -96,6 +111,25 @@ export default function EditBlogPostPage() {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>
         <p>加载中...</p>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div style={{ padding: "2rem" }}>
+        <div
+          style={{
+            padding: "1rem",
+            background: "#fff2f0",
+            border: "1px solid #ffccc7",
+            borderRadius: 4,
+            color: "#ff4d4f",
+          }}
+          role="alert"
+        >
+          {loadError}
+        </div>
       </div>
     )
   }
@@ -137,7 +171,7 @@ export default function EditBlogPostPage() {
         </button>
       </div>
 
-      {error && (
+      {submit.status === "error" && submit.error ? (
         <div
           style={{
             marginBottom: "1.5rem",
@@ -147,12 +181,13 @@ export default function EditBlogPostPage() {
             borderRadius: 4,
             color: "#ff4d4f",
           }}
+          role="alert"
         >
-          {error}
+          {submit.error}
         </div>
-      )}
+      ) : null}
 
-      {success && (
+      {submit.status === "success" ? (
         <div
           style={{
             marginBottom: "1.5rem",
@@ -162,10 +197,11 @@ export default function EditBlogPostPage() {
             borderRadius: 4,
             color: "#52c41a",
           }}
+          role="status"
         >
           文章更新成功！正在跳转...
         </div>
-      )}
+      ) : null}
 
       <form onSubmit={handleSubmit} style={{ maxWidth: 800 }}>
         <div style={{ marginBottom: "1.5rem" }}>
@@ -313,19 +349,19 @@ export default function EditBlogPostPage() {
         <div style={{ display: "flex", gap: "1rem" }}>
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={submit.isSubmitting}
             style={{
               padding: "0.625rem 1.25rem",
               fontSize: "1rem",
               fontWeight: 500,
               color: "#fff",
-              background: isSubmitting ? "#bfbfbf" : "#1890ff",
+              background: submit.isSubmitting ? "#bfbfbf" : "#1890ff",
               border: "none",
               borderRadius: 4,
-              cursor: isSubmitting ? "not-allowed" : "pointer",
+              cursor: submit.isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            {isSubmitting ? "保存中..." : "保存修改"}
+            {submit.isSubmitting ? "保存中..." : "保存修改"}
           </button>
           <button
             type="button"
@@ -381,7 +417,8 @@ export default function EditBlogPostPage() {
               {author && <span>作者：{author}</span>}
               {tags && (
                 <span>
-                  标签：{tags
+                  标签：
+                  {tags
                     .split(",")
                     .map((t) => t.trim())
                     .filter(Boolean)
