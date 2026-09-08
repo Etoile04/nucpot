@@ -88,10 +88,7 @@ function writeDraft<T>(formId: string, value: T): void {
   }
 }
 
-export function useFormDraft<T>(
-  formId: string,
-  initial: T,
-): readonly [T, (next: T) => void] {
+export function useFormDraft<T>(formId: string, initial: T): readonly [T, (next: T) => void] {
   const [value, setValue] = useState<T>(() => readDraft(formId, initial))
   const isFirstRender = useRef(true)
   // Track the formId we last observed so a runtime formId change is
@@ -119,6 +116,16 @@ export function useFormDraft<T>(
     if (lastSeenFormId.current !== formId) {
       lastSeenFormId.current = formId
       setValue(readDraft(formId, initialRef.current))
+      return
+    }
+
+    // NFM-4456: if the page resets state back to the initial value after
+    // a successful submit (``setDraft(EMPTY_DRAFT)`` following
+    // ``clearFormDraft``), the value is now referentially equal to the
+    // captured initial. Writing it back would resurrect the just-cleared
+    // storage entry, so we bail — the clear stands and the hook returns
+    // to the same state the page will read on next mount.
+    if (value === initialRef.current) {
       return
     }
 
