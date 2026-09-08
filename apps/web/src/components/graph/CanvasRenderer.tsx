@@ -15,17 +15,9 @@
  */
 
 import { useRef, useEffect, useCallback, useMemo } from "react"
-import type {
-  SimNode,
-  SimEdge,
-  GraphViewport,
-  GraphSelection,
-} from "./types"
+import type { SimNode, SimEdge, GraphViewport, GraphSelection } from "./types"
 import { getNodeColor, getTheme } from "./graph-theme"
-import {
-  EDGE_DEFAULT_COLOR,
-  EDGE_HIGHLIGHT_COLOR,
-} from "./graph-theme"
+import { EDGE_DEFAULT_COLOR, EDGE_HIGHLIGHT_COLOR } from "./graph-theme"
 import { getNeighborIds } from "./graph-utils"
 
 export interface CanvasRendererProps {
@@ -100,10 +92,7 @@ export function CanvasRenderer({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const theme = useMemo(() => getTheme(), [])
   const neighborIds = useMemo(
-    () =>
-      selection.hoveredId
-        ? getNeighborIds(selection.hoveredId, edges)
-        : new Set<string>(),
+    () => (selection.hoveredId ? getNeighborIds(selection.hoveredId, edges) : new Set<string>()),
     [selection.hoveredId, edges],
   )
 
@@ -134,30 +123,19 @@ export function CanvasRenderer({
       const coords = getEdgeCoords(edge)
       if (!coords) continue
 
-      const srcId =
-        typeof edge.source === "string"
-          ? edge.source
-          : edge.source.id
-      const tgtId =
-        typeof edge.target === "string"
-          ? edge.target
-          : edge.target.id
+      const srcId = typeof edge.source === "string" ? edge.source : edge.source.id
+      const tgtId = typeof edge.target === "string" ? edge.target : edge.target.id
 
       const isHighlighted =
-        selection.hoveredId &&
-        (srcId === selection.hoveredId || tgtId === selection.hoveredId)
+        selection.hoveredId && (srcId === selection.hoveredId || tgtId === selection.hoveredId)
 
       const isDimmed =
-        selection.hoveredId &&
-        !isHighlighted &&
-        !(neighborIds.has(srcId) && neighborIds.has(tgtId))
+        selection.hoveredId && !isHighlighted && !(neighborIds.has(srcId) && neighborIds.has(tgtId))
 
       ctx.beginPath()
       ctx.moveTo(coords.x1, coords.y1)
       ctx.lineTo(coords.x2, coords.y2)
-      ctx.strokeStyle = isHighlighted
-        ? EDGE_HIGHLIGHT_COLOR
-        : EDGE_DEFAULT_COLOR
+      ctx.strokeStyle = isHighlighted ? EDGE_HIGHLIGHT_COLOR : EDGE_DEFAULT_COLOR
       ctx.lineWidth = isHighlighted ? 2 : theme.edgeWidth
       ctx.globalAlpha = isDimmed ? 0.15 : 1
       ctx.stroke()
@@ -169,8 +147,7 @@ export function CanvasRenderer({
       const isSelected = selection.nodeId === node.id
       const isHovered = selection.hoveredId === node.id
       const isNeighbor = neighborIds.has(node.id)
-      const isDimmed =
-        selection.hoveredId && !isHovered && !isNeighbor
+      const isDimmed = selection.hoveredId && !isHovered && !isNeighbor
 
       const color = getNodeColor(node.category)
       const r = node.radius

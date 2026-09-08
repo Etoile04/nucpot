@@ -33,10 +33,7 @@ const TRANSITION: CSSProperties = {
 }
 
 /** Build inline style object for node groups. */
-function nodeGroupStyle(
-  isDimmed: boolean,
-  isFocused: boolean,
-): CSSProperties {
+function nodeGroupStyle(isDimmed: boolean, isFocused: boolean): CSSProperties {
   const base: CSSProperties = {
     ...TRANSITION,
     cursor: "pointer",
@@ -78,10 +75,7 @@ export function SvgRenderer({
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
 
   const neighborIds = useMemo(
-    () =>
-      selection.hoveredId
-        ? getNeighborIds(selection.hoveredId, edges)
-        : new Set<string>(),
+    () => (selection.hoveredId ? getNeighborIds(selection.hoveredId, edges) : new Set<string>()),
     [selection.hoveredId, edges],
   )
 
@@ -156,11 +150,7 @@ export function SvgRenderer({
                 y1={typeof src === "string" ? 0 : src.y}
                 x2={typeof tgt === "string" ? 0 : tgt.x}
                 y2={typeof tgt === "string" ? 0 : tgt.y}
-                stroke={
-                  isHighlighted
-                    ? EDGE_HIGHLIGHT_COLOR
-                    : EDGE_DEFAULT_COLOR
-                }
+                stroke={isHighlighted ? EDGE_HIGHLIGHT_COLOR : EDGE_DEFAULT_COLOR}
                 strokeWidth={isHighlighted ? 2 : theme.edgeWidth}
                 style={edgeStyle(!!isDimmed)}
               />
@@ -175,10 +165,7 @@ export function SvgRenderer({
             const isHovered = selection.hoveredId === node.id
             const isNeighbor = neighborIds.has(node.id)
             const isDimmed =
-              selection.hoveredId &&
-              !isHovered &&
-              !isNeighbor &&
-              node.id !== selection.hoveredId
+              selection.hoveredId && !isHovered && !isNeighbor && node.id !== selection.hoveredId
 
             const isFocused = focusedNodeId === node.id
             const color = getNodeColor(node.category)
@@ -231,11 +218,7 @@ export function SvgRenderer({
                   cy={node.y}
                   r={r}
                   fill={color}
-                  stroke={
-                    isHovered || isSelected
-                      ? "#ffffff"
-                      : "transparent"
-                  }
+                  stroke={isHovered || isSelected ? "#ffffff" : "transparent"}
                   strokeWidth={1.5}
                 />
 

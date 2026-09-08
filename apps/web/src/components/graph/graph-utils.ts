@@ -5,10 +5,7 @@
 import type { SimEdge } from "./types"
 
 /** Compute 1-hop neighbor IDs for a given node from its edges. */
-export function getNeighborIds(
-  nodeId: string,
-  edges: readonly SimEdge[],
-): ReadonlySet<string> {
+export function getNeighborIds(nodeId: string, edges: readonly SimEdge[]): ReadonlySet<string> {
   const neighbors = new Set<string>()
   for (const edge of edges) {
     const src = typeof edge.source === "string" ? edge.source : edge.source.id

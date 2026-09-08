@@ -10,9 +10,15 @@
  * nodes fetched from the KG graph endpoint. Click handlers:
  *   - material node    → navigate to /materials/<id>
  *   - non-material node → show inline tooltip, no navigation
+ *
+ * NFM-4449 Q4: the hand-rolled `useState<ViewState>` + `useEffect`
+ * fetch machine is replaced by `useGraphView`, which collapses
+ * loading/error/empty/fetch into a single 5-state `status` field.
+ * The "coverage gap" 404 (NFM-4093) is now handled by the queryFn
+ * returning `null`, which useGraphView surfaces as `status === "empty"`.
  */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Alert, Button, Empty, Spin, Typography } from "antd"
@@ -20,6 +26,7 @@ import { ReloadOutlined } from "@ant-design/icons"
 import { GraphCanvas, type GraphData, type GraphNode } from "@/components/graph"
 import { getMaterialSubgraph } from "@/lib/materials-api"
 import { ApiError } from "@/lib/api-client"
+import { useGraphView } from "@/hooks/useGraphView"
 
 const { Title, Text } = Typography
 
@@ -32,97 +39,74 @@ interface MaterialSubgraphViewProps {
   readonly materialId: string
 }
 
-interface ViewState {
+interface SubgraphFetchResult {
+  /** Resolved graph data, or `null` for 404 (no Material kg_node bridge). */
   readonly data: GraphData | null
-  readonly loading: boolean
-  readonly error: string | null
-  /**
-   * True when the backend signalled that the focal material has no
-   * Material kg_node bridge (typically a 404 from /kg/graph/subgraph).
-   *
-   * Per NFM-4093 / NFM-4096: a missing bridge is a *known coverage gap*
-   * (e.g. one of the 11 same-name-duplicate rows that intentionally
-   * lack a bridge), not a transport error. Surface it through the
-   * empty-state branch — not the generic error Alert.
-   */
-  readonly coverageGap: boolean
-  readonly tooltip: GraphNode | null
+  /** Backend-supplied focal label, used for the aria-label. */
   readonly focalLabel: string | null
 }
 
-const INITIAL_STATE: ViewState = {
-  data: null,
-  loading: true,
-  error: null,
-  coverageGap: false,
-  tooltip: null,
-  focalLabel: null,
+/**
+ * NFM-4449 Q4: single queryFn. 404 from /kg/graph/subgraph means the
+ * focal material has no Material kg_node bridge (NFM-4093 coverage
+ * gap). Translate to `data: null` so useGraphView surfaces it as the
+ * "empty" status, not the "error" status.
+ */
+async function fetchMaterialSubgraph(
+  materialId: string,
+): Promise<SubgraphFetchResult> {
+  try {
+    const data = await getMaterialSubgraph(materialId, DEFAULT_DEPTH)
+    const focalCandidates = [`${MATERIAL_PREFIX}${materialId}`, materialId]
+    const focal =
+      data.nodes.find((node) => focalCandidates.includes(node.id)) ??
+      data.nodes.find((node) => node.type === "material") ??
+      null
+    return { data, focalLabel: focal?.label ?? null }
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 404) {
+      return { data: null, focalLabel: null }
+    }
+    throw err
+  }
 }
 
 // ── Component ─────────────────────────────────────────────────────────
 
 export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) {
   const router = useRouter()
-  const [state, setState] = useState<ViewState>(INITIAL_STATE)
 
-  const fetchGraph = useCallback(async () => {
-    setState((prev) => ({
-      ...prev,
-      loading: true,
-      error: null,
-      coverageGap: false,
-    }))
+  // Tooltip state lives outside the data state machine (it tracks UI
+  // interaction, not fetch progress).
+  const [tooltip, setTooltip] = useState<GraphNode | null>(null)
 
-    try {
-      const data = await getMaterialSubgraph(materialId, DEFAULT_DEPTH)
+  // NFM-4449 Q4 + Q6: useGraphView replaces the hand-rolled state.
+  // queryKey scopes cache per material; 5s staleTime keeps tab-switch
+  // + return cheap without serving truly stale data.
+  const view = useGraphView<SubgraphFetchResult>({
+    queryKey: ["material-subgraph", materialId] as const,
+    queryFn: () => fetchMaterialSubgraph(materialId),
+    staleTime: 5_000,
+    // 404 → data: null; the hook's isEmpty=true puts us in "empty"
+    // status, which the JSX below maps to the coverage-gap banner.
+    isEmpty: (result) => result.data === null || result.data.nodes.length === 0,
+  })
 
-      // Locate the focal node to source the aria-label.
-      const focalCandidates = [`${MATERIAL_PREFIX}${materialId}`, materialId]
-      const focal =
-        data.nodes.find((node) => focalCandidates.includes(node.id)) ??
-        data.nodes.find((node) => node.type === "material") ??
-        null
+  const { data, status, error, retry } = view
 
-      setState({
-        data,
-        loading: false,
-        error: null,
-        coverageGap: false,
-        tooltip: null,
-        focalLabel: focal?.label ?? null,
-      })
-    } catch (err: unknown) {
-      // 404 from /kg/graph/subgraph means the focal material has no
-      // Material kg_node bridge — a *known coverage gap* (NFM-4093),
-      // not a transport failure. Route it to the empty-state banner
-      // so users see "this is tracked", not a generic error. 5xx and
-      // network failures keep the generic Alert.
-      const isCoverageGap = err instanceof ApiError && err.status === 404
-
-      if (isCoverageGap) {
-        setState((prev) => ({
-          ...prev,
-          loading: false,
-          error: null,
-          coverageGap: true,
-          data: null,
-        }))
-        return
-      }
-
-      const message = err instanceof Error ? err.message : "Failed to load graph"
-      setState((prev) => ({
-        ...prev,
-        loading: false,
-        error: message,
-        data: null,
-      }))
-    }
-  }, [materialId])
-
-  useEffect(() => {
-    void fetchGraph()
-  }, [fetchGraph])
+  // Derived values used in the JSX below. `data` is null while loading
+  // and on 404 (status === "empty" / "loading"); only on "retry" /
+  // "fetch" is it a real graph payload.
+  const isLoading = status === "loading"
+  const isError = status === "error"
+  const isEmpty =
+    status === "empty" ||
+    (data !== null &&
+      data !== undefined &&
+      data.data !== null &&
+      data.data.nodes.length === 0)
+  const graphData = data?.data ?? null
+  const focalLabel = data?.focalLabel ?? null
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
@@ -132,37 +116,28 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
         // bridge (NFM-4093) fall through to the tooltip branch below.
         const targetId = node.materials_id
         if (!targetId) {
-          setState((prev) => ({ ...prev, tooltip: node }))
+          setTooltip(node)
           return
         }
         router.push(`/materials/${targetId}`)
         return
       }
-      setState((prev) => ({ ...prev, tooltip: node }))
+      setTooltip(node)
     },
     [router],
   )
 
   const handleNodeHover = useCallback((node: GraphNode | null) => {
     // Hover replaces tooltip too — keep state consistent with click target.
-    setState((prev) => ({ ...prev, tooltip: node }))
+    setTooltip(node)
   }, [])
 
   const dismissTooltip = useCallback(() => {
-    setState((prev) => ({ ...prev, tooltip: null }))
+    setTooltip(null)
   }, [])
 
-  const handleRetry = useCallback(() => {
-    void fetchGraph()
-  }, [fetchGraph])
-
-  const isEmpty =
-    !state.loading &&
-    !state.error &&
-    (state.coverageGap || (state.data !== null && state.data.nodes.length === 0))
-
-  const ariaLabel = state.focalLabel
-    ? `Material knowledge graph for ${state.focalLabel}`
+  const ariaLabel = focalLabel
+    ? `Material knowledge graph for ${focalLabel}`
     : `Material knowledge graph for ${materialId}`
 
   return (
@@ -171,7 +146,7 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       <div className="flex items-center justify-between mb-6">
         <div>
           <Title level={2} className="!m-0 text-white">
-            {state.focalLabel ? `${state.focalLabel} — 知识图谱` : "材料知识图谱"}
+            {focalLabel ? `${focalLabel} — 知识图谱` : "材料知识图谱"}
           </Title>
           <Text type="secondary">
             显示与该材料相关的属性、实验、条件与相邻材料 (深度 {DEFAULT_DEPTH})
@@ -186,7 +161,7 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       </div>
 
       {/* Loading state */}
-      {state.loading && (
+      {isLoading && (
         <div className="flex items-center justify-center py-20">
           <Spin tip="Loading graph…" size="large">
             <div className="p-12" />
@@ -194,15 +169,15 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
         </div>
       )}
 
-      {/* Error state */}
-      {!state.loading && state.error && (
+      {/* Error state — surfaces the underlying Error from useGraphView. */}
+      {isError && error && (
         <Alert
           type="error"
           showIcon
           message="加载知识图谱失败"
-          description={state.error}
+          description={error.message}
           action={
-            <Button size="small" icon={<ReloadOutlined />} onClick={handleRetry}>
+            <Button size="small" icon={<ReloadOutlined />} onClick={retry}>
               Retry
             </Button>
           }
@@ -210,11 +185,11 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       )}
 
       {/* Empty state — covers both (a) backend returned a 404 for the
-          focal material (no Material kg_node bridge — known coverage
-          gap per NFM-4093) and (b) backend returned 200 with zero
-          nodes. The banner explains the gap and links to the
-          tracking issue so users know it's tracked, not a bug. */}
-      {!state.loading && !state.error && isEmpty && (
+          focal material (no Material kg_node bridge — NFM-4093
+          coverage gap) and (b) backend returned 200 with zero nodes.
+          The banner explains the gap and links to the tracking issue
+          so users know it's tracked, not a bug. */}
+      {!isLoading && !isError && isEmpty && (
         <div
           className="flex flex-col items-center justify-center py-16 gap-4"
           data-testid="material-subgraph-empty"
@@ -245,15 +220,16 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
         </div>
       )}
 
-      {/* Graph */}
-      {!state.loading && !state.error && !isEmpty && state.data && (
+      {/* Graph — render for "retry" (settled, data is good) and for
+          "fetch" (background refetch with stale data still on screen). */}
+      {!isLoading && !isError && !isEmpty && graphData && (
         <div
           aria-label={ariaLabel}
           className="rounded-lg border border-[var(--border-color,#2d2d44)] bg-[var(--bg-elevated,#1a1a2e)] overflow-hidden"
           style={{ height: 640 }}
         >
           <GraphCanvas
-            data={state.data}
+            data={graphData}
             onNodeClick={handleNodeClick}
             onNodeHover={handleNodeHover}
             showControls
@@ -262,7 +238,7 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       )}
 
       {/* Tooltip for non-material node */}
-      {state.tooltip && (
+      {tooltip && (
         <div
           role="tooltip"
           data-testid="material-subgraph-tooltip"
@@ -270,9 +246,9 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
         >
           <div>
             <Text type="secondary" className="block text-xs uppercase mb-1">
-              {state.tooltip.type}
+              {tooltip.type}
             </Text>
-            <Text className="text-white">{state.tooltip.label}</Text>
+            <Text className="text-white">{tooltip.label}</Text>
           </div>
           <Button size="small" type="text" onClick={dismissTooltip}>
             Close

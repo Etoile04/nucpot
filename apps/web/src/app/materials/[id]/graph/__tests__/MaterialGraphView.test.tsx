@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 // ApiHttpError was removed; the component now narrows 404s by message text.
 
 // ── Mock next/navigation ──────────────────────────────────────────────
@@ -164,8 +165,22 @@ import { MaterialGraphView } from "../MaterialGraphView"
 
 // ── Helper ──────────────────────────────────────────────────────────────
 
+/**
+ * NFM-4449: MaterialGraphView now consumes data via useGraphView, which
+ * wraps `useQuery` from TanStack Query. The test harness provides a
+ * fresh QueryClient per render so cache state never bleeds between
+ * cases (and retry: false so a thrown fetch doesn't retry under the
+ * hood and confuse our mock-call assertions).
+ */
 function renderView(materialId: string) {
-  return render(<MaterialGraphView materialId={materialId} />)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MaterialGraphView materialId={materialId} />
+    </QueryClientProvider>,
+  )
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────

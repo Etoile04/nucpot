@@ -41,10 +41,7 @@ export function KgToolbar({
   const activeCount = activeTypes.size
 
   return (
-    <nav
-      className="flex items-center gap-2 px-3 py-2"
-      aria-label="Graph toolbar"
-    >
+    <nav className="flex items-center gap-2 px-3 py-2" aria-label="Graph toolbar">
       {/* Zoom controls */}
       <button
         type="button"
@@ -108,10 +105,7 @@ export function KgToolbar({
       </button>
 
       {/* Separator */}
-      <div
-        className="mx-1 h-6 w-px bg-gray-600"
-        aria-hidden="true"
-      />
+      <div className="mx-1 h-6 w-px bg-gray-600" aria-hidden="true" />
 
       {/* Type filter */}
       <label className="flex items-center gap-1.5 text-xs text-gray-400">

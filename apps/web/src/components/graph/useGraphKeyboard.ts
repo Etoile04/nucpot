@@ -77,9 +77,7 @@ export function useGraphKeyboard(options: UseGraphKeyboardOptions): void {
         case "Tab": {
           event.preventDefault()
           if (nodeIds.length === 0) break
-          const currentIdx = selection.nodeId
-            ? nodeIds.indexOf(selection.nodeId)
-            : -1
+          const currentIdx = selection.nodeId ? nodeIds.indexOf(selection.nodeId) : -1
           const nextIdx = event.shiftKey
             ? (currentIdx - 1 + nodeIds.length) % nodeIds.length
             : (currentIdx + 1) % nodeIds.length

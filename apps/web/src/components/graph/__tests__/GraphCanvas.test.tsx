@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import { createRef } from "react"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { GraphCanvas } from "../GraphCanvas"
-import type { GraphData } from "../types"
+import type { GraphData, GraphViewportApi } from "../types"
 
 /* ------------------------------------------------------------------ */
 /*  Polyfill ResizeObserver for jsdom                                   */
@@ -16,7 +17,7 @@ class MockResizeObserver {
 
 if (typeof window !== "undefined" && !("ResizeObserver" in window)) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).ResizeObserver = MockResizeObserver
+  ;(window as any).ResizeObserver = MockResizeObserver
 }
 
 /* ------------------------------------------------------------------ */
@@ -58,9 +59,7 @@ const SMALL_DATA: GraphData = {
     { id: "n1", label: "Uranium", type: "material" },
     { id: "n2", label: "Density", type: "property" },
   ],
-  edges: [
-    { id: "e1", source: "n1", target: "n2" },
-  ],
+  edges: [{ id: "e1", source: "n1", target: "n2" }],
 }
 
 const EXPANDABLE_DATA: GraphData = {
@@ -68,9 +67,7 @@ const EXPANDABLE_DATA: GraphData = {
     { id: "n1", label: "Uranium", type: "material", childCount: 3 },
     { id: "n2", label: "Density", type: "property" },
   ],
-  edges: [
-    { id: "e1", source: "n1", target: "n2" },
-  ],
+  edges: [{ id: "e1", source: "n1", target: "n2" }],
 }
 
 function makeLargeData(count: number): GraphData {
@@ -127,9 +124,7 @@ describe("GraphCanvas", () => {
     const emptyData: GraphData = { nodes: [], edges: [] }
     render(<GraphCanvas data={emptyData} />)
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "No graph data to display",
-    )
+    expect(screen.getByRole("status")).toHaveTextContent("No graph data to display")
   })
 
   it("applies custom className", () => {
@@ -158,9 +153,7 @@ describe("GraphCanvas", () => {
 
   it("calls onExpand on double-click when childCount > 0", () => {
     const onExpand = vi.fn()
-    render(
-      <GraphCanvas data={EXPANDABLE_DATA} onExpand={onExpand} />,
-    )
+    render(<GraphCanvas data={EXPANDABLE_DATA} onExpand={onExpand} />)
 
     const node = screen.getByRole("button", { name: /Node: Uranium/i })
     fireEvent.dblClick(node)
@@ -173,13 +166,60 @@ describe("GraphCanvas", () => {
 
   it("does not call onExpand on double-click when childCount is 0", () => {
     const onExpand = vi.fn()
-    render(
-      <GraphCanvas data={SMALL_DATA} onExpand={onExpand} />,
-    )
+    render(<GraphCanvas data={SMALL_DATA} onExpand={onExpand} />)
 
     const node = screen.getByRole("button", { name: /Node: Uranium/i })
     fireEvent.dblClick(node)
 
     expect(onExpand).not.toHaveBeenCalled()
+  })
+
+  /* -------------------------------------------------------------- */
+  /*  NFM-4449 Q3: viewportApi contract                              */
+  /*                                                                 */
+  /*  The external /kg/explore toolbar's "Zoom in / Zoom out / Fit"  */
+  /*  buttons call viewportRef.current.zoomIn() etc. This test pins  */
+  /*  the imperative API surface:                                      */
+  /*    - forwardRef returns a GraphViewportApi                       */
+  /*    - all four methods are present                                */
+  /*    - calling each does NOT throw                                 */
+  /*    - reset() is an alias of fit() (kept for spec parity)         */
+  /*  The Playwright suite covers end-to-end click-through on the    */
+  /*  real /kg/explore page.                                          */
+  /* -------------------------------------------------------------- */
+
+  it("exposes a viewportApi with zoomIn/zoomOut/fit/reset via forwardRef", () => {
+    const ref = createRef<GraphViewportApi>()
+    render(<GraphCanvas data={SMALL_DATA} ref={ref} />)
+
+    expect(ref.current).not.toBeNull()
+    expect(typeof ref.current!.zoomIn).toBe("function")
+    expect(typeof ref.current!.zoomOut).toBe("function")
+    expect(typeof ref.current!.fit).toBe("function")
+    expect(typeof ref.current!.reset).toBe("function")
+  })
+
+  it("viewportApi.zoomIn() and zoomOut() execute without throwing", () => {
+    const ref = createRef<GraphViewportApi>()
+    render(<GraphCanvas data={SMALL_DATA} ref={ref} />)
+
+    expect(() => ref.current!.zoomIn()).not.toThrow()
+    expect(() => ref.current!.zoomOut()).not.toThrow()
+    // Repeated calls must remain stable (no throw on clamp-at-bound).
+    expect(() => ref.current!.zoomIn()).not.toThrow()
+    expect(() => ref.current!.zoomOut()).not.toThrow()
+  })
+
+  it("viewportApi.fit() and reset() execute without throwing (reset is an alias of fit)", () => {
+    const ref = createRef<GraphViewportApi>()
+    render(<GraphCanvas data={SMALL_DATA} ref={ref} />)
+
+    expect(() => ref.current!.fit()).not.toThrow()
+    expect(() => ref.current!.reset()).not.toThrow()
+    // Calling after a zoom change is the realistic sequence and must
+    // still not throw — proves the ref instance survives re-renders.
+    ref.current!.zoomIn()
+    expect(() => ref.current!.fit()).not.toThrow()
+    expect(() => ref.current!.reset()).not.toThrow()
   })
 })
