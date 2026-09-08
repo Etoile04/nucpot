@@ -42,3 +42,41 @@ _Avoid_: database utils、DB helper、调用点自建 engine
 **parse 失败标记 (parse failure mark)**:
 抽取管线崩溃时对 DataSource 行的 best-effort 兜底写入(`parse_status='failed'`),绝不掩盖原始异常。它是 session-provider implementation 的应急通道,不是独立 module。
 _Avoid_: failure reporter、status writer
+
+### 图谱视图
+
+**图谱视图 (graph view)**:
+以节点-连线呈现知识图谱(或其邻域)的页面能力。图谱视图消费共享的图谱画布,不各自实现布局、渲染与交互。
+_Avoid_: 图谱页面(泛指时)、图谱组件(指实现时)
+
+**图谱画布 (graph canvas)**:
+所有图谱视图背后的共享深 module:布局模拟、渲染、视口控制与状态信号的唯一 owner。消费方经其 interface 获得行为,不绕过它直接操作模拟或 DOM。
+_Avoid_: 画布组件、图表容器
+
+**布局收敛 (converged)**:
+力导向模拟自然达到稳定、停止迭代的状态。收敛信号由图谱画布发出,消费方不需要也不应该自行判断「算完了没」。
+
+**布局定格 (settled)**:
+布局模拟达到超时上限后强制停止、以当前布局交付使用的状态。「收敛」与「定格」都是可用态,交互均已解锁;区别仅在布局质量,消费方可选择是否对用户作轻量区分提示。
+_Avoid_: 超时(指故障时)、失败
+
+**视口控制 (viewport control)**:
+对图谱画布的缩放、平移、适配视野等操作。视口控制的 interface 由图谱画布暴露,页面级工具栏是其 adapter 之一,不各写一份控制逻辑。
+_Avoid_: 缩放工具、画布操作
+
+### 图谱标识与列表
+
+**图谱节点标识 (graph node id)**:
+知识图谱节点的标识,由图谱体系自行分配,不是材料标识。携带图谱节点标识的响应若涉及材料,必须同时携带材料标识或显式无桥标记;由消费方自行猜测两套标识的关系是禁止的。
+_Avoid_: 节点 uuid(与材料 uuid 混称时)
+
+**材料标识 (material id)**:
+材料在材料库中的主键,材料详情页 URL 的身份来源。图谱场景下从图谱节点标识经桥接获得;无桥接的节点不产生导航。
+
+**分页视图 (paged list)**:
+以固定页大小浏览长列表的能力。页码是可分享状态(进 URL);翻页、URL 同步与滚动复位由共享的分页模块统一持有,列表页面不自建分页内脏。
+_Avoid_: 翻页控件(指能力时)
+
+**提交状态 (submit state)**:
+表单提交的生命周期状态:idle | submitting | success | error。由共享的提交模块统一持有与呈现,表单不自写三布尔变体。
+_Avoid_: loading 旗标、submitting 布尔
