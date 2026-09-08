@@ -26,7 +26,7 @@
 | Web (Next.js) | `nucpot-prod-web` | 3000 | 3000 | ✅ healthy |
 | API (FastAPI) | `nucpot-prod-api` | 8000 | 8001, 8002 | ✅ healthy |
 | Worker (Celery) | `nucpot-prod-worker` | - | - | ✅ healthy |
-| LightRAG | `nucpot-prod-lightrag` | 9621 | 仅内网 | ✅ healthy |
+| LightRAG | `nucpot-prod-lightrag` | 9621 | 无宿主端口 / 容器内 9621 | ✅ healthy |
 | DB (Postgres) | `nucpot-prod-db` | 5432 | 5433 (host) | ✅ healthy |
 | Redis | `nucpot-prod-redis` | 6379 | - | ✅ healthy |
 
