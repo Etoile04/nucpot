@@ -182,8 +182,10 @@ services:
     image: nucpot-prod-lightrag:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-prod-lightrag
     restart: unless-stopped
-    ports:
-      - "${PROD_LIGHTRAG_HOST_PORT:-9621}:9621"
+    # NFM-4481: no host port. Sidecar is reachable only via the `prod` docker
+    # network as `nucpot-prod-lightrag:9621` (zero-auth — NFM API is the sole
+    # gateway; see NFM-4481 plan, Option B). Exposing 9621 publicly would let
+    # any LAN attacker call /query unauthenticated.
     volumes:
       - prod-lightrag-data:/app/data
     environment:

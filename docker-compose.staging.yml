@@ -135,8 +135,11 @@ services:
     image: nucpot-staging-lightrag:${STAGING_IMAGE_TAG:-latest}
     container_name: nucpot-staging-lightrag
     restart: unless-stopped
-    ports:
-      - "${STAGING_LIGHTRAG_HOST_PORT:-9621}:9621"
+    # NFM-4481: no host port. Sidecar reachable only via the `staging`
+    # network as `nucpot-staging-lightrag:9621`. The previous
+    # STAGING_LIGHTRAG_HOST_PORT override is no longer honored (compose
+    # ignores it); keep the var in .env.staging.example untouched for now
+    # to avoid a noisy env-file diff.
     volumes:
       - staging-lightrag-data:/app/data
     environment:

@@ -14,9 +14,16 @@ Usage:
       --api-url http://127.0.0.1:8001 \
       --token <JWT_TOKEN>
 
-    # Directly against the LightRAG sidecar (no auth needed):
+    # Directly against the LightRAG sidecar from inside the compose network:
     python scripts/e2e_lightrag_10papers.py \
-      --direct --lightrag-url http://127.0.0.1:9621
+      --direct --lightrag-url http://nucpot-dev-lightrag:9621
+
+    # Or via `docker exec` from the host (NFM-4481: dev compose now binds the
+    # sidecar to 127.0.0.1 only, so direct host loopback still works):
+    #   docker exec nucpot-dev-lightrag \
+    #     python scripts/e2e_lightrag_10papers.py \
+    #       --direct --lightrag-url http://127.0.0.1:9621
+    # (the same binary runs inside the sidecar container's filesystem)
 
     # Dry-run: print what would be tested without calling any service:
     python scripts/e2e_lightrag_10papers.py --dry-run
@@ -1009,8 +1016,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--lightrag-url",
-        default="http://127.0.0.1:9621",
-        help="LightRAG sidecar URL (default: http://127.0.0.1:9621)",
+        default="http://nucpot-dev-lightrag:9621",
+        help=(
+            "LightRAG sidecar URL (default: http://nucpot-dev-lightrag:9621 — "
+            "the docker compose service name on the nucpot-dev network). "
+            "Use http://127.0.0.1:9621 only from inside the sidecar container "
+            "(e.g. via `docker exec`); the host loopback mapping is now "
+            "127.0.0.1-only in docker/docker-compose.yml per NFM-4481."
+        ),
     )
     p.add_argument(
         "--api-url",
