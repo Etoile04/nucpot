@@ -1,50 +1,30 @@
 /**
- * Resolve a potential's `file_url` into a URL the browser can actually fetch.
+ * file_url trust contract (NFM-4458).
  *
- * Canonical form (NFM-4309 / BUG-37): every migrated row stores the backend
- * proxy download path `/api/v1/potentials/{id}/file`, which passes through
- * unchanged — nginx routes `/api/*` to the API in prod, so the browser
- * button and direct API consumers (AutoVC) share one anonymous URL.
+ * Production invariants (verified 2026-09-08):
  *
- * Historical `file_url` values still resolvable for unmigrated caches:
+ *   - Every `potentials.file_url` returned by the BFF is canonical —
+ *     either the proxy path ``/api/v1/potentials/{id}/file`` or empty
+ *     (the historical missing-file rows, BUG-06). The FastAPI
+ *     `potential_file_resolver` and migration 083 already collapsed
+ *     the four legacy forms (absolute Supabase URLs, Supabase-relative
+ *     paths, ``/uploads/<key>``, bare filenames) and the
+ *     ``/app/uploads/<file>`` dead-link form at the source.
  *
- *   1. `https://…` — absolute URL (Supabase public objects). Passed through
- *      unchanged (NFM-4309: wrapping them in `/uploads/…` produced dead
- *      links for the 13 library rows).
+ * What this module does NOT do anymore:
  *
- *   2. `/storage/v1/object/public/…` — Supabase Storage path, MUST be
- *      prefixed with the Supabase project origin (NFM-3317).
+ *   - prepend the Supabase project origin (the legacy NFM-3317 fallback);
+ *   - rewrite ``/storage/v1/`` to absolute Supabase URLs;
+ *   - prefix bare filenames with ``/uploads/``;
+ *   - accept ``/app/uploads/`` as a resolvable path.
  *
- *   3. `/uploads/<uuid>.<ext>` — upload-volume files, now served through
- *      the backend proxy by migration 083; kept for legacy caches.
- *
- *   4. bare `foo.eam.alloy` — legacy bare filename, assumed under `/uploads/`.
- *
- * `/app/uploads/...` (API-container-local paths) are dead links tracked in
- * BUG-37; they pass through unchanged and 404 visibly rather than silently
- * misresolving. Migration 083 eliminates them at the source.
+ * The frontend's job is now: emit the canonical URL unchanged, or
+ * surface the "file missing" state when the canonical URL is empty.
+ * The single render path lives in `<FileLink>` (apps/web/src/components/
+ * potential/FileLink.tsx). This module only exposes the trivial
+ * pass-through plus the filename-derivation helper (which still needs
+ * `extra.file_storage` to give the browser a real `download=` name).
  */
-
-const SUPABASE_URL_FALLBACK = "https://gzhiqyopzlmnkdzammhx.supabase.co"
-
-// Read lazily so tests (and non-Next runtimes) can observe env changes; in a
-// Next.js build `process.env.NEXT_PUBLIC_*` is inlined at compile time.
-function supabaseUrl(): string {
-  return process.env.NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_URL_FALLBACK
-}
-
-export function resolveFileUrl(fileUrl: string): string {
-  // Absolute URLs (Supabase public objects) work as-is.
-  if (/^https?:\/\//i.test(fileUrl)) {
-    return fileUrl
-  }
-  if (fileUrl.startsWith("/storage/v1/")) {
-    return `${supabaseUrl()}${fileUrl}`
-  }
-  // Canonical proxy path (/api/v1/potentials/{id}/file) and legacy
-  // site-relative /uploads/ paths are already site-relative.
-  return fileUrl.startsWith("/") ? fileUrl : `/uploads/${fileUrl}`
-}
 
 const STORAGE_V1_MARKER = "/storage/v1/object/public/"
 
@@ -54,17 +34,24 @@ function lastPathSegment(path: string): string {
   return segments[segments.length - 1] ?? ""
 }
 
-export function fileNameFromUrl(fileUrl: string): string {
-  return lastPathSegment(fileUrl) || fileUrl
+/**
+ * Trust the backend canonicalization: return the canonical proxy URL
+ * unchanged, or the empty string when the row carries no file.
+ *
+ * Returns "" (not null) so callers can use the result directly as an
+ * `<a href>` / `download=` payload without a separate null check.
+ */
+export function resolveFileUrl(fileUrl: string | null | undefined): string {
+  if (!fileUrl) return ""
+  return fileUrl
 }
 
 /**
- * Display/download filename for a potential file (NFM-4309).
+ * Display filename for a potential file (NFM-4309 → NFM-4458).
  *
  * The canonical proxy URL ends in the literal segment "file", so the
- * real name must come from the storage reference: the uploads key or the
- * first supabase object path (bucket prefix and origin stripped). Legacy
- * URL forms keep deriving the name from the URL itself.
+ * real name must come from the storage reference: the uploads key or
+ * the first supabase object path (bucket prefix and origin stripped).
  */
 export function resolveFileName(fileUrl: string, extra?: Record<string, unknown> | null): string {
   const storage = extra?.file_storage
@@ -85,5 +72,5 @@ export function resolveFileName(fileUrl: string, extra?: Record<string, unknown>
       }
     }
   }
-  return fileNameFromUrl(fileUrl)
+  return lastPathSegment(fileUrl) || fileUrl
 }
