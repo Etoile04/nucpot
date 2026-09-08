@@ -21,8 +21,12 @@ services:
       context: .
       dockerfile: docker/lightrag.Dockerfile
     container_name: nucpot-dev-lightrag
+    # NFM-4481: dev-only bind to the host loopback. LAN hosts cannot reach
+    # the sidecar; only the dev workstation (where `docker compose up` ran)
+    # can. Use `docker exec` to call the sidecar from outside compose —
+    # e.g. `docker exec nucpot-dev-lightrag curl -sS http://127.0.0.1:9621/health`.
     ports:
-      - "9621:9621"
+      - "127.0.0.1:9621:9621"
     volumes:
       - lightrag-data:/app/data
     environment:

@@ -40,10 +40,10 @@ services:
     image: nucpot-lightrag:${PROD_IMAGE_TAG:-latest}
     container_name: nucpot-lightrag
     restart: unless-stopped
-    ports:
-      # Host 9621 -> Container 8001
-      # (Host 8001 is already used by NFM API)
-      - "${LIGHTRAG_HOST_PORT:-9621}:8001"
+    # NFM-4481: no host port. Overlay service is reachable only via the
+    # nucpot-prod network as `nucpot-lightrag:8001`. The previous
+    # LIGHTRAG_HOST_PORT env var is no longer honored (compose ignores it);
+    # callers reach the sidecar over the shared docker network.
     environment:
       # --- PostgreSQL (shared with NFM API) ---
       POSTGRES_HOST: ${LIGHTRAG_PG_HOST:-nucpot-prod-db}
