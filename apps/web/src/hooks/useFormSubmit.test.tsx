@@ -120,8 +120,12 @@ describe("useFormSubmit — state machine", () => {
           mutationFn: async () => {
             // Throw a plain object so neither the Error nor string branch of
             // toMessage matches — the fallback is the only source of truth.
-            // eslint-disable-next-line @typescript-eslint/no-throw-literal
-            throw { code: "E_FOO" }
+            // Note: the previous `@typescript-eslint/no-throw-literal` disable
+            // was removed because that rule no longer exists in the current
+            // typescript-eslint; assigning to `unknown` keeps the linter quiet
+            // without referencing an undefined rule.
+            const thrown: unknown = { code: "E_FOO" }
+            throw thrown
           },
           errorFallback: "网络错误",
         }),
