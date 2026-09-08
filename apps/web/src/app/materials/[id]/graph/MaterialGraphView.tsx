@@ -11,13 +11,14 @@
  * not-found Result without polluting the error path).
  */
 
-import { useCallback } from "react"
+import { useCallback, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Typography, Skeleton, Result, Button } from "antd"
 import type { GraphNode, GraphData } from "@/components/graph"
 import { getKGGraph, transformGraphResponse, type KGGraphResponse } from "@/lib/kg-api"
+import { resolveMaterialLink } from "@/lib/material-link"
 import { useGraphView } from "@/hooks/useGraphView"
 
 const { Title, Text } = Typography
@@ -174,23 +175,36 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
 
   const { data, status, error, retry } = view
 
+  // NFM-4445 — tool tip state for non-material nodes and no-bridge Material
+  // nodes (NFM-4093 same-name cohort). Same pattern as MaterialSubgraphView.
+  const [tooltip, setTooltip] = useState<GraphNode | null>(null)
+
+  const dismissTooltip = useCallback(() => {
+    setTooltip(null)
+  }, [])
+
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
       if (data?.focalId && node.id === data.focalId) return
 
-      // NFM-4445 — Material nodes route to the canonical materials.id
-      // (server-supplied bridge), never the KG-node UUID.  Same-name
-      // cohorts without a bridge (NFM-4093) fall through to the
-      // generic KG-node route.  Non-material nodes always go to the
-      // KG node page.
-      if (node.type === "material" && node.materials_id) {
-        router.push(`/materials/${node.materials_id}/properties`)
-      } else {
-        router.push(`/kg/node/${node.id}`)
+      // NFM-4445 — single decision-packet resolver. Material nodes with a
+      // server-supplied bridge navigate to the canonical materials.id (with
+      // /properties suffix to land on the material's property panel rather
+      // than the bare detail page). Non-Material nodes and no-bridge Material
+      // nodes (NFM-4093 same-name cohort) fall through to the tooltip.
+      const decision = resolveMaterialLink(node)
+      if (decision.kind === "navigate") {
+        router.push(`${decision.href}/properties`)
+        return
       }
+      setTooltip(node)
     },
     [router, data?.focalId],
   )
+
+  const handleNodeHover = useCallback((node: GraphNode | null) => {
+    setTooltip(node)
+  }, [])
 
   // NFM-4449: status-aware render. Each branch maps cleanly onto the
   // 5-state machine. "fetch" / "retry" both render the canvas (the
@@ -241,11 +255,33 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
         <GraphCanvas
           data={data.data}
           onNodeClick={handleNodeClick}
+          onNodeHover={handleNodeHover}
           height={GRAPH_HEIGHT}
           showControls={true}
           initialZoom={1}
           className="material-graph-canvas"
         />
+      )}
+
+      {/* Tooltip for non-material nodes and no-bridge Material nodes
+          (NFM-4093 same-name cohort). Same data-testid as the subgraph
+          view so E2E QA can find both surfaces. */}
+      {tooltip && (
+        <div
+          role="tooltip"
+          data-testid="material-graph-tooltip"
+          className="mt-4 p-4 rounded-lg bg-[var(--bg-elevated,#1a1a2e)] border border-[var(--border-color,#2d2d44)] flex items-start justify-between gap-4"
+        >
+          <div>
+            <Text type="secondary" className="block text-xs uppercase mb-1">
+              {tooltip.type}
+            </Text>
+            <Text className="text-white">{tooltip.label}</Text>
+          </div>
+          <Button size="small" type="text" onClick={dismissTooltip}>
+            Close
+          </Button>
+        </div>
       )}
     </main>
   )
