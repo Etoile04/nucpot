@@ -4,15 +4,16 @@
  * Per NFM-3550 S.3.3 — edit entity_types and relation_types arrays.
  * When versionId is empty string, operates in "new" mode (F3 fix).
  */
-'use client'
+"use client"
 
-import { useState, useEffect, useCallback, use } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useOntologyDetail } from '@/features/ontology/hooks/use-ontology-detail'
-import { useOntologyMutations } from '@/features/ontology/hooks/use-ontology-mutations'
-import { ErrorPanel } from '@/features/ontology/components/error-panel'
-import type { EntityType, RelationType } from '@/features/ontology/types'
+import { useState, useEffect, useCallback, use } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useOntologyDetail } from "@/features/ontology/hooks/use-ontology-detail"
+import { useOntologyMutations } from "@/features/ontology/hooks/use-ontology-mutations"
+import { ErrorPanel } from "@/features/ontology/components/error-panel"
+import type { EntityType, RelationType } from "@/features/ontology/types"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 interface EditPageProps {
   params: Promise<{ typeId: string }>
@@ -36,19 +37,19 @@ interface RelationFormRow {
 function entityToRow(et: EntityType): EntityFormRow {
   return {
     name: et.name,
-    chinese_name: et.chinese_name ?? '',
-    english_name: et.english_name ?? '',
-    domain: et.domain ?? '',
-    description: et.description ?? '',
+    chinese_name: et.chinese_name ?? "",
+    english_name: et.english_name ?? "",
+    domain: et.domain ?? "",
+    description: et.description ?? "",
   }
 }
 
 function relationToRow(rt: RelationType): RelationFormRow {
   return {
     name: rt.name,
-    source_types: (rt.source_types ?? []).join(', '),
-    target_types: (rt.target_types ?? []).join(', '),
-    description: rt.description ?? '',
+    source_types: (rt.source_types ?? []).join(", "),
+    target_types: (rt.target_types ?? []).join(", "),
+    description: rt.description ?? "",
   }
 }
 
@@ -67,31 +68,97 @@ function rowToEntity(r: EntityFormRow): EntityType {
 function rowToRelation(r: RelationFormRow): RelationType {
   return {
     name: r.name,
-    source_types: r.source_types ? r.source_types.split(',').map(s => s.trim()).filter(Boolean) : null,
-    target_types: r.target_types ? r.target_types.split(',').map(s => s.trim()).filter(Boolean) : null,
+    source_types: r.source_types
+      ? r.source_types
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : null,
+    target_types: r.target_types
+      ? r.target_types
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : null,
     description: r.description || null,
     display_name: null,
     properties_schema: null,
   }
 }
 
-const EMPTY_ENTITY: EntityFormRow = { name: '', chinese_name: '', english_name: '', domain: '', description: '' }
-const EMPTY_RELATION: RelationFormRow = { name: '', source_types: '', target_types: '', description: '' }
+const EMPTY_ENTITY: EntityFormRow = {
+  name: "",
+  chinese_name: "",
+  english_name: "",
+  domain: "",
+  description: "",
+}
+const EMPTY_RELATION: RelationFormRow = {
+  name: "",
+  source_types: "",
+  target_types: "",
+  description: "",
+}
 
 export function OntologyEditForm({ versionId }: { versionId: string }) {
   const router = useRouter()
-  const isNew = versionId === ''
+  const isNew = versionId === ""
 
-  const { version, entityTypes, relationTypes, loading: detailLoading, error: detailError, refetch } =
-    useOntologyDetail(isNew ? null : versionId)
-  const { saving, error: mutationError, createDraft, updateDraft, publishVersion } = useOntologyMutations()
+  const {
+    version,
+    entityTypes,
+    relationTypes,
+    loading: detailLoading,
+    error: detailError,
+    refetch,
+  } = useOntologyDetail(isNew ? null : versionId)
+  const { createDraft, updateDraft, publishVersion } = useOntologyMutations()
 
-  const [entities, setEntities] = useState<EntityFormRow[]>(
-    isNew ? [{ ...EMPTY_ENTITY }] : [],
-  )
+  const [entities, setEntities] = useState<EntityFormRow[]>(isNew ? [{ ...EMPTY_ENTITY }] : [])
   const [relations, setRelations] = useState<RelationFormRow[]>([])
-  const [changelog, setChangelog] = useState('')
+  const [changelog, setChangelog] = useState("")
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  // NFM-4456: drive both save-draft and publish flows through the shared
+  // useFormSubmit state machine so the UI status / error rendering is
+  // identical to every other form in the app.
+  const saveDraft = useFormSubmit<
+    {
+      kind: "create" | "update"
+      versionId: string
+      ontologyData: { entity_types: EntityType[]; relation_types: RelationType[] }
+      changelog: string
+    },
+    { id: string }
+  >({
+    mutationFn: (vars) => {
+      if (vars.kind === "create") {
+        return createDraft.mutateAsync({
+          changelog: vars.changelog,
+          ontologyData: vars.ontologyData,
+        })
+      }
+      return updateDraft.mutateAsync({
+        versionId: vars.versionId,
+        patch: { ontology_data: vars.ontologyData, changelog: vars.changelog },
+      })
+    },
+    onSuccess: (created) => {
+      setSuccessMsg("Draft saved")
+      if (isNew && created?.id) {
+        router.push("/admin/ontology/" + created.id)
+      }
+    },
+  })
+
+  const publish = useFormSubmit<{ versionId: string; changelog: string }, unknown>({
+    mutationFn: (vars) =>
+      publishVersion.mutateAsync({ versionId: vars.versionId, changelog: vars.changelog }),
+    onSuccess: () => {
+      setSuccessMsg("Published")
+      setTimeout(() => router.push("/admin/ontology/" + versionId), 2000)
+    },
+  })
 
   useEffect(() => {
     if (!isNew && version && entityTypes.length > 0) {
@@ -101,63 +168,66 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
   }, [isNew, version, entityTypes, relationTypes])
 
   const handleAddEntity = useCallback(() => {
-    setEntities(prev => [...prev, { ...EMPTY_ENTITY }])
+    setEntities((prev) => [...prev, { ...EMPTY_ENTITY }])
   }, [])
 
   const handleRemoveEntity = useCallback((idx: number) => {
-    setEntities(prev => prev.filter((_, i) => i !== idx))
+    setEntities((prev) => prev.filter((_, i) => i !== idx))
   }, [])
 
-  const handleEntityChange = useCallback((idx: number, field: keyof EntityFormRow, value: string) => {
-    setEntities(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
-  }, [])
+  const handleEntityChange = useCallback(
+    (idx: number, field: keyof EntityFormRow, value: string) => {
+      setEntities((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)))
+    },
+    [],
+  )
 
   const handleAddRelation = useCallback(() => {
-    setRelations(prev => [...prev, { ...EMPTY_RELATION }])
+    setRelations((prev) => [...prev, { ...EMPTY_RELATION }])
   }, [])
 
   const handleRemoveRelation = useCallback((idx: number) => {
-    setRelations(prev => prev.filter((_, i) => i !== idx))
+    setRelations((prev) => prev.filter((_, i) => i !== idx))
   }, [])
 
-  const handleRelationChange = useCallback((idx: number, field: keyof RelationFormRow, value: string) => {
-    setRelations(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
-  }, [])
+  const handleRelationChange = useCallback(
+    (idx: number, field: keyof RelationFormRow, value: string) => {
+      setRelations((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)))
+    },
+    [],
+  )
 
   const handleSaveDraft = useCallback(async () => {
-    try {
-      const ontologyData = {
-        entity_types: entities.map(rowToEntity),
-        relation_types: relations.map(rowToRelation),
-      }
-      if (isNew) {
-        const created = await createDraft.mutateAsync({ changelog, ontologyData })
-        setSuccessMsg('Draft saved')
-        router.push('/admin/ontology/' + created.id)
-      } else {
-        await updateDraft.mutateAsync({ versionId, patch: { ontology_data: ontologyData, changelog } })
-        setSuccessMsg('Draft saved')
-      }
-    } catch {
-      // error surfaced via mutationError
+    const ontologyData = {
+      entity_types: entities.map(rowToEntity),
+      relation_types: relations.map(rowToRelation),
     }
-  }, [isNew, versionId, entities, relations, changelog, createDraft, updateDraft, router])
+    try {
+      await saveDraft.submit({
+        kind: isNew ? "create" : "update",
+        versionId,
+        ontologyData,
+        changelog,
+      })
+    } catch {
+      // surfaced via saveDraft.error
+    }
+  }, [isNew, versionId, entities, relations, changelog, saveDraft])
 
   const handlePromote = useCallback(async () => {
     if (!versionId) return
     try {
-      await publishVersion.mutateAsync({ versionId, changelog })
-      setSuccessMsg('Published')
-      setTimeout(() => router.push('/admin/ontology/' + versionId), 2000)
+      await publish.submit({ versionId, changelog })
     } catch {
-      // error surfaced via mutationError
+      // surfaced via publish.error
     }
-  }, [versionId, changelog, publishVersion, router])
+  }, [versionId, changelog, publish])
+
+  const saving = saveDraft.isSubmitting || publish.isSubmitting
+  const mutationError = saveDraft.error ?? publish.error
 
   if (detailLoading) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">Loading...</div>
-    )
+    return <div className="max-w-2xl mx-auto p-6">Loading...</div>
   }
 
   if (detailError && !isNew) {
@@ -173,7 +243,10 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
       <div className="max-w-2xl mx-auto p-6 text-center">
         <p className="text-emerald-400 text-sm">{successMsg}</p>
         {!isNew && (
-          <Link href={'/admin/ontology/' + versionId} className="text-blue-400 text-sm mt-3 inline-block">
+          <Link
+            href={"/admin/ontology/" + versionId}
+            className="text-blue-400 text-sm mt-3 inline-block"
+          >
             Go to detail
           </Link>
         )}
@@ -181,9 +254,10 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
     )
   }
 
-  const backHref = isNew ? '/admin/ontology' : '/admin/ontology/' + versionId
+  const backHref = isNew ? "/admin/ontology" : "/admin/ontology/" + versionId
 
-  const inputCls = 'w-full px-3 py-2 rounded border border-gray-600 bg-gray-900 text-gray-200 text-sm outline-none focus:border-blue-500'
+  const inputCls =
+    "w-full px-3 py-2 rounded border border-gray-600 bg-gray-900 text-gray-200 text-sm outline-none focus:border-blue-500"
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -195,11 +269,16 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
         </header>
 
         <h1 className="text-2xl font-bold text-gray-100 mb-2">
-          {isNew ? 'New ontology version' : `Edit v${version?.version ?? ''}`}
+          {isNew ? "New ontology version" : `Edit v${version?.version ?? ""}`}
         </h1>
         <div className="h-px bg-gray-700 mb-8" />
 
-        <form onSubmit={(e) => { e.preventDefault(); void handleSaveDraft() }}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void handleSaveDraft()
+          }}
+        >
           <fieldset className="border-none p-0 mb-8">
             <legend className="text-lg font-semibold text-gray-100 mb-4 block">Entity Types</legend>
             <div className="space-y-4">
@@ -222,7 +301,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                       <span className="block text-gray-300 text-sm mb-1">Type ID *</span>
                       <input
                         value={entity.name}
-                        onChange={(e) => handleEntityChange(idx, 'name', e.target.value)}
+                        onChange={(e) => handleEntityChange(idx, "name", e.target.value)}
                         disabled={!isNew}
                         required
                         aria-required="true"
@@ -234,7 +313,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                       <span className="block text-gray-300 text-sm mb-1">Domain</span>
                       <input
                         value={entity.domain}
-                        onChange={(e) => handleEntityChange(idx, 'domain', e.target.value)}
+                        onChange={(e) => handleEntityChange(idx, "domain", e.target.value)}
                         placeholder="e.g. Nuclear cladding"
                         className={inputCls}
                       />
@@ -243,7 +322,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                       <span className="block text-gray-300 text-sm mb-1">Chinese label</span>
                       <input
                         value={entity.chinese_name}
-                        onChange={(e) => handleEntityChange(idx, 'chinese_name', e.target.value)}
+                        onChange={(e) => handleEntityChange(idx, "chinese_name", e.target.value)}
                         className={inputCls}
                       />
                     </label>
@@ -251,7 +330,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                       <span className="block text-gray-300 text-sm mb-1">English label</span>
                       <input
                         value={entity.english_name}
-                        onChange={(e) => handleEntityChange(idx, 'english_name', e.target.value)}
+                        onChange={(e) => handleEntityChange(idx, "english_name", e.target.value)}
                         className={inputCls}
                       />
                     </label>
@@ -260,9 +339,9 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                     <span className="block text-gray-300 text-sm mb-1">Description</span>
                     <textarea
                       value={entity.description}
-                      onChange={(e) => handleEntityChange(idx, 'description', e.target.value)}
+                      onChange={(e) => handleEntityChange(idx, "description", e.target.value)}
                       rows={3}
-                      className={inputCls + ' font-mono resize-y min-h-[80px]'}
+                      className={inputCls + " font-mono resize-y min-h-[80px]"}
                     />
                   </label>
                 </div>
@@ -278,7 +357,9 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
           </fieldset>
 
           <fieldset className="border-none p-0 mb-8">
-            <legend className="text-lg font-semibold text-gray-100 mb-4 block">Relation Types</legend>
+            <legend className="text-lg font-semibold text-gray-100 mb-4 block">
+              Relation Types
+            </legend>
             {relations.length === 0 ? (
               <p className="text-gray-500 text-sm">No relation types defined.</p>
             ) : (
@@ -300,26 +381,34 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                         <span className="block text-gray-300 text-sm mb-1">Relation name *</span>
                         <input
                           value={rel.name}
-                          onChange={(e) => handleRelationChange(idx, 'name', e.target.value)}
+                          onChange={(e) => handleRelationChange(idx, "name", e.target.value)}
                           placeholder="e.g. has_composition"
                           className={inputCls}
                         />
                       </label>
                       <div />
                       <label className="block col-span-2">
-                        <span className="block text-gray-300 text-sm mb-1">Source types (comma-separated)</span>
+                        <span className="block text-gray-300 text-sm mb-1">
+                          Source types (comma-separated)
+                        </span>
                         <input
                           value={rel.source_types}
-                          onChange={(e) => handleRelationChange(idx, 'source_types', e.target.value)}
+                          onChange={(e) =>
+                            handleRelationChange(idx, "source_types", e.target.value)
+                          }
                           placeholder="e.g. mat.zr_alloy_phase, mat.zr_alloy_component"
                           className={inputCls}
                         />
                       </label>
                       <label className="block col-span-2">
-                        <span className="block text-gray-300 text-sm mb-1">Target types (comma-separated)</span>
+                        <span className="block text-gray-300 text-sm mb-1">
+                          Target types (comma-separated)
+                        </span>
                         <input
                           value={rel.target_types}
-                          onChange={(e) => handleRelationChange(idx, 'target_types', e.target.value)}
+                          onChange={(e) =>
+                            handleRelationChange(idx, "target_types", e.target.value)
+                          }
                           placeholder="e.g. mat.property"
                           className={inputCls}
                         />
@@ -328,9 +417,9 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                         <span className="block text-gray-300 text-sm mb-1">Description</span>
                         <textarea
                           value={rel.description}
-                          onChange={(e) => handleRelationChange(idx, 'description', e.target.value)}
+                          onChange={(e) => handleRelationChange(idx, "description", e.target.value)}
                           rows={2}
-                          className={inputCls + ' resize-y min-h-[60px]'}
+                          className={inputCls + " resize-y min-h-[60px]"}
                         />
                       </label>
                     </div>
@@ -354,7 +443,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
               onChange={(e) => setChangelog(e.target.value)}
               rows={3}
               aria-label="Changelog"
-              className={inputCls + ' font-mono resize-y min-h-[80px]'}
+              className={inputCls + " font-mono resize-y min-h-[80px]"}
             />
           </fieldset>
 
@@ -371,7 +460,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
               aria-disabled={saving}
               className="px-5 py-2 rounded border border-gray-500 bg-gray-700 text-gray-200 text-sm font-medium cursor-pointer hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {saving ? 'Saving...' : 'Save draft'}
+              {saving ? "Saving..." : "Save draft"}
             </button>
             {!isNew && (
               <button
@@ -380,7 +469,7 @@ export function OntologyEditForm({ versionId }: { versionId: string }) {
                 onClick={() => void handlePromote()}
                 className="px-5 py-2 rounded bg-blue-600 border border-blue-600 text-white text-sm font-medium cursor-pointer hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {saving ? 'Publishing...' : 'Promote and publish'}
+                {saving ? "Publishing..." : "Promote and publish"}
               </button>
             )}
           </div>

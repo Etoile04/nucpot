@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { authApi } from "@/lib/api-client"
+import { useFormSubmit } from "@/hooks/useFormSubmit"
 
 const DEFAULT_REDIRECT = "/admin/blog"
 
@@ -36,27 +37,24 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+
+  const login = useFormSubmit<{ username: string; password: string }, unknown>({
+    mutationFn: ({ username: u, password: p }) => authApi.login(u, p),
+    errorFallback: "网络错误，请稍后重试",
+    onSuccess: () => {
+      const returnTo = searchParams.get("returnTo")
+      const destination = returnTo && isValidReturnTo(returnTo) ? returnTo : DEFAULT_REDIRECT
+      router.push(destination)
+      router.refresh()
+    },
+  })
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
-    setError(null)
-
     try {
-      await authApi.login(username, password)
-      const returnTo = searchParams.get("returnTo")
-      const destination =
-        returnTo && isValidReturnTo(returnTo) ? returnTo : DEFAULT_REDIRECT
-      router.push(destination)
-      router.refresh()
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "网络错误，请稍后重试",
-      )
-    } finally {
-      setIsSubmitting(false)
+      await login.submit({ username, password })
+    } catch {
+      // surfaced via login.error / FormAlert
     }
   }
 
@@ -100,7 +98,7 @@ function LoginForm() {
           请登录管理员账号
         </p>
 
-        {error && (
+        {login.status === "error" && login.error ? (
           <div
             style={{
               marginBottom: "1.5rem",
@@ -110,10 +108,11 @@ function LoginForm() {
               borderRadius: 4,
               color: "#ff4d4f",
             }}
+            role="alert"
           >
-            {error}
+            {login.error}
           </div>
-        )}
+        ) : null}
 
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: "1.5rem" }}>
@@ -176,7 +175,7 @@ function LoginForm() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={login.isSubmitting}
             style={{
               width: "100%",
               marginTop: "1.5rem",
@@ -184,13 +183,13 @@ function LoginForm() {
               fontSize: "1rem",
               fontWeight: 500,
               color: "#fff",
-              background: isSubmitting ? "#bfbfbf" : "#1890ff",
+              background: login.isSubmitting ? "#bfbfbf" : "#1890ff",
               border: "none",
               borderRadius: 4,
-              cursor: isSubmitting ? "not-allowed" : "pointer",
+              cursor: login.isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            {isSubmitting ? "登录中..." : "登录"}
+            {login.isSubmitting ? "登录中..." : "登录"}
           </button>
         </form>
       </div>

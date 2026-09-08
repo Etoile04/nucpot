@@ -1,9 +1,10 @@
 "use client"
 
-import { useCallback, useState } from "react"
-import { Button, Form, Input, Modal, Radio, App, Alert } from "antd"
+import { useCallback } from "react"
+import { Button, Form, Input, Modal, Radio, App } from "antd"
 import { BugOutlined, BulbOutlined, EditOutlined, QuestionCircleOutlined } from "@ant-design/icons"
 import { FEEDBACK_TYPES, submitFeedback, type FeedbackPayload } from "@/lib/feedback-api"
+import { useFormSubmit, FormAlert } from "@/components/forms"
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
   bug_report: <BugOutlined />,
@@ -24,19 +25,33 @@ interface FeedbackFormValues {
   contact_email?: string
 }
 
-type SubmitStatus = "idle" | "submitting" | "success" | "error"
-
 export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
   const [form] = Form.useForm<FeedbackFormValues>()
-  const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle")
-  const [submitError, setSubmitError] = useState<string | null>(null)
   const { message } = App.useApp()
+
+  const submitState = useFormSubmit<FeedbackFormValues, unknown>({
+    mutationFn: (values) => {
+      const payload: FeedbackPayload = {
+        ...values,
+        page_url: window.location.href,
+      }
+      return submitFeedback(payload)
+    },
+    errorFallback: "提交失败，请稍后重试",
+    onSuccess: () => {
+      message.success("感谢您的反馈！我们会尽快处理。")
+      handleClose()
+    },
+    onError: (err) => {
+      const errorMessage = err instanceof Error ? err.message : "提交失败，请稍后重试"
+      message.error(errorMessage)
+    },
+  })
 
   const handleReset = useCallback(() => {
     form.resetFields()
-    setSubmitStatus("idle")
-    setSubmitError(null)
-  }, [form])
+    submitState.reset()
+  }, [form, submitState])
 
   const handleClose = useCallback(() => {
     handleReset()
@@ -45,33 +60,19 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
 
   const handleSubmit = useCallback(
     async (values: FeedbackFormValues) => {
-      setSubmitStatus("submitting")
-      setSubmitError(null)
       try {
-        const payload: FeedbackPayload = {
-          ...values,
-          page_url: window.location.href,
-        }
-
-        await submitFeedback(payload)
-        setSubmitStatus("success")
-        message.success("感谢您的反馈！我们会尽快处理。")
-        handleClose()
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "提交失败，请稍后重试"
-        setSubmitStatus("error")
-        setSubmitError(errorMessage)
-        message.error(errorMessage)
+        await submitState.submit(values)
+      } catch {
+        // surfaced via submitState.error / FormAlert
       }
     },
-    [handleClose, message],
+    [submitState],
   )
 
   const handleFinishFailed = useCallback(() => {
-    setSubmitStatus("idle")
-    setSubmitError(null)
+    submitState.reset()
     message.warning("请完善必填项后再提交")
-  }, [message])
+  }, [message, submitState])
 
   return (
     <Modal
@@ -91,12 +92,15 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         initialValues={{ feedback_type: "bug_report" }}
         requiredMark
       >
-        {submitStatus === "error" && submitError ? (
+        {submitState.status === "error" ? (
           <Form.Item>
-            <Alert type="error" showIcon message="提交失败" description={submitError} />
-            <Button size="small" danger className="mt-2" onClick={() => form.submit()}>
-              重试
-            </Button>
+            <FormAlert
+              status={submitState.status}
+              error={submitState.error}
+              theme="antd"
+              onRetry={() => form.submit()}
+              retryLabel="重试"
+            />
           </Form.Item>
         ) : null}
         <Form.Item
@@ -149,7 +153,7 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
         </Form.Item>
 
         <Form.Item>
-          <Button type="primary" htmlType="submit" loading={submitStatus === "submitting"} block>
+          <Button type="primary" htmlType="submit" loading={submitState.isSubmitting} block>
             提交反馈
           </Button>
         </Form.Item>

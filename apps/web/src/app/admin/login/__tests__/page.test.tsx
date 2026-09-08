@@ -6,19 +6,8 @@
  * Also validates open-redirect protection.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  vi,
-  beforeEach,
-} from "vitest"
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-} from "@testing-library/react"
+import { describe, it, expect, vi, beforeEach } from "vitest"
+import { render, screen, fireEvent, waitFor } from "@/test/render-with-providers"
 const pushMock = vi.fn()
 const refreshMock = vi.fn()
 let mockSearchParamsString = ""
@@ -65,15 +54,12 @@ describe("LoginPage — returnTo redirect", () => {
   })
 
   it("redirects to returnTo path when provided as query param", async () => {
-    mockSearchParamsString =
-      "returnTo=%2Fdashboard%2Fliterature%3Fpage%3D3%26status%3Dpending"
+    mockSearchParamsString = "returnTo=%2Fdashboard%2Fliterature%3Fpage%3D3%26status%3Dpending"
     render(<LoginPage />)
     fillAndSubmit("admin@example.com", "pass123")
 
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith(
-        "/dashboard/literature?page=3&status=pending",
-      )
+      expect(pushMock).toHaveBeenCalledWith("/dashboard/literature?page=3&status=pending")
     })
   })
 

@@ -6,14 +6,13 @@
 
 "use client"
 
-import { useState } from "react"
-import { Alert, Form, Input, Modal, Select } from "antd"
+import { Form, Input, Modal, Select } from "antd"
 
 import { registerHubNode } from "@/lib/admin/hub-api"
 import type { NodeRegisterRequest, ResourceNode } from "@/lib/admin/hub-types"
+import { useFormSubmit, FormAlert } from "@/components/forms"
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const NODE_TYPE_OPTIONS = [
   { value: "computing", label: "计算节点 (computing)" },
@@ -27,14 +26,21 @@ interface RegisterNodeModalProps {
   onRegistered: (node: ResourceNode) => void
 }
 
-export default function RegisterNodeModal({
-  open,
-  onClose,
-  onRegistered,
-}: RegisterNodeModalProps) {
+export default function RegisterNodeModal({ open, onClose, onRegistered }: RegisterNodeModalProps) {
   const [form] = Form.useForm<NodeRegisterRequest>()
-  const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const submit = useFormSubmit<NodeRegisterRequest, ResourceNode>({
+    mutationFn: (values) =>
+      registerHubNode({
+        ...values,
+        public_key: values.public_key || null,
+      }),
+    errorFallback: "注册节点失败",
+    onSuccess: (node) => {
+      form.resetFields()
+      onRegistered(node)
+    },
+  })
 
   const handleOk = async () => {
     let values: NodeRegisterRequest
@@ -43,26 +49,16 @@ export default function RegisterNodeModal({
     } catch {
       return // Validation errors are rendered inline by the form.
     }
-
-    setSubmitting(true)
-    setSubmitError(null)
     try {
-      const node = await registerHubNode({
-        ...values,
-        public_key: values.public_key || null,
-      })
-      form.resetFields()
-      onRegistered(node)
-    } catch (error: unknown) {
-      setSubmitError(error instanceof Error ? error.message : "注册节点失败")
-    } finally {
-      setSubmitting(false)
+      await submit.submit(values)
+    } catch {
+      // surfaced via submit.error / FormAlert
     }
   }
 
   const handleCancel = () => {
     form.resetFields()
-    setSubmitError(null)
+    submit.reset()
     onClose()
   }
 
@@ -74,7 +70,7 @@ export default function RegisterNodeModal({
       onCancel={handleCancel}
       okText="注册"
       cancelText="取消"
-      confirmLoading={submitting}
+      confirmLoading={submit.isSubmitting}
       destroyOnHidden
     >
       <Form form={form} layout="vertical" name="register-node">
@@ -124,8 +120,14 @@ export default function RegisterNodeModal({
           <Input.TextArea rows={3} placeholder="用于加密校验的公钥" />
         </Form.Item>
       </Form>
-      {submitError ? (
-        <Alert type="error" showIcon message={submitError} role="alert" />
+      {submit.status === "error" ? (
+        <FormAlert
+          status={submit.status}
+          error={submit.error}
+          theme="antd"
+          onRetry={handleOk}
+          retryLabel="重试"
+        />
       ) : null}
     </Modal>
   )
