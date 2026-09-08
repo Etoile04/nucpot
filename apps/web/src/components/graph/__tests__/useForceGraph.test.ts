@@ -105,9 +105,7 @@ describe("useForceGraph", () => {
   })
 
   it("initializes simulation with nodes and edges", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     expect(result.current.simNodes).toHaveLength(3)
     expect(result.current.simEdges).toHaveLength(2)
@@ -117,9 +115,7 @@ describe("useForceGraph", () => {
   })
 
   it("selects a node by id", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     act(() => {
       result.current.selectNode("n1")
@@ -129,9 +125,7 @@ describe("useForceGraph", () => {
   })
 
   it("hovers a node by id", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     act(() => {
       result.current.hoverNode("n2")
@@ -147,9 +141,7 @@ describe("useForceGraph", () => {
   })
 
   it("zoomTo updates viewport k", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     act(() => {
       result.current.zoomTo(2.5)
@@ -159,9 +151,7 @@ describe("useForceGraph", () => {
   })
 
   it("fitToView resets viewport to origin", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     act(() => {
       result.current.zoomTo(3)
@@ -175,9 +165,7 @@ describe("useForceGraph", () => {
   })
 
   it("setViewport updates viewport x, y, k", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     const newViewport: GraphViewport = { x: 50, y: 100, k: 1.5 }
 
@@ -189,9 +177,7 @@ describe("useForceGraph", () => {
   })
 
   it("restart re-heats the simulation", async () => {
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     // Wait for the async createSimulation to resolve and set simRef
     await waitFor(() => {
@@ -207,9 +193,7 @@ describe("useForceGraph", () => {
   })
 
   it("handles large datasets (250 nodes)", () => {
-    const { result } = renderHook(() =>
-      useForceGraph(LARGE_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(LARGE_DATA, 800, 600))
 
     expect(result.current.simNodes).toHaveLength(250)
     expect(result.current.simEdges).toHaveLength(300)
@@ -227,9 +211,7 @@ describe("useForceGraph", () => {
       throw new Error("d3-force transitive API missing")
     })
 
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     // Initially the hook sets isRunning=true while waiting for the simulation.
     expect(result.current.isRunning).toBe(true)
@@ -245,9 +227,7 @@ describe("useForceGraph", () => {
   it("does not set isRunning for empty data (NFM-2608 empty-data guard)", () => {
     const EMPTY_DATA: GraphData = { nodes: [], edges: [] }
 
-    const { result } = renderHook(() =>
-      useForceGraph(EMPTY_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(EMPTY_DATA, 800, 600))
 
     // Must NOT enter running state — createSimulation returns null for
     // empty data and the old code never cleared isRunning.
@@ -274,9 +254,7 @@ describe("useForceGraph", () => {
       ],
     }
 
-    const { result } = renderHook(() =>
-      useForceGraph(DANGLING_EDGE_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(DANGLING_EDGE_DATA, 800, 600))
 
     // Only the valid edge (n1→n2) should survive; two dangling edges dropped.
     expect(result.current.simNodes).toHaveLength(2)
@@ -296,9 +274,7 @@ describe("useForceGraph", () => {
       ],
     }
 
-    const { result } = renderHook(() =>
-      useForceGraph(ALL_DANGLING, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(ALL_DANGLING, 800, 600))
 
     expect(result.current.simNodes).toHaveLength(1)
     expect(result.current.simEdges).toHaveLength(0)
@@ -330,9 +306,7 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // per-tick React re-renders.
     vi.useFakeTimers()
 
-    const { result } = renderHook(() =>
-      useForceGraph(LARGE_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(LARGE_DATA, 800, 600))
 
     // Flush microtasks so the async setup registers tick handlers and
     // the watchdog.
@@ -361,9 +335,7 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // consecutive ticks instead of waiting for the 10s ceiling.
     mockAlphaValue = 0.001 // below STUCK_ALPHA_THRESHOLD (0.005)
 
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     await flushHookSetup()
 
@@ -387,9 +359,7 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // NOT declare stuck — the simulation is making progress.
     mockAlphaValue = 0.5
 
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     await flushHookSetup()
 
@@ -412,9 +382,7 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // dip doesn't trigger premature stop.
     mockAlphaValue = 0.5
 
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     await flushHookSetup()
 
@@ -447,9 +415,7 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // firing one per tick.
     mockAlphaValue = 0.5
 
-    const { result } = renderHook(() =>
-      useForceGraph(SMALL_DATA, 800, 600),
-    )
+    const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
 
     await flushHookSetup()
 
@@ -520,5 +486,80 @@ describe("useForceGraph (NFM-4446 convergence guards)", () => {
     // an unmounted component" warning, and state is consistent.
     // We assert the hook is in a stable terminal state.
     expect(result.current.simNodes.length).toBeGreaterThan(0)
+  })
+
+  /* ------------------------------------------------------------------ */
+  /*  NFM-4449 Q2-cont: layoutStatus 3-state + configurable cap         */
+  /* ------------------------------------------------------------------ */
+
+  describe("layoutStatus (NFM-4449 3-state convergence signal)", () => {
+    it("reports 'running' while simulation is in progress", async () => {
+      const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
+      await flushHookSetup()
+      expect(result.current.layoutStatus).toBe("running")
+    })
+
+    it("reports 'converged' when d3-force fires 'end' (natural convergence)", async () => {
+      const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
+      await flushHookSetup()
+      const endHandler = registeredEndHandlers[0]
+      expect(endHandler).toBeDefined()
+
+      await act(async () => {
+        endHandler!()
+      })
+
+      expect(result.current.layoutStatus).toBe("converged")
+    })
+
+    it("reports 'settled' when hard timeout cap fires", async () => {
+      vi.useFakeTimers()
+
+      const { result } = renderHook(() => useForceGraph(LARGE_DATA, 800, 600))
+      await flushHookSetup()
+      expect(result.current.layoutStatus).toBe("running")
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MAX_SIMULATION_MS + 1_000)
+      })
+
+      expect(result.current.layoutStatus).toBe("settled")
+    })
+
+    it("reports 'settled' when stuck-alpha watchdog fires", async () => {
+      mockAlphaValue = 0.001 // below STUCK_ALPHA_THRESHOLD (0.005)
+      const { result } = renderHook(() => useForceGraph(SMALL_DATA, 800, 600))
+      await flushHookSetup()
+
+      const tickHandler = registeredTickHandlers[0]
+      await act(async () => {
+        for (let i = 0; i < 30; i++) {
+          tickHandler!()
+        }
+      })
+
+      expect(result.current.layoutStatus).toBe("settled")
+    })
+
+    it("honors a custom cap passed via options.maxSimulationMs", async () => {
+      vi.useFakeTimers()
+      const CUSTOM_CAP_MS = 500
+
+      const { result } = renderHook(() =>
+        useForceGraph(SMALL_DATA, 800, 600, { maxSimulationMs: CUSTOM_CAP_MS }),
+      )
+      await flushHookSetup()
+      expect(result.current.layoutStatus).toBe("running")
+
+      // Advance past custom cap; settle should fire.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CUSTOM_CAP_MS + 100)
+      })
+
+      expect(result.current.layoutStatus).toBe("settled")
+      // The default 10s cap must NOT have settled first — proves
+      // the override was applied.
+      expect(result.current.layoutStatus).not.toBe("running")
+    })
   })
 })

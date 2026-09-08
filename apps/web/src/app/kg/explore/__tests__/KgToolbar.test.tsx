@@ -13,34 +13,21 @@ describe("KgToolbar", () => {
     onZoomOut: vi.fn(),
     onFit: vi.fn(),
     onToggleType: vi.fn(),
-    activeTypes: new Set<GraphNodeType>([
-      "material",
-      "property",
-      "entity",
-      "default",
-    ]),
+    activeTypes: new Set<GraphNodeType>(["material", "property", "entity", "default"]),
   }
 
   it("renders zoom in, zoom out, and fit buttons", () => {
     render(<KgToolbar {...defaultProps} />)
 
-    expect(
-      screen.getByRole("button", { name: /zoom in/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /zoom out/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /fit to view/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /zoom in/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /zoom out/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /fit to view/i })).toBeInTheDocument()
   })
 
   it("renders type filter dropdown", () => {
     render(<KgToolbar {...defaultProps} />)
 
-    expect(
-      screen.getByRole("combobox", { name: /filter by type/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: /filter by type/i })).toBeInTheDocument()
   })
 
   it("calls onZoomIn when zoom in button is clicked", () => {

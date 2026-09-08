@@ -11,13 +11,7 @@
 
 /** Semantic categories for graph nodes, mapped to distinct colors/shapes. */
 export type NodeCategory =
-  | "material"
-  | "property"
-  | "potential"
-  | "ontology"
-  | "source"
-  | "extraction"
-  | "unknown"
+  "material" | "property" | "potential" | "ontology" | "source" | "extraction" | "unknown"
 
 /** Valid NodeCategory values for iteration. */
 export const NODE_CATEGORIES: readonly NodeCategory[] = [
@@ -128,6 +122,35 @@ export interface GraphCanvasProps {
   readonly height?: number | string
   readonly initialZoom?: number
   readonly showControls?: boolean
+  /**
+   * NFM-4449 Q2-continuation: hard cap (ms) on layout time before the
+   * simulation is forcibly stopped. Default: 10_000 (useForceGraph
+   * default). Pass a smaller value for snappier feel on small graphs.
+   */
+  readonly maxSimulationMs?: number
+}
+
+/**
+ * NFM-4449 Q3: imperative handle exposed by `GraphCanvas` via `ref`.
+ * Lets external toolbars (e.g. /kg/explore top toolbar) drive the
+ * canvas viewport without each consumer instantiating its own
+ * (no-op) `useGraphControls`. All four methods are safe to call
+ * before the simulation has converged — they only mutate viewport
+ * state, not the d3 simulation.
+ */
+export interface GraphViewportApi {
+  /** Increase scale by the configured zoom step (1.3x, clamped). */
+  zoomIn: () => void
+  /** Decrease scale by the configured zoom step (1/1.3x, clamped). */
+  zoomOut: () => void
+  /** Reset viewport to {x: 0, y: 0, k: 1}. */
+  fit: () => void
+  /**
+   * Reset viewport to {x: 0, y: 0, k: 1}. Kept as a distinct name
+   * for spec parity with the issue brief; currently identical to
+   * `fit()`.
+   */
+  reset: () => void
 }
 
 /* ------------------------------------------------------------------ */

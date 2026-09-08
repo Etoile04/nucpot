@@ -122,34 +122,22 @@ describe("KgExploreView", () => {
   it("renders GraphCanvas with provided initial data", () => {
     render(<KgExploreView initialData={initialData} />)
 
-    expect(
-      screen.getByRole("application", { name: /knowledge graph/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("application", { name: /knowledge graph/i })).toBeInTheDocument()
   })
 
   it("renders toolbar with zoom and filter controls", () => {
     render(<KgExploreView initialData={initialData} />)
 
-    expect(
-      screen.getByRole("button", { name: /zoom in/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /zoom out/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /fit to view/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("combobox", { name: /filter by type/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /zoom in/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /zoom out/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /fit to view/i })).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: /filter by type/i })).toBeInTheDocument()
   })
 
   it("renders legend bar at bottom", () => {
     render(<KgExploreView initialData={initialData} />)
 
-    expect(
-      screen.getByRole("complementary", { name: /graph legend/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("complementary", { name: /graph legend/i })).toBeInTheDocument()
   })
 
   it("filters nodes by toggling type filter", async () => {
@@ -184,9 +172,7 @@ describe("KgExploreView", () => {
     fireEvent.change(select, { target: { value: "material" } })
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/no visible nodes/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/no visible nodes/i)).toBeInTheDocument()
     })
   })
 

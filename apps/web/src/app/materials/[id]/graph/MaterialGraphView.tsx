@@ -1,13 +1,24 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+/**
+ * MaterialGraphView — depth-2 KG neighbourhood view for a single material.
+ *
+ * NFM-4449 Q4: the hand-rolled `useState<ViewState>` + `useEffect`
+ * fetch machine is replaced by `useGraphView`, which collapses
+ * loading/error/empty/fetch into a single 5-state `status` field.
+ * The "not_found" branch is preserved as a sub-state of "empty"
+ * (the queryFn returns `null` for 404s so the UI can render the
+ * not-found Result without polluting the error path).
+ */
+
+import { useCallback } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Typography, Skeleton, Result, Button } from "antd"
 import type { GraphNode, GraphData } from "@/components/graph"
 import { getKGGraph, transformGraphResponse, type KGGraphResponse } from "@/lib/kg-api"
-// ApiHttpError was renamed to ApiError; not used for narrowing here.
+import { useGraphView } from "@/hooks/useGraphView"
 
 const { Title, Text } = Typography
 
@@ -46,20 +57,36 @@ interface MaterialGraphViewProps {
   readonly materialId: string
 }
 
-type FetchStatus = "idle" | "loading" | "success" | "not_found" | "error"
-
-interface ViewState {
-  readonly status: FetchStatus
-  readonly graphData: GraphData | null
+interface GraphFetchResult {
+  /** Resolved graph data, or `null` for 404 (focal material not in KG). */
+  readonly data: GraphData | null
+  /** Focal-node id from the backend, when present. */
   readonly focalId: string | null
-  readonly errorMessage: string | null
 }
 
-const INITIAL_STATE: ViewState = {
-  status: "idle",
-  graphData: null,
-  focalId: null,
-  errorMessage: null,
+/**
+ * NFM-4449 Q4: single queryFn for useGraphView. Translates a 404 from
+ * the backend into a `data: null` result so the consumer can branch
+ * on "not found" without the error path picking it up.
+ */
+async function fetchMaterialGraph(
+  materialId: string,
+): Promise<GraphFetchResult> {
+  try {
+    const response: KGGraphResponse = await getKGGraph({
+      nodeId: materialId,
+      depth: 2,
+    })
+    return {
+      data: transformGraphResponse(response),
+      focalId: response.focal?.id ?? null,
+    }
+  } catch (err) {
+    if (err instanceof Error && /not found/i.test(err.message)) {
+      return { data: null, focalId: null }
+    }
+    throw err
+  }
 }
 
 // ── Sub-components ────────────────────────────────────────────────────
@@ -128,57 +155,28 @@ function ErrorState({
 
 export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
   const router = useRouter()
-  const [state, setState] = useState<ViewState>(INITIAL_STATE)
 
-  const fetchData = useCallback(async () => {
-    setState((prev) => ({
-      ...prev,
-      status: "loading",
-      graphData: null,
-      focalId: null,
-      errorMessage: null,
-    }))
+  // NFM-4449 Q4 + Q6: TanStack Query via useGraphView. queryKey scopes
+  // the cache per material so navigating between two materials doesn't
+  // bleed stale data.
+  const view = useGraphView<GraphFetchResult>({
+    queryKey: ["material-graph", materialId] as const,
+    queryFn: () => fetchMaterialGraph(materialId),
+    // The graph data is focal-material-specific; don't reuse across
+    // navigations. 5s is a small window where a tab switch + return
+    // gets a free refetch instead of a forced refetch.
+    staleTime: 5_000,
+    // 404 → `data: null` is the "empty / not_found" sub-state; the
+    // hook's default isEmpty would treat it as empty, which is what
+    // we want — the view's main render branches on `data === null`.
+    isEmpty: (result) => result.data === null,
+  })
 
-    try {
-      const response: KGGraphResponse = await getKGGraph({
-        nodeId: materialId,
-        depth: 2,
-      })
-
-      const graphData = transformGraphResponse(response)
-
-      setState({
-        status: "success",
-        graphData,
-        focalId: response.focal?.id ?? null,
-        errorMessage: null,
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "未知错误"
-
-      // 404 (not-found in KG) is a normal flow, not a system error.
-      // We match on the message text since the shared request() helper
-      // throws a plain Error after reading the backend's `detail` field;
-      // there is no typed HTTP status on the thrown object.
-      if (err instanceof Error && /not found/i.test(message)) {
-        setState((prev) => ({ ...prev, status: "not_found" }))
-      } else {
-        setState((prev) => ({
-          ...prev,
-          status: "error",
-          errorMessage: message,
-        }))
-      }
-    }
-  }, [materialId])
-
-  useEffect(() => {
-    void fetchData()
-  }, [fetchData])
+  const { data, status, error, retry } = view
 
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
-      if (node.id === state.focalId) return
+      if (data?.focalId && node.id === data.focalId) return
 
       // NFM-4445 — Material nodes route to the canonical materials.id
       // (server-supplied bridge), never the KG-node UUID.  Same-name
@@ -191,9 +189,13 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
         router.push(`/kg/node/${node.id}`)
       }
     },
-    [router, state.focalId],
+    [router, data?.focalId],
   )
 
+  // NFM-4449: status-aware render. Each branch maps cleanly onto the
+  // 5-state machine. "fetch" / "retry" both render the canvas (the
+  // background refetch doesn't block the UI); "loading" / "error" /
+  // "empty" each have their own dedicated UI.
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-8">
       {/* Header */}
@@ -218,20 +220,26 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
       </div>
 
       {/* Loading state */}
-      {state.status === "loading" && <GraphLoadingSkeleton />}
-
-      {/* Not found state */}
-      {state.status === "not_found" && <NotFoundState materialId={materialId} />}
-
-      {/* Error state */}
-      {state.status === "error" && state.errorMessage && (
-        <ErrorState message={state.errorMessage} onRetry={fetchData} />
+      {(status === "loading" || status === "fetch") && status === "loading" && (
+        <GraphLoadingSkeleton />
       )}
 
-      {/* Graph */}
-      {state.status === "success" && state.graphData && (
+      {/* Not found state — useGraphView's isEmpty returns true for
+          data: null, so this branch fires on a 404. */}
+      {status === "empty" && <NotFoundState materialId={materialId} />}
+
+      {/* Error state */}
+      {status === "error" && error && (
+        <ErrorState message={error.message} onRetry={retry} />
+      )}
+
+      {/* Graph — render for "retry" (settled, data is good) and for
+          "fetch" (background refetch with stale data still on screen). */}
+      {(status === "retry" || status === "fetch") &&
+        data &&
+        data.data && (
         <GraphCanvas
-          data={state.graphData}
+          data={data.data}
           onNodeClick={handleNodeClick}
           height={GRAPH_HEIGHT}
           showControls={true}

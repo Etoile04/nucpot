@@ -16,7 +16,9 @@ function makeOptions(
   overrides: Partial<UseGraphKeyboardOptions> = {},
 ): UseGraphKeyboardOptions {
   return {
-    containerRef: { current: container as unknown as SVGSVGElement } as React.RefObject<SVGSVGElement | null>,
+    containerRef: {
+      current: container as unknown as SVGSVGElement,
+    } as React.RefObject<SVGSVGElement | null>,
     viewport: BASE_VIEWPORT,
     selection: BASE_SELECTION,
     nodeIds: [...NODE_IDS],

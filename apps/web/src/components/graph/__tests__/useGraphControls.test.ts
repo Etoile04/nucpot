@@ -8,9 +8,7 @@ describe("useGraphControls", () => {
 
   it("zoomIn increases scale", () => {
     const onChange = vi.fn()
-    const { result } = renderHook(() =>
-      useGraphControls(initialViewport, onChange),
-    )
+    const { result } = renderHook(() => useGraphControls(initialViewport, onChange))
 
     act(() => {
       result.current.zoomIn()
@@ -23,9 +21,7 @@ describe("useGraphControls", () => {
 
   it("zoomOut decreases scale", () => {
     const onChange = vi.fn()
-    const { result } = renderHook(() =>
-      useGraphControls(initialViewport, onChange),
-    )
+    const { result } = renderHook(() => useGraphControls(initialViewport, onChange))
 
     act(() => {
       result.current.zoomOut()
@@ -81,9 +77,7 @@ describe("useGraphControls", () => {
 
   it("scaleViewport applies factor", () => {
     const onChange = vi.fn()
-    const { result } = renderHook(() =>
-      useGraphControls(initialViewport, onChange),
-    )
+    const { result } = renderHook(() => useGraphControls(initialViewport, onChange))
 
     act(() => {
       result.current.scaleViewport(2)

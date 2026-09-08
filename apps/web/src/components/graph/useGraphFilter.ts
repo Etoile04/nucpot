@@ -21,12 +21,7 @@ export interface UseGraphFilterReturn {
   readonly allTypes: readonly GraphNodeType[]
 }
 
-const ALL_TYPES: readonly GraphNodeType[] = [
-  "material",
-  "property",
-  "entity",
-  "default",
-] as const
+const ALL_TYPES: readonly GraphNodeType[] = ["material", "property", "entity", "default"] as const
 
 export function useGraphFilter(
   data: GraphData,
@@ -39,15 +34,11 @@ export function useGraphFilter(
       return data
     }
 
-    const visibleIds = new Set(
-      data.nodes.filter((n) => activeTypes.has(n.type)).map((n) => n.id),
-    )
+    const visibleIds = new Set(data.nodes.filter((n) => activeTypes.has(n.type)).map((n) => n.id))
 
     return {
       nodes: data.nodes.filter((n) => visibleIds.has(n.id)),
-      edges: data.edges.filter(
-        (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
-      ),
+      edges: data.edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target)),
     }
   }, [data, activeTypes])
 

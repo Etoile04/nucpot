@@ -8,19 +8,44 @@
  *
  * Uses D3 force-directed layout (d3-force, d3-zoom) already in the
  * project dependencies — no new packages required.
+ *
+ * NFM-4449 Q3: the canvas exposes an imperative `viewportApi` via
+ * `ref` so external toolbars (e.g. the /kg/explore top toolbar) can
+ * drive zoom/pan/fit without each consumer instantiating its own
+ * (no-op) `useGraphControls` hook. The contract is:
+ *
+ *   - `zoomIn()`  — increase scale by 1.3x (clamped to maxZoom)
+ *   - `zoomOut()` — decrease scale by 1/1.3x (clamped to minZoom)
+ *   - `fit()`     — reset viewport to {x: 0, y: 0, k: 1}
+ *   - `reset()`   — alias of `fit()` (kept for spec parity; same effect)
+ *
+ * NFM-4449 Q2-continuation: the canvas surfaces the 3-state
+ * `layoutStatus` ("running" | "converged" | "settled") so consumers
+ * can tell apart a d3 natural convergence from a hard-timeout freeze.
+ * The hard cap is configurable via the `maxSimulationMs` prop.
  */
 
-import { useRef, useState, useCallback, useMemo, useEffect, Component, type ReactNode } from "react"
+import {
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useImperativeHandle,
+  forwardRef,
+  Component,
+  type ReactNode,
+} from "react"
 import type { GraphNode, SimNode } from "./types"
 import { toNodeType } from "./types"
-import { useForceGraph } from "./useForceGraph"
+import { useForceGraph, MAX_SIMULATION_MS } from "./useForceGraph"
 import { useGraphControls } from "./useGraphControls"
 import { useReducedMotion } from "./useReducedMotion"
 import { useGraphKeyboard } from "./useGraphKeyboard"
 import { SvgRenderer } from "./SvgRenderer"
 import { CanvasRenderer } from "./CanvasRenderer"
 import { GRAPH_CSS_VARS } from "./graph-theme"
-import type { GraphCanvasProps } from "./types"
+import type { GraphCanvasProps, GraphViewportApi } from "./types"
 
 /* ------------------------------------------------------------------ */
 /*  Error boundary                                                    */
@@ -204,16 +229,20 @@ const DEFAULT_HEIGHT = 500
 const DEFAULT_WIDTH = 800
 const SVG_THRESHOLD = 200
 
-export function GraphCanvas({
-  data,
-  onNodeClick,
-  onNodeHover,
-  onExpand,
-  className,
-  height = DEFAULT_HEIGHT,
-  initialZoom = 1,
-  showControls = true,
-}: GraphCanvasProps) {
+export const GraphCanvas = forwardRef<GraphViewportApi, GraphCanvasProps>(function GraphCanvas(
+  {
+    data,
+    onNodeClick,
+    onNodeHover,
+    onExpand,
+    className,
+    height = DEFAULT_HEIGHT,
+    initialZoom = 1,
+    showControls = true,
+    maxSimulationMs = MAX_SIMULATION_MS,
+  },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [dimensions, setDimensions] = useState({
@@ -255,10 +284,33 @@ export function GraphCanvas({
   /*  Force graph simulation                                           */
   /* ---------------------------------------------------------------- */
 
-  const graph = useForceGraph(data, dimensions.width, dimensions.height)
+  const graph = useForceGraph(data, dimensions.width, dimensions.height, {
+    maxSimulationMs,
+  })
   const controls = useGraphControls(graph.viewport, graph.setViewport, {
     initialZoom,
   })
+
+  /* ---------------------------------------------------------------- */
+  /*  Imperative viewportApi (NFM-4449 Q3)                             */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Expose zoom/fit/reset to external toolbars via the ref. The same
+   * `controls` instance powers the internal ControlBar, so the
+   * external toolbar and the in-canvas buttons drive the same
+   * viewport state — no more split/no-op toolbars.
+   */
+  useImperativeHandle<GraphViewportApi, GraphViewportApi>(
+    ref,
+    () => ({
+      zoomIn: () => controls.zoomIn(),
+      zoomOut: () => controls.zoomOut(),
+      fit: () => graph.fitToView(),
+      reset: () => graph.fitToView(),
+    }),
+    [controls.zoomIn, controls.zoomOut, graph.fitToView],
+  )
 
   /* ---------------------------------------------------------------- */
   /*  Keyboard navigation                                              */
@@ -398,7 +450,7 @@ export function GraphCanvas({
       aria-label="Interactive knowledge graph"
     >
       <GraphErrorBoundary key={retryKey} onRetry={handleRetry}>
-        {graph.isRunning && !prefersReducedMotion && <LoadingSkeleton />}
+        {graph.layoutStatus === "running" && !prefersReducedMotion && <LoadingSkeleton />}
 
         {graph.simNodes.length >= SVG_THRESHOLD ? (
           <CanvasRenderer
@@ -437,6 +489,6 @@ export function GraphCanvas({
       </GraphErrorBoundary>
     </div>
   )
-}
+})
 
 export default GraphCanvas

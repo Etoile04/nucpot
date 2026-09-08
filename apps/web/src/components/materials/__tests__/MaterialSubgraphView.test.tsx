@@ -2,8 +2,27 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 // @vitest-environment jsdom
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MaterialSubgraphView } from "../MaterialSubgraphView"
 import { ApiError } from "@/lib/api-client"
+import type { ReactNode } from "react"
+
+/**
+ * NFM-4449: MaterialSubgraphView now reads its data via useGraphView,
+ * which wraps `useQuery` from TanStack Query. Every render in the
+ * non-skipped suites below must therefore be wrapped in a fresh
+ * QueryClientProvider. We keep `retry: false` so a thrown fetch
+ * doesn't retry under the hood and confuse the per-test mock-call
+ * counts.
+ */
+function renderWithQueryClient(node: ReactNode) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>,
+  )
+}
 
 /* ------------------------------------------------------------------ */
 /*  d3-force mock — keeps simulation synchronous (matches sibling     */
@@ -97,7 +116,7 @@ describe.skip("MaterialSubgraphView", () => {
   it("renders loading state initially", () => {
     ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}))
 
-    const { container } = render(<MaterialSubgraphView materialId="ZrO2" />)
+    const { container } = renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     // Ant Design Spin renders with aria-busy but the tip text may not
     // be directly queryable by getByText in jsdom.
@@ -105,7 +124,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("fetches subgraph via getMaterialSubgraph on mount", async () => {
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(getMaterialSubgraph).toHaveBeenCalledWith("ZrO2", 2)
@@ -113,7 +132,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("renders GraphCanvas after data loads", async () => {
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(
@@ -125,7 +144,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("applies aria-label from focal material label on the wrapper", async () => {
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(
@@ -135,7 +154,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("navigates to /materials/<id> when clicking a material node, stripping prefix", async () => {
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Node: Silicon Carbide/i })).toBeInTheDocument()
@@ -147,7 +166,7 @@ describe.skip("MaterialSubgraphView", () => {
   })
 
   it("does not navigate when clicking a non-material node — shows tooltip instead", async () => {
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Node: Density/i })).toBeInTheDocument()
@@ -162,7 +181,7 @@ describe.skip("MaterialSubgraphView", () => {
   it("renders error state with retry button when fetch rejects", async () => {
     ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network down"))
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/network down/i)).toBeInTheDocument()
@@ -176,7 +195,7 @@ describe.skip("MaterialSubgraphView", () => {
       .mockRejectedValueOnce(new Error("Network down"))
       .mockResolvedValueOnce(makeGraphData())
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/network down/i)).toBeInTheDocument()
@@ -195,7 +214,7 @@ describe.skip("MaterialSubgraphView", () => {
       edges: [],
     })
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/暂无关联节点|no related nodes/i)).toBeInTheDocument()
@@ -215,7 +234,7 @@ describe.skip("MaterialSubgraphView click routing", () => {
   function renderWithNodes(nodes: GraphData["nodes"], edges: GraphData["edges"] = []) {
     const data: GraphData = { nodes, edges }
     ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue(data)
-    return render(<MaterialSubgraphView materialId="ZrO2" />)
+    return renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
   }
 
   it("strips material: prefix and navigates for material-type node", async () => {
@@ -311,7 +330,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
       new ApiError("Not Found", 404),
     )
 
-    render(<MaterialSubgraphView materialId="U-10Mo" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="U-10Mo" />)
 
     // The banner copy explicitly references NFM-4093
     await waitFor(() => {
@@ -329,7 +348,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
       new ApiError("Not Found", 404),
     )
 
-    render(<MaterialSubgraphView materialId="U-10Mo" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="U-10Mo" />)
 
     await waitFor(() => {
       expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
@@ -345,7 +364,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
       new ApiError("Internal Server Error", 500),
     )
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/Internal Server Error/i)).toBeInTheDocument()
@@ -358,7 +377,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
   it("still shows the generic error Alert on network failure (non-ApiError)", async () => {
     ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network down"))
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/network down/i)).toBeInTheDocument()
@@ -373,7 +392,7 @@ describe("MaterialSubgraphView — NFM-4096 coverage-gap banner", () => {
       edges: [],
     })
 
-    render(<MaterialSubgraphView materialId="ZrO2" />)
+    renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
 
     await waitFor(() => {
       expect(screen.getByText(/NFM-4093/)).toBeInTheDocument()
@@ -410,7 +429,7 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
   function renderWithGraph(nodes: GraphNode[], edges: GraphEdge[] = []) {
     const data: GraphData = { nodes, edges }
     ;(getMaterialSubgraph as ReturnType<typeof vi.fn>).mockResolvedValue(data)
-    return render(<MaterialSubgraphView materialId="ZrO2" />)
+    return renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
   }
 
   it("routes to /materials/{materials_id} when the bridge is supplied", async () => {

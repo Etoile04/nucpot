@@ -113,9 +113,7 @@ describe("SvgRenderer", () => {
     )
 
     const viewportGroup = container.querySelector(".graph-viewport")
-    expect(viewportGroup?.getAttribute("transform")).toBe(
-      "translate(0, 0) scale(1)",
-    )
+    expect(viewportGroup?.getAttribute("transform")).toBe("translate(0, 0) scale(1)")
   })
 
   it("applies custom viewport transform", () => {
@@ -134,9 +132,7 @@ describe("SvgRenderer", () => {
     )
 
     const viewportGroup = container.querySelector(".graph-viewport")
-    expect(viewportGroup?.getAttribute("transform")).toBe(
-      "translate(50, 100) scale(1.5)",
-    )
+    expect(viewportGroup?.getAttribute("transform")).toBe("translate(50, 100) scale(1.5)")
   })
 
   /* ----- Node category colors ----- */
@@ -220,12 +216,8 @@ describe("SvgRenderer", () => {
     )
 
     const nodeGroups = container.querySelectorAll("[role='button']")
-    const n1 = Array.from(nodeGroups).find(
-      (g) => g.getAttribute("aria-label") === "Node: Uranium",
-    )
-    const n2 = Array.from(nodeGroups).find(
-      (g) => g.getAttribute("aria-label") === "Node: Density",
-    )
+    const n1 = Array.from(nodeGroups).find((g) => g.getAttribute("aria-label") === "Node: Uranium")
+    const n2 = Array.from(nodeGroups).find((g) => g.getAttribute("aria-label") === "Node: Density")
 
     // Hovered node (n1) should not be dimmed (opacity via inline style)
     expect(n1?.getAttribute("style")).toContain("opacity: 1")

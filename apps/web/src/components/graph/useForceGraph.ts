@@ -27,13 +27,7 @@
  */
 
 import { useRef, useEffect, useState, useCallback, useMemo } from "react"
-import type {
-  GraphData,
-  SimNode,
-  SimEdge,
-  GraphViewport,
-  GraphSelection,
-} from "./types"
+import type { GraphData, SimNode, SimEdge, GraphViewport, GraphSelection } from "./types"
 import { toCategory } from "./types"
 import { getNodeRadius } from "./graph-theme"
 
@@ -73,6 +67,26 @@ const INITIAL_RENDER_TICKS = 5
 /** Why the layout finished — used for the dev-mode log only. */
 type LayoutFinishReason = "end" | "timeout" | "stuck"
 
+/**
+ * NFM-4449 Q2-cont: 3-state convergence signal surfaced to consumers.
+ * - `running` — the simulation is actively iterating (or about to start)
+ * - `converged` — d3-force fired `end` (alpha crossed alphaMin naturally)
+ * - `settled` — the simulation was forcibly stopped by the hard-timeout
+ *   ceiling or the stuck-alpha watchdog. Positions are usable but not
+ *   d3-converged; consumers may want to surface a "settled" badge.
+ */
+export type LayoutStatus = "running" | "converged" | "settled"
+
+/** NFM-4449: optional runtime knobs for `useForceGraph`. */
+export interface UseForceGraphOptions {
+  /**
+   * Hard ceiling on layout time (ms). After this many milliseconds the
+   * simulation is forcibly stopped and `layoutStatus` transitions to
+   * `"settled"`. Defaults to {@link MAX_SIMULATION_MS} (10s).
+   */
+  readonly maxSimulationMs?: number
+}
+
 /** Build SimNode from public GraphNode with random initial position. */
 function buildSimNode(node: GraphData["nodes"][number], width: number, height: number): SimNode {
   const category = toCategory(node.type)
@@ -106,7 +120,18 @@ export interface UseForceGraphReturn {
   readonly simEdges: readonly SimEdge[]
   readonly viewport: GraphViewport
   readonly selection: GraphSelection
+  /**
+   * NFM-4446: convenience boolean — true while the simulation is
+   * actively running. Semantically `isRunning === (layoutStatus === "running")`.
+   * Kept for backward compatibility with consumers that haven't yet
+   * migrated to the 3-state `layoutStatus` signal.
+   */
   readonly isRunning: boolean
+  /**
+   * NFM-4449 Q2-continuation: 3-state terminal signal. See `LayoutStatus`
+   * for the three valid values.
+   */
+  readonly layoutStatus: LayoutStatus
   readonly error: Error | null
   readonly setViewport: (v: GraphViewport) => void
   readonly selectNode: (id: string | null) => void
@@ -120,9 +145,11 @@ export function useForceGraph(
   data: GraphData,
   containerWidth: number,
   containerHeight: number,
+  options: UseForceGraphOptions = {},
 ): UseForceGraphReturn {
   const w = containerWidth || DEFAULT_WIDTH
   const h = containerHeight || DEFAULT_HEIGHT
+  const maxSimulationMs = options.maxSimulationMs ?? MAX_SIMULATION_MS
 
   const [simNodes, setSimNodes] = useState<SimNode[]>([])
   const [simEdges, setSimEdges] = useState<SimEdge[]>([])
@@ -131,7 +158,7 @@ export function useForceGraph(
     nodeId: null,
     hoveredId: null,
   })
-  const [isRunning, setIsRunning] = useState(false)
+  const [layoutStatus, setLayoutStatus] = useState<LayoutStatus>("running")
   const [error, setError] = useState<Error | null>(null)
 
   const nodesRef = useRef<SimNode[]>([])
@@ -169,13 +196,15 @@ export function useForceGraph(
     setSelection({ nodeId: null, hoveredId: null })
 
     // NFM-2608: don't enter running state when there are no nodes.
+    // NFM-4449: emit "settled" as the terminal state — no simulation
+    // ran, but the canvas is in a usable terminal state (empty).
     if (nodes.length === 0) {
-      setIsRunning(false)
+      setLayoutStatus("settled")
       setError(null)
       return () => {}
     }
 
-    setIsRunning(true)
+    setLayoutStatus("running")
 
     // Mutable per-simulation state for the tick handler.
     let simulation: import("d3-force").Simulation<SimNode, SimEdge> | null = null
@@ -209,7 +238,9 @@ export function useForceGraph(
       // Flush final node positions so renderers show the last frame
       // even if the last tick was throttled out.
       setSimNodes([...nodes])
-      setIsRunning(false)
+      // NFM-4449 Q2-cont: collapse isRunning to a 3-state signal.
+      // Natural end → "converged"; timeout/stuck → "settled".
+      setLayoutStatus(reason === "end" ? "converged" : "settled")
       if (
         typeof console !== "undefined" &&
         typeof process !== "undefined" &&
@@ -269,16 +300,12 @@ export function useForceGraph(
             // thread on 500-1000-node graphs. d3 keeps running physics
             // at its own RAF pace regardless.
             if (tickCount > INITIAL_RENDER_TICKS) {
-              const now =
-                typeof performance !== "undefined" ? performance.now() : Date.now()
+              const now = typeof performance !== "undefined" ? performance.now() : Date.now()
               if (pendingRaf != null) return
               if (now - lastRenderTime < RENDER_BUDGET_MS) return
               pendingRaf = requestAnimationFrame(() => {
                 pendingRaf = null
-                lastRenderTime =
-                  typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now()
+                lastRenderTime = typeof performance !== "undefined" ? performance.now() : Date.now()
                 if (finalized || isStale()) return
                 setSimNodes([...nodes])
               })
@@ -299,24 +326,24 @@ export function useForceGraph(
 
         // NFM-4446: hard timeout — even if d3 never converges and the
         // stuck-watchdog never fires (e.g. alpha oscillates above
-        // threshold), we forcibly stop at 10s and unlock the UI.
-        watchdog = setTimeout(() => finalize("timeout"), MAX_SIMULATION_MS)
+        // threshold), we forcibly stop and unlock the UI. NFM-4449:
+        // cap is configurable via options.maxSimulationMs.
+        watchdog = setTimeout(() => finalize("timeout"), maxSimulationMs)
       } catch (err) {
         if (isStale()) return
         // NFM-2608: if d3-force setup rejects, the simulation never
-        // starts and isRunning would stay true forever — hanging the
-        // "Computing layout…" overlay. Clear the busy state and surface
-        // the error so the UI can render a fallback instead.
-        const wrapped =
-          err instanceof Error ? err : new Error("Force layout failed")
+        // starts and would hang the "Computing layout…" overlay forever.
+        // Clear the busy state and surface the error so the UI can
+        // render a fallback instead. NFM-4449: surface "settled" as
+        // the terminal status so consumers don't keep rendering the
+        // loading skeleton after a setup failure.
+        const wrapped = err instanceof Error ? err : new Error("Force layout failed")
         setError(wrapped)
-        setIsRunning(false)
+        setLayoutStatus("settled")
         if (typeof console !== "undefined") {
-          console.error(
-            "[NFM-2608] useForceGraph: layout setup failed",
-            wrapped,
-            { cause: (err instanceof Error ? err.cause : undefined) },
-          )
+          console.error("[NFM-2608] useForceGraph: layout setup failed", wrapped, {
+            cause: err instanceof Error ? err.cause : undefined,
+          })
         }
       }
     })()
@@ -336,7 +363,7 @@ export function useForceGraph(
         simRef.current = null
       }
     }
-  }, [data, w, h])
+  }, [data, w, h, maxSimulationMs])
 
   const selectNode = useCallback((id: string | null) => {
     setSelection((prev) => ({ ...prev, nodeId: id }))
@@ -361,7 +388,7 @@ export function useForceGraph(
   const restart = useCallback(() => {
     if (simRef.current) {
       simRef.current.alpha(1).restart()
-      setIsRunning(true)
+      setLayoutStatus("running")
     }
   }, [])
 
@@ -371,7 +398,8 @@ export function useForceGraph(
       simEdges,
       viewport,
       selection,
-      isRunning,
+      isRunning: layoutStatus === "running",
+      layoutStatus,
       error,
       setViewport: setViewportCb,
       selectNode,
@@ -385,7 +413,7 @@ export function useForceGraph(
       simEdges,
       viewport,
       selection,
-      isRunning,
+      layoutStatus,
       error,
       setViewportCb,
       selectNode,
