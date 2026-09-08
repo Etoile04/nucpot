@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 // @vitest-environment jsdom
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MaterialSubgraphView } from "../MaterialSubgraphView"
@@ -19,9 +19,7 @@ function renderWithQueryClient(node: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
-  return render(
-    <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>,
-  )
+  return render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>)
 }
 
 /* ------------------------------------------------------------------ */
@@ -432,10 +430,11 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
     return renderWithQueryClient(<MaterialSubgraphView materialId="ZrO2" />)
   }
 
-  it("routes to /materials/{materials_id} when the bridge is supplied", async () => {
+  it("routes to /materials/{materials_id}/properties when the bridge is supplied", async () => {
     // The KG-node UUID (496cf283-…) must NOT be used as the URL id — only
     // the server-supplied materials_id bridge (068dc946-…) is the source
-    // of truth.
+    // of truth.  NFM-4471 (W2): the click must deep-link into the
+    // Properties tab, not the bare detail page.
     renderWithGraph([
       {
         id: KG_UO2_UUID,
@@ -451,9 +450,11 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
 
     fireEvent.click(screen.getByRole("button", { name: /Node: UO2/i }))
 
-    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_UO2_UUID}`)
-    // Specifically: NOT the KG UUID.
+    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_UO2_UUID}/properties`)
+    // Specifically: neither the bare detail page nor the KG UUID.
+    expect(pushMock).not.toHaveBeenCalledWith(`/materials/${MAT_UO2_UUID}`)
     expect(pushMock).not.toHaveBeenCalledWith(`/materials/${KG_UO2_UUID}`)
+    expect(pushMock).not.toHaveBeenCalledWith(`/materials/${KG_UO2_UUID}/properties`)
   })
 
   it("routes neighbour Material nodes via their own bridge", async () => {
@@ -481,7 +482,8 @@ describe("MaterialSubgraphView — NFM-4445 materials_id bridge routing", () => 
 
     fireEvent.click(screen.getByRole("button", { name: /Node: SiC/i }))
 
-    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_SIC_UUID}`)
+    expect(pushMock).toHaveBeenCalledWith(`/materials/${MAT_SIC_UUID}/properties`)
+    expect(pushMock).not.toHaveBeenCalledWith(`/materials/${MAT_SIC_UUID}`)
     expect(pushMock).not.toHaveBeenCalledWith(`/materials/${KG_SIC_UUID}`)
   })
 
