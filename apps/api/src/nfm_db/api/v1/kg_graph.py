@@ -187,14 +187,12 @@ async def _to_response(
     independent KG-node UUID space never leaks into a navigation.
     """
     # NFM-4445 — single batch lookup of Material labels → materials.id.
-    material_labels = sorted({
-        node.label
-        for node in subgraph.nodes
-        if node.node_type == "Material" and node.label
-    })
-    label_to_material_id = await lookup_materials_ids_by_labels(
-        session, material_labels
-    ) if material_labels else {}
+    material_labels = sorted(
+        {node.label for node in subgraph.nodes if node.node_type == "Material" and node.label}
+    )
+    label_to_material_id = (
+        await lookup_materials_ids_by_labels(session, material_labels) if material_labels else {}
+    )
 
     node_items: list[KGGraphNode] = [
         KGGraphNode(
@@ -206,9 +204,7 @@ async def _to_response(
             confidence=node.confidence,
             source_id=str(node.source_id) if node.source_id else None,
             materials_id=(
-                label_to_material_id.get(node.label)
-                if node.node_type == "Material"
-                else None
+                label_to_material_id.get(node.label) if node.node_type == "Material" else None
             ),
         )
         for node in subgraph.nodes

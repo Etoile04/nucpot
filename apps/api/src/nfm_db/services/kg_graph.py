@@ -291,8 +291,4 @@ async def lookup_materials_ids_by_labels(
     for name, mat_id in rows:
         name_to_ids.setdefault(name, []).append(mat_id)
 
-    return {
-        name: str(mat_ids[0])
-        for name, mat_ids in name_to_ids.items()
-        if len(mat_ids) == 1
-    }
+    return {name: str(mat_ids[0]) for name, mat_ids in name_to_ids.items() if len(mat_ids) == 1}

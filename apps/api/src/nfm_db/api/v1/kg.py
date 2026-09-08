@@ -426,11 +426,9 @@ async def get_kg_graph(
 
         # NFM-4445 — batch-resolve Material labels to materials.id so the
         # frontend can route Material-typed clicks correctly.
-        material_labels = sorted({
-            n.label
-            for n in node_rows
-            if n.node_type == "Material" and n.label
-        })
+        material_labels = sorted(
+            {n.label for n in node_rows if n.node_type == "Material" and n.label}
+        )
         label_to_material_id = (
             await lookup_materials_ids_by_labels(session, material_labels)
             if material_labels

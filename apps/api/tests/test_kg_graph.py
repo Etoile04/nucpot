@@ -623,23 +623,23 @@ class TestMaterialsIdBridgeResponse:
     _KG_SIC_UUID = uuid.UUID("496cf283-0000-0000-0000-000000000002")
     _KG_DUP_UUID = uuid.UUID("496cf283-0000-0000-0000-000000000003")
 
-    async def _seed_materials_with_kg_nodes(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def _seed_materials_with_kg_nodes(self, db_session: AsyncSession) -> None:
         # Two clean bridges: UO2 and SiC.
         db_session.add(Material(id=self._MAT_UO2_UUID, name="UO2", is_active=True))
         db_session.add(Material(id=self._MAT_SIC_UUID, name="SiC", is_active=True))
         # NFM-4093 same-name cohort: 2x "Cr-doped UO2" materials.
         # Bridge intentionally ambiguous → both KG nodes must report null.
         db_session.add(Material(id=self._MAT_DUP_UUID, name="Cr-doped UO2", is_active=True))
-        db_session.add(Material(id=uuid.UUID("068dc946-0000-0000-0000-000000000004"), name="Cr-doped UO2", is_active=True))
+        db_session.add(
+            Material(
+                id=uuid.UUID("068dc946-0000-0000-0000-000000000004"),
+                name="Cr-doped UO2",
+                is_active=True,
+            )
+        )
 
-        db_session.add(
-            _make_node(node_id=self._KG_UO2_UUID, label="UO2", node_type="Material")
-        )
-        db_session.add(
-            _make_node(node_id=self._KG_SIC_UUID, label="SiC", node_type="Material")
-        )
+        db_session.add(_make_node(node_id=self._KG_UO2_UUID, label="UO2", node_type="Material"))
+        db_session.add(_make_node(node_id=self._KG_SIC_UUID, label="SiC", node_type="Material"))
         db_session.add(
             _make_node(
                 node_id=self._KG_DUP_UUID,
@@ -663,11 +663,11 @@ class TestMaterialsIdBridgeResponse:
             )
         )
         # Edges so BFS traverses Material → neighbor.
+        db_session.add(_make_edge(self._KG_UO2_UUID, self._KG_SIC_UUID, "relatedTo"))
         db_session.add(
-            _make_edge(self._KG_UO2_UUID, self._KG_SIC_UUID, "relatedTo")
-        )
-        db_session.add(
-            _make_edge(self._KG_UO2_UUID, uuid.UUID("496cf283-0000-0000-0000-0000000000ff"), "hasProperty")
+            _make_edge(
+                self._KG_UO2_UUID, uuid.UUID("496cf283-0000-0000-0000-0000000000ff"), "hasProperty"
+            )
         )
         await db_session.flush()
 
@@ -697,9 +697,7 @@ class TestMaterialsIdBridgeResponse:
         assert sic["materials_id"] == str(self._MAT_SIC_UUID)
 
     @pytest.mark.asyncio
-    async def test_non_material_node_has_null_materials_id(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_non_material_node_has_null_materials_id(self, db_session: AsyncSession) -> None:
         """Property-typed nodes leave ``materials_id`` null — no FK applies."""
         await self._seed_materials_with_kg_nodes(db_session)
         client = _make_client(lambda: db_session)
@@ -710,8 +708,7 @@ class TestMaterialsIdBridgeResponse:
         assert resp.status_code == 200
 
         prop_node = next(
-            n for n in resp.json()["nodes"]
-            if n["id"] == "496cf283-0000-0000-0000-0000000000ff"
+            n for n in resp.json()["nodes"] if n["id"] == "496cf283-0000-0000-0000-0000000000ff"
         )
         # /kg/graph/subgraph returns the raw KG ``node_type`` ("Property");
         # the frontend mapper (``kg-api.ts::toGraphNodeType``) lowercases
@@ -746,9 +743,7 @@ class TestMaterialsIdBridgeResponse:
         assert nodes[0]["materials_id"] is None
 
     @pytest.mark.asyncio
-    async def test_same_name_duplicate_cohort_is_null(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_same_name_duplicate_cohort_is_null(self, db_session: AsyncSession) -> None:
         """NFM-4093: a Material node sharing its name with >1 materials row
         is intentionally ambiguous — ``materials_id`` stays ``null`` so the
         UI never silently mis-routes to one of the duplicates.
@@ -816,44 +811,46 @@ class TestMaterialsIdLookupHelper:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_ambiguous_same_name_label_omitted(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_ambiguous_same_name_label_omitted(self, db_session: AsyncSession) -> None:
         """NFM-4093 same-name cohort (e.g. 8x Cr-doped UO2) is intentionally
         ambiguous; the helper must omit it rather than silently returning the
         first match."""
         from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
 
         db_session.add(
-            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b1"), name="Cr-doped UO2", is_active=True)
+            Material(
+                id=uuid.UUID("068dc946-0000-0000-0000-0000000000b1"),
+                name="Cr-doped UO2",
+                is_active=True,
+            )
         )
         db_session.add(
-            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b2"), name="Cr-doped UO2", is_active=True)
+            Material(
+                id=uuid.UUID("068dc946-0000-0000-0000-0000000000b2"),
+                name="Cr-doped UO2",
+                is_active=True,
+            )
         )
         # Single-match sibling still resolves.
         db_session.add(
-            Material(id=uuid.UUID("068dc946-0000-0000-0000-0000000000b3"), name="SiC", is_active=True)
+            Material(
+                id=uuid.UUID("068dc946-0000-0000-0000-0000000000b3"), name="SiC", is_active=True
+            )
         )
         await db_session.flush()
 
-        result = await lookup_materials_ids_by_labels(
-            db_session, ["Cr-doped UO2", "SiC"]
-        )
+        result = await lookup_materials_ids_by_labels(db_session, ["Cr-doped UO2", "SiC"])
         # Cr-doped UO2 omitted (ambiguous); SiC kept (single match).
         assert "Cr-doped UO2" not in result
         assert result["SiC"] == "068dc946-0000-0000-0000-0000000000b3"
 
     @pytest.mark.asyncio
-    async def test_batch_dedupes_labels(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_batch_dedupes_labels(self, db_session: AsyncSession) -> None:
         from nfm_db.services.kg_graph import lookup_materials_ids_by_labels
 
         mat_uuid = uuid.UUID("068dc946-0000-0000-0000-0000000000cc")
         db_session.add(Material(id=mat_uuid, name="UO2", is_active=True))
         await db_session.flush()
 
-        result = await lookup_materials_ids_by_labels(
-            db_session, ["UO2", "UO2", "UO2"]
-        )
+        result = await lookup_materials_ids_by_labels(db_session, ["UO2", "UO2", "UO2"])
         assert result == {"UO2": str(mat_uuid)}
