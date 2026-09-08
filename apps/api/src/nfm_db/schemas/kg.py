@@ -101,6 +101,15 @@ class KGGraphNode(BaseModel):
     status: str
     confidence: float = Field(ge=0.0, le=1.0)
     source_id: str | None = None
+    #: NFM-4445 — bridge to ``materials.id`` for nodes of type ``Material``.
+    #: Populated by joining ``kg_nodes.label = materials.name`` server-side so
+    #: the frontend can route to ``/materials/{materials_id}`` without mixing
+    #: up the independent KG-node UUID space (e.g. ``496cf283-…`` for UO2's
+    #: KG node vs ``068dc946-…`` for the materials row). Absent (``null``)
+    #: when no matching material exists — including the NFM-4093 same-name
+    #: duplicate groups (8x Cr-doped UO2, 5x U-Mo) intentionally left
+    #: unbridged by design; the UI renders tooltip-only in that case.
+    materials_id: str | None = None
 
 
 class KGGraphEdge(BaseModel):

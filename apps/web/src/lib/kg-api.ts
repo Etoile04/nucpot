@@ -20,6 +20,12 @@ export interface KGGraphNode {
   readonly status: string
   readonly confidence: number
   readonly source_id: string | null
+  /**
+   * NFM-4445 — bridge to ``materials.id`` for ``Material``-typed nodes.
+   * See ``GraphNode.materials_id`` for the consumer contract.  Mirrors the
+   * server-side field on ``KGGraphNode`` (apps/api/.../schemas/kg.py).
+   */
+  readonly materials_id?: string | null
 }
 
 export interface KGGraphEdge {
@@ -89,6 +95,10 @@ function toGraphNode(node: KGGraphNode, focalId: string): GraphNode {
     size: isFocal ? 20 : Math.max(6, 14 - depth * 3),
     color: isFocal ? "#f59e0b" : undefined,
     childCount: undefined,
+    // NFM-4445 — pass through the materials bridge for Material-typed
+      // nodes so click handlers can route to /materials/{materials_id}
+      // instead of /materials/{kg_node.id}.
+      materials_id: node.materials_id ?? undefined,
   }
 }
 

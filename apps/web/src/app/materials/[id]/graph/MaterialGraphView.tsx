@@ -180,10 +180,13 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
     (node: GraphNode) => {
       if (node.id === state.focalId) return
 
-      // Material nodes → properties page; everything else → generic KG node page.
-      // Sending non-material nodes to another /graph route would create loops.
-      if (node.type === "material") {
-        router.push(`/materials/${node.id}/properties`)
+      // NFM-4445 — Material nodes route to the canonical materials.id
+      // (server-supplied bridge), never the KG-node UUID.  Same-name
+      // cohorts without a bridge (NFM-4093) fall through to the
+      // generic KG-node route.  Non-material nodes always go to the
+      // KG node page.
+      if (node.type === "material" && node.materials_id) {
+        router.push(`/materials/${node.materials_id}/properties`)
       } else {
         router.push(`/kg/node/${node.id}`)
       }
