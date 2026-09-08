@@ -8,8 +8,15 @@
  * should render its status through this component.
  *
  * Pass a `theme` of `"antd"` when the form is wrapped in AntD's `<App/>`
- * context (uses `<Alert>`); `"plain"` for non-AntD forms (uses a Tailwind
- * panel matching the existing admin/blog style).
+ * context (uses `<Alert>`); `"plain"` for non-AntD forms (uses the
+ * token-driven panel from globals.css — WCAG-AA compliant on the dark
+ * surface, AA on light via `dark:` overrides).
+ *
+ * NFM-4456 follow-up (NFM-4477 §1.1): plain theme no longer hardcodes
+ * `bg-red-900/40 border-red-700 text-red-300`. Surface/border/text now
+ * come from `--alert-error-*` / `--alert-success-*` CSS tokens, with
+ * `dark:` variants for light-mode renders. Retry button has a real
+ * `focus-visible` ring.
  */
 "use client"
 
@@ -23,7 +30,7 @@ export interface FormAlertProps {
   error: string | null
   /** Custom success message; defaults to "操作成功". */
   successMessage?: ReactNode
-  /** "antd" uses <Alert>; "plain" uses Tailwind-styled div. Default "plain". */
+  /** "antd" uses <Alert>; "plain" uses token-driven Tailwind panel. Default "plain". */
   theme?: "antd" | "plain"
   /** Optional retry callback; when present, renders a retry button on error. */
   onRetry?: () => void
@@ -47,7 +54,11 @@ export function FormAlert({
         <div data-testid="form-alert" data-status="error">
           <Alert type="error" showIcon message="提交失败" description={error ?? "未知错误"} />
           {onRetry ? (
-            <button type="button" className="mt-2 text-sm underline" onClick={onRetry}>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-2 text-sm underline rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--alert-error-ring)]"
+            >
               {retryLabel}
             </button>
           ) : null}
@@ -58,7 +69,7 @@ export function FormAlert({
       <div
         data-testid="form-alert"
         data-status="error"
-        className="mb-4 rounded-lg border px-4 py-3 text-sm bg-red-900/40 border-red-700 text-red-300"
+        className="mb-4 rounded-lg border px-4 py-3 text-sm bg-[var(--alert-error-bg)] border-[var(--alert-error-border)] text-[var(--alert-error-text)]"
         role="alert"
       >
         <div className="flex items-center justify-between gap-3">
@@ -67,7 +78,7 @@ export function FormAlert({
             <button
               type="button"
               onClick={onRetry}
-              className="text-red-200 underline hover:text-red-100"
+              className="rounded-sm underline underline-offset-2 text-[var(--alert-error-text-strong)] hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--alert-error-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--alert-error-bg)]"
             >
               {retryLabel}
             </button>
@@ -89,7 +100,7 @@ export function FormAlert({
     <div
       data-testid="form-alert"
       data-status="success"
-      className="mb-4 rounded-lg border px-4 py-3 text-sm bg-green-900/40 border-green-700 text-green-300"
+      className="mb-4 rounded-lg border px-4 py-3 text-sm bg-[var(--alert-success-bg)] border-[var(--alert-success-border)] text-[var(--alert-success-text)]"
       role="status"
     >
       ✓ {successMessage}
