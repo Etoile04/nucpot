@@ -5,6 +5,14 @@
 **Parent:** NFM-3357 (RAG service errors & truncated error messages)
 **Depends on:** NFM-3403 (T1 — error-message contract; `done` 2026-08-21)
 
+> **2026-09-09 update — NFM-4525 / NFM-4521 Path A follow-up:** §8 below
+> documents the per-mode latency budget after the qwen3.5:4b-nvfp4 model
+> swap (NFM-4521 Path A) plus the thinking-mode disable (NFM-4525). The
+> failure-path ceiling in §2.1 (≤15 s wall-clock) is unchanged; the
+> success-path ceiling is now **8 s wall-clock** for cached or fresh
+> queries on the post-fix stack, vs the 30 s ceiling NFM-4492 raised the
+> read budget to while Path A was being validated.
+
 ---
 
 ## 1. Context
@@ -180,3 +188,72 @@ The existing `docker-compose.lightrag.yml:83-90` healthcheck (`curl -fsS ... /he
 - NFM-3357 — parent epic
 - NFM-1222 — semantic query bridge at `/api/v1/kg/search?mode=lightrag`
 - NFM-1247 — prior circuit-breaker removed in favour of stateless per-request fallback
+- NFM-4492 — raised `NFM_LIGHTRAG_QUERY_TIMEOUT_S` from 8 s → 30 s as the
+  temporary ceiling while Path A was being validated (superseded by the
+  NFM-4525 fix below; can be walked back to 8–12 s after the post-fix
+  per-mode budget is verified)
+- NFM-4521 (Path A) — switched `PROD_LIGHTRAG_LLM_MODEL` from
+  `qwen3.8:27b-mlx` to `qwen3.5:4b-nvfp4` (NFM-4521 PR #1268) to bring the
+  *cached*-query wall-clock under 1 s; latent thinking-mode bug only
+  surfaced under fresh (non-cached) queries
+- NFM-4525 — switches `PROD_LIGHTRAG_LLM_BINDING` from `openai` (compat)
+  to `ollama` (native) and installs `docker/lightrag/sitecustomize.py`
+  to default `think=False` on the Ollama binding; brings fresh-query
+  wall-clock back inside the 30 s ceiling without touching NFM-4492's
+  raised timeout
+
+---
+
+## 8. Per-mode latency budget (post NFM-4521 Path A + NFM-4525 fix)
+
+This section is the operator-facing reference for the prod LightRAG
+sidecar after NFM-4521 Path A swapped the model to `qwen3.5:4b-nvfp4` and
+NFM-4525 disabled the model's thinking mode. All numbers are wall-clock
+observed end-to-end on prod (`/api/v1/lightrag/query`) with
+`NFM_LIGHTRAG_QUERY_TIMEOUT_S=30` (NFM-4492 ceiling).
+
+| Mode | Cache hit? | Expected wall-clock (post NFM-4525) | Failure ceiling (still applies from §2.1) |
+| --- | --- | --- | --- |
+| `hybrid` (default) | yes | **0.1–0.3 s** (cached extraction) | 30 s |
+| `hybrid` | no | **1–5 s** (fresh extraction w/o thinking) | 30 s |
+| `local` | yes | 0.1–0.3 s (cached) | 30 s |
+| `local` | no | 1–3 s (entity-anchored retrieval, smaller graph) | 30 s |
+| `global` | yes | 0.1–0.3 s (cached) | 30 s |
+| `global` | no | 3–7 s (full-graph traversal) | 30 s |
+| `naive` | yes | 0.1–0.3 s (cached) | 30 s |
+| `naive` | no | 1–3 s (pure vector retrieval, no graph) | 30 s |
+| `mix` | yes | 0.1–0.3 s (cached) | 30 s |
+| `mix` | no | 2–6 s (hybrid-of-hybrids) | 30 s |
+
+**Pre-NFM-4525 (latent bug, observed during Path A validation):**
+
+| Mode | Cache hit? | Observed wall-clock (pre-fix) | Root cause |
+| --- | --- | --- | --- |
+| any | no | **30.0 s** (timeout ceiling, empty `Content` | qwen3.5:4b-nvfp4 eats output tokens on internal `Thinking Process: 1. Analyze the Request:…` reasoning before producing user-visible content; Ollama's `/v1/chat/completions` compat layer ignores `chat_template_kwargs` / `extra_body.think` / `options.think` so the openai binding could not disable it |
+| any | yes | 0.1 s (cached answer text) | extraction was cached by an earlier session whose token budget predates the thinking-mode-active templates |
+
+**Why the post-fix budget holds:**
+
+1. NFM-4525 switched `PROD_LIGHTRAG_LLM_BINDING` to `ollama` (native
+   `/api/chat`) which honors the top-level `think` body parameter.
+2. `docker/lightrag/sitecustomize.py` is auto-loaded by Python at
+   `lightrag-server` startup and monkey-patches
+   `lightrag.llm.ollama._ollama_model_if_cache` to default
+   `think=False`, with `setdefault` semantics so any per-call override
+   (e.g. future role-LLM kwargs) is preserved.
+3. With thinking disabled, `qwen3.5:4b-nvfp4` answers "say hi in 5
+   words" in 6 tokens / 2.8 s on the Ollama daemon (measured). Hybrid
+   query overhead (vector retrieval + graph traversal + prompt assembly)
+   dominates; per-query latency is in the 1–7 s range observed above.
+4. The `OPENAI_LLM_REASONING_EFFORT=none` env that NFM-4521 Path A set
+   is now redundant (it controls OpenAI `o1`-style reasoning effort, not
+   qwen3 thinking mode); kept on the container for audit-trail parity,
+   to be cleaned up in a follow-up.
+
+**Walking back NFM-4492's 30 s ceiling:** after this fix, the per-mode
+ceiling in §2.1 (8 s LLM + 3 s connect + 12 s read + 14 s frontend =
+≤ 15 s user-visible) is once again the operative budget. The NFM-4492
+raise to 30 s was a safety valve while Path A was being validated; it
+can be walked back to 12 s in a follow-up that re-runs the §4 integration
+test against the post-NFM-4525 image. Tracked but not in scope for
+this docs-only landing.
