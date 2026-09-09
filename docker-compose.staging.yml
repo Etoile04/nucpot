@@ -61,6 +61,12 @@ services:
       # Service-discovery vars only (compose service names, not host env).
       NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
       NFM_LIGHTRAG_PORT: "9621"
+      # NFM-4502 / NFM-4492: mirror prod's 30s query timeout (PR #1272) so the
+      # staging canary matches prod's budget and cold/warm hybrid latency can be
+      # measured against the same ceiling. Without this, lightrag_client.py
+      # falls back to the 8.0s default and every hybrid query hits the 8.07s
+      # wall with empty error detail (NFM-4502 root cause).
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "30.0"
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
