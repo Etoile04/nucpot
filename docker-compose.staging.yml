@@ -174,7 +174,11 @@ services:
       # — pgvector hnsw caps at 2000d and we want the model's native
       # 768d, not a MRL-truncated variant.
       EMBEDDING_SEND_DIM: ${STAGING_LIGHTRAG_EMBEDDING_SEND_DIM:-false}
-      EMBEDDING_BINDING_HOST: ${STAGING_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
+      # NFM-4532: the embedding host must follow EMBEDDING_MODEL. nomic-embed-text
+      # only exists on Ollama — pointing it at api.openai.com returns 404
+      # model_not_found, which is the exact failure this issue exists to close.
+      # Default mirrors prod (docker-compose.prod.yml EMBEDDING_BINDING_HOST).
+      EMBEDDING_BINDING_HOST: ${STAGING_LIGHTRAG_EMBEDDING_HOST:-http://host.docker.internal:11434/v1}
       EMBEDDING_BINDING_API_KEY: ${STAGING_LIGHTRAG_EMBEDDING_API_KEY:-${STAGING_LIGHTRAG_LLM_API_KEY}}
       # NFM-4532: mirror prod's rerank stack (PR #1275). launchd ai.nfm.rerank-server
       # binds 127.0.0.1:8109 on the host; host.docker.internal on the staging
