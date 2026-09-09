@@ -369,10 +369,89 @@ def test_default_paths_match_repo_layout(tmp_path: Path):
         capture_output=True,
         text=True,
     )
-    # After the AC fix lands this exit code will become 0; today the real
-    # staging compose is drifted, so we accept either 0 or 1 but assert
-    # the script did not crash.
-    assert result.returncode in (0, 1), (
-        f"unexpected rc={result.returncode}; stderr={result.stderr!r}"
+    # The AC fix has landed on this branch, so the real staging compose must
+    # now be clean. Asserting rc == 0 (rather than "0 or 1") is what makes this
+    # a regression test instead of a crash smoke-test.
+    assert result.returncode == 0, (
+        f"real repo compose files show RAG drift; rc={result.returncode}; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert "Traceback" not in result.stderr
+
+
+# --- NFM-4532 value-coupling regression -------------------------------------
+#
+# The parity guard above is a *presence* check: it asks whether a tracked prod
+# var is declared on staging, not whether it carries a compatible value. That
+# is deliberate (staging legitimately differs on hosts, ports and credentials)
+# but it leaves one sharp edge: EMBEDDING_MODEL and EMBEDDING_BINDING_HOST are
+# coupled. nomic-embed-text exists only on Ollama, so pointing it at
+# api.openai.com returns 404 model_not_found on every embed — reintroducing the
+# exact class of staging-only failure NFM-4532 was filed to eliminate, while
+# the presence check stays green. These tests pin that coupling.
+
+_OLLAMA_ONLY_EMBEDDING_MODELS = ("nomic-embed-text",)
+
+
+def _compose_default(expr: str) -> str:
+    """Extract `default` from a `${VAR:-default}` compose interpolation.
+
+    Returns the expression unchanged when it is a plain literal.
+    """
+    raw = str(expr).strip()
+    if not (raw.startswith("${") and raw.endswith("}")):
+        return raw
+    inner = raw[2:-1]
+    if ":-" not in inner:
+        return raw
+    return inner.split(":-", 1)[1]
+
+
+def _lightrag_env(compose_name: str) -> dict[str, str]:
+    yaml = pytest.importorskip("yaml")
+    repo_root = Path(__file__).resolve().parents[2]
+    data = yaml.safe_load((repo_root / compose_name).read_text())
+    env = data["services"]["lightrag"].get("environment") or {}
+    if isinstance(env, list):
+        env = dict((item.split("=", 1) + [""])[:2] for item in env)
+    return {k: str(v) for k, v in env.items()}
+
+
+@pytest.mark.parametrize(
+    "compose_name", ["docker-compose.prod.yml", "docker-compose.staging.yml"]
+)
+def test_ollama_only_embedding_model_is_not_pointed_at_openai(compose_name: str):
+    """An Ollama-only embedding model must never default to the OpenAI host.
+
+    Regression: staging set EMBEDDING_MODEL=nomic-embed-text while
+    EMBEDDING_BINDING_HOST still defaulted to https://api.openai.com/v1, so a
+    staging brought up without a pre-provisioned .env.staging would 404 on
+    every embedding call.
+    """
+    env = _lightrag_env(compose_name)
+    model = _compose_default(env.get("EMBEDDING_MODEL", ""))
+    if model not in _OLLAMA_ONLY_EMBEDDING_MODELS:
+        pytest.skip(f"{compose_name} embedding model {model!r} is not Ollama-only")
+
+    host = _compose_default(env.get("EMBEDDING_BINDING_HOST", ""))
+    assert "api.openai.com" not in host, (
+        f"{compose_name}: EMBEDDING_MODEL={model!r} is Ollama-only but "
+        f"EMBEDDING_BINDING_HOST defaults to {host!r} — every embed will 404 "
+        f"with model_not_found."
+    )
+
+
+def test_staging_embedding_host_default_matches_prod():
+    """Staging's embedding host default must mirror prod's.
+
+    The whole point of the `${VAR:-<prod default>}` pattern in these compose
+    files is that an un-provisioned environment still renders prod-equivalent
+    values. If the defaults diverge, staging silently stops being a canary.
+    """
+    prod = _compose_default(_lightrag_env("docker-compose.prod.yml").get("EMBEDDING_BINDING_HOST", ""))
+    staging = _compose_default(
+        _lightrag_env("docker-compose.staging.yml").get("EMBEDDING_BINDING_HOST", "")
+    )
+    assert staging == prod, (
+        f"EMBEDDING_BINDING_HOST default drift: prod={prod!r} staging={staging!r}"
+    )
