@@ -230,3 +230,63 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_query_with_null_list_fields_succeeds(self, client: AsyncClient) -> None:
+        """NFM-4522: LightRAG may return `references/entities/relationships: null`
+        (JSON null) when include_references=false or in certain modes.
+
+        The wrapper must coerce null → [] so the Pydantic QueryResponse
+        validation passes and the response returns success:true with empty
+        list fields rather than raising 422 from the boundary.
+        """
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
+            mock_instance = mock_cls.return_value
+            # LightRAG sidecar returns explicit nulls (not missing keys)
+            mock_instance.query = AsyncMock(
+                return_value={
+                    "response": "Some answer text.",
+                    "references": None,
+                    "entities": None,
+                    "relationships": None,
+                }
+            )
+
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                payload = {"query": "test query", "mode": "hybrid"}
+                response = await ac.post("/api/v1/lightrag/query", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True, f"Expected success, got error: {data.get('error')}"
+        assert data["data"]["response"] == "Some answer text."
+        assert data["data"]["references"] == []
+        assert data["data"]["entities"] == []
+        assert data["data"]["relationships"] == []
+
+    @pytest.mark.asyncio
+    async def test_query_with_null_response_succeeds(self, client: AsyncClient) -> None:
+        """NFM-4522: defensive — if LightRAG ever returns `response: null`,
+        wrapper coerces to "" instead of passing None to QueryResponse."""
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query = AsyncMock(
+                return_value={
+                    "response": None,
+                    "references": None,
+                    "entities": None,
+                    "relationships": None,
+                }
+            )
+
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                payload = {"query": "test query"}
+                response = await ac.post("/api/v1/lightrag/query", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["response"] == ""
+        assert data["data"]["references"] == []

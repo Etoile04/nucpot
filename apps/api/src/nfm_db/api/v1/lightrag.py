@@ -172,13 +172,17 @@ async def query_knowledge_graph(
             mode=request.mode.value,
             include_references=request.include_references,
         )
+        # NFM-4522: LightRAG may return explicit JSON null for list fields
+        # (notably references when include_references=false). `dict.get(key, default)`
+        # returns the default only on missing keys, not on null values, so we
+        # use `or []` to coerce null → empty list at the API boundary.
         return ApiResponse(
             success=True,
             data=QueryResponse(
-                response=result.get("response", ""),
-                references=result.get("references", []),
-                entities=result.get("entities", []),
-                relationships=result.get("relationships", []),
+                response=result.get("response") or "",
+                references=result.get("references") or [],
+                entities=result.get("entities") or [],
+                relationships=result.get("relationships") or [],
             ),
         )
     except LightRAGClientError as exc:
