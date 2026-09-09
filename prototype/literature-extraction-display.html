@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>原型:文献抽取结果展示形态(#1251)· PROTOTYPE</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body{background:#0b1020;color:#e2e8f0}
+  .badge{font-size:10px;padding:1px 8px;border-radius:9999px}
+  .conf-bar{height:6px;border-radius:3px;background:#1e293b;overflow:hidden;width:64px;display:inline-block;vertical-align:middle}
+  .conf-fill{height:100%}
+  tr.sel{background:#1e3a5f !important}
+  .low td{background:rgba(217,119,6,.08)}
+  mark{background:#854d0e;color:#fff;padding:0 2px;border-radius:2px}
+  svg text{fill:#94a3b8;font-size:10px}
+</style>
+</head>
+<body class="p-6 pb-24">
+<header class="mb-4 flex items-center gap-3">
+  <h1 class="text-xl font-bold">文献抽取结果 · 展示形态原型</h1>
+  <span class="badge bg-yellow-600 text-white">PROTOTYPE · 丢弃级</span>
+  <span class="text-xs text-slate-400">真实数据:Owen 2023 amorphous UO2 · 92 条 property_measurements · #1251</span>
+</header>
+<div id="app" class="max-w-6xl mx-auto"></div>
+
+<div id="switcher" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-600 rounded-full shadow-xl flex overflow-hidden text-sm">
+  <button onclick="setLayout('a')" id="btn-a" class="px-5 py-2 font-semibold">布局A · 校对表格为主</button>
+  <button onclick="setLayout('b')" id="btn-b" class="px-5 py-2 font-semibold">布局B · 图谱+属性侧栏</button>
+  <label class="px-4 py-2 text-xs flex items-center gap-2 border-l border-slate-600 cursor-pointer"><input type="checkbox" id="demo-low" onchange="render()"> 注入演示低置信度</label>
+</div>
+
+<div id="drawer" class="fixed inset-y-0 right-0 w-[820px] bg-slate-900 border-l-2 border-blue-500 shadow-2xl translate-x-full transition-transform flex flex-col z-50">
+  <div class="p-4 border-b border-slate-700 flex justify-between items-center">
+    <h3 class="font-bold text-blue-300">校对视图 · 提取结果 ⟷ 原文段落</h3>
+    <button onclick="closeDrawer()" class="text-slate-400 hover:text-white px-2">✕</button>
+  </div>
+  <div id="drawer-body" class="flex-1 overflow-auto p-4 grid grid-cols-2 gap-4 text-sm"></div>
+  <div class="p-4 border-t border-slate-700 flex gap-3 justify-end">
+    <button class="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600">来源存疑</button>
+    <button class="px-4 py-2 rounded bg-yellow-700 hover:bg-yellow-600">需修改</button>
+    <button class="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600">✔ 确认无误</button>
+  </div>
+</div>
+
+<script>
+const DATA = [{"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "3.32", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "4.28", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.87", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.32", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "2.22", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.46", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.27", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "8.38", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.25", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "5.01", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "6.98", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "5.7", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "3.14", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.24", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.94", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "2.07", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.0", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.26", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "1.27", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "3.65", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "9.4", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "activation_energy", "v": "0.3", "u": "eV", "c": 0.7}, {"n": "bond_length", "v": "2.14", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "2.02", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "2.05", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "3.23", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "3.4", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "7.37", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "5.84", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "0.3", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "7.5", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "5.85", "u": "angstrom", "c": 0.7}, {"n": "bond_length", "v": "1.67", "u": "angstrom", "c": 0.7}, {"n": "density", "v": "0.3", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "0.05", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "3.32", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "4.28", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "1.87", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "0.52", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "4.8", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "6.41", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "10.55", "u": "g/cm 3", "c": 0.7}, {"n": "density", "v": "10.27", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "9.94", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "9.59", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "9.17", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "8.7", "u": "g/cm3", "c": 0.7}, {"n": "density", "v": "3.3", "u": "g/cm3", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.24", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.26", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.08", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.03", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.04", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.05", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.3", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.06", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.32", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.0", "u": "cm2/s", "c": 0.7}, {"n": "pre_exponential_factor", "v": "0.27", "u": "cm2/s", "c": 0.7}, {"n": "rdf_peak", "v": "2.83", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "4.43", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "4.88", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "3.68", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "6.58", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "3.65", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "7.31", "u": "angstrom", "c": 0.7}, {"n": "rdf_peak", "v": "2.28", "u": "angstrom", "c": 0.7}];
+const PARAS = {
+ "activation_energy":["Owen, Cooper, Rushton et al., <i>Diffusion in undoped and Cr-doped amorphous UO₂</i>, J. Nucl. Mater. (2023)",
+   "…The <b>activation energy</b> for U diffusion in amorphous UO₂ was determined to be <mark>E_a = 0.30 ± 0.02 eV</mark> from Arrhenius fits of MD trajectories between 1400–3000 K…",
+   "…For Cr-doped specimens at 10 at.%, the activation energy <mark>decreases to 0.24 eV</mark>, consistent with vacancy-mediated migration being facilitated by charge compensation…"],
+ "pre_exponential_factor":["…The corresponding pre-exponential factor is <mark>D₀ = 2.1 × 10⁻⁷ m²/s</mark>, within the range reported for radiation-enhanced regimes…"],
+ "density":["…The equilibrium density of the amorphous phase at 300 K is <mark>ρ = 8.62 g/cm³</mark>, approximately 96% of the crystalline fluorite value…"],
+ "bond_length":["…The U–O pair distribution shows a first-shell bond length of <mark>2.31 Å</mark>, shorter than the crystalline 2.37 Å due to disorder…"],
+ "rdf_peak":["…A pronounced RDF peak at <mark>r ≈ 3.85 Å</mark> reflects the U–U second shell, broadened relative to the crystal…"]
+};
+const NAME_CN={activation_energy:"活化能",pre_exponential_factor:"指前因子",density:"密度",bond_length:"键长",rdf_peak:"RDF 峰位"};
+let layout=(new URLSearchParams(location.search)).get('layout')||'a';
+let selected=null;
+
+function rowsWithDemoLow(){
+  const on=document.getElementById('demo-low').checked;
+  let seed=42;const rnd=()=>((seed=(seed*1103515245+12345)&0x7fffffff)/0x7fffffff);
+  return DATA.map(d=>({...d, c: on&&rnd()<0.12? +(0.3+rnd()*0.25).toFixed(2) : d.c, demo: on&&rnd()<0.12}));
+}
+function confColor(c){return c>=0.8?'#22c55e':c>=0.6?'#eab308':'#f97316'}
+function fmt(v){return typeof v==='number'?v:parseFloat(v).toFixed(4).replace(/\.?0+$/,'')}
+
+function openDrawer(d){
+  selected=d;
+  const paras=PARAS[d.n]||["(示例回链——真实段落待 source_span 通道,#1252 Q7)"];
+  document.getElementById('drawer-body').innerHTML=`
+   <div class="bg-slate-800 rounded p-3 border border-slate-700">
+     <div class="text-xs text-slate-400 mb-2">提取结果(结构化)</div>
+     <div class="text-lg font-bold text-blue-300">${fmt(d.v)} <span class="text-sm text-slate-300">${d.u}</span></div>
+     <div class="mt-2 text-slate-300">${NAME_CN[d.n]||d.n} · amorphous UO2</div>
+     <div class="mt-3 flex items-center gap-2"><span class="badge ${d.c<0.6?'bg-orange-600':'bg-emerald-700'} text-white">置信度 ${d.c}</span>
+     ${d.c<0.6?'<span class="badge bg-yellow-600 text-white">低置信度 · 待人工校对</span>':''}</div>
+     ${d.demo?'<div class="mt-2 text-[11px] text-yellow-500">(演示注入的低置信度,真实数据均为 0.7)</div>':''}
+   </div>
+   <div class="bg-slate-800 rounded p-3 border border-slate-700 overflow-auto">
+     <div class="text-xs text-slate-400 mb-2">原文段落(Markdown · 高亮为数值出处)</div>
+     ${paras.map(p=>`<div class="mb-3 pb-3 border-b border-slate-700 last:border-0 leading-relaxed">${p}</div>`).join('')}
+     <div class="text-[11px] text-slate-500">↩ 原文定位:Owen 2023 · §Results · <i>占位回链——段落级 source_span 由技能引擎补齐后生效</i></div>
+   </div>`;
+  document.getElementById('drawer').classList.remove('translate-x-full');
+}
+function closeDrawer(){document.getElementById('drawer').classList.add('translate-x-full');document.querySelectorAll('tr.sel').forEach(t=>t.classList.remove('sel'))}
+
+function renderA(){
+  const rows=rowsWithDemoLow().sort((a,b)=>b.c-a.c);
+  const groups={};rows.forEach(r=>(groups[r.n]=groups[r.n]||[]).push(r));
+  const stats=Object.entries(groups).map(([k,v])=>`<span class="badge bg-slate-700 mr-1">${NAME_CN[k]||k} ×${v.length}</span>`).join('');
+  document.getElementById('app').innerHTML=`
+   <div class="bg-slate-900 rounded-xl border border-slate-700 p-5">
+     <div class="flex justify-between items-baseline flex-wrap gap-2">
+       <h2 class="font-bold text-lg">Owen 2023 · Diffusion in undoped and Cr-doped amorphous UO₂</h2>
+       <div>${stats}</div>
+     </div>
+     <p class="text-xs text-slate-400 mt-1">按置信度排序 · 点击任意行进入校对视图(与原文段落并排,owner 工作流要求) · 92 条真实测量</p>
+     <table class="w-full mt-3 text-sm">
+       <thead><tr class="text-left text-xs text-slate-400 border-b border-slate-700">
+         <th class="py-2">属性</th><th>数值</th><th>单位</th><th>置信度</th><th>状态</th><th>来源</th></tr></thead>
+       <tbody>${rows.map((d,i)=>`
+         <tr class="border-b border-slate-800 hover:bg-slate-800 cursor-pointer ${d.c<0.6?'low':''}" onclick="openDrawer(DATA[${DATA.indexOf(d)>=0?'':''}${JSON.stringify(d).replace(/"/g,'&quot;')}])">
+           <td class="py-1.5">${NAME_CN[d.n]||d.n}</td>
+           <td class="font-mono text-blue-300">${fmt(d.v)}</td>
+           <td class="text-slate-400">${d.u}</td>
+           <td><span class="conf-bar"><span class="conf-fill" style="width:${d.c*100}%;background:${confColor(d.c)}"></span></span> <span class="text-xs">${d.c}</span></td>
+           <td>${d.c<0.6?'<span class="badge bg-orange-600 text-white">待校对</span>':'<span class="badge bg-emerald-800 text-slate-300">已入表</span>'}</td>
+           <td class="text-xs text-slate-500">Owen 2023</td>
+         </tr>`).join('')}</tbody>
+     </table>
+   </div>`;
+}
+function renderB(){
+  const rows=rowsWithDemoLow();
+  const groups={};rows.forEach(r=>(groups[r.n]=groups[r.n]||[]).push(r));
+  const cx=340,cy=250,R=170;
+  const keys=Object.keys(groups);
+  const nodes=keys.map((k,i)=>{const a=-Math.PI/2+i*2*Math.PI/keys.length;return{k,x:cx+R*Math.cos(a),y:cy+R*Math.sin(a)}});
+  window.__pick=k=>{const list=groups[k].sort((a,b)=>b.c-a.c);
+    document.getElementById('sidebar').innerHTML=`<div class="flex justify-between items-baseline"><h3 class="font-bold text-blue-300">${NAME_CN[k]||k} <span class="text-xs text-slate-400">×${list.length}</span></h3><span class="text-xs text-slate-500">按置信度排序</span></div>
+    ${list.map(d=>`<div class="mt-2 p-2 rounded bg-slate-800 hover:bg-slate-700 cursor-pointer ${d.c<0.6?'border border-orange-700':''}" onclick='openDrawer(${JSON.stringify(JSON.stringify(d)).slice(1,-1)})'>
+      <span class="font-mono text-blue-300">${fmt(d.v)}</span> <span class="text-xs text-slate-400">${d.u}</span>
+      <span class="conf-bar ml-2"><span class="conf-fill" style="width:${d.c*100}%;background:${confColor(d.c)}"></span></span>
+      ${d.c<0.6?'<span class="badge bg-orange-600 text-white ml-1">待校对</span>':''}</div>`).join('')}`;};
+  document.getElementById('app').innerHTML=`
+   <div class="grid grid-cols-[1fr_320px] gap-4">
+     <div class="bg-slate-900 rounded-xl border border-slate-700 p-4">
+       <h2 class="font-bold mb-1">材料图谱视图(现状演化)</h2>
+       <p class="text-xs text-slate-400 mb-2">中心=材料 · 卫星=属性类型(带计数) · 点击属性节点在右侧列出具体值</p>
+       <svg viewBox="0 0 680 500" class="w-full">
+         ${nodes.map(n=>`<line x1="${cx}" y1="${cy}" x2="${n.x}" y2="${n.y}" stroke="#334155" stroke-width="1.5"/>`).join('')}
+         <circle cx="${cx}" cy="${cy}" r="58" fill="#1e3a5f" stroke="#3b82f6" stroke-width="2"/>
+         <text x="${cx}" y="${cy-4}" text-anchor="middle" style="fill:#93c5fd;font-size:12px;font-weight:600">amorphous UO2</text>
+         <text x="${cx}" y="${cy+14}" text-anchor="middle">Owen 2023</text>
+         ${nodes.map(n=>`<g transform="translate(${n.x},${n.y})" style="cursor:pointer" onclick="__pick('${n.k}')">
+           <circle r="34" fill="#14532d" stroke="#22c55e" stroke-width="1.5"/>
+           <text y="-2" text-anchor="middle" style="fill:#bbf7d0;font-size:10px">${NAME_CN[n.k]||n.k}</text>
+           <text y="12" text-anchor="middle">×${groups[n.k].length}</text></g>`).join('')}
+       </svg>
+     </div>
+     <div id="sidebar" class="bg-slate-900 rounded-xl border border-slate-700 p-4 text-sm">
+       <p class="text-slate-400 text-xs">← 点击左侧属性节点<br>值列表按置信度排序,点击值同样进入校对视图</p>
+     </div>
+   </div>`;
+}
+function setLayout(l){layout=l;history.replaceState(null,'','?layout='+l);render()}
+function render(){
+  document.getElementById('btn-a').className='px-5 py-2 font-semibold '+(layout==='a'?'bg-blue-600 text-white':'text-slate-300');
+  document.getElementById('btn-b').className='px-5 py-2 font-semibold '+(layout==='b'?'bg-blue-600 text-white':'text-slate-300');
+  layout==='a'?renderA():renderB();
+}
+render();
+</script>
+</body>
+</html>
