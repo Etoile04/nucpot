@@ -61,6 +61,13 @@ services:
       # Service-discovery vars only (compose service names, not host env).
       NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
       NFM_LIGHTRAG_PORT: "9621"
+      # NFM-4532: query timeout must match prod (60.0 at filing). Default
+      # mirrors docker-compose.prod.yml line 111; the env-var override
+      # exists so SRE can lower it locally without a compose edit. Without
+      # this override the staging canary inherits the 8.0s hardcoded
+      # ceiling in apps/api/src/nfm_db/services/lightrag_client.py and
+      # every first-hit hybrid query times out before the LLM cache lands.
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: ${STAGING_LIGHTRAG_QUERY_TIMEOUT_S:-60.0}
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
@@ -155,9 +162,31 @@ services:
       LLM_BINDING_HOST: ${STAGING_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
       LLM_BINDING_API_KEY: ${STAGING_LIGHTRAG_LLM_API_KEY:?Set STAGING_LIGHTRAG_LLM_API_KEY}
       EMBEDDING_BINDING: ${STAGING_LIGHTRAG_EMBEDDING_BINDING:-openai}
-      EMBEDDING_MODEL: ${STAGING_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      # NFM-4532: mirror prod's nomic-embed-text + EMBEDDING_DIM=768 so the
+      # G2 canary actually exercises the embedding pipeline. text-embedding-3-small
+      # is OpenAI-only and 404s locally — staging LightRAG falls back to
+      # 1536d (the LightRAG default when EMBEDDING_DIM is unset) and rejects
+      # every embed with "Embedding dimension mismatch detected".
+      EMBEDDING_MODEL: ${STAGING_LIGHTRAG_EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIM: ${STAGING_LIGHTRAG_EMBEDDING_DIM:-768}
+      # NFM-3803 (A3): the openai-compatible binding only forwards
+      # ?dimensions= when EMBEDDING_SEND_DIM is true. False matches prod
+      # — pgvector hnsw caps at 2000d and we want the model's native
+      # 768d, not a MRL-truncated variant.
+      EMBEDDING_SEND_DIM: ${STAGING_LIGHTRAG_EMBEDDING_SEND_DIM:-false}
       EMBEDDING_BINDING_HOST: ${STAGING_LIGHTRAG_EMBEDDING_HOST:-https://api.openai.com/v1}
       EMBEDDING_BINDING_API_KEY: ${STAGING_LIGHTRAG_EMBEDDING_API_KEY:-${STAGING_LIGHTRAG_LLM_API_KEY}}
+      # NFM-4532: mirror prod's rerank stack (PR #1275). launchd ai.nfm.rerank-server
+      # binds 127.0.0.1:8109 on the host; host.docker.internal on the staging
+      # network resolves to the host loopback so this URL is reachable from
+      # the staging lightrag container. Co-located with prod: a rerank
+      # change is now a single fixpoint (compose + host rerank daemon) instead
+      # of needing a separate staging rerank decision.
+      RERANK_BINDING: ${STAGING_LIGHTRAG_RERANK_BINDING:-cohere}
+      RERANK_MODEL: ${STAGING_LIGHTRAG_RERANK_MODEL:-qwen3-reranker-0.6b}
+      RERANK_BINDING_HOST: ${STAGING_LIGHTRAG_RERANK_HOST:-http://host.docker.internal:8109/rerank}
+      RERANK_BINDING_API_KEY: ${STAGING_LIGHTRAG_RERANK_API_KEY:-local-rerank}
+      MIN_RERANK_SCORE: ${STAGING_LIGHTRAG_MIN_RERANK_SCORE:-0.3}
       WORKSPACE: /app/data
     depends_on:
       db: { condition: service_healthy }
