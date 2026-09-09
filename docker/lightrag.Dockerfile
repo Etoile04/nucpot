@@ -45,6 +45,15 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
+# NFM-4525: Patch LightRAG's ollama binding to default `think=False`.
+# qwen3.5:4b-nvfp4's chat template forces thinking mode; Ollama's
+# /v1/chat/completions compat layer ignores chat_template_kwargs / extra_body
+# / options.think, so the patch must default `think=False` on the native
+# /api/chat binding. The file is a no-op when LLM_BINDING!=ollama (e.g. on
+# the staging image against real OpenAI). See docker/lightrag/sitecustomize.py
+# for the patch + rationale.
+COPY docker/lightrag/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
+
 # LightRAG server defaults to HOST=0.0.0.0, PORT=9621
 EXPOSE 9621
 
