@@ -98,6 +98,13 @@ services:
       CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
       NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
       NFM_LIGHTRAG_PORT: "9621"
+      # NFM-4502 / NFM-4492: raise the LightRAG query ceiling from the
+      # 8.0s hardcoded default in apps/api/src/nfm_db/services/lightrag_client.py
+      # so we can measure real post-fix cold/warm latency (research found 63.7s
+      # cold query with the broken embed; expected post-fix cold ≤ 30s with
+      # nomic-embed-text). 30s is the first probe — NFM-3404 / NFM-4502 will
+      # re-tune once measurements are in.
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "30.0"
       # HPC SSH key (mount as secret in production)
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
