@@ -34,12 +34,23 @@ WORKDIR /app
 # at runtime. lightrag-hku[api] does NOT pull it in; without it baked into
 # the image, pipmaster tries `pip install --upgrade asyncpg` at container
 # START (against pypi.org, GFW-blocked) and startup crash-loops. Bake it.
+#
+# NFM-4527: lightrag's pipmaster.core ALSO lazy-installs the LLM binding's
+# Python client at container START (the same GFW-blocked path). With
+# LLM_BINDING=ollama it tries `pip install --upgrade ollama` against
+# pypi.org forever and the container stays `health: starting`. Bake the
+# binding's package here too — same retry ladder as asyncpg. Belt-and-
+# suspenders: also install httpx (a hard transitive dep of ollama) so the
+# lazy-install path is fully eliminated. Any future LLM_BINDING=<x> flip
+# MUST be paired with adding the matching client package to this line.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg || \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg) || \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx) || \
     (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg)
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx)
 
 # Knowledge graph data directory (persisted via volume mount)
 RUN mkdir -p /app/data

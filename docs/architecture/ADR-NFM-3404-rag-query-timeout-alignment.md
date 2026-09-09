@@ -201,6 +201,17 @@ The existing `docker-compose.lightrag.yml:83-90` healthcheck (`curl -fsS ... /he
   to default `think=False` on the Ollama binding; brings fresh-query
   wall-clock back inside the 30 s ceiling without touching NFM-4492's
   raised timeout
+- NFM-4527 — NFM-4525's image shipped **inert** because `docker/lightrag.Dockerfile`
+  did not install the `ollama` Python client. lightrag's `pipmaster.core`
+  lazy-installs the binding's package at container START against
+  `pypi.org` (GFW-blocked from inside the container) and loops forever on
+  `Failed to handle package: ollama`; `nucpot-prod-lightrag` stays
+  `health: starting` indefinitely and `sitecustomize.py` never gets to run.
+  NFM-4527 bakes `ollama>=0.6.0` and `httpx` into the image at build time
+  so pipmaster never gets a chance to lazy-install. A regression test in
+  `docker/lightrag/tests/test_dockerfile_binding_package.py` enforces the
+  binding-package → Dockerfile invariant for any future `LLM_BINDING=<x>`
+  flip.
 
 ---
 
@@ -257,3 +268,42 @@ raise to 30 s was a safety valve while Path A was being validated; it
 can be walked back to 12 s in a follow-up that re-runs the §4 integration
 test against the post-NFM-4525 image. Tracked but not in scope for
 this docs-only landing.
+
+### 8.1 Addendum — actual post-fix wall-clock (NFM-4527)
+
+> **2026-09-09 update — NFM-4527 shipped:** NFM-4525's image
+> (`aa0db03e48c6fc77ae9601b86004c03d53312f32`) deployed to prod but the
+> fix was inert — `docker/lightrag.Dockerfile` did not install the
+> `ollama` Python client. Cached queries still returned in 0.1–2.5 s
+> (extraction cached before thinking-mode-active templates landed),
+> but **fresh unique queries still hit the 30 s ceiling** with empty
+> `Content`, because `nucpot-prod-lightrag` itself never finished
+> initialising past pipmaster. NFM-4527 bakes the binding's package
+> into the image at build time. After NFM-4527 deploy + env flip,
+> the per-mode wall-clock should track the budget table in §8 above.
+
+| Mode | Cache hit? | Wall-clock after NFM-4527 deploy | Verified by |
+| --- | --- | --- | --- |
+| `hybrid` (default) | yes | **0.1–0.3 s** | cached-extraction regression check (NFM-4492) |
+| `hybrid` | no | **1–5 s** (target) | fresh-hybrid smoke query with UNIQUE text — see NFM-4527 AC-4 |
+| `local` / `naive` | no | 1–3 s | follow-up smoke queries |
+| `global` | no | 3–7 s | follow-up smoke queries (multi-LLM-call, §3.1 risk) |
+| `mix` | no | 2–6 s | follow-up smoke queries |
+
+**Validation gate for the env flip:** before flipping
+`PROD_LIGHTRAG_LLM_BINDING=ollama` (and dropping `/v1` from
+`PROD_LIGHTRAG_LLM_HOST`), RE must verify on the post-NFM-4527 image:
+
+1. `docker logs nucpot-prod-lightrag` contains
+   `[nucmd-patch] LightRAG ollama binding patched: think=False default`
+   within 60 s of `starting`.
+2. Container reaches `health: healthy` within 2 min (vs indefinite
+   `starting` on NFM-4525's image).
+3. Fresh `hybrid` query with UNIQUE text returns
+   `wall ≤ 30 s ∧ response_len > 100 chars ∧ finish_reason != length`.
+
+If (1) or (2) fails, revert `docker/.env.prod` (LE rollback path
+`run-recovery.sh rollback --tag <previous-sha>`) and treat the next
+Dockerfile candidate as a no-deploy until the regression test in
+`docker/lightrag/tests/test_dockerfile_binding_package.py` passes
+locally with the updated `BINDING_PACKAGE_MAP`.
