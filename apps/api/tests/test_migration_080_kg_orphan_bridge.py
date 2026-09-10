@@ -100,12 +100,15 @@ class TestMigration080Chain:
         again; 083_normalize_potential_file_urls (NFM-4309 / BUG-37,
         potentials.file_url canonical proxy normalization + sweep) extended
         it again; 084_potentials_list_partial_index (NFM-4311 / BUG-30,
-        potentials list default-sort partial index) is the current head.
+        potentials list default-sort partial index) was the head until
+        085_g1b_conditions_dataset_versions_dedupe (NFM-4548, G1-B:
+        conditions JSONB + dataset_versions + dedupe_key) chained after
+        084 — 085 is the current head.
         This keeps asserting "exactly one head" so a future bad
         down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "084_potentials_list_partial_index"
+        current_head = "085_g1b_conditions_dataset_versions_dedupe"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
