@@ -519,6 +519,71 @@ def test_celery_task_is_registered() -> None:
     )
 
 
+def test_celery_task_uses_task_scoped_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUG-22 (NFM-4076): the task must not touch the shared engine.
+
+    The shared engine's asyncpg pool binds connections to the first
+    ``asyncio.run`` loop that used them; this task gets a fresh loop per
+    invocation in a Celery prefork child, so ``get_session_factory``
+    deterministically fails with ``InterfaceError: another operation is
+    in progress`` (verified live in prod 2026-09-10).  Regression guard:
+    the task body must acquire its session via the task-scoped
+    ``task_session_factory`` adapter (ADR-NFM-4076 D3).
+    """
+    from nfm_db.services import celery_app as celery_module
+    from nfm_db.services.rag_audit import AuditOutcome
+
+    captured: dict[str, Any] = {}
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    def _fake_task_factory() -> Any:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _ctx() -> Any:
+            captured["task_scoped"] = True
+            yield lambda: _FakeSession()
+
+        return _ctx()
+
+    async def _fake_audit(session: object, **kwargs: object) -> AuditOutcome:
+        captured["session"] = session
+        return AuditOutcome(
+            run_date=date(2026, 9, 11),
+            completed_total=0,
+            indexed_total=0,
+            drift_total=0,
+            reingested=0,
+            errors=0,
+        )
+
+    class _FakeSettings:
+        lightrag_host = "localhost"
+        lightrag_port = 9621
+
+    monkeypatch.setattr(
+        "nfm_db.database.task_session_factory", _fake_task_factory
+    )
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit.run_rag_audit_index_coverage", _fake_audit
+    )
+    monkeypatch.setattr(
+        "nfm_db.config.get_settings", lambda: _FakeSettings()
+    )
+
+    result = celery_module.rag_audit_index_coverage_task.run()
+
+    assert captured.get("task_scoped") is True
+    assert isinstance(captured.get("session"), _FakeSession)
+    assert result["indexed_total"] == 0
+
+
 # ---------------------------------------------------------------------------
 # LightRAGClient.list_indexed_documents marker extraction
 # ---------------------------------------------------------------------------
