@@ -50,6 +50,8 @@ import {
   KG_EDGE_BADGE,
   PROVENANCE_SECTION_ORDER,
 } from "@/lib/provenance"
+import { LayoutBSection } from "@/components/g1-extraction/LayoutBSection"
+import { adaptToG1Rows } from "@/lib/g1-extraction/adapter"
 
 const { Title, Text, Paragraph } = Typography
 
@@ -303,10 +305,16 @@ export default function LiteratureDetailView({
         </Card>
       )}
 
+      {/* G1 Layout B — default per spec §4.1 (AC-3) */}
+      <LayoutBSection
+        materialLabel={detail.title ?? detail.id}
+        measurements={adaptToG1Rows(detail.extraction_results)}
+      />
+
       {/* Figures */}
       <FiguresSection figures={detail.figures ?? []} literatureId={detail.id} />
 
-      {/* Extraction results */}
+      {/* Extraction results (legacy fallback during transition) */}
       <ExtractionResultsSection results={detail.extraction_results ?? []} />
     </div>
   )
