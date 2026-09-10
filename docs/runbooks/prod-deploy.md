@@ -64,14 +64,15 @@ exactly this command shape run from a Hermes desktop session.
 
 ### 2.1. Buildable services
 
-`docker-compose.prod.yml` defines six services. `db` and `redis`
-pull base images only; the remaining four are rebuildable locally:
+`docker-compose.prod.yml` defines seven services. `db` and `redis`
+pull base images only; the remaining five are rebuildable locally:
 
 | `svc`         | Image tag (with `PROD_IMAGE_TAG`)               | Notes                                                       |
 | ------------- | ----------------------------------------------- | ----------------------------------------------------------- |
-| `api`         | `nucpot-prod-api:${PROD_IMAGE_TAG:-latest}`     | Shared by `worker` — one build covers both.                 |
+| `api`         | `nucpot-prod-api:${PROD_IMAGE_TAG:-latest}`     | Shared by `worker` and `beat` — one build covers all three. |
 | `lightrag`    | `nucpot-prod-lightrag:${PROD_IMAGE_TAG:-latest}` | Standalone RAG sidecar.                                     |
 | `worker`      | `nucpot-prod-api:${PROD_IMAGE_TAG:-latest}`     | **Re-tag, do not rebuild** — uses the `api` image.          |
+| `beat`        | `nucpot-prod-api:${PROD_IMAGE_TAG:-latest}`     | **Re-tag, do not rebuild** — Celery beat scheduler.        |
 | `web`         | `nucpot-prod-web:${PROD_IMAGE_TAG:-latest}`     | Next.js frontend, built in `apps/web/`.                     |
 
 `db` (pgvector/pgvector:pg16) and `redis` (redis:7-alpine) are
@@ -144,10 +145,11 @@ export PROD_IMAGE_TAG="$(git rev-parse HEAD)"
 echo "==> Local build with PROD_IMAGE_TAG=${PROD_IMAGE_TAG}"
 
 docker compose -f docker-compose.prod.yml build api web
-docker compose -f docker-compose.prod.yml up -d api worker web
+docker compose -f docker-compose.prod.yml up -d api worker beat web
 ```
 
-`worker` is restarted, not rebuilt — it shares the `api` image.
+`worker` and `beat` are restarted, not rebuilt — they share the `api`
+image.
 
 ### 2.5. Verification
 
