@@ -52,7 +52,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "086_add_validity_check_and_valid_range"
-down_revision: str | Sequence[str] | None = "084_potentials_list_partial_index"
+down_revision: str | Sequence[str] | None = "085_g1b_conditions_dataset_versions_dedupe"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

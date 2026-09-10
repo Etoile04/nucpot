@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
+from nfm_db.api.v1.review import _row_to_review_item
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.review import ReviewStatus
 
@@ -315,6 +317,99 @@ async def test_pending_to_pending_rejected(async_client, db_session) -> None:
         json={"status": "pending"},
     )
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# R3: NFM-4554 skip action — spec §3.4 `skipped` state
+# ---------------------------------------------------------------------------
+# Spec §3.4 mandates `skipped` as a first-class review_status (临时跳过,
+# 后续仍可恢复;不阻塞版本合并). The frontend 五动作 "跳过" wire-up used
+# to map to pending (no-op self-loop), which the backend correctly rejects
+# with 409 → user-visible toast in the E2E QA round-4 probe. These tests
+# pin the spec-faithful implementation: `skipped` is a real enum value
+# with `pending ↔ skipped` round-trip transitions, and stats aggregation
+# counts it as a distinct bucket.
+
+
+@pytest.mark.asyncio
+async def test_skip_status_is_a_valid_enum_value() -> None:
+    """ReviewStatus.SKIPPED exists with value='skipped' per spec §3.4."""
+    assert hasattr(ReviewStatus, "SKIPPED"), (
+        "ReviewStatus.SKIPPED must exist for spec §3.4 'skipped' state"
+    )
+    assert ReviewStatus.SKIPPED.value == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_pending_to_skipped_accepted(async_client, db_session) -> None:
+    """Spec §3.4: pending → skipped is the 五动作 '跳过' wire-up."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.PENDING.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "skipped", "note": "稍后再校"},
+    )
+    assert response.status_code == 200, (
+        f"pending → skipped must succeed per spec §3.4, got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json()["data"]["review_status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_skipped_to_pending_round_trip(async_client, db_session) -> None:
+    """Spec §3.4: skipped → pending (恢复) is a valid transition."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.SKIPPED.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending"},
+    )
+    assert response.status_code == 200, (
+        f"skipped → pending (恢复) must succeed per spec §3.4, got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json()["data"]["review_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_skipped_does_not_block_terminal_reset(async_client, db_session) -> None:
+    """Skipped → terminal (approved/rejected/needs_revision) is allowed."""
+    for target in ("approved", "rejected", "needs_revision"):
+        # Need a fresh row per attempt because each PATCH mutates state.
+        er2 = await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.SKIPPED.value,
+        )
+        response = await async_client.patch(
+            f"/api/v1/review/{er2.id}",
+            json={"status": target},
+        )
+        assert response.status_code == 200, (
+            f"skipped → {target} must succeed (resumable per spec §3.4), "
+            f"got {response.status_code}: {response.text}"
+        )
+        assert response.json()["data"]["review_status"] == target
+
+
+@pytest.mark.asyncio
+async def test_stats_counts_skipped_bucketed(async_client, db_session) -> None:
+    """Stats aggregation surfaces skipped as its own bucket, not zeroed."""
+    for _ in range(2):
+        await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.SKIPPED.value,
+        )
+    response = await async_client.get("/api/v1/review/stats")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["skipped"] == 2, (
+        f"skipped must aggregate independently (spec §3.4), got {data}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -674,3 +769,114 @@ async def test_stats_by_type_breakdown(async_client, db_session) -> None:
     # All four type labels should be present
     for label in ("extraction", "node", "edge", "measurement"):
         assert label in by_type
+
+
+# ---------------------------------------------------------------------------
+# NFM-4560 — _row_to_review_item unit_symbols branch
+# ---------------------------------------------------------------------------
+#
+# PropertyMeasurement has FK references to tables that don't exist in
+# SQLite (property_types.id, units.id, datasets.id, sources.id), so the
+# integration tests above use ExtractionResult. The unit_symbol JOIN
+# lives in the property_measurements branch of ``_row_to_review_item``
+# only, so we unit-test it with a duck-typed row instead of seeding a
+# real DB. This keeps the test fast and SQLite-friendly while still
+# exercising the mapping contract the API endpoint depends on.
+
+
+def _measurement_row(
+    *,
+    row_id: uuid.UUID | None = None,
+    property_type_id: uuid.UUID | None,
+    unit_id: uuid.UUID | None,
+    value_scalar: float | None = 0.34,
+    dedupe_key: str | None = None,
+    notes: str | None = None,
+) -> SimpleNamespace:
+    """Build a duck-typed row that mimics PropertyMeasurement's surface
+    that ``_row_to_review_item`` reads (property_type_id, unit_id,
+    value_scalar, dedupe_key, notes, id, created_at, review_status)."""
+    return SimpleNamespace(
+        id=row_id or uuid.uuid4(),
+        property_type_id=property_type_id,
+        unit_id=unit_id,
+        value_scalar=value_scalar,
+        dedupe_key=dedupe_key,
+        notes=notes,
+        # _row_to_review_item uses getattr for these — set them so the
+        # response envelope is fully populated.
+        confidence=0.5,
+        review_status="pending",
+        created_at=datetime(2026, 9, 10, tzinfo=UTC),
+    )
+
+
+def test_row_to_review_item_resolves_unit_symbol_when_present() -> None:
+    """NFM-4560 — backend mirror of the round-2 property_type_name fix.
+
+    When ``unit_symbols`` is supplied and the row has a unit_id, the
+    mapper writes ``unit_symbol`` into item_data so the UI can render
+    "W/(m·K)" instead of a row UUID prefix.
+    """
+    unit_id = uuid.uuid4()
+    pt_id = uuid.uuid4()
+    row = _measurement_row(property_type_id=pt_id, unit_id=unit_id)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        property_type_names={pt_id: "thermal conductivity"},
+        unit_symbols={unit_id: "W/(m·K)"},
+    )
+    assert item.item_data["unit_symbol"] == "W/(m·K)"
+    assert item.item_data["unit_id"] == str(unit_id)
+    assert item.item_data["property_type_name"] == "thermal conductivity"
+
+
+def test_row_to_review_item_unit_symbol_null_when_dict_empty() -> None:
+    """No symbol resolved → item_data["unit_symbol"] is None (legacy
+    fallback handled client-side, mirrors property_type_name)."""
+    unit_id = uuid.uuid4()
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=unit_id)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={},  # unit was deleted / not resolvable
+    )
+    assert item.item_data["unit_symbol"] is None
+    # unit_id is still surfaced so the client can fall back to a short
+    # id prefix.
+    assert item.item_data["unit_id"] == str(unit_id)
+
+
+def test_row_to_review_item_unit_symbol_null_when_row_has_no_unit() -> None:
+    """Row with unit_id=None → no symbol, no unit_id, client shows '—'."""
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=None)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={},
+    )
+    assert item.item_data["unit_symbol"] is None
+    assert item.item_data["unit_id"] is None
+
+
+def test_row_to_review_item_unit_symbols_param_is_optional() -> None:
+    """unit_symbols=None must not crash (mirrors property_type_names)."""
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=uuid.uuid4())
+    item = _row_to_review_item(row, "property_measurements")
+    assert item.item_data["unit_symbol"] is None
+
+
+def test_row_to_review_item_resolves_only_matching_unit_id() -> None:
+    """The mapper looks up by the row's specific unit_id — a different
+    row with a different unit_id must not bleed its symbol into this
+    row's item_data."""
+    this_unit = uuid.uuid4()
+    other_unit = uuid.uuid4()
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=this_unit)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={this_unit: "K", other_unit: "eV"},
+    )
+    assert item.item_data["unit_symbol"] == "K"
