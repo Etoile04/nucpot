@@ -97,8 +97,10 @@ class TestRevisionMetadata:
         normalize_potential_file_urls for the BUG-37 file_url
         governance) chained after 082, 084 (NFM-4311 / BUG-30,
         potentials list default-sort partial index) chained after 083,
-        and 085 (NFM-4548, G1-B: conditions JSONB + dataset_versions +
-        dedupe_key) chained after 084 — 085 is the current head.
+        085 (NFM-4548, G1-B: conditions JSONB + dataset_versions +
+        dedupe_key) chained after 084, and 086 (NFM-4550, G1-D:
+        valid_range + validity_check JSONB) chained after 085 — 086
+        is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -111,7 +113,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["085_g1b_conditions_dataset_versions_dedupe"], (
+        assert heads == ["086_add_validity_check_and_valid_range"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
