@@ -91,7 +91,7 @@ class TestMigration080Chain:
         )
 
     def test_080_is_single_head(self, script_directory: ScriptDirectory) -> None:
-        """Exactly one head exists — 086 (NFM-4539 RAG-D) chained after 085 is it.
+        """Exactly one head exists — 087 (NFM-4539 RAG-D) chained after 086 is it.
 
         080 was the head until 081_create_feature_flags_table (NFM-4180,
         backend feature-flag service for the DataLossNotice rollout)
@@ -101,16 +101,17 @@ class TestMigration080Chain:
         potentials.file_url canonical proxy normalization + sweep) extended
         it again; 084_potentials_list_partial_index (NFM-4311 / BUG-30,
         potentials list default-sort partial index) extended it again;
-        085_create_rag_access_log (NFM-4539 RAG-B, the
+        085_g1b_conditions_dataset_versions_dedupe (NFM-4548 G1-B schema)
+        extended it again; 086_create_rag_access_log (NFM-4539 RAG-B, the
         ``rag_access_log`` table for AC-7 telemetry) extended it again;
-        086_create_rag_index_audit_log (NFM-4539 RAG-D, the
+        087_create_rag_index_audit_log (NFM-4539 RAG-D, the
         ``rag_index_audit_log`` for the daily index-coverage
         reconciliation) is the current head.  This keeps asserting
         "exactly one head" so a future bad down_revision still fails
         loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "086_create_rag_index_audit_log"
+        current_head = "087_create_rag_index_audit_log"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 

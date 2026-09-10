@@ -1,11 +1,15 @@
-"""086 — rag_index_audit_log table (NFM-4539 RAG-D).
+"""087 — rag_index_audit_log table (NFM-4539 RAG-D).
 
 One row per drift finding emitted by the ``rag_audit_index_coverage``
 Celery task (NFM-4257 03:30 UTC window).  Composite unique constraint
 ``(routine, literature_id, run_date)`` is the §8.2 idempotency guard.
 
-Revision ID: 086_create_rag_index_audit_log
-Revises: 085_create_rag_access_log
+Chains after ``086_create_rag_access_log`` (NFM-4539 RAG-B AC-7) —
+originally branch-local revision 086, renumbered to 087 during the
+rebase onto ``abc345a39`` (main).
+
+Revision ID: 087_create_rag_index_audit_log
+Revises: 086_create_rag_access_log
 Create Date: 2026-09-10
 """
 
@@ -13,8 +17,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "086_create_rag_index_audit_log"
-down_revision: str | Sequence[str] | None = "085_create_rag_access_log"
+revision: str = "087_create_rag_index_audit_log"
+down_revision: str | Sequence[str] | None = "086_create_rag_access_log"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

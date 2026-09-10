@@ -1,4 +1,4 @@
-"""085 — rag_access_log table (NFM-4539 RAG-B).
+"""086 — rag_access_log table (NFM-4539 RAG-B).
 
 One row per ``POST /api/v1/lightrag/query`` call.  Surfaces the AC-7
 telemetry: ``mode``, ``was_fallback``, ``was_cached``, ``query_kind``,
@@ -6,8 +6,13 @@ telemetry: ``mode``, ``was_fallback``, ``was_cached``, ``query_kind``,
 P95-over-7d rollups, on ``(mode, ts)`` for per-mode dashboards, and on
 ``was_fallback`` so AC-4 fallback counters stay cheap.
 
-Revision ID: 085_create_rag_access_log
-Revises: 084_potentials_list_partial_index
+Chains after ``085_g1b_conditions_dataset_versions_dedupe`` (NFM-4548 G1-B
+schema) on the post-2026-09-10 main branch — the original branch-local
+revision 085 collided with NFM-4548 and was renumbered to 086 during the
+rebase onto ``abc345a39``.
+
+Revision ID: 086_create_rag_access_log
+Revises: 085_g1b_conditions_dataset_versions_dedupe
 Create Date: 2026-09-10
 """
 
@@ -15,8 +20,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "085_create_rag_access_log"
-down_revision: str | Sequence[str] | None = "084_potentials_list_partial_index"
+revision: str = "086_create_rag_access_log"
+down_revision: str | Sequence[str] | None = "085_g1b_conditions_dataset_versions_dedupe"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

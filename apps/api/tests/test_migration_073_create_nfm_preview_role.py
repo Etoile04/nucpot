@@ -86,9 +86,13 @@ class TestRevisionMetadata:
         Originally asserted 073 as the head (NFM-4122). The chain has
         since been extended by 075/076/077/078/079/080/081/082/083 (BUG-30
         file_url governance, BUG-08 blog_role_domain_expert, feature_flags
-        for DataLossNotice, potentials partial index), 085_create_rag_access_log
-        (NFM-4539 RAG-B AC-7 telemetry) and 086_create_rag_index_audit_log
-        (NFM-4539 RAG-D daily reconciliation) — 086 is the current head.
+        for DataLossNotice, potentials partial index),
+        085_g1b_conditions_dataset_versions_dedupe (NFM-4548 G1-B schema
+        landed on main post-branch), 086_create_rag_access_log
+        (NFM-4539 RAG-B AC-7 telemetry) and 087_create_rag_index_audit_log
+        (NFM-4539 RAG-D daily reconciliation) — 087 is the current head.
+        The NFM-4539 renumber from "085/086" to "086/087" happened during
+        the PR #1285 rebase onto main after NFM-4548 grabbed the slot.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -101,7 +105,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["086_create_rag_index_audit_log"], (
+        assert heads == ["087_create_rag_index_audit_log"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
