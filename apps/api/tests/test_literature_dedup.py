@@ -34,6 +34,7 @@ from nfm_db.models import Base
 from nfm_db.models.material import Material, MaterialCategory
 from nfm_db.models.property import (
     Dataset,
+    DatasetVersion,
     PropertyCategory,
     PropertyMeasurement,
     PropertyType,
@@ -461,7 +462,23 @@ def _make_extraction_input(
 
 
 class TestMapperWritesDedupeKey:
-    """Every mapper INSERT must populate ``dedupe_key`` (AC-9 contract)."""
+    """Every mapper INSERT must populate ``dedupe_key`` (AC-9 contract).
+
+    The exact hash differs by dialect:
+      * Postgres (prod): ``GENERATED ALWAYS AS (md5(...)) STORED`` —
+        mapper MUST NOT write a literal; PG computes the value on
+        every INSERT. The column is non-NULL on disk.
+      * SQLite (hermetic tests): the mapper writes the SHA-256
+        equivalent computed by
+        :func:`nfm_db.services.literature_dedup.compute_dedupe_key`.
+        SQLite's GENERATED is unenforced, so an explicit write is the
+        only way to make the partial unique ``uq_pm_dedupe_key``
+        (WHERE dataset_version_id IS NOT NULL) fire on duplicate runs.
+
+    Either way the contract is: ``dedupe_key IS NOT NULL`` after every
+    mapper INSERT, and ``dataset_version_id IS NOT NULL`` so the partial
+    unique scope actually covers the row.
+    """
 
     async def test_mapper_writes_dedupe_key_on_insert(self, db_session: AsyncSession) -> None:
         # Seed the catalogue rows the mapper requires.
@@ -487,33 +504,26 @@ class TestMapperWritesDedupeKey:
         result = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
         assert result.created_measurements == 1
 
-        # The QA probe asserted both rows landed with dedupe_key=NULL.
-        # After the wire-up the column MUST be populated.
+        # The 2026-09-10 E2E QA probe asserted both rows landed with
+        # dedupe_key=NULL. After the PG-aware wire-up the column MUST be
+        # populated on every supported dialect.
         rows = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
         assert len(rows) == 1
-        assert rows[0].dedupe_key is not None
-        assert rows[0].dedupe_key.startswith("sha256:")
-        # And it MUST match the helper exactly — no off-by-one in the
-        # composite ordering (dataset, property, source, value_hash).
-        assert rows[0].dedupe_key == compute_dedupe_key(
-            rows[0].dataset_id,
-            rows[0].property_type_id,
-            # source_id is the FK on the joined dataset row.
-            (
-                await db_session.execute(
-                    select(Dataset.source_id).where(Dataset.id == rows[0].dataset_id)
-                )
-            ).scalar_one(),
-            # value_hash mirrors the mapper's own derivation (sha1 of
-            # sorted-JSON value kwargs). Recompute the canonical form so
-            # the test fails if either side drifts.
-            _expected_value_hash({"value_scalar": 2800.0}),
+        assert rows[0].dedupe_key is not None, (
+            "AC-9 regression: dedupe_key stayed NULL after mapper INSERT."
+        )
+        # AC-9 partial unique requires dataset_version_id; otherwise the
+        # partial scope (WHERE dataset_version_id IS NOT NULL) never
+        # covers the row, and Owen 2023's 92-row case collapses to … 92.
+        assert rows[0].dataset_version_id is not None, (
+            "AC-9 regression: dataset_version_id NULL — partial unique "
+            "uq_pm_dedupe_key can never fire on this row."
         )
 
     async def test_mapper_dedup_via_constraint_on_identical_rerun(
         self, db_session: AsyncSession
     ) -> None:
-        """Reproduces the E2E QA 2026-09-10 probe scenario.
+        """Reproduces the 2026-09-10 E2E QA probe scenario.
 
         Two ``map_and_persist`` calls with identical inputs must collapse
         to ONE ``PropertyMeasurement`` row (Owen 2023's 92-row case).
@@ -538,9 +548,11 @@ class TestMapperWritesDedupeKey:
         await db_session.flush()
 
         first = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
-        # Second call with the same payload — without an explicit dedupe_key
-        # (the real mapper never passes one). The mapper must catch the
-        # IntegrityError internally and count the row as skipped.
+        # Second call with the same payload — without an explicit
+        # dedupe_key (the real mapper never passes one on PG). The mapper
+        # must catch the IntegrityError internally and count the row as
+        # skipped via either the legacy ``uq_pm_dedup`` 5-tuple or the
+        # new ``uq_pm_dedupe_key`` partial unique.
         second = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
         assert first.created_measurements == 1
         assert second.created_measurements == 0
@@ -550,6 +562,111 @@ class TestMapperWritesDedupeKey:
         assert len(rows) == 1, (
             f"AC-9 regression: identical mapper calls landed {len(rows)} rows; expected 1."
         )
+
+
+class TestMapperStampsDatasetVersion:
+    """Every mapper INSERT must carry a non-NULL ``dataset_version_id`` (AC-9).
+
+    The mapper mints (or reuses) a single ``DatasetVersion`` per
+    ``Dataset`` per batch — version 1 status='draft'. The
+    ``uq_pm_dedupe_key`` partial unique (WHERE dataset_version_id IS NOT
+    NULL) only fires when this column is populated, so a missing
+    ``dataset_version_id`` is functionally equivalent to no dedup at all.
+    """
+
+    async def test_mapper_creates_dataset_version_on_new_dataset(
+        self, db_session: AsyncSession
+    ) -> None:
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        result = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
+        assert result.created_datasets == 1
+
+        # A DatasetVersion row was minted alongside the Dataset.
+        versions = (
+            await db_session.execute(select(DatasetVersion))
+        ).scalars().all()
+        assert len(versions) == 1
+        assert versions[0].version_no == 1
+        assert versions[0].status == "draft"
+
+        # And the measurement is stamped with that version's id.
+        measurements = (
+            await db_session.execute(select(PropertyMeasurement))
+        ).scalars().all()
+        assert len(measurements) == 1
+        assert measurements[0].dataset_version_id == versions[0].id
+
+    async def test_mapper_reuses_existing_dataset_version(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A second mapper run on the same dataset must reuse v1.
+
+        This guards against an accidental version_no explosion: if the
+        mapper minted v2 on every run, the partial unique would silently
+        re-scope to a fresh version and dedup would never fire across
+        requests.
+        """
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        # First mapper run creates the dataset + version v1.
+        await map_and_persist(db_session, [_make_extraction_input(value="2800")])
+        first_versions = (
+            await db_session.execute(select(DatasetVersion))
+        ).scalars().all()
+        assert len(first_versions) == 1
+        first_version_id = first_versions[0].id
+
+        # Second mapper run on the same (material, source) pair — the
+        # mapper reuses the existing dataset (no fresh INSERT) and reuses
+        # its version (no fresh INSERT).
+        await map_and_persist(
+            db_session, [_make_extraction_input(value="2800", property_name="boiling_point")]
+        )
+        # boiling_point doesn't exist yet → skipped, but the mapper still
+        # touched the dataset_map and dataset_version_map. The version
+        # row count must NOT have grown.
+        all_versions = (
+            await db_session.execute(select(DatasetVersion))
+        ).scalars().all()
+        assert len(all_versions) == 1, (
+            f"Mapper minted a fresh DatasetVersion on reuse: {len(all_versions)} > 1."
+        )
+        assert all_versions[0].id == first_version_id
 
 
 class TestMapperStampsLiteratureIdentity:
