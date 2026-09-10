@@ -61,7 +61,10 @@ function handleReviewRoute(route: Route, url: string): void {
     jsonResponse(
       route,
       // Wrap in envelope to match backend response shape
-      { success: true, data: batchActionCount % 2 === 1 ? MOCK_BATCH_APPROVE_RESPONSE : MOCK_BATCH_REJECT_RESPONSE },
+      {
+        success: true,
+        data: batchActionCount % 2 === 1 ? MOCK_BATCH_APPROVE_RESPONSE : MOCK_BATCH_REJECT_RESPONSE,
+      },
     )
     return
   }
@@ -139,10 +142,7 @@ function handleReviewRoute(route: Route, url: string): void {
  * @param authenticated - If true, /auth/me returns a valid user profile.
  *   If false, /auth/me returns 401 (simulating unauthenticated state).
  */
-export async function setupReviewMocks(
-  page: Page,
-  authenticated: boolean,
-): Promise<void> {
+export async function setupReviewMocks(page: Page, authenticated: boolean): Promise<void> {
   // Reset mutable state
   batchActionCount = 0
 
@@ -184,11 +184,10 @@ export async function injectAuth(page: Page): Promise<void> {
   ])
   // Also keep localStorage for any legacy code paths
   await page.context().addInitScript(
-    (key: string, value: string) => {
+    ({ key, value }: { key: string; value: string }) => {
       localStorage.setItem(key, value)
     },
-    TOKEN_KEY,
-    MOCK_TOKEN,
+    { key: TOKEN_KEY, value: MOCK_TOKEN },
   )
 }
 
@@ -200,7 +199,10 @@ export async function injectAuth(page: Page): Promise<void> {
  */
 export async function clearAuth(page: Page): Promise<void> {
   await page.context().clearCookies()
-  await page.context().addInitScript((key: string) => {
-    localStorage.removeItem(key)
-  }, TOKEN_KEY)
+  await page.context().addInitScript(
+    ({ key }: { key: string }) => {
+      localStorage.removeItem(key)
+    },
+    { key: TOKEN_KEY },
+  )
 }
