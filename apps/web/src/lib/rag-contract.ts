@@ -57,6 +57,25 @@ export interface RagContractQueryResponse {
   readonly entities: readonly Record<string, unknown>[]
   /** KG relationships related to the query. */
   readonly relationships: readonly Record<string, unknown>[]
+  /**
+   * NFM-4539 RAG-B / AC-4: transparent degradation envelope.  When
+   * ``used=true`` the semantic path stalled and the answer was rescued
+   * via the ILIKE full-text path; the UI surfaces a badge so the user
+   * knows the answer is degraded.
+   */
+  readonly fallback: RagContractFallback
+}
+
+/**
+ * Mirrors nfm_db.schemas.lightrag.FallbackInfo.  ``kind`` is the
+ * fallback family (``"iliKE"`` today); ``original_error`` carries the
+ * upstream failure message so logs can correlate the UI badge with the
+ * access_log row.
+ */
+export interface RagContractFallback {
+  readonly used: boolean
+  readonly kind: string | null
+  readonly original_error: string | null
 }
 
 // ---------------------------------------------------------------------------

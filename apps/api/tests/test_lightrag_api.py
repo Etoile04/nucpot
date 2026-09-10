@@ -215,21 +215,54 @@ class TestQueryEndpoint:
 
     @pytest.mark.asyncio
     async def test_query_service_error(self, client: AsyncClient) -> None:
-        """Should return error when LightRAG service fails."""
+        """LightRAG service error → AC-4 transparent ILIKE fallback.
+
+        NFM-4539 RAG-B AC-4: a ``LightRAGClientError`` raised inside the
+        sidecar must surface as a degraded-but-successful response
+        (``success=True``, ``fallback.used=True``, ``kind='iliKE'``) with
+        the rule-based fallback's references, NOT a hard ``success=False``
+        error — that's the §3.2 / AC-4 contract.  This test parallels
+        ``tests/api/v1/test_lightrag.py::test_query_client_error`` and was
+        missed during the initial RAG-B rollout (caught by Code Review).
+        """
         from nfm_db.services.lightrag_client import LightRAGClientError
+        from nfm_db.services.rag_provider import RAGQueryResult
 
         with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
             mock_instance = mock_cls.return_value
             mock_instance.query = AsyncMock(side_effect=LightRAGClientError("Query failed"))
-
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                payload = {"query": "test query"}
-                response = await ac.post("/api/v1/lightrag/query", json=payload)
+            with patch(
+                "nfm_db.services.rag_provider.RuleBasedFallbackProvider.query",
+                new_callable=AsyncMock,
+            ) as mock_fallback_query:
+                mock_fallback_query.return_value = RAGQueryResult(
+                    response="rule-based: stub for test_query_service_error",
+                    references=[
+                        {
+                            "source_type": "data_source",
+                            "source_id": "ds-fallback",
+                            "score": 0.42,
+                        },
+                    ],
+                    provider="rule-based-fallback",
+                    fallback=True,
+                )
+
+                async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                    payload = {"query": "test query"}
+                    response = await ac.post("/api/v1/lightrag/query", json=payload)
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
+        # AC-4 contract: the user gets a transparent degraded answer, not a hard error.
+        assert data["success"] is True
+        assert data["data"]["fallback"]["used"] is True
+        assert data["data"]["fallback"]["kind"] == "iliKE"
+        # The rescue path actually ran — references are populated.
+        assert len(data["data"]["references"]) == 1
+        assert data["data"]["references"][0]["source_type"] == "data_source"
+        mock_fallback_query.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_query_with_null_list_fields_succeeds(self, client: AsyncClient) -> None:
