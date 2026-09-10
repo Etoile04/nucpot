@@ -3,12 +3,13 @@
 | Field | Value |
 | --- | --- |
 | **Status** | Accepted (CTO decision) |
-| **Date** | 2026-09-04 |
+| **Date** | 2026-09-04 (original), 2026-09-10 (amended — see §G6) |
 | **Author** | CTO |
 | **Source issue** | [NFM-4266](/NFM/issues/NFM-4266) |
-| **Evidence** | SRE attribution comment `c35bc8ce` on [NFM-4264](/NFM/issues/NFM-4264) |
+| **Amendment source** | [NFM-4582](/NFM/issues/NFM-4582) (`[CTO-AMEND]`, 2026-09-10) |
+| **Evidence** | SRE attribution comment `c35bc8ce` on [NFM-4264](/NFM/issues/NFM-4264); NFM-4581 evidence comment `93351853-1607-44c9-9fc8-23b51a201385` on [NFM-4579](/NFM/issues/NFM-4579) |
 | **Complements** | [NFM-4265](/NFM/issues/NFM-4265) (LE — stale `PROD_IMAGE_TAG` env-file landmine; orthogonal, both stand) |
-| **Related lineage** | [NFM-3320](/NFM/issues/NFM-3320) (deploy cutover asserts), [NFM-2148](/NFM/issues/NFM-2148) (SHA tag pinning), [NFM-1664](/NFM/issues/NFM-1664) (SRE recovery pilot) |
+| **Related lineage** | [NFM-3320](/NFM/issues/NFM-3320) (deploy cutover asserts), [NFM-2148](/NFM/issues/NFM-2148) (SHA tag pinning), [NFM-1664](/NFM/issues/NFM-1664) (SRE recovery pilot), [NFM-4225](/NFM/issues/NFM-4225) (proxy-resilience shim — **superseded for prod** by [NFM-4567](/NFM/issues/NFM-4567); see §G6), [NFM-4565](/NFM/issues/NFM-4565) / [NFM-4579](/NFM/issues/NFM-4579) / [NFM-4581](/NFM/issues/NFM-4581) (2026-09-10 prod-runner recovery incident) |
 
 ---
 
@@ -66,11 +67,30 @@ All prod mutations route exclusively through one of: (i) GH Actions `production-
 
 The structural smell: an interactive, autonomy-leaning desktop harness shares a host and docker socket with prod state. Long-term the right shape is separation (distinct prod host or distinct deploy identity + socket group). Recorded as direction; revisit if G1+G2 prove operationally too costly.
 
+### G6 — System proxy assumptions (amended 2026-09-10, NFM-4582)
+
+Premise correction relative to [NFM-4225](/NFM/issues/NFM-4225) and the original [NFM-4565](/NFM/issues/NFM-4565) ruling (b). The 2026-09-10 prod-runner recovery incident surfaced two facts that were true at the time of the original guidance but cannot be carried forward as assumptions:
+
+- **NFMD must not assume ownership of system-level proxy ports.** The historical 7892 listener — for which [NFM-4225](/NFM/issues/NFM-4225) prescribed a durable socat shim — was at 2026-09-10T09:25Z actually owned by a user-installed application (`咍嗒云 v2cloudCore`, PID 1369, 7d 8h uptime, launchd-managed `application.com.v2cloud.*`, 21 ESTABLISHED client connections from Zotero, Quark Cloud, Chrome, Obsidian, VS Code, Python). The "no owner, NFMD may claim" assumption baked into NFM-4225 is unsafe. Any future 789x / 790x port may similarly be owned by user space at any instant; NFMD components must not bind, assume, or mutate them.
+  - Evidence: [NFM-4581](/NFM/issues/NFM-4581) description; NFM-4579 evidence comment `93351853-1607-44c9-9fc8-23b51a201385` (2026-09-10T09:25Z).
+  - **Stale-evidence lesson** (same incident): [NFM-4569](/NFM/issues/NFM-4569)'s closure snapshot (~09:12Z, "7892 empty + no owner") was correct at that instant but became stale immediately after — NFM-4567 relaunched the runner at ~09:20Z and the user's 咍嗒云 VPN rebound 7892 within minutes. Snapshots expire on the order of minutes when user space controls the resource. Any governance claim about a system proxy port must be re-verified at the moment of action, not relied on from a prior probe.
+
+- **Runner isolation must be plist-explicit, not absence-based.** The runner plist (`~/Library/LaunchAgents/actions.runner.Etoile04-nucpot.wenjiedeMac-Studio.plist`) must set `HTTPS_PROXY=""` and `HTTP_PROXY=""` literally. The runner must NOT rely on the absence of a system proxy — the moment any user app binds 7892 again, absence-based isolation regresses silently. The plist must also pin `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` to the local MITM CA bundle ([NFM-4567](/NFM/issues/NFM-4567)) so the broker handshake terminates through the runner-side proxy regardless of any system-level TLS interception.
+  - **AC-G6.1:** `grep -E '^(HTTPS_PROXY|HTTP_PROXY)=' <plist> | EnvironmentVariables` returns both keys present and empty.
+  - **AC-G6.2:** with both keys empty in plist AND `lsof -nP -iTCP:7892 -sTCP:LISTEN` showing a non-NFMD owner, the runner logs `Connected to GitHub` without traversing 7892 (i.e. absence of system proxy is **not** what keeps the runner working).
+
+- **NFM-7892 sentinel cron is the durable monitor, not a one-time cleanup.** The launchd plist at `~/Library/LaunchAgents/com.nfm.7892-sentinel.plist` (StartInterval=300s) reads `scutil --proxy`, compares advertised state to `lsof -nP -iTCP:7892 -sTCP:LISTEN`, and pages SRE if the two diverge. This sentinel is **not** a P0-burndown artifact; it stays in place indefinitely and is not removed when [NFM-4579](/NFM/issues/NFM-4579) closes. Removal requires a successor monitor (e.g. an ADR-013 G4-style drift alarm) explicitly inheriting its scope.
+  - Reference: [NFM-4579](/NFM/issues/NFM-4579) Part 2 (sentinel cron) and [NFM-4581](/NFM/issues/NFM-4581) "What's already delivered" — both landed 2026-09-10. Sentinel path: `/Users/lwj04/bin/nfm-7892-sentinel.sh`.
+
+**Supersedence of [NFM-4225](/NFM/issues/NFM-4225) — prod runner scope.** NFM-4225's "durable socat forwarder 7892→7897" remediation is **superseded for the prod runner** (`wenjiedeMac-Studio`). The new architecture is the terminating TLS proxy at `127.0.0.1:8443` deployed under [NFM-4567](/NFM/issues/NFM-4567) — a local-CA MITM whose upstream leg uses OpenSSL (the client stack that demonstrably completes the broker handshake on this host, per [NFM-4569](/NFM/issues/NFM-4569)). The socat shim remains relevant only as a **staging-runner** fallback for the Linux `thinkstation` if and when the same DPI fingerprint recurs there — and only if NFM-4567's design cannot be ported to that host. Until that port-or-fallback decision is made explicitly, do not restore 7892→7897 shims on `wenjiedeMac-Studio`.
+
 ## 3. What this ADR deliberately does NOT do
 
 - **No duplicate of [NFM-4265](/NFM/issues/NFM-4265):** that issue (LE, in_progress) fixes the stale `PROD_IMAGE_TAG` env-file landmine and makes host-side compose fail loudly on stale tags. G1/G2 gate *contexts*; NFM-4265 removes *one landmine*. Orthogonal; both ship.
 - **No sandbox mandate for `terminal.backend`:** switching the desktop harness to a sandboxed backend is a product-level change to the operator's harness with broad blast radius; G1's scoped blocklist gets the risk reduction at a fraction of the cost.
 - **No adversarial-security claim:** these guardrails convert *silent accidental/autonomous-drift* prod mutation into *loud, deliberate, attributed* bypass. A host-user-level actor can ultimately defeat host-level gates; G4 exists for that residual. NFM-4297 raises the effort bar for that actor (gated entries serialize on an exclusive lock, bind `DEPLOY_SHA`/recorded baselines to origin/main reachability, and pin interpreters so a caller's PATH selects nothing — macOS sudo has no secure_path), but the disclaimer stands: this is tamper *resistance*, not tamper *impossibility*.
+- **No assumption that system proxy ports are NFMD-owned.** NFM-4225-era "7892 is ours, keep it durable" guidance is deprecated for the prod runner; see §G6 and [NFM-4581](/NFM/issues/NFM-4581). Future runners, plists, and migration scripts must not bind or assume 789x / 790x. If a runner needs terminating TLS, it terminates TLS itself (NFM-4567 pattern) rather than reusing a port it doesn't own.
+- **No relitigation of the [NFM-4565](/NFM/issues/NFM-4565) ruling (b):** NFM-4582 (this amendment) captures the *governance tail* — the stale-premise lesson and the durable-monitor design. The ruling itself is final; the runner plist changes from NFM-4567 stand, and the sentinel cron from NFM-4579 Part 2 stands.
 
 ## 4. Risks & trade-offs
 
@@ -81,6 +101,8 @@ The structural smell: an interactive, autonomy-leaning desktop harness shares a 
 | Drift alarm noise during sanctioned deploys | Manifest is written by the sanctioned path at deploy time; check tolerates in-flight deploys (re-check or quiet window). |
 | Fail-closed tirith blocks everything on engine breakage | Fail-closed applies to prod-mutation rules only; general policy keeps `tirith_fail_open`. |
 | Wrapper shim drift as docker CLI evolves | G2 acceptance is behavioral (direct binary invocation), not implementation-coupled; revisit at docker major upgrades. |
+| User-space VPN (e.g. 咍嗒云 v2cloudCore) rebinds 7892 between NFM-4225 probe and NFM-4225 fix, breaking the "durable shim" premise | G6 mandates plist-explicit `HTTPS_PROXY=""` so runner isolation survives the rebind; sentinel cron (NFM-4579 Part 2) detects the divergence within 5 min; terminating TLS proxy (NFM-4567) is the new architecture, not the socat shim. |
+| Sentinel cron false pages during user VPN connect/disconnect | Page path is informational-only by design (NFM-4579 Part 2); not a deploy block. False positives indicate a real proxy-vs-listener divergence; investigate the cause, do not silence. |
 
 ## 5. Acceptance (incident replay test)
 
@@ -93,4 +115,5 @@ The composite test for the whole set: replay the NFM-4264 scenario end-to-end fr
 | G1 + G3 (harness layer) | CTO → CPO child issue (NFM-4267) | Hermes `command_allowlist`/approvals/tirith + gateway logging |
 | G2 + G4 (host + repo layer) | CTO → CPO child issue (NFM-4268) | Host gating mechanism + deploy manifest & drift check (cron) |
 | G5 policy | This ADR + [NFM-4266](/NFM/issues/NFM-4266) comment | No code; cited by G1 refusal UX |
+| G6 (system proxy assumptions, amendment) | This ADR amendment (NFM-4582); durable monitor is [NFM-4579](/NFM/issues/NFM-4579) Part 2 sentinel cron; supersedes [NFM-4225](/NFM/issues/NFM-4225) for prod runner scope | Documentation only; no new code. Runner-side isolation is plist-explicit per NFM-4567. |
 | Directional separation | This ADR §2 only | No issue until G1+G2 cost data exists |
