@@ -65,6 +65,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from .audit import AuditLog
+
 # Default probe path: Docker registry API v2 root. Returns 401 unauth
 # on every working Docker registry; works for all the public mirrors
 # (daocloud, 1panel, dockerproxy, ustc). /auth/token was tried but the

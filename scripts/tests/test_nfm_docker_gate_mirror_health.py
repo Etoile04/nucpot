@@ -438,3 +438,74 @@ def test_latest_alarm_returns_none_when_log_missing(tmp_path):
     from nfm_docker_gate.mirror_health import latest_alarm
 
     assert latest_alarm(str(tmp_path / "missing.log")) is None
+
+
+# ---- main() entry: must construct AuditLog without NameError --------------------
+# CR-1 (2026-09-10): mirror_health.py:462 referenced AuditLog without
+# importing it, so launchd's main() crashed at the first statement and the
+# watchdog restart-looped with no audit record ever written. The earlier
+# tests construct AuditLog themselves, so the missing import slipped past
+# them. This test calls main() end-to-end with a fake config + a probe loop
+# that exits after one tick so the launchd path is exercised.
+
+
+def test_main_writes_startup_record_and_logs_first_probe(tmp_path, monkeypatch):
+    """Round-trip main() so any missing import surfaces as NameError, not as
+    a quietly-passing unit test that only ever imported individual helpers."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import main
+
+    cfg = tmp_path / "mirrors.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mirrors": [
+                    {"name": "daocloud", "url": "https://docker.m.daocloud.io"},
+                    {"name": "dockerproxy", "url": "https://dockerproxy.com"},
+                ]
+            }
+        )
+    )
+    log = tmp_path / "audit.log"
+
+    # Avoid hitting the network in a unit test. probe_mirror returns a
+    # healthy result so the first tick is a no-op (no alarm) — we are
+    # asserting the launchd entry path runs without NameError, not that
+    # the alarm logic fires.
+    fake_result = ProbeResult(
+        "daocloud", "https://docker.m.daocloud.io", "ok", 401, None, 12
+    )
+
+    def fake_probe_mirror(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 12)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", fake_probe_mirror)
+
+    # Exit the while True: time.sleep(args.interval) loop after the first
+    # tick by making time.sleep raise SystemExit. This keeps the test
+    # fast and lets main() write both the startup record AND one tick's
+    # (silent) alarm-free probe.
+    def fake_sleep(_seconds):
+        raise SystemExit(0)
+
+    monkeypatch.setattr(mirror_health.time, "sleep", fake_sleep)
+
+    raised = None
+    try:
+        main(["--config", str(cfg), "--log", str(log), "--interval", "30"])
+    except SystemExit as exit_code:
+        # The fake_sleep raises SystemExit(0); main() does not catch it.
+        # A NameError would surface here as `raised = NameError(...)`.
+        if exit_code.code != 0:
+            raised = AssertionError(f"main() exited non-zero: {exit_code.code}")
+    except NameError as error:
+        raised = error
+    assert raised is None, f"main() raised {raised!r}"
+
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    # The startup record is the durable evidence that main() ran; if
+    # NameError had crashed the process before this write, the file
+    # would be empty and the launchd plist would restart-loop forever.
+    assert any(record.get("event") == "startup" for record in records), (
+        f"expected a startup record, got {records!r}"
+    )
