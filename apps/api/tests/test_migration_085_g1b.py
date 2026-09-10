@@ -94,9 +94,7 @@ class TestMigration085Structural:
         assert "op" in names
 
     def test_defines_upgrade_and_downgrade(self, migration_ast: ast.Module) -> None:
-        functions = [
-            n.name for n in migration_ast.body if isinstance(n, ast.FunctionDef)
-        ]
+        functions = [n.name for n in migration_ast.body if isinstance(n, ast.FunctionDef)]
         assert "upgrade" in functions
         assert "downgrade" in functions
 
@@ -122,15 +120,11 @@ class TestMigration085DatasetVersionsAC6:
         ), "ADR-017 section 2.3 status tuple must match"
         assert "ck_dataset_versions_status" in migration_source
 
-    def test_dataset_versions_version_no_check(
-        self, migration_source: str
-    ) -> None:
+    def test_dataset_versions_version_no_check(self, migration_source: str) -> None:
         assert "ck_dataset_versions_version_no" in migration_source
         assert "version_no >= 1" in migration_source
 
-    def test_dataset_versions_unique_version_no_per_dataset(
-        self, migration_source: str
-    ) -> None:
+    def test_dataset_versions_unique_version_no_per_dataset(self, migration_source: str) -> None:
         assert "uq_dataset_versions_dataset_version_no" in migration_source
         assert '"dataset_id"' in migration_source
         assert '"version_no"' in migration_source
@@ -145,13 +139,9 @@ class TestMigration085DatasetVersionsAC6:
         assert "idx_dataset_versions_status" in migration_source
 
     def test_dataset_versions_fk_to_datasets(self, migration_source: str) -> None:
-        assert "datasets.id" in migration_source or (
-            '"datasets"' in migration_source
-        )
+        assert "datasets.id" in migration_source or ('"datasets"' in migration_source)
 
-    def test_dataset_versions_row_and_source_ids_are_jsonb(
-        self, migration_source: str
-    ) -> None:
+    def test_dataset_versions_row_and_source_ids_are_jsonb(self, migration_source: str) -> None:
         assert "row_ids" in migration_source
         assert "source_ids" in migration_source
         assert "JSONB" in migration_source
@@ -169,12 +159,8 @@ class TestMigration085DedupeKeyAC9:
             "method",
         ), "ADR-017 section 2.6 superset decision (f)"
 
-    def test_dedupe_key_column_is_generated_stored(
-        self, migration_source: str
-    ) -> None:
-        assert "GENERATED ALWAYS AS" in migration_source or (
-            "GENERATED ALWAYS" in migration_source
-        )
+    def test_dedupe_key_column_is_generated_stored(self, migration_source: str) -> None:
+        assert "GENERATED ALWAYS AS" in migration_source or ("GENERATED ALWAYS" in migration_source)
         assert "STORED" in migration_source
         assert migration_source.count("GENERATED ALWAYS") >= 2
 
@@ -185,11 +171,9 @@ class TestMigration085DedupeKeyAC9:
     def test_uq_pm_dedup_retained(self, migration_source: str) -> None:
         assert "DROP INDEX uq_pm_dedup" not in migration_source
         assert 'drop_constraint("uq_pm_dedup"' not in migration_source
-        assert 'drop_constraint(\'uq_pm_dedup\'' not in migration_source
+        assert "drop_constraint('uq_pm_dedup'" not in migration_source
 
-    def test_dedupe_key_expression_inlines_value_hash(
-        self, migration_source: str
-    ) -> None:
+    def test_dedupe_key_expression_inlines_value_hash(self, migration_source: str) -> None:
         assert "value_scalar::text" in migration_source
         assert "value_min::text" in migration_source
         assert "value_max::text" in migration_source
@@ -198,12 +182,8 @@ class TestMigration085DedupeKeyAC9:
 
 
 class TestMigration085ConditionsExpansion:
-    def test_conditions_column_is_jsonb_not_nullable(
-        self, migration_source: str
-    ) -> None:
-        assert '"conditions"' in migration_source or (
-            "'conditions'" in migration_source
-        )
+    def test_conditions_column_is_jsonb_not_nullable(self, migration_source: str) -> None:
+        assert '"conditions"' in migration_source or ("'conditions'" in migration_source)
         assert "JSONB" in migration_source
         assert "nullable=False" in migration_source
 
@@ -232,15 +212,11 @@ class TestMigration085ConditionsExpansion:
 class TestMigration085DatasetIdentity:
     def test_literature_doi_column(self, migration_source: str) -> None:
         assert "literature_doi" in migration_source
-        assert "VARCHAR(255)" in migration_source or (
-            "String(length=255)" in migration_source
-        )
+        assert "VARCHAR(255)" in migration_source or ("String(length=255)" in migration_source)
 
     def test_literature_content_hash_column(self, migration_source: str) -> None:
         assert "literature_content_hash" in migration_source
-        assert "VARCHAR(64)" in migration_source or (
-            "String(length=64)" in migration_source
-        )
+        assert "VARCHAR(64)" in migration_source or ("String(length=64)" in migration_source)
 
     def test_doi_partial_unique_index(self, migration_source: str) -> None:
         assert "uq_datasets_literature_doi" in migration_source
@@ -264,9 +240,7 @@ class TestMigration085Reversibility:
         downgrade_section = migration_source.split("def downgrade()")[1]
         assert "uq_pm_dedupe_key" in downgrade_section
 
-    def test_downgrade_drops_literature_identity_columns(
-        self, migration_source: str
-    ) -> None:
+    def test_downgrade_drops_literature_identity_columns(self, migration_source: str) -> None:
         downgrade_section = migration_source.split("def downgrade()")[1]
         assert "literature_doi" in downgrade_section
         assert "literature_content_hash" in downgrade_section
@@ -286,38 +260,24 @@ class TestMigration085Reversibility:
 
 
 class TestMigration085Documentation:
-    def test_docstring_references_adr_017_section_2_3(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_references_adr_017_section_2_3(self, migration_source: str) -> None:
         assert "ADR-017" in migration_source and "2.3" in migration_source
 
-    def test_docstring_references_adr_017_section_2_5(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_references_adr_017_section_2_5(self, migration_source: str) -> None:
         assert "ADR-017" in migration_source and "2.5" in migration_source
 
-    def test_docstring_references_adr_017_section_2_6(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_references_adr_017_section_2_6(self, migration_source: str) -> None:
         assert "ADR-017" in migration_source and "2.6" in migration_source
 
-    def test_docstring_references_adr_016_section_2_4(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_references_adr_016_section_2_4(self, migration_source: str) -> None:
         assert "ADR-016" in migration_source and "2.4" in migration_source
 
-    def test_docstring_calls_out_decision_f_superset(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_calls_out_decision_f_superset(self, migration_source: str) -> None:
         assert "(f)" in migration_source
         assert "conditions_hash" in migration_source
-        assert "strict superset" in migration_source or (
-            "behaviour" in migration_source
-        )
+        assert "strict superset" in migration_source or ("behaviour" in migration_source)
 
-    def test_docstring_calls_out_decision_h_partial_uniqueness(
-        self, migration_source: str
-    ) -> None:
+    def test_docstring_calls_out_decision_h_partial_uniqueness(self, migration_source: str) -> None:
         assert "(g)" in migration_source
         assert "(h)" in migration_source
         assert "uq_pm_dedup" in migration_source

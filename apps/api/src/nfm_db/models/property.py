@@ -126,9 +126,7 @@ class Dataset(TimestampMixin, Base):
         # not a check-then-insert race.  The DB-level invariant catches
         # both the legacy duplicate-state reported in NFM-2009 and any
         # concurrent-rerun duplicate creation.
-        UniqueConstraint(
-            "source_id", "material_id", name="uq_datasets_source_material"
-        ),
+        UniqueConstraint("source_id", "material_id", name="uq_datasets_source_material"),
         # NFM-4548 (G1-B) — ADR-017 §2.5 literature identity. Partial-unique
         # because most legacy datasets carry no DOI and their NULLs must not
         # collide with one another.
@@ -209,9 +207,7 @@ class DatasetVersion(TimestampMixin, Base):
     __tablename__ = "dataset_versions"
     __table_args__ = (
         CheckConstraint(
-            " OR ".join(
-                f"status = '{value}'" for value in DATASET_VERSION_STATUSES
-            ),
+            " OR ".join(f"status = '{value}'" for value in DATASET_VERSION_STATUSES),
             name="ck_dataset_versions_status",
         ),
         CheckConstraint("version_no >= 1", name="ck_dataset_versions_version_no"),
@@ -278,7 +274,6 @@ class DatasetVersion(TimestampMixin, Base):
             f"<DatasetVersion id={self.id!s} dataset={self.dataset_id!s} "
             f"v{self.version_no} {self.status}>"
         )
-
 
 
 class PropertyMeasurement(TimestampMixin, Base):

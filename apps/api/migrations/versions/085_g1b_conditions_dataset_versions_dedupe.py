@@ -373,9 +373,7 @@ def _downgrade_dataset_identity() -> None:
 
 
 def _upgrade_dataset_versions() -> None:
-    status_check = " OR ".join(
-        f"status = '{value}'" for value in _DATASET_VERSION_STATUSES
-    )
+    status_check = " OR ".join(f"status = '{value}'" for value in _DATASET_VERSION_STATUSES)
 
     op.create_table(
         "dataset_versions",
@@ -443,12 +441,8 @@ def _upgrade_dataset_versions() -> None:
         ),
     )
 
-    op.create_index(
-        "idx_dataset_versions_dataset", "dataset_versions", ["dataset_id"]
-    )
-    op.create_index(
-        "idx_dataset_versions_status", "dataset_versions", ["dataset_id", "status"]
-    )
+    op.create_index("idx_dataset_versions_dataset", "dataset_versions", ["dataset_id"])
+    op.create_index("idx_dataset_versions_status", "dataset_versions", ["dataset_id", "status"])
 
     # ADR-017 §2.3 rollback is "切 released 指针" — a dataset therefore has at
     # most one released version at any instant. Enforced in the DB so a failed
