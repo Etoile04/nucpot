@@ -560,6 +560,59 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 ds.id,
             )
 
+        # --- Step 2d: literature dedup hint (NFM-4549 / G1-C) -----------
+        # ADR-017 §2.5: resolve the DOI / content_hash to an existing
+        # ``Dataset`` if one is already known. The match is stored as
+        # a hint in ``ds.metadata_`` so the extraction mapper
+        # (``extraction_to_db_mapper`` — also NFM-4549 / G1-C) can
+        # route the new ``DataSource`` onto the existing dataset row
+        # instead of creating a fresh one. Miss path (no match) leaves
+        # the mapper to allocate a new dataset as it does today.
+        #
+        # The hint is intentionally metadata-only: the per-literature
+        # isolation + version table that ADR-017 §2.5 also requires
+        # ships with G1-B (NFM-4548). Wiring the (DOI, content_hash)
+        # dedup at the literature_service boundary keeps this PR
+        # forward-compatible — the G1-B dataset_versions branch can
+        # pick up the hint and start bumping versions without further
+        # changes here.
+        try:
+            from nfm_db.services.literature_dedup import (
+                resolve_literature_dataset,
+            )
+
+            existing = await resolve_literature_dataset(
+                db,
+                doi=ds.doi,
+                content_hash=ds.file_hash,
+            )
+            if existing is not None:
+                # Coerce the metadata bag to a mutable dict (the column
+                # may already hold a CompatJSONB mapping).
+                meta = dict(ds.metadata_ or {})
+                meta["g1_dedup_target_dataset_id"] = str(existing.id)
+                ds.metadata_ = meta
+                logger.info(
+                    "process_literature: dedup hit datasource_id=%s -> "
+                    "existing_dataset_id=%s doi=%s file_hash=%s",
+                    ds.id,
+                    existing.id,
+                    ds.doi,
+                    ds.file_hash,
+                )
+            else:
+                logger.info(
+                    "process_literature: dedup miss datasource_id=%s "
+                    "(fresh dataset will be allocated by the mapper)",
+                    ds.id,
+                )
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "process_literature: literature dedup lookup failed for "
+                "datasource_id=%s (non-fatal; mapper will allocate fresh)",
+                ds.id,
+            )
+
         # --- Step 3: extracting ----------------------------------------
         ds.parse_status = PARSE_STATUS_EXTRACTING
         await db.commit()
