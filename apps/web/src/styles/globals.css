@@ -476,8 +476,26 @@ body {
   animation: g1-row-invalid-shake 500ms var(--onto-ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
 }
 
+/* NFM-4576 (QA W1) — Layout B sidebar rows are <div>s (MeasurementRowItem)
+ * with no <td> children, so the `> td` rules above never matched and only
+ * the inline red value text + reason line fired. Same four cues, scoped to
+ * div rows so the Layout A <tr>/<td> treatment is untouched: tint + 4px bar
+ * on the row element itself (the component drops its inline
+ * borderLeft/backgroundColor when invalid to yield the cascade), ⚠ glyph
+ * before the property name, one-shot 500ms shake. */
+div.g1-row-invalid {
+  background-color: var(--alert-error-bg);
+  border-left: 4px solid var(--alert-error-border);
+  animation: g1-row-invalid-shake 500ms var(--onto-ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
+}
+div.g1-row-invalid > div:first-child > span:first-child::before {
+  content: "⚠ ";
+  color: var(--alert-error-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .g1-row-invalid > td:first-child {
+  .g1-row-invalid > td:first-child,
+  div.g1-row-invalid {
     animation: none;
   }
 }

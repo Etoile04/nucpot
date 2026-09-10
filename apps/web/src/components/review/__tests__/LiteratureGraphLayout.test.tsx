@@ -171,6 +171,22 @@ describe("LiteratureGraphLayout (NFM-4553)", () => {
     expect(invalidRow).toHaveAttribute("title", expect.stringContaining("lattice 0.3Å"))
   })
 
+  it("yields the inline border/background cascade on invalid rows (NFM-4576 W1)", () => {
+    render(<LiteratureGraphLayout literatureId="lit-1" payload={SAMPLE_PAYLOAD} />)
+
+    // Layout B rows are <div>s, so the div.g1-row-invalid rules in globals.css
+    // must carry the red tint + 4px alert bar. The component therefore drops
+    // its inline borderLeft/backgroundColor when invalid — inline styles would
+    // otherwise win the cascade and the four CSS cues would never fire.
+    const invalidRow = screen.getByTestId("measurement-row-pm-2")
+    expect(invalidRow.style.borderLeft).toBe("")
+    expect(invalidRow.style.backgroundColor).toBe("")
+
+    // Valid rows keep the review-status bar via inline style (unchanged path).
+    const validRow = screen.getByTestId("measurement-row-pm-3")
+    expect(validRow.style.borderLeft).toContain("4px solid")
+  })
+
   it("renders value_expression as KaTeX-flavored styled text (AC-5)", () => {
     render(<LiteratureGraphLayout literatureId="lit-1" payload={SAMPLE_PAYLOAD} />)
 

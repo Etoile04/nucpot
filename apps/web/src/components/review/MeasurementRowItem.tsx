@@ -120,8 +120,17 @@ export function MeasurementRowItem({ row, isSelected, onClick }: MeasurementRowI
   const rowStyle: CSSProperties = {
     cursor: "pointer",
     padding: "10px 12px 10px 16px",
-    borderLeft: `4px solid ${barColor}`,
-    backgroundColor: isSelected ? "rgba(147, 197, 253, 0.08)" : "transparent",
+    // NFM-4576 (QA W1): when invalid, leave borderLeft/backgroundColor unset
+    // so the `div.g1-row-invalid` rules in globals.css can paint the alert
+    // tint + 4px red bar — inline styles would otherwise win the cascade and
+    // only the red value text + reason line would show. Invalid dominates
+    // selected (alert state; selection stays exposed via aria-pressed).
+    borderLeft: isInvalid ? undefined : `4px solid ${barColor}`,
+    backgroundColor: isInvalid
+      ? undefined
+      : isSelected
+        ? "rgba(147, 197, 253, 0.08)"
+        : "transparent",
     transition: "background-color 150ms var(--onto-ease-out, ease-out)",
   }
 
