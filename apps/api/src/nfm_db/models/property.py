@@ -438,7 +438,7 @@ class PropertyMeasurement(TimestampMixin, Base):
     # row is excluded from the mergeable set (spec §2.6 / §8.2
     # step 4).
     validity_check: Mapped[dict[str, object] | None] = mapped_column(
-        JSON,
+        CompatJSONB,
         nullable=True,
         comment=(
             "Per-property valid_range evaluation "
