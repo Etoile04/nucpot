@@ -101,6 +101,29 @@ class PropertyType(TimestampMixin, Base):
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # NFM-4550 / G1-D — per-property physical valid range (spec §8.4
+    # AC-10). Both NULL means "no range constraint" — the mapper
+    # falls back to ``validity_check.status='warn'``. Otherwise
+    # ``nfm_db.services.validation.evaluate_valid_range`` compares
+    # the row's value(s) against ``[valid_range_min, valid_range_max]``
+    # and emits ``{status, reason}`` on the row.
+    valid_range_min: Mapped[float | None] = mapped_column(
+        Numeric(20, 15),
+        nullable=True,
+        comment=(
+            "Physical valid-range lower bound (NFM-4550 G1-D AC-10). "
+            "NULL = no lower bound configured."
+        ),
+    )
+    valid_range_max: Mapped[float | None] = mapped_column(
+        Numeric(20, 15),
+        nullable=True,
+        comment=(
+            "Physical valid-range upper bound (NFM-4550 G1-D AC-10). "
+            "NULL = no upper bound configured."
+        ),
+    )
+
     # -- relationships --
     category: Mapped["PropertyCategory"] = relationship(back_populates="property_types")
     default_unit: Mapped["Unit | None"] = relationship(
@@ -378,7 +401,12 @@ class PropertyMeasurement(TimestampMixin, Base):
     review_status: Mapped[str] = mapped_column(
         String(50),
         default="pending",
-        comment="pending | approved | rejected | needs_revision | corrected",
+        comment=(
+            "pending | approved | rejected | needs_revision | corrected "
+            "| invalid — auto-set when validity_check.status='fail' "
+            "(NFM-4550 G1-D, spec §8.4 AC-10); domain_expert can "
+            "override back to 'pending' on the校对 page."
+        ),
     )
     reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(
@@ -400,6 +428,23 @@ class PropertyMeasurement(TimestampMixin, Base):
         nullable=False,
         server_default="",
         comment="Measurement method (NFM-2032 5-tuple dedup).",
+    )
+    # NFM-4550 / G1-D — per-row physical validity (spec §8.4, AC-10).
+    # JSONB payload of the form ``{status: "ok"|"warn"|"fail",
+    # reason: str|null}`` produced by
+    # ``nfm_db.services.validation.evaluate_valid_range``. Populated
+    # at INSERT by ``extraction_to_db_mapper``; ``review_status`` is
+    # overridden to ``"invalid"`` when ``status="fail"`` so the
+    # row is excluded from the mergeable set (spec §2.6 / §8.2
+    # step 4).
+    validity_check: Mapped[dict[str, object] | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment=(
+            "Per-property valid_range evaluation "
+            "(NFM-4550 G1-D, spec §8.4 AC-10). "
+            "{status: ok|warn|fail, reason: str|null}."
+        ),
     )
 
     # -- NFM-4548 (G1-B) — ADR-016 §2.4 / ADR-017 §2.5 / spec §3.1 --
