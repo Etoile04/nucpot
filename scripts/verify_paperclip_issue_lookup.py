@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
-"""Acceptance gate for `paperclip_issue_lookup` — ADR-008 / NFM-2036.
+"""Acceptance gate for `paperclip_issue_lookup` — ADR-008 / NFM-2036 / NFM-4540.
 
-Runs the six cases from the arch-spec against the live `$PAPERCLIP_API_URL`
-and prints PASS / FAIL for each. Exits non-zero if any case fails.
+Runs ten cases (six live, four spy/no-HTTP) and prints PASS / FAIL for each.
+Exits non-zero if any case fails.
 
     python3 scripts/verify_paperclip_issue_lookup.py
 
-| # | Setup                                     | Expected                          |
-|---|-------------------------------------------|-----------------------------------|
-| 1 | no PAPERCLIP_API_KEY, lookup_issue        | AuthError raised, zero HTTP calls |
-| 2 | key restored, BASE_URL not company-scoped | WrongPath raised, zero HTTP calls |
-| 3 | lookup_issue("NFM-DOES-NOT-EXIST-9999")   | NotFound, distinct from errors    |
-| 4 | lookup_issue("NFM-1909")                  | Ok, 1 issue, pages_consumed == 1  |
-| 5 | lookup_issue("NFM-2113") — known blocked  | blockedBy present, non-empty      |
-| 6 | lookup_issue("NFM-2092") — known blocked  | blockedBy present, non-empty      |
+| #  | Mode  | Setup                                       | Expected                          |
+|----|-------|---------------------------------------------|-----------------------------------|
+| 1  | spy   | no PAPERCLIP_API_KEY, lookup_issue          | AuthError raised, zero HTTP calls |
+| 2  | spy   | key restored, BASE_URL not company-scoped   | WrongPath raised, zero HTTP calls |
+| 3  | live  | lookup_issue("NFM-DOES-NOT-EXIST-9999")     | NotFound, distinct from errors    |
+| 4  | live  | lookup_issue("NFM-1909")                    | Ok, 1 issue, pages_consumed == 1  |
+| 5  | live  | lookup_issue("NFM-2113") — known blocked    | blockedBy present, non-empty      |
+| 6  | live  | lookup_issue("NFM-2092") — known blocked    | blockedBy present, non-empty      |
+| 7  | spy   | D1: lookup_issues(dict)                     | TypeError, zero HTTP calls        |
+| 8  | spy   | D2: lookup_issues(status="done")            | TypeError, zero HTTP calls        |
+| 9  | spy   | D3: lookup_issues(identifier=...)           | client-side filter, only matches  |
+| 10 | spy   | D3: lookup_issues(parent_issue_id=...)      | client-side filter, only matches  |
 
-Cases 1 and 2 must prove *no HTTP call was attempted*. They do that by
+Cases 1, 2, 7, and 8 must prove *no HTTP call was attempted*. They do that by
 replacing the helper's `requests` module with a spy that records any call and
 refuses to perform it — so a regression that moved the guards to after the
 request would fail loudly rather than silently pass.
+
+Cases 9 and 10 stub `requests.get` with a captured response so the regression
+is deterministic and runs offline (no PAPERCLIP_API_URL needed).
 """
 
 # ruff: noqa: B904
@@ -52,6 +59,37 @@ class SpyRequests:
     def get(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         raise AssertionError("helper opened an HTTP connection before its pre-flight guards ran")
+
+
+class FakeResponse:
+    """Captured response object — never the network. JSON-only shape."""
+
+    def __init__(self, status_code: int, body) -> None:
+        self.status_code = status_code
+        self._body = body
+        self.text = ""
+
+    def json(self):
+        return self._body
+
+
+class CapturingRequests:
+    """Stands in for `requests` but returns a pre-canned response. Records calls."""
+
+    def __init__(self, response: FakeResponse) -> None:
+        self.response = response
+        self.calls: list[dict] = []
+
+    def get(self, url, params=None, headers=None, timeout=None, **kwargs):
+        self.calls.append(
+            {
+                "url": url,
+                "params": dict(params or {}),
+                "headers": dict(headers or {}),
+                "timeout": timeout,
+            }
+        )
+        return self.response
 
 
 class Guard:
@@ -180,6 +218,143 @@ def case_6_blocked_issue_b() -> str:
     return f"blockedBy present ({len(blockers)} blockers): {blockers}"
 
 
+# --- NFM-4540 regression cases (D1, D2, D3) -----------------------------------
+#
+# These four cases are pure spy/no-HTTP: they stub `requests.get` with a
+# CapturingRequests so the helper never touches the network, then assert that
+# the safety-property guards reject the silent-wrong-result paths. Cases 7
+# and 8 expect TypeError; cases 9 and 10 expect client-side re-verification
+# to drop rows that the server would silently have returned unfiltered.
+
+
+# A captured response body: 5 rows where 3 actually match `parent_issue_id`
+# "parent-uuid" and where 1 of those also matches `identifier="NFM-MATCH-1"`.
+# The other rows are unrelated — they are what the server silently returned
+# under the false pretence of being filtered (the D3 trap).
+SAMPLE_PARENT_UUID = "11111111-2222-3333-4444-555555555555"
+SAMPLE_IDENTIFIER = "NFM-MATCH-1"
+
+_SAMPLE_ROWS = [
+    {"id": "row-a", "identifier": "NFM-MATCH-1", "parentId": SAMPLE_PARENT_UUID},
+    {"id": "row-b", "identifier": "NFM-MATCH-1", "parentId": "different-parent"},
+    {"id": "row-c", "identifier": "NFM-MATCH-1", "parentId": SAMPLE_PARENT_UUID},
+    {"id": "row-d", "identifier": "NFM-NOISE", "parentId": SAMPLE_PARENT_UUID},
+    {"id": "row-e", "identifier": "NFM-NOISE", "parentId": "yet-another-parent"},
+]
+
+
+def _restore_real_requests() -> None:
+    """Restore real requests module + base URL after a CapturingRequests run."""
+    plu.requests = _REAL_REQUESTS
+    plu.BASE_URL = _REAL_BASE_URL
+
+
+# Module-level snapshot of the real module state so we can restore after the
+# capture runs. Set at import time (the helper is a library import — its
+# module reference is stable for the rest of the process).
+_REAL_REQUESTS = plu.requests
+_REAL_BASE_URL = plu.BASE_URL
+
+
+def case_7_dict_q_raises() -> str:
+    """D1: lookup_issues({'parentIssueId': ...}) raises — never silently degrades."""
+    capturing = CapturingRequests(FakeResponse(200, []))
+    plu.requests = capturing
+    try:
+        try:
+            plu.lookup_issues({"parentIssueId": "ignored-by-server"})
+        except TypeError as err:
+            msg = str(err)
+            if "parent_issue_id" not in msg and "identifier" not in msg:
+                raise AssertionError(
+                    f"TypeError did not name a correct keyword: {msg}"
+                )
+            if capturing.calls:
+                raise AssertionError(
+                    f"helper opened {len(capturing.calls)} HTTP call(s) "
+                    "before the q-shape guard rejected"
+                )
+            return f"TypeError raised pre-flight, 0 HTTP calls — {err}"
+        raise AssertionError("expected TypeError, got a successful return")
+    finally:
+        _restore_real_requests()
+
+
+def case_8_str_status_raises() -> str:
+    """D2: lookup_issues(status='done') raises — never silently returns Ok([])."""
+    capturing = CapturingRequests(
+        FakeResponse(200, [{"id": "x", "identifier": "NFM-X", "status": "done"}])
+    )
+    plu.requests = capturing
+    try:
+        try:
+            result = plu.lookup_issues(status="done")
+        except TypeError as err:
+            if capturing.calls:
+                raise AssertionError(
+                    f"helper opened {len(capturing.calls)} HTTP call(s) "
+                    "before the status-shape guard rejected"
+                )
+            msg = str(err)
+            if "list" not in msg.lower():
+                raise AssertionError(
+                    f"TypeError did not mention 'list': {msg}"
+                )
+            return f"TypeError raised pre-flight, 0 HTTP calls — {err}"
+        # Per the AC: "raises OR returns the correct rows". Either disposition
+        # is acceptable; this case exercises the explicit-raise disposition.
+        raise AssertionError(
+            f"expected TypeError OR correct filtered rows, got {result!r}"
+        )
+    finally:
+        _restore_real_requests()
+
+
+def case_9_identifier_client_side_filter() -> str:
+    """D3 (identifier): only rows whose identifier field exactly matches are returned."""
+    capturing = CapturingRequests(FakeResponse(200, _SAMPLE_ROWS))
+    plu.requests = capturing
+    try:
+        result = plu.lookup_issues(identifier=SAMPLE_IDENTIFIER)
+        if not isinstance(result, plu.Ok):
+            raise AssertionError(f"expected Ok, got {result!r}")
+        returned_ids = [row.get("identifier") for row in result.issues]
+        if returned_ids != ["NFM-MATCH-1", "NFM-MATCH-1", "NFM-MATCH-1"]:
+            raise AssertionError(
+                f"client-side identifier filter failed: got {returned_ids!r}, "
+                "expected 3x NFM-MATCH-1 (row-d / row-e dropped by D3 guard)"
+            )
+        if not capturing.calls:
+            raise AssertionError("expected at least one HTTP call (server still queried)")
+        return f"Ok({len(result.issues)} rows after client-side filter: {returned_ids})"
+    finally:
+        _restore_real_requests()
+
+
+def case_10_parent_issue_id_client_side_filter() -> str:
+    """D3 (parent_issue_id): only rows whose parentId field exactly matches are returned."""
+    capturing = CapturingRequests(FakeResponse(200, _SAMPLE_ROWS))
+    plu.requests = capturing
+    try:
+        result = plu.lookup_issues(parent_issue_id=SAMPLE_PARENT_UUID)
+        if not isinstance(result, plu.Ok):
+            raise AssertionError(f"expected Ok, got {result!r}")
+        returned_parents = sorted({row.get("parentId") for row in result.issues})
+        if returned_parents != [SAMPLE_PARENT_UUID]:
+            raise AssertionError(
+                f"client-side parentId filter failed: parents={returned_parents!r}, "
+                "expected only the SAMPLE_PARENT_UUID (row-b / row-e dropped by D3 guard)"
+            )
+        if len(result.issues) != 3:
+            raise AssertionError(
+                f"expected 3 rows under SAMPLE_PARENT_UUID, got {len(result.issues)}: "
+                f"{[r.get('id') for r in result.issues]}"
+            )
+        return f"Ok({len(result.issues)} rows after parentId filter: parents={returned_parents})"
+    finally:
+        _restore_real_requests()
+
+
 CASES = [
     ("1", "missing PAPERCLIP_API_KEY -> AuthError, no HTTP", case_1_missing_key),
     ("2", "non-company-scoped BASE_URL -> WrongPathError, no HTTP", case_2_wrong_path),
@@ -194,6 +369,26 @@ CASES = [
         "6",
         f"{BLOCKED_IDENTIFIER_B} -> blockedBy non-empty (trap-3 regression)",
         case_6_blocked_issue_b,
+    ),
+    (
+        "7",
+        "D1: lookup_issues({...}) -> TypeError, 0 HTTP calls (regression guard)",
+        case_7_dict_q_raises,
+    ),
+    (
+        "8",
+        "D2: lookup_issues(status='done') -> TypeError, 0 HTTP calls (regression guard)",
+        case_8_str_status_raises,
+    ),
+    (
+        "9",
+        f"D3 identifier: lookup_issues(identifier={SAMPLE_IDENTIFIER!r}) client-side filter",
+        case_9_identifier_client_side_filter,
+    ),
+    (
+        "10",
+        f"D3 parent_issue_id: lookup_issues(parent_issue_id={SAMPLE_PARENT_UUID!r}) client-side filter",
+        case_10_parent_issue_id_client_side_filter,
     ),
 ]
 

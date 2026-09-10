@@ -36,6 +36,16 @@ The safety property
 Auth and wrong-path failures are *raised*, never returned, so they can never be
 mistaken for an empty list. A genuine no-match is ``Ok(issues=[])``.
 
+By the same token, **a non-empty result can only ever mean "these rows match
+the filters you asked for."** The Paperclip server silently ignores several
+filter parameters (notably ``?parentIssueId=`` and ``?identifier=``), so a
+list call without client-side re-verification would surface *unfiltered* rows
+under the false pretence of being filtered. ``lookup_issues`` therefore re-
+checks every filter it accepts before returning. Likewise the input shape
+itself is guarded — a dict or list where a string was expected degrades
+silently today (D1) and degrades into nonsense for ``status="done"`` today
+(D2). Both paths raise loudly so callers fail fast and visibly.
+
 Raised vs returned
 ------------------
 ``LookupResult`` is the complete result vocabulary, but the two members that
@@ -426,14 +436,58 @@ def lookup_issues(
     status: list[str] | None = None,
     assignee_agent_id: str | None = None,
     project_id: str | None = None,
+    parent_issue_id: str | None = None,
+    identifier: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
 ) -> LookupResult:
     """List issues with optional filters, auto-paginating past the 1000-row cap.
 
     Returns ``Ok`` (possibly with an empty ``issues`` list — that means the API
     genuinely matched nothing). Inspect ``Ok.truncated`` before treating the
-    result as the complete set. Raises ``AuthError`` / ``WrongPath``.
+    result as the complete set. Raises ``AuthError`` / ``WrongPath`` /
+    ``TypeError`` for caller-side shape mistakes.
+
+    Input shape guards (NFM-4540 / D1, D2)
+    --------------------------------------
+    ``q`` must be ``str | None``. A ``dict`` or ``list`` here is the D1 trap:
+    the old ``_clean`` only stripped ``(None, "", [])``, so a dict would have
+    passed straight through as a query parameter and the server would have
+    silently ignored it, returning unfiltered rows as if they matched.
+
+    ``status`` must be ``list[str] | None``. Passing a bare string was the D2
+    trap: ``",".join("done")`` returns ``"d,o,n,e"`` — the server then treats
+    that as a status list of four unknown values and returns the empty
+    intersection, so the caller concludes "no done issues" while thousands of
+    matches exist.
+
+    Client-side filter re-verification (NFM-4540 / D3)
+    ---------------------------------------------------
+    The Paperclip server silently ignores ``?parentIssueId=`` and
+    ``?identifier=``. ``lookup_issues`` therefore re-checks every returned row
+    locally before handing it back. A non-empty ``Ok`` can therefore only mean
+    "these rows genuinely match the filters you asked for" — the second half
+    of the safety property stated in the module docstring.
     """
+    # AC-1: reject non-str q loudly (D1). Dict/list/positional-filter call sites
+    # must fail fast with a message naming the correct keyword.
+    if q is not None and not isinstance(q, str):
+        raise TypeError(
+            f"q must be a str (or None); got {type(q).__name__}. "
+            "If you meant to filter by parent or identifier, "
+            "pass them as keyword arguments: "
+            "lookup_issues(parent_issue_id=..., identifier=...)."
+        )
+
+    # AC-2: reject non-list status loudly (D2). Passing a bare string was the
+    # silent-wrong-result path: ','.join('done') returns 'd,o,n,e'.
+    if status is not None and not isinstance(status, list):
+        raise TypeError(
+            f"status must be a list[str] (e.g. ['done']), not a bare string. "
+            f"Got status={status!r} of type {type(status).__name__}. "
+            "The bare-string form was the D2 silent-wrong-result bug "
+            "(','.join('done') returns 'd,o,n,e'); wrap it in a list."
+        )
+
     params = _clean(
         {
             "q": q,
@@ -448,4 +502,20 @@ def lookup_issues(
         return page
 
     rows, pages, truncated = page
-    return Ok(issues=rows, pages_consumed=pages, truncated=truncated)
+
+    # AC-3: client-side filter re-verification. The server silently ignores
+    # ?parentIssueId= and ?identifier=, so we cannot trust the row set is
+    # already filtered. Both filters AND-combine when both are supplied.
+    filtered_rows = rows
+    if identifier is not None or parent_issue_id is not None:
+        target_ident = identifier.casefold() if isinstance(identifier, str) else None
+        filtered_rows = [
+            row
+            for row in rows
+            if (target_ident is None
+                or (isinstance(row.get("identifier"), str)
+                    and row["identifier"].casefold() == target_ident))
+            and (parent_issue_id is None or row.get("parentId") == parent_issue_id)
+        ]
+
+    return Ok(issues=filtered_rows, pages_consumed=pages, truncated=truncated)
