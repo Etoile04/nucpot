@@ -46,6 +46,8 @@ def lookup_issues(
     status: list[str] | None = None,
     assignee_agent_id: str | None = None,
     project_id: str | None = None,
+    parent_id: str | None = None,
+    identifier: str | None = None,
     max_pages: int = 10,
 ) -> Ok:
     """Return a synthetic ``Ok(issues=[])`` — never hits the network.
@@ -53,6 +55,9 @@ def lookup_issues(
     Signature MUST stay in lock-step with the real helper. The smoke
     test verifies the kwargs accepted by ``tools/reconcile_cancelled_blockers.py``
     are a subset of those accepted by the real helper.
+
+    ``parent_id`` and ``identifier`` were added by NFM-4538 so callers have a
+    sanctioned, locally-verified way to filter by parent and by identifier.
     """
     return Ok()
 
