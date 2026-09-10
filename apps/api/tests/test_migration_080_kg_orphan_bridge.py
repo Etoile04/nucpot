@@ -91,7 +91,7 @@ class TestMigration080Chain:
         )
 
     def test_080_is_single_head(self, script_directory: ScriptDirectory) -> None:
-        """Exactly one head exists — 084 (BUG-30) chained after 083 is it.
+        """Exactly one head exists — 085 (G1-B) chained after 084 is it.
 
         080 was the head until 081_create_feature_flags_table (NFM-4180,
         backend feature-flag service for the DataLossNotice rollout)
@@ -103,12 +103,15 @@ class TestMigration080Chain:
         potentials list default-sort partial index) was the head until
         085_g1b_conditions_dataset_versions_dedupe (NFM-4548, G1-B:
         conditions JSONB + dataset_versions + dedupe_key) chained after
-        084 — 085 is the current head.
+        084 — 085 was the head until 086_add_validity_check_and_valid_range
+        (NFM-4550, G1-D: per-property ``valid_range`` on ``property_types``
+        + ``validity_check`` on ``property_measurements``) chained after
+        085 — 086 is the current head.
         This keeps asserting "exactly one head" so a future bad
         down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "085_g1b_conditions_dataset_versions_dedupe"
+        current_head = "086_add_validity_check_and_valid_range"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
