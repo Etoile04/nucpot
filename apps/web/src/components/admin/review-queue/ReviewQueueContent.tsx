@@ -138,13 +138,27 @@ export function ReviewQueueContent({ initialStatus = "pending" }: ReviewQueueCon
       title: "单位",
       key: "unit",
       width: 100,
+      // NFM-4560 — spec §4.2 单位 column shows the real unit symbol
+      // (e.g. "W/(m·K)") instead of a row UUID prefix. Mirrors the
+      // 属性 column's fallback: when the backend can't resolve a
+      // symbol (deleted unit / pre-migration row), fall back to a
+      // short id prefix so the proof-reader still sees SOMETHING
+      // distinguishable from "—".
       render: (_, rec) =>
-        rec.unitId ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        rec.unitSymbol ? (
+          <span data-testid="unit-symbol" style={{ fontFamily: "monospace" }}>
+            {rec.unitSymbol}
+          </span>
+        ) : rec.unitId ? (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12 }}
+            data-testid="unit-fallback"
+          >
             {rec.unitId.slice(0, 8)}
           </Typography.Text>
         ) : (
-          <span style={{ color: "#999" }}>—</span>
+          <span data-testid="unit-empty" style={{ color: "#999" }}>—</span>
         ),
     },
     {

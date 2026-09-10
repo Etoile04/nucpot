@@ -30,7 +30,8 @@ const lowRow = {
   source: { paragraph: "low confidence paragraph", page: 1, doi: null },
   createdAt: "2026-09-10T00:00:00Z",
   valueScalar: 0.32,
-  unitId: "unit-1",
+  unitId: "unit-W-p-K",
+  unitSymbol: "W/(m·K)",
   notes: null,
   propertyTypeId: "pt-lattice",
   propertyTypeName: "lattice parameter a",
@@ -47,7 +48,8 @@ const highRow = {
   source: { paragraph: "high confidence paragraph", page: 2, doi: null },
   createdAt: "2026-09-10T00:00:00Z",
   valueScalar: 1.23,
-  unitId: "unit-2",
+  unitId: "unit-g-cm3",
+  unitSymbol: "g/cm³",
   notes: null,
   propertyTypeId: "pt-density",
   propertyTypeName: "density",
@@ -213,6 +215,71 @@ describe("ReviewQueueContent — Layout A", () => {
       const name = screen.getByTestId("property-name")
       expect(name.textContent).toContain("legacy-u")
     })
+  })
+
+  // NFM-4560 — UXDesigner Visual-Truth Gate round-3 follow-up:
+  // 单位 column must show the resolved unit symbol (e.g. "W/(m·K)",
+  // "g/cm³"), NOT a row UUID prefix.
+  it("renders the unit symbol (not the unit_id prefix) in the 单位 column", async () => {
+    mockedFetch.mockResolvedValueOnce({
+      items: [lowRow, highRow],
+      total: 2,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      const symbols = screen.getAllByTestId("unit-symbol")
+      expect(symbols).toHaveLength(2)
+      expect(symbols[0]).toHaveTextContent("W/(m·K)")
+      expect(symbols[1]).toHaveTextContent("g/cm³")
+      // Sanity: no row UUID prefix in any unit cell
+      expect(screen.queryByText(/^unit-W-p-K$/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/^unit-g-cm3$/)).not.toBeInTheDocument()
+    })
+  })
+
+  it("falls back to a short unit_id prefix when unitSymbol is missing (legacy rows)", async () => {
+    const legacyRow = {
+      ...lowRow,
+      unitSymbol: null,
+      unitId: "unit-legacy-12345678-abcdef",
+    }
+    mockedFetch.mockResolvedValueOnce({
+      items: [legacyRow],
+      total: 1,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      // The fallback shows the first 8 chars of unitId
+      const fallback = screen.getByTestId("unit-fallback")
+      expect(fallback.textContent).toContain("unit-leg")
+    })
+    // The resolved-symbol path is NOT taken
+    expect(screen.queryByTestId("unit-symbol")).not.toBeInTheDocument()
+  })
+
+  it("renders a dash placeholder when neither unitSymbol nor unitId is set", async () => {
+    const noUnitRow = {
+      ...lowRow,
+      unitSymbol: null,
+      unitId: null,
+    }
+    mockedFetch.mockResolvedValueOnce({
+      items: [noUnitRow],
+      total: 1,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      expect(screen.getByTestId("unit-empty")).toBeInTheDocument()
+    })
+    // Neither symbol nor fallback path is taken
+    expect(screen.queryByTestId("unit-symbol")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("unit-fallback")).not.toBeInTheDocument()
   })
 
   // NFM-4554 G1-F UXDesigner Visual-Truth Gate bounce-back fix #2:

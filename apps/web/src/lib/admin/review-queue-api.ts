@@ -37,6 +37,11 @@ export interface ReviewQueueItem {
   /** NFM-4554 (G1-F) — spec §4.2 属性 column. Resolved by the backend
    *  via JOIN onto property_types. Null for KG / extraction_results rows. */
   readonly propertyTypeName: string | null
+  /** NFM-4560 — spec §4.2 单位 column. Resolved by the backend via
+   *  JOIN onto units.symbol. Null when the unit was deleted or the
+   *  row predates the unit_symbols JOIN; the UI falls back to a short
+   *  unit_id prefix in that case (same legacy strategy as 属性). */
+  readonly unitSymbol: string | null
   /** NFM-4548 (G1-B) — ADR-017 §2.6 composite dedupe key. Rows sharing
    *  the same key are auto-merged; spec §4.3 calls for a "已合并 N 行"
    *  badge when this happens. Null on legacy rows pre-G1-B. */
@@ -126,6 +131,8 @@ function mapItem(raw: BackendItem): ReviewQueueItem {
       typeof data.property_type_name === "string"
         ? data.property_type_name
         : null,
+    unitSymbol:
+      typeof data.unit_symbol === "string" ? data.unit_symbol : null,
     dedupeKey: typeof data.dedupe_key === "string" ? data.dedupe_key : null,
     validityCheck: {
       status: validityStatus,

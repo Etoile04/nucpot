@@ -28,6 +28,7 @@ const item: ReviewQueueItem = {
   createdAt: "2026-09-10T12:00:00Z",
   valueScalar: 0.34,
   unitId: "unit-abc-123",
+  unitSymbol: "W/(m·K)",
   notes: null,
   propertyTypeId: "pt-thermal-conductivity",
   propertyTypeName: "thermal conductivity",
@@ -59,6 +60,29 @@ describe("ReviewDrawer", () => {
     expect(screen.getByText("0.34")).toBeInTheDocument()
     expect(screen.getByText("42%")).toBeInTheDocument()
     expect(screen.getByText(/pending/)).toBeInTheDocument()
+  })
+
+  // NFM-4560 — measurement row reads as "0.34 W/(m·K)" rather than
+  // the round-2 "0.34 unit unit-abc-123" (the duplicate "unit" word).
+  it("renders the resolved unit symbol in the measurement row", () => {
+    render(<ReviewDrawer item={item} open onClose={noop} onDecided={noop} />)
+    const symbol = screen.getByTestId("unit-symbol-drawer")
+    expect(symbol).toHaveTextContent("W/(m·K)")
+    // The legacy "unit <uuid-prefix>" wrapper must NOT appear when a
+    // resolved symbol is available.
+    expect(screen.queryByText(/^unit unit-/)).not.toBeInTheDocument()
+  })
+
+  it("falls back to 'unit <short-id>' when the symbol cannot be resolved", () => {
+    const legacyItem = {
+      ...item,
+      unitSymbol: null,
+      unitId: "unit-legacy-12345678",
+    }
+    render(<ReviewDrawer item={legacyItem} open onClose={noop} onDecided={noop} />)
+    // The 8-char prefix of the legacy id shows up
+    expect(screen.getByText(/^unit unit-leg$/)).toBeInTheDocument()
+    expect(screen.queryByTestId("unit-symbol-drawer")).not.toBeInTheDocument()
   })
 
   it("exposes all five spec §4.3 action buttons", () => {

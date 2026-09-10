@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
+from nfm_db.api.v1.review import _row_to_review_item
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.review import ReviewStatus
 
@@ -674,3 +676,114 @@ async def test_stats_by_type_breakdown(async_client, db_session) -> None:
     # All four type labels should be present
     for label in ("extraction", "node", "edge", "measurement"):
         assert label in by_type
+
+
+# ---------------------------------------------------------------------------
+# NFM-4560 — _row_to_review_item unit_symbols branch
+# ---------------------------------------------------------------------------
+#
+# PropertyMeasurement has FK references to tables that don't exist in
+# SQLite (property_types.id, units.id, datasets.id, sources.id), so the
+# integration tests above use ExtractionResult. The unit_symbol JOIN
+# lives in the property_measurements branch of ``_row_to_review_item``
+# only, so we unit-test it with a duck-typed row instead of seeding a
+# real DB. This keeps the test fast and SQLite-friendly while still
+# exercising the mapping contract the API endpoint depends on.
+
+
+def _measurement_row(
+    *,
+    row_id: uuid.UUID | None = None,
+    property_type_id: uuid.UUID | None,
+    unit_id: uuid.UUID | None,
+    value_scalar: float | None = 0.34,
+    dedupe_key: str | None = None,
+    notes: str | None = None,
+) -> SimpleNamespace:
+    """Build a duck-typed row that mimics PropertyMeasurement's surface
+    that ``_row_to_review_item`` reads (property_type_id, unit_id,
+    value_scalar, dedupe_key, notes, id, created_at, review_status)."""
+    return SimpleNamespace(
+        id=row_id or uuid.uuid4(),
+        property_type_id=property_type_id,
+        unit_id=unit_id,
+        value_scalar=value_scalar,
+        dedupe_key=dedupe_key,
+        notes=notes,
+        # _row_to_review_item uses getattr for these — set them so the
+        # response envelope is fully populated.
+        confidence=0.5,
+        review_status="pending",
+        created_at=datetime(2026, 9, 10, tzinfo=UTC),
+    )
+
+
+def test_row_to_review_item_resolves_unit_symbol_when_present() -> None:
+    """NFM-4560 — backend mirror of the round-2 property_type_name fix.
+
+    When ``unit_symbols`` is supplied and the row has a unit_id, the
+    mapper writes ``unit_symbol`` into item_data so the UI can render
+    "W/(m·K)" instead of a row UUID prefix.
+    """
+    unit_id = uuid.uuid4()
+    pt_id = uuid.uuid4()
+    row = _measurement_row(property_type_id=pt_id, unit_id=unit_id)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        property_type_names={pt_id: "thermal conductivity"},
+        unit_symbols={unit_id: "W/(m·K)"},
+    )
+    assert item.item_data["unit_symbol"] == "W/(m·K)"
+    assert item.item_data["unit_id"] == str(unit_id)
+    assert item.item_data["property_type_name"] == "thermal conductivity"
+
+
+def test_row_to_review_item_unit_symbol_null_when_dict_empty() -> None:
+    """No symbol resolved → item_data["unit_symbol"] is None (legacy
+    fallback handled client-side, mirrors property_type_name)."""
+    unit_id = uuid.uuid4()
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=unit_id)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={},  # unit was deleted / not resolvable
+    )
+    assert item.item_data["unit_symbol"] is None
+    # unit_id is still surfaced so the client can fall back to a short
+    # id prefix.
+    assert item.item_data["unit_id"] == str(unit_id)
+
+
+def test_row_to_review_item_unit_symbol_null_when_row_has_no_unit() -> None:
+    """Row with unit_id=None → no symbol, no unit_id, client shows '—'."""
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=None)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={},
+    )
+    assert item.item_data["unit_symbol"] is None
+    assert item.item_data["unit_id"] is None
+
+
+def test_row_to_review_item_unit_symbols_param_is_optional() -> None:
+    """unit_symbols=None must not crash (mirrors property_type_names)."""
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=uuid.uuid4())
+    item = _row_to_review_item(row, "property_measurements")
+    assert item.item_data["unit_symbol"] is None
+
+
+def test_row_to_review_item_resolves_only_matching_unit_id() -> None:
+    """The mapper looks up by the row's specific unit_id — a different
+    row with a different unit_id must not bleed its symbol into this
+    row's item_data."""
+    this_unit = uuid.uuid4()
+    other_unit = uuid.uuid4()
+    row = _measurement_row(property_type_id=uuid.uuid4(), unit_id=this_unit)
+    item = _row_to_review_item(
+        row,
+        "property_measurements",
+        unit_symbols={this_unit: "K", other_unit: "eV"},
+    )
+    assert item.item_data["unit_symbol"] == "K"

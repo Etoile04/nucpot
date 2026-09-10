@@ -126,11 +126,22 @@ export function ReviewDrawer({ item, open, onClose, onDecided, validityCheck }: 
               }}
             >
               {item.valueScalar ?? "—"}
-              {item.unitId && (
+              {/* NFM-4560 — show the resolved unit symbol (e.g. "W/(m·K)")
+                  rather than the raw "unit <uuid-prefix>" which made
+                  the measurement row read like "0.34 unit unit-W-p".
+                  Legacy fallback mirrors the table column's behavior. */}
+              {item.unitSymbol ? (
+                <span
+                  data-testid="unit-symbol-drawer"
+                  style={{ marginLeft: 8, fontSize: 16 }}
+                >
+                  {item.unitSymbol}
+                </span>
+              ) : item.unitId ? (
                 <span style={{ marginLeft: 8, fontSize: 14, color: "#888" }}>
                   unit {item.unitId.slice(0, 8)}
                 </span>
-              )}
+              ) : null}
             </div>
           </section>
 

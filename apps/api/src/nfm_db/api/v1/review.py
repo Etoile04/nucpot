@@ -30,6 +30,7 @@ from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.property import PropertyMeasurement, PropertyType
 from nfm_db.models.review import VALID_TRANSITIONS, Review, ReviewStatus
 from nfm_db.models.source import DataSource
+from nfm_db.models.unit import Unit
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse, PaginatedResponse
 from nfm_db.schemas.review import (
@@ -111,6 +112,7 @@ def _row_to_review_item(
     row: Any,
     table_name: str,
     property_type_names: dict[Any, str] | None = None,
+    unit_symbols: dict[Any, str] | None = None,
 ) -> ReviewItemResponse:
     """Convert a DB row to a ReviewItemResponse."""
     source_info: ReviewSourceInfo | None = None
@@ -141,6 +143,11 @@ def _row_to_review_item(
             if property_type_names and row.property_type_id
             else None
         )
+        resolved_symbol = (
+            unit_symbols.get(row.unit_id)
+            if unit_symbols and row.unit_id
+            else None
+        )
         item_data = {
             "value_scalar": float(row.value_scalar) if row.value_scalar else None,
             "unit_id": str(row.unit_id) if row.unit_id else None,
@@ -148,6 +155,10 @@ def _row_to_review_item(
             # NFM-4554 (G1-F) — surface enough context for the
             # proof-reading queue (spec §4.2 + §4.3) to render
             #   • 属性 column = property_type.name (not row UUID)
+            #   • 单位 column = unit.symbol (not unit_id UUID prefix —
+            #     NFM-4560 fix, mirrors the property_type_name round-2
+            #     fix). Legacy fallback: short id prefix when the unit
+            #     cannot be resolved (deleted unit / pre-migration row).
             #   • 已合并 N 行 badge = dedupe_key grouped count
             #   • 红行 + reason = validity_check.status='fail' (G1-D
             #     wire-up; current rows report status='unknown' until
@@ -156,6 +167,7 @@ def _row_to_review_item(
                 str(row.property_type_id) if row.property_type_id else None
             ),
             "property_type_name": resolved_name,
+            "unit_symbol": resolved_symbol,
             "dedupe_key": getattr(row, "dedupe_key", None),
             "validity_check": {
                 "status": "unknown",
@@ -311,7 +323,13 @@ async def get_pending_reviews(
         # NFM-4554 (G1-F) — eagerly resolve property_types.name for
         # property_measurements rows so the queue can render the
         # property name (spec §4.2 属性 column) instead of a row UUID.
+        # NFM-4560 — same eager-JOIN pattern for Unit.symbol so the
+        # 单位 column renders the real symbol (e.g. "W/(m·K)") instead
+        # of a row-UUID prefix. Unit.symbol has a 20-char String column
+        # with a uq_units_symbol unique constraint, so it cannot blow up
+        # the JSON payload.
         property_type_names: dict[Any, str] = {}
+        unit_symbols: dict[Any, str] = {}
         if table_name == "property_measurements":
             result = await db.execute(stmt)
             rows = result.scalars().all()
@@ -322,6 +340,13 @@ async def get_pending_reviews(
                 )
                 name_rows = (await db.execute(name_stmt)).all()
                 property_type_names = {pid: name for pid, name in name_rows}
+            unit_ids = {r.unit_id for r in rows if r.unit_id}
+            if unit_ids:
+                symbol_stmt = select(Unit.id, Unit.symbol).where(
+                    Unit.id.in_(unit_ids)
+                )
+                symbol_rows = (await db.execute(symbol_stmt)).all()
+                unit_symbols = {uid: sym for uid, sym in symbol_rows}
         else:
             result = await db.execute(stmt)
             rows = result.scalars().all()
@@ -329,6 +354,7 @@ async def get_pending_reviews(
             kwargs: dict[str, Any] = {}
             if table_name == "property_measurements":
                 kwargs["property_type_names"] = property_type_names
+                kwargs["unit_symbols"] = unit_symbols
             all_items.append(_row_to_review_item(row, table_name, **kwargs))
 
     # Sort by created_at desc (stable across tables).
