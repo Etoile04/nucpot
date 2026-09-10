@@ -44,6 +44,10 @@ from nfm_db.services.health_event_emitter import (
     build_context,
     emit_health_event,
 )
+from nfm_db.services.validation import (
+    ValidityResult,
+    evaluate_valid_range,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -970,6 +974,41 @@ async def map_and_persist(
         # instead of being a flat 0.70.
         review_status = _confidence_to_review_status(item.confidence)
 
+        # NFM-4550 / G1-D AC-10 — evaluate the physical valid_range at
+        # 落库 time. ``validity_check`` is persisted on the row, and a
+        # ``status="fail"`` result overrides ``review_status`` to
+        # ``"invalid"`` so the row is excluded from the mergeable set
+        # (spec §2.6 / §8.2 step 4). Spec §8.4 also calls for the
+        # 校对 page to render a red row + hover-reason from this field.
+        value_scalar_for_check = value_kwargs.get("value_scalar")
+        validity_result: ValidityResult = evaluate_valid_range(
+            property_name=property_type.name,
+            valid_range_min=(
+                float(property_type.valid_range_min)
+                if property_type.valid_range_min is not None
+                else None
+            ),
+            valid_range_max=(
+                float(property_type.valid_range_max)
+                if property_type.valid_range_max is not None
+                else None
+            ),
+            value_scalar=(
+                float(value_scalar_for_check)
+                if value_scalar_for_check is not None
+                else None
+            ),
+            value_min=value_kwargs.get("value_min"),
+            value_max=value_kwargs.get("value_max"),
+            unit=unit.symbol if unit is not None else None,
+        )
+        validity_check_payload: dict[str, object] = {
+            "status": validity_result.status,
+            "reason": validity_result.reason,
+        }
+        if validity_result.status == "fail":
+            review_status = "invalid"
+
         # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
         # SAVEPOINT so a concurrent cross-request dedup race produces
         # IntegrityError without poisoning the outer transaction.
@@ -984,6 +1023,7 @@ async def map_and_persist(
                     review_status=review_status,
                     conditions_hash=cond_h,
                     method=method_str,
+                    validity_check=validity_check_payload,
                     **value_kwargs,
                 )
                 db.add(measurement)
