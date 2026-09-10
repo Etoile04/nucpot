@@ -96,6 +96,30 @@ def test_guard_rejects_non_hex_pin() -> None:
     assert "hex sha" in (result.stdout + result.stderr).lower()
 
 
+def test_guard_fails_closed_when_flag_on_without_pin() -> None:
+    """NFM-4611 regression — flag ON with no pin must FAIL, not pass.
+
+    Before NFM-4611 every check in the guard was gated on ``env_pin``
+    being truthy, so this exact configuration — the dangerous one, where
+    someone flips EXTRACTION_SKILL_ENABLED=true but never supplies
+    EXTRACTION_SKILL_REPO_PIN — exited 0 and printed
+    "OK — env matches lock file (pin=000…)". That made the CI gate
+    fail OPEN in the one scenario AC-8 exists to catch.
+    """
+    result = _run_guard(env_overrides={"EXTRACTION_SKILL_ENABLED": "true"})
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    combined = (result.stdout + result.stderr).lower()
+    assert "mandatory" in combined or "unset" in combined
+
+
+def test_guard_rejects_placeholder_lock_pin_when_flag_on() -> None:
+    """NFM-4611 — a zero-placeholder lock pin is never runnable when the
+    flag is on, regardless of whether env_pin was supplied."""
+    result = _run_guard(env_overrides={"EXTRACTION_SKILL_ENABLED": "true"})
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "placeholder" in (result.stdout + result.stderr).lower()
+
+
 def test_guard_lock_file_exists() -> None:
     """Sanity: the lock file ships at the expected path."""
     assert LOCK_FILE.is_file()

@@ -111,6 +111,29 @@ jobs:
         run: python apps/api/scripts/check_silent_excepts.py
         working-directory: ${{ github.workspace }}
 
+      # NFM-4611 / NFM-4547 AC-8: fail-closed guard for the extraction skill
+      # repo pin. Deliberately placed between `Lint (ruff)` and
+      # `Type-check (mypy)` so type-check only runs on a validated pin.
+      #
+      # Two layers fire here:
+      #   1. Lock-file integrity — ALWAYS live, independent of env. The script
+      #      returns 3 (lock file missing) / 2 (missing catalog.upstream.pin)
+      #      BEFORE it reads any env var, so a deleted or corrupted
+      #      packages/skills-catalog/lock.yaml reddens CI on every PR.
+      #   2. env ↔ lock drift — live once the EXTRACTION_SKILL_* repo variables
+      #      are configured. They are intentionally UNSET today (dark launch,
+      #      ADR-016 §2.7): an unset `vars.*` renders as "" and the script
+      #      treats "" as absent, so this is a no-op until the flag flips.
+      #      Wiring the env through now means flipping the flag does not also
+      #      require a second PR to arm the gate.
+      - name: Skill pin fail-closed gate (check_skill_pin.py)
+        run: python apps/api/scripts/check_skill_pin.py
+        working-directory: ${{ github.workspace }}
+        env:
+          EXTRACTION_SKILL_ENABLED: ${{ vars.EXTRACTION_SKILL_ENABLED }}
+          EXTRACTION_SKILL_REPO_PIN: ${{ vars.EXTRACTION_SKILL_REPO_PIN }}
+          EXTRACTION_SKILL_VERSION: ${{ vars.EXTRACTION_SKILL_VERSION }}
+
       - name: Type-check (mypy)
         run: uv run mypy src
 
