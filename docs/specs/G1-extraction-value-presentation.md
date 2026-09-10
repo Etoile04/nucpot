@@ -2,7 +2,7 @@
 
 > wayfinder #1249 → #1257 坍缩 · G1 区
 > 来源决议:[Etoile04/nucpot#1250](https://github.com/Etoile04/nucpot/issues/1250) · [#1251](https://github.com/Etoile04/nucpot/issues/1251) · [#1252](https://github.com/Etoile04/nucpot/issues/1252) · [#1253](https://github.com/Etoile04/nucpot/issues/1253) · [#1264](https://github.com/Etoile04/nucpot/issues/1264) · [#1280](https://github.com/Etoile04/nucpot/issues/1280)
-> 关联 ADR:[ADR-016 技能引擎](#) · [ADR-017 数据集生命周期](#)
+> 关联 ADR:[ADR-016 技能引擎](../adr/ADR-016-NFM-4535-skills-engine-as-extraction-engine.md) · [ADR-017 数据集生命周期](../adr/ADR-017-NFM-4535-dataset-lifecycle.md)
 > 状态:**可建**(所有开放决策已锁;实现票分拆见 §10)
 
 ## 1. 目标
