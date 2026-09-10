@@ -180,6 +180,43 @@ describe("ReviewDrawer", () => {
     )
     expect(screen.getByText(/键长 0\.3Å 低于有效域下限/)).toBeInTheDocument()
   })
+
+  // NFM-4560 — Visual-Truth Gate round-2: 测量值 row shows the real
+  // unit symbol next to the value instead of a duplicate "unit <prefix>"
+  // word salad.
+  it("renders the resolved unit symbol next to the measurement value", () => {
+    render(
+      <ReviewDrawer
+        item={item}
+        open={true}
+        onClose={noop}
+        onDecided={noop}
+      />,
+    )
+    const drawerUnit = screen.getByTestId("unit-symbol-drawer")
+    expect(drawerUnit).toHaveTextContent("W/(m·K)")
+    // Sanity: the previous bug phrase "unit unit-W-p" must not appear
+    expect(screen.queryByText(/unit unit-/)).not.toBeInTheDocument()
+  })
+
+  it("falls back to a short unitId prefix in the drawer when unitSymbol is missing (legacy rows)", () => {
+    const legacyItem = {
+      ...item,
+      unitSymbol: null,
+      unitId: "legacy-unit-aabbccdd",
+    }
+    render(
+      <ReviewDrawer
+        item={legacyItem}
+        open={true}
+        onClose={noop}
+        onDecided={noop}
+      />,
+    )
+    // Drawer keeps the legacy "unit <prefix>" suffix (per spec §4.2
+    // — never silently lose provenance).
+    expect(screen.getByText(/unit legacy-u/)).toBeInTheDocument()
+  })
 })
 
 describe("NOTE_REQUIRED_ACTIONS (transitional 6-state mapping)", () => {

@@ -37,6 +37,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 0.34,
           unit_id: "unit-W-per-mK",
+          unit_symbol: "W/(m·K)",
           notes: null,
           property_type_id: "pt-thermal-conductivity",
           property_type_name: "thermal conductivity",
@@ -58,6 +59,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 4.95,
           unit_id: "unit-angstrom",
+          unit_symbol: "Å",
           notes: null,
           property_type_id: "pt-lattice-a",
           property_type_name: "lattice parameter a",
@@ -79,6 +81,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 0.05,
           unit_id: "unit-g-per-cm3",
+          unit_symbol: "g/cm³",
           notes: null,
           property_type_id: "pt-density",
           property_type_name: "density",
@@ -105,6 +108,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 1200,
           unit_id: "unit-K",
+          unit_symbol: "K",
           notes: null,
           property_type_id: "pt-melting-T",
           property_type_name: "melting temperature",
@@ -126,6 +130,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 5.4,
           unit_id: "unit-eV",
+          unit_symbol: "eV",
           notes: null,
           property_type_id: "pt-cohesive-E",
           property_type_name: "cohesive energy",
@@ -147,6 +152,7 @@ const MOCK_QUEUE = {
         item_data: {
           value_scalar: 10.97,
           unit_id: "unit-g-per-cm3",
+          unit_symbol: "g/cm³",
           notes: null,
           property_type_id: "pt-theoretical-density",
           property_type_name: "theoretical density",
@@ -281,6 +287,25 @@ for (const vp of viewports) {
       "title",
       /density 0\.05 g\/cm³/,
     )
+    // NFM-4560 — 单位 column shows resolved unit symbols (e.g.
+    // "W/(m·K)", "Å", "g/cm³", "K", "eV"), NOT row-UUID prefixes.
+    // Match via the data-testid so symbol-looking value text (0.34)
+    // doesn't accidentally satisfy the assertion.
+    const unitSymbols = page.locator("[data-testid='unit-symbol']")
+    await expect(unitSymbols.first()).toBeVisible({ timeout: 5_000 })
+    const symbolTexts = await unitSymbols.allTextContents()
+    expect(symbolTexts.length).toBeGreaterThanOrEqual(6)
+    for (const expected of [
+      "W/(m·K)",
+      "Å",
+      "g/cm³",
+      "K",
+      "eV",
+    ]) {
+      expect(symbolTexts).toContain(expected)
+    }
+    // Sanity: the previous bug phrase "unit unit-" must NOT appear.
+    expect(await page.locator("body").innerText()).not.toMatch(/unit unit-/)
 
     await page.screenshot({
       path: `qa-artifacts/nfm-4554-${vp.name}-queue.png`,
@@ -301,6 +326,12 @@ for (const vp of viewports) {
     await expect(page.getByTestId("review-action-invalid")).toBeVisible()
     await expect(page.getByTestId("review-action-dispute")).toBeVisible()
     await expect(page.getByTestId("review-action-skip")).toBeVisible()
+    // NFM-4560 — 测量值 row in the drawer shows the resolved symbol
+    // next to the value (e.g. "0.34 W/(m·K)"), not "0.34 unit unit-W-p".
+    await expect(page.getByTestId("unit-symbol-drawer")).toHaveText(
+      "W/(m·K)",
+      { timeout: 5_000 },
+    )
     // Give Ant Drawer time to finish its open animation/portal mount
     await page.waitForTimeout(800)
     // Confirm drawer panel is actually in the viewport bounds

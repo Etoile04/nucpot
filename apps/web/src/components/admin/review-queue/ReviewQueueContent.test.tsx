@@ -385,4 +385,50 @@ describe("ReviewQueueContent — Layout A", () => {
     const table = scrollWrap.querySelector(".ant-table")
     expect(table).toBeInTheDocument()
   })
+
+  // NFM-4560 — Visual-Truth Gate round-2: 单位 column shows the real
+  // unit symbol (e.g. "W/(m·K)") instead of a row-UUID prefix.
+  it("renders the resolved unit symbol in the 单位 column", async () => {
+    mockedFetch.mockResolvedValueOnce({
+      items: [lowRow, highRow],
+      total: 2,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      const symbols = screen.getAllByTestId("unit-symbol")
+      expect(symbols[0]).toHaveTextContent("W/(m·K)")
+      expect(symbols[1]).toHaveTextContent("g/cm³")
+    })
+  })
+
+  it("falls back to a short unitId prefix when unitSymbol is missing (legacy rows)", async () => {
+    const legacyRow = { ...lowRow, unitSymbol: null, unitId: "legacy-unit-aabbccdd" }
+    mockedFetch.mockResolvedValueOnce({
+      items: [legacyRow],
+      total: 1,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      const fallback = screen.getByTestId("unit-fallback")
+      expect(fallback).toHaveTextContent("legacy-u")
+    })
+  })
+
+  it("renders an em-dash placeholder when both unitSymbol and unitId are null", async () => {
+    const emptyRow = { ...lowRow, unitSymbol: null, unitId: null }
+    mockedFetch.mockResolvedValueOnce({
+      items: [emptyRow],
+      total: 1,
+      page: 1,
+      pages: 1,
+    })
+    renderWithQuery(<ReviewQueueContent />)
+    await waitFor(() => {
+      expect(screen.getByTestId("unit-empty")).toHaveTextContent("—")
+    })
+  })
 })
