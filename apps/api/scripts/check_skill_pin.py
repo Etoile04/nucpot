@@ -116,6 +116,19 @@ def main() -> int:
 
     errors: list[str] = []
 
+    # NFM-4611: fail-closed hole found while wiring this guard into CI.
+    # Every check below was gated on `env_pin` being truthy, so the exact
+    # dangerous configuration — flag flipped ON with no pin supplied —
+    # exited 0 and even reported the zero placeholder as the effective pin.
+    # The module docstring of extraction_skill.py already states the
+    # intended contract ("EXTRACTION_SKILL_REPO_PIN is mandatory when the
+    # flag is on"); this makes the guard enforce it.
+    if flag_on and not env_pin:
+        errors.append(
+            "EXTRACTION_SKILL_ENABLED is on but EXTRACTION_SKILL_REPO_PIN is unset; "
+            "the pin is mandatory whenever the skill path is enabled"
+        )
+
     if env_pin and not _SHA1_HEX.match(env_pin):
         errors.append(
             f"EXTRACTION_SKILL_REPO_PIN={env_pin!r} is not a 40-char hex SHA"
@@ -131,7 +144,10 @@ def main() -> int:
             f"EXTRACTION_SKILL_VERSION drift: env={env_version!r} vs lock={lock_version!r}"
         )
 
-    if env_pin and lock_pin.startswith("0" * 40):
+    # NFM-4611: was `if env_pin and ...`. A zero-placeholder lock pin is
+    # never safe to run against once the flag is on, whether or not the
+    # deployer remembered to set env_pin.
+    if (env_pin or flag_on) and lock_pin.startswith("0" * 40):
         errors.append(
             "lock file upstream.pin is the zero placeholder; "
             "set a real SHA before flipping EXTRACTION_SKILL_ENABLED=true"
