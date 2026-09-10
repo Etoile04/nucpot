@@ -421,7 +421,13 @@ async def test_query_naive_mode(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_query_client_error(async_client: AsyncClient) -> None:
-    """POST /lightrag/query returns success=False on LightRAGClientError."""
+    """POST /lightrag/query surfaces ILIKE fallback on LightRAGClientError.
+
+    NFM-4539 RAG-B §3.2: every user-facing LightRAG failure that resembles
+    a stall must fall through to ILIKE rather than hard-failing, with
+    ``fallback.used=true`` and ``fallback.kind='iliKE'``.  The caller
+    (RagSearchView) reads the envelope and renders the badge.
+    """
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -438,8 +444,9 @@ async def test_query_client_error(async_client: AsyncClient) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["success"] is False
-    assert "LightRAG service error" in body["error"]
+    assert body["success"] is True
+    assert body["data"]["fallback"]["used"] is True
+    assert body["data"]["fallback"]["kind"] == "iliKE"
 
 
 @pytest.mark.asyncio

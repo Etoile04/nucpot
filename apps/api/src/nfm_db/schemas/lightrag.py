@@ -16,6 +16,7 @@ Cross-language contract:
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -122,6 +123,13 @@ class QueryResponse(BaseModel):
     """Response from the LightRAG semantic query.
 
     Maps LightRAG's POST /query response with structured KG data.
+
+    NFM-4539 RAG-B: ``fallback`` carries the transparent-degradation
+    envelope so the frontend can render the §3.2 / AC-4 badge without
+    inspecting internals.  ``fallback.used=false`` is the steady state;
+    ``fallback.used=true`` with ``kind='iliKE'`` indicates the
+    semantic-search sidecar timed out and the answer was rescued via the
+    ILIKE full-text path.
     """
 
     response: str = Field(
@@ -139,6 +147,36 @@ class QueryResponse(BaseModel):
         default_factory=list,
         description="KG relationships related to the query",
     )
+    fallback: FallbackInfo = Field(
+        default_factory=lambda: FallbackInfo(used=False),
+        description=(
+            "Transparent degradation envelope (NFM-4539 §3.2 / AC-4). "
+            "Set ``used=true`` only when the response was rescued via "
+            "ILIKE after the LightRAG sidecar exceeded its budget."
+        ),
+    )
+
+
+class FallbackInfo(BaseModel):
+    """Fallback envelope (NFM-4539 RAG-B / §3.2 / AC-4)."""
+
+    used: bool = Field(
+        False,
+        description="True iff the response was rescued via a fallback path.",
+    )
+    kind: str | None = Field(
+        None,
+        description=(
+            "Fallback kind; currently ``'iliKE'`` for ILIKE rescue. "
+            "``None`` when no fallback fired."
+        ),
+    )
+    original_error: str | None = Field(
+        None,
+        description="Error message that triggered the fallback (if any).",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +206,76 @@ class HealthResponse(BaseModel):
         None,
         description="Pinned LightRAG version from config",
     )
+
+
+# ---------------------------------------------------------------------------
+# Metrics (NFM-4539 RAG-E / AC-8)
+# ---------------------------------------------------------------------------
+
+
+class TierP95(BaseModel):
+    """P95 latency for one tier over the AC-8 window.
+
+    ``p95_ms`` is ``None`` when the sample size is below the 5-row floor
+    so the dashboard renders an honest "insufficient data" badge instead
+    of a misleading percentile from a tiny sample.
+    """
+
+    p95_ms: float | None = Field(
+        None,
+        description="P95 latency in milliseconds; None when sample size is below the floor.",
+    )
+    sample_size: int = Field(
+        0,
+        description="Number of access-log rows in the window that fed this tier.",
+    )
+    target_ms: float = Field(
+        description="SLA target in milliseconds (Tier-1 < 1s; Tier-2 < 30s pre-NFM-4525, < 10s after).",
+    )
+    meets_sla: bool = Field(
+        False,
+        description="True iff ``p95_ms`` is not None and is at or below ``target_ms``.",
+    )
+
+
+class MetricsResponse(BaseModel):
+    """Dashboard payload for NFM-4539 RAG-E / AC-8.
+
+    Drives the weekly RAG quality dashboard.  Three literature totals
+    (completed / indexed / diff) plus two tier latencies over a rolling
+    7-day window.
+    """
+
+    lit_completed_total: int = Field(
+        description="Number of DataSource rows with parse_status='completed'.",
+    )
+    lit_indexed_total: int = Field(
+        description=(
+            "Number of completed literature rows that the daily "
+            "rag_audit_index_coverage confirms are in the LightRAG index "
+            "(most recent run_date). "
+            "None when the audit has never run."
+        ),
+    )
+    lit_indexed_source: str = Field(
+        "rag_index_audit_log",
+        description="Provenance of ``lit_indexed_total``.",
+    )
+    lit_diff_count: int = Field(
+        description="completed - indexed; the RAG-D backlog.",
+    )
+    tier_1_p95: TierP95 = Field(
+        description="Cached/hot path latency (was_cached=true).",
+    )
+    tier_2_p95: TierP95 = Field(
+        description="Fresh semantic-search latency (was_cached=false AND was_fallback=false).",
+    )
+    window_days: int = Field(
+        7,
+        description="Rolling window in days for the latency tiers.",
+    )
+    generated_at: datetime = Field(
+        description="UTC timestamp at which this payload was computed.",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
