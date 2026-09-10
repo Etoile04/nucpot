@@ -154,6 +154,112 @@ def test_assert_pin_consistent_passes_when_lock_and_env_agree(
     assert sha == "a" * 40
 
 
+# ---------------------------------------------------------------------------
+# Pin consistency — NFM-4618 defense-in-depth (mirror of NFM-4611 in CI guard)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_assert_pin_consistent_raises_when_flag_on_but_pin_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4618 regression — flag ON with no pin must FAIL at runtime, not pass.
+
+    Prior to NFM-4618 every check in ``assert_pin_consistent`` was gated
+    on ``env_pin`` being truthy, so this exact configuration — the
+    dangerous one, where someone flips ``EXTRACTION_SKILL_ENABLED=true``
+    but never supplies ``EXTRACTION_SKILL_REPO_PIN`` — exited cleanly
+    and ``resolve_skill_pin()`` then fell back to the lock value, which
+    today is the 40-zero placeholder. The runtime would proceed with a
+    zero SHA rather than refusing to start.
+    """
+    monkeypatch.setenv(EXTRACTION_SKILL_ENABLED_ENV, "true")
+    monkeypatch.delenv(EXTRACTION_SKILL_REPO_PIN_ENV, raising=False)
+    monkeypatch.delenv(EXTRACTION_SKILL_VERSION_ENV, raising=False)
+    with pytest.raises(SkillPinMismatchError) as excinfo:
+        assert_pin_consistent(env=None, lock=_stub_lock())
+    combined = str(excinfo.value).lower()
+    assert "mandatory" in combined or "unset" in combined
+
+
+@pytest.mark.unit
+def test_assert_pin_consistent_raises_when_flag_on_and_lock_is_zero_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4618 — a zero-placeholder lock pin is never runnable when the
+    flag is on, regardless of whether env_pin was supplied.
+
+    Without this, ``EXTRACTION_SKILL_ENABLED=true`` against the shipped
+    lock file (which still has the TODO 40-zero SHA) would silently
+    ship a non-functional extraction. Mirrors the NFM-4611 fix in the
+    CI guard so the same configuration fails closed at every layer.
+
+    Sets a real ``env_pin`` so the mandatory-pin check (which fires
+    earlier) does not pre-empt this branch — we want to exercise the
+    placeholder-vs-real-pin disagreement specifically.
+    """
+    from nfm_db.services.extraction_skill import SkillsLock
+
+    monkeypatch.setenv(EXTRACTION_SKILL_ENABLED_ENV, "true")
+    monkeypatch.setenv(EXTRACTION_SKILL_REPO_PIN_ENV, "a" * 40)
+    monkeypatch.setenv(EXTRACTION_SKILL_VERSION_ENV, "v1.7.2")
+    zero_lock = SkillsLock(
+        catalog_id="x",
+        upstream_url="https://example.com/repo.git",
+        pin="0" * 40,
+        ref=None,
+        default_skill="nuclear-property-extraction-v4",
+        skills={
+            "nuclear-property-extraction-v4": {
+                "version": "v1.7.2",
+                "entrypoint": "skills/nuclear-property-extraction-v4/SKILL.md",
+            }
+        },
+        raw={},
+    )
+    with pytest.raises(SkillPinMismatchError) as excinfo:
+        assert_pin_consistent(env=None, lock=zero_lock)
+    assert "placeholder" in str(excinfo.value).lower()
+
+
+@pytest.mark.unit
+def test_assert_pin_consistent_passes_when_flag_off_even_with_zero_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4618 non-regression — flag OFF must keep working as today.
+
+    The dark-launch default (``EXTRACTION_SKILL_ENABLED`` unset) leaves
+    ``assert_pin_consistent`` a no-op on the env-supplied pin; the
+    zero-placeholder lock is only dangerous once the flag flips. This
+    test guards against the fix accidentally tightening the dark-launch
+    default and breaking every existing call site.
+    """
+    from nfm_db.services.extraction_skill import SkillsLock
+
+    monkeypatch.delenv(EXTRACTION_SKILL_ENABLED_ENV, raising=False)
+    monkeypatch.delenv(EXTRACTION_SKILL_REPO_PIN_ENV, raising=False)
+    monkeypatch.delenv(EXTRACTION_SKILL_VERSION_ENV, raising=False)
+    zero_lock = SkillsLock(
+        catalog_id="x",
+        upstream_url="https://example.com/repo.git",
+        pin="0" * 40,
+        ref=None,
+        default_skill="nuclear-property-extraction-v4",
+        skills={
+            "nuclear-property-extraction-v4": {
+                "version": "v1.7.2",
+                "entrypoint": "skills/nuclear-property-extraction-v4/SKILL.md",
+            }
+        },
+        raw={},
+    )
+    version, sha = assert_pin_consistent(env=None, lock=zero_lock)
+    # Falls back to lock values when env is unset — the documented
+    # behaviour that ``resolve_skill_pin`` and the test suite rely on.
+    assert version == "v1.7.2"
+    assert sha == "0" * 40
+
+
 @pytest.mark.unit
 def test_resolve_skill_pin_falls_back_to_lock(env_off: None) -> None:
     """When env is unset, the lock file is the source of truth so
