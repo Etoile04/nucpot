@@ -50,7 +50,7 @@
 | `reviewer_note` | text | N | 校对备注 |
 | `reviewed_at` | timestamptz | N | 校对时间 |
 | `validity_check` | jsonb | N | 属性级 `valid_range` 校验结果:`{status: "ok"\|"warn"\|"fail", reason: str\|null}` |
-| `dedupe_key` | text | Y | **(dataset, property_type, source_id, value_hash)** 复合键,唯一约束,摄取 upsert 依赖 |
+| `dedupe_key` | text | N | **(dataset, property_type, source_id, value_hash)** 复合键,唯一约束,摄取 upsert 依赖;mapper 写入路径必填(`extraction_to_db_mapper` 必须填充),legacy 行允许 NULL(部分 UNIQUE 索引允许多个 NULL) |
 
 ### 3.2 技能输出 ↔ 行级契约 adapter(13 → 20 字段)
 

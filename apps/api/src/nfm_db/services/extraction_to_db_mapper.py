@@ -7,7 +7,27 @@ Mapping:
   source_doi / reference → DataSource (dedup by DOI)
   material_name / composition → Material + MaterialComposition (dedup by formula)
   property_category / property → PropertyType lookup
-  value / unit / conditions → Dataset + PropertyMeasurement + MeasurementCondition
+  value / unit / conditions → Dataset + DatasetVersion + PropertyMeasurement + MeasurementCondition
+
+Dedup (NFM-4549 / G1-C — AC-9):
+  ``property_measurements.dedupe_key`` is a PG ``GENERATED ALWAYS AS
+  (md5(...)) STORED`` column (see migration 085 — NFM-4548 G1-B). The
+  mapper never writes it; PG computes the value on every INSERT.
+  On dialect != postgres (SQLite hermetic tests) we compute the SHA-256
+  equivalent client-side via
+  :func:`nfm_db.services.literature_dedup.compute_dedupe_key` and write
+  it explicitly so the test fixture can exercise the same partial
+  unique ``uq_pm_dedupe_key`` path. A second INSERT with the same
+  ``(dataset_id, property_type_id, source_id, value_hash)`` raises
+  ``IntegrityError`` and is counted as a skipped duplicate — Owen 2023's
+  92-row case collapses to one row.
+  Each measurement is also stamped with ``dataset_version_id`` so the
+  partial unique ``WHERE dataset_version_id IS NOT NULL`` actually fires
+  on PG (legacy NULL rows are excluded per ADR-017 §4.1).
+  The mapper also stamps ``Dataset.literature_doi`` /
+  ``literature_content_hash`` on first creation so the cross-row
+  DOI → content_hash ladder in :func:`resolve_literature_dataset` can
+  hit on subsequent extractions.
 
 All operations run within a single DB transaction.
 """
@@ -28,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import (
     Dataset,
+    DatasetVersion,
     DataSource,
     Material,
     MaterialAlias,
@@ -44,6 +65,10 @@ from nfm_db.services.health_event_emitter import (
     build_context,
     emit_health_event,
 )
+from nfm_db.services.literature_dedup import (
+    compute_dedupe_key,
+    normalize_doi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +77,18 @@ logger = logging.getLogger(__name__)
 # cross-request duplicate (rather than a real DB error).  The composite
 # UNIQUE INDEXes introduced by migration 032 turn any concurrent-insert
 # race into an IntegrityError; the dedup race must NOT surface as a 500.
+# ``uq_pm_dedupe_key`` (migration 085 — NFM-4548 / NFM-4549 G1-C, AC-9)
+# joins the list — it fires when ``compute_dedupe_key`` collides on a
+# re-run for rows carrying a non-NULL ``dataset_version_id``. Legacy
+# dedup paths (``uq_pm_dedup``, ``uq_datasets_source_material``,
+# ``uq_datasets_literature_doi``) are kept on the same fingerprint set.
 # Match by both the wrapped pgcode (Postgres) and a substring over the
 # message text for portability across SQLite and Postgres.
 _DEDUP_CONFLICT_FRAGMENTS: tuple[str, ...] = (
     "uq_pm_dedup",
+    "uq_pm_dedupe_key",
     "uq_datasets_source_material",
+    "uq_datasets_literature_doi",
     "unique constraint",
     "unique_violation",
     "UNIQUE constraint failed",
@@ -332,6 +364,31 @@ def _conditions_hash(conditions: dict[str, Any] | None) -> str:
     return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
 
 
+def _value_hash(value_kwargs: dict[str, Any]) -> str:
+    """Stable SHA1 hex digest of the measurement value kwargs.
+
+    Used by AC-9's :func:`compute_dedupe_key` so two ``PropertyMeasurement``
+    rows with the same value (regardless of which value column carries it —
+    scalar / min / max / expression / list / text) collapse to one row.
+
+    Only the value columns are hashed; ``method`` and ``conditions_hash``
+    are deliberately omitted here because :func:`compute_dedupe_key`
+    folds them in at the next layer (mirroring the PG GENERATED formula
+    in migration 085 decision (f)). Two measurements with the same value
+    but different conditions or methods therefore stay distinct rows in
+    both SQLite tests and PG prod. ``review_status`` is also omitted as
+    it is not part of the dedup tuple.
+    """
+    # ``None``-drop values that are not set; sort by key for stability.
+    serialised = json.dumps(
+        {k: v for k, v in value_kwargs.items() if v is not None},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
+
+
 def _measurement_dedup_key(item: ExtractedProperty) -> str:
     """Build the 5-tuple dedup key for a PropertyMeasurement.
 
@@ -348,6 +405,48 @@ def _measurement_dedup_key(item: ExtractedProperty) -> str:
     cond_h = _conditions_hash(item.conditions)
     method = (item.method or "").strip()
     return f"{material}|{prop}|{source_ref}|{cond_h}|{method}"
+
+
+async def _get_or_create_dataset_version(
+    db: AsyncSession,
+    dataset: Dataset,
+    source: DataSource,
+) -> DatasetVersion:
+    """Find or mint the active ``dataset_versions`` snapshot for ``dataset``.
+
+    AC-9 (NFM-4549 / G1-C) requires every ``property_measurements`` row to
+    carry a non-NULL ``dataset_version_id`` so the partial unique
+    ``uq_pm_dedupe_key WHERE dataset_version_id IS NOT NULL`` actually
+    fires on PG — legacy NULL rows are excluded per ADR-017 §4.1.
+
+    Strategy: prefer the most recent ``draft`` version; if none exists,
+    mint ``version_no = 1`` with ``status = 'draft'`` and seed
+    ``source_ids`` with the contributing source. The row_ids array is
+    populated post-INSERT by the mapper's ``PropertyMeasurement`` writes
+    in this same transaction — a separate promotion step flips the
+    snapshot to ``released`` after the batch commits (out of scope for
+    NFM-4549, owned by AC-6 / ADR-017 §2.3).
+    """
+    existing = (
+        await db.execute(
+            select(DatasetVersion)
+            .where(DatasetVersion.dataset_id == dataset.id)
+            .order_by(DatasetVersion.version_no.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if existing is not None:
+        return existing
+    version = DatasetVersion(
+        dataset_id=dataset.id,
+        version_no=1,
+        status="draft",
+        row_ids=[],
+        source_ids=[str(source.id)] if source is not None else [],
+    )
+    db.add(version)
+    await db.flush()
+    return version
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +780,11 @@ async def map_and_persist(
     source_map: dict[str, DataSource] = {}
     material_map: dict[str, Material] = {}
     dataset_map: dict[str, Dataset] = {}
+    # NFM-4549 / G1-C — AC-9 path: every measurement is stamped with the
+    # owning DatasetVersion.id so the partial unique ``uq_pm_dedupe_key``
+    # (WHERE dataset_version_id IS NOT NULL) actually fires on PG. Track
+    # the active version per dataset for the duration of the batch.
+    dataset_version_map: dict[str, DatasetVersion] = {}
     # NFM-1981 AC-2: track seen 5-tuple keys to skip exact duplicates
     seen_measurement_keys: set[str] = set()
 
@@ -890,17 +994,102 @@ async def map_and_persist(
                 # dataset.  Reuse it so the 5-tuple dedup keys line up.
                 dataset_map[d_key] = existing_dataset
                 reused_entities += 1
-            else:
-                dataset = Dataset(
-                    material_id=material.id,
-                    source_id=source.id,
-                    title=dataset_title,
-                    is_verified=False,
+                # NFM-4549 / G1-C — AC-9: stamp the active DatasetVersion
+                # on each measurement so the partial unique ``uq_pm_dedupe_key``
+                # can fire. Lazy-creates v1 if this dataset predates
+                # ADR-017 §2.3 versioning.
+                dataset_version_map[d_key] = await _get_or_create_dataset_version(
+                    db, existing_dataset, source
                 )
-                db.add(dataset)
-                await db.flush()
-                dataset_map[d_key] = dataset
-                created_datasets += 1
+            else:
+                # NFM-4549 / G1-C — stamp the dataset with the literature
+                # identity signals so the cross-row DOI → content_hash
+                # ladder (:func:`resolve_literature_dataset`) can hit on
+                # the next extraction. Both columns are partial-unique
+                # (migration 085) so two datasets sharing a NULL are
+                # legal; once one carries a non-null value it becomes
+                # the canonical row for that literature. A concurrent or
+                # sequential same-DOI cross-source race (different
+                # ``(material, source)`` pair whose normalized DOI /
+                # content_hash collides with the canonical row) must
+                # NOT abort the outer transaction: wrap the INSERT in a
+                # SAVEPOINT and recover by reusing the canonical row.
+                try:
+                    async with db.begin_nested():
+                        dataset = Dataset(
+                            material_id=material.id,
+                            source_id=source.id,
+                            title=dataset_title,
+                            is_verified=False,
+                            literature_doi=normalize_doi(source.doi),
+                            literature_content_hash=source.file_hash,
+                        )
+                        db.add(dataset)
+                        await db.flush()
+                except IntegrityError as exc:
+                    if _is_dedup_conflict(exc):
+                        # A racing request already wrote the canonical
+                        # dataset for this literature identity. Roll
+                        # back the SAVEPOINT, re-fetch by the same
+                        # ``(material, source)`` pair we just tried, and
+                        # reuse whichever canonical row the index now
+                        # resolves to.
+                        logger.debug(
+                            "Dedup conflict on dataset "
+                            "(material=%s, source=%s, literature_doi=%s, "
+                            "literature_content_hash=%s): %s",
+                            material.id,
+                            source.id,
+                            normalize_doi(source.doi),
+                            source.file_hash,
+                            exc,
+                        )
+                        existing_dataset = (
+                            (
+                                await db.execute(
+                                    select(Dataset).where(
+                                        Dataset.material_id == material.id,
+                                        Dataset.source_id == source.id,
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .first()
+                        )
+                        if existing_dataset is not None:
+                            dataset_map[d_key] = existing_dataset
+                            reused_entities += 1
+                            # NFM-4549 / G1-C — AC-9 partial unique needs
+                            # ``dataset_version_id``. Bind the active version
+                            # (which may have been minted by the racing
+                            # request in the gap between the dedup
+                            # IntegrityError and our re-read).
+                            dataset_version_map[d_key] = (
+                                await _get_or_create_dataset_version(
+                                    db, existing_dataset, source
+                                )
+                            )
+                        else:
+                            # The partial-unique index fired but no row
+                            # yet exists for this ``(material, source)``
+                            # pair — extremely unlikely (a third party
+                            # deleted the canonical row between the
+                            # conflicting INSERT and our re-read), but
+                            # propagate rather than silently drop the
+                            # measurement to avoid data loss.
+                            raise
+                    else:
+                        # Real DB error — propagate.
+                        raise
+                else:
+                    dataset_map[d_key] = dataset
+                    created_datasets += 1
+                    # NFM-4549 / G1-C — AC-9 partial unique needs
+                    # ``dataset_version_id``. Mint v1 'draft' on every
+                    # fresh Dataset.
+                    dataset_version_map[d_key] = await _get_or_create_dataset_version(
+                        db, dataset, source
+                    )
 
         dataset = dataset_map[d_key]
 
@@ -970,6 +1159,48 @@ async def map_and_persist(
         # instead of being a flat 0.70.
         review_status = _confidence_to_review_status(item.confidence)
 
+        # NFM-4549 / G1-C — AC-9 dedupe_key is a PG ``GENERATED ALWAYS AS
+        # (md5(...)) STORED`` column (see migration 085 — NFM-4548 G1-B).
+        # The mapper MUST NOT write a literal value on PG (PG rejects
+        # INSERT into GENERATED ALWAYS columns without OVERRIDING SYSTEM
+        # VALUE). On non-Postgres dialects (SQLite hermetic tests)
+        # GENERATED is unenforced and the partial unique only fires when
+        # the column is non-NULL, so the mapper computes the SHA-256
+        # equivalent client-side and writes it explicitly. PG prod
+        # therefore relies on ``uq_pm_dedupe_key`` (partial unique
+        # WHERE dataset_version_id IS NOT NULL) firing on the DB-
+        # generated md5 hash; SQLite tests rely on the same partial
+        # unique firing on the client-side SHA-256 hash. Both paths
+        # produce a non-NULL dedupe_key and exercise the same
+        # IntegrityError → skipped-duplicate path.
+        active_dataset_version = dataset_version_map.get(d_key)
+        if active_dataset_version is None:
+            # Defensive fallback — should never trip because every code
+            # path that populates ``dataset_map`` also populates
+            # ``dataset_version_map``. If it does trip, AC-9 silently
+            # degrades (legacy NULL partial unique path) and we surface
+            # the regression loudly.
+            raise RuntimeError(
+                f"dataset_version_map missing for d_key={d_key} — mapper wiring "
+                "regression (NFM-4549 G1-C AC-9 path)."
+            )
+        measurement_kwargs: dict[str, Any] = dict(value_kwargs)
+        if (db.bind.dialect.name or "").lower() != "postgresql":
+            # SQLite (tests): write the dedupe_key explicitly so the
+            # partial unique fires on duplicates. SHA-256 client-side
+            # hash; PG prod uses md5 via the GENERATED column instead.
+            # conditions_hash + method are folded in to mirror the PG
+            # GENERATED formula (migration 085 decision (f)) so the two
+            # dialects agree on which rows collide.
+            measurement_kwargs["dedupe_key"] = compute_dedupe_key(
+                dataset.id,
+                property_type.id,
+                source.id,
+                _value_hash(value_kwargs),
+                conditions_hash=cond_h,
+                method=method_str,
+            )
+
         # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
         # SAVEPOINT so a concurrent cross-request dedup race produces
         # IntegrityError without poisoning the outer transaction.
@@ -984,7 +1215,8 @@ async def map_and_persist(
                     review_status=review_status,
                     conditions_hash=cond_h,
                     method=method_str,
-                    **value_kwargs,
+                    dataset_version_id=active_dataset_version.id,
+                    **measurement_kwargs,
                 )
                 db.add(measurement)
                 await db.flush()
@@ -994,11 +1226,13 @@ async def map_and_persist(
                 # Roll back this SAVEPOINT and count as skipped.
                 logger.debug(
                     "Dedup conflict on (dataset=%s, prop_type=%s, "
-                    "conditions_hash=%s, method=%s): %s",
+                    "conditions_hash=%s, method=%s, "
+                    "dataset_version_id=%s): %s",
                     dataset.id,
                     property_type.id,
                     cond_h,
                     method_str,
+                    active_dataset_version.id,
                     exc,
                 )
                 skipped_duplicate_measurements += 1
