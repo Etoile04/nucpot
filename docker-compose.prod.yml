@@ -102,13 +102,13 @@ services:
       # 8.0s hardcoded default in apps/api/src/nfm_db/services/lightrag_client.py
       # so we can measure real post-fix cold/warm latency (research found 63.7s
       # cold query with the broken embed; expected post-fix cold ≤ 30s with
-      # nomic-embed-text). 30s was the first probe; NFM-4492 closeout measured
-      # true cold hybrid ≈ 40-60s (4B NVFP4 generation over ~28k-token context
-      # runs past the 30s ceiling and the client sees len-0 until the LLM
-      # cache lands). Raise to 60s so first-hit queries return synchronously;
-      # warm/cache-hit stays 0.1-0.2s. NFM-3404 three-tier recalibration is
-      # the durable owner of this knob.
-      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "60.0"
+      # NFM-4539 RAG-F: tightened from 60s → 10s after NFM-4525 fixed the
+      # qwen3.5 thinking-mode token-eat bug. Cold mix/hybrid queries now
+      # complete inside 10s end-to-end; anything past this is a stalled
+      # sidecar and the ILIKE fallback path (RAG-B / §3.2) carries the
+      # user-visible degradation. The companion client-side abort budget
+      # is ``NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS=15_000`` in apps/web.
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "10.0"
       # HPC SSH key (mount as secret in production)
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
