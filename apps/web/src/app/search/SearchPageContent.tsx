@@ -42,7 +42,7 @@ export function SearchPageContent() {
           <Text type="secondary">
             {mode === "text"
               ? "按类型、元素或关键字检索势函数库"
-              : "使用 AI 语义检索知识图谱中的核材料数据（需登录）"}
+              : "使用 AI 语义检索知识图谱中的核材料数据"}
           </Text>
         </div>
         <SearchModeToggle value={mode} onChange={handleModeChange} />

@@ -61,13 +61,12 @@ services:
       # Service-discovery vars only (compose service names, not host env).
       NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
       NFM_LIGHTRAG_PORT: "9621"
-      # NFM-4532: query timeout must match prod (60.0 at filing). Default
-      # mirrors docker-compose.prod.yml line 111; the env-var override
-      # exists so SRE can lower it locally without a compose edit. Without
-      # this override the staging canary inherits the 8.0s hardcoded
-      # ceiling in apps/api/src/nfm_db/services/lightrag_client.py and
-      # every first-hit hybrid query times out before the LLM cache lands.
-      NFM_LIGHTRAG_QUERY_TIMEOUT_S: ${STAGING_LIGHTRAG_QUERY_TIMEOUT_S:-60.0}
+      # NFM-4539 RAG-F: tightened default to 10.0s after NFM-4525 fixed
+      # the qwen3.5 thinking-mode token-eat bug. The env-var override
+      # stays so SRE can dial it locally without a compose edit; the
+      # client-side abort budget is ``NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS
+      # =15_000`` in apps/web (RAG-F contract).
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: ${STAGING_LIGHTRAG_QUERY_TIMEOUT_S:-10.0}
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
