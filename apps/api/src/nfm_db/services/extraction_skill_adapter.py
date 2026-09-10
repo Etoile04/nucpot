@@ -460,7 +460,7 @@ def adapt_skill_record(
         # Stash fixed-column projection alongside conditions for the
         # mapper. Not part of the canonical row but useful in audit
         # logs.
-        fixed_condition_columns=fixed_conditions,  # type: ignore[call-arg]
+        fixed_condition_columns=fixed_conditions,
     )
 
 
