@@ -5,6 +5,8 @@ import logging
 import os
 from datetime import timedelta
 
+from celery.schedules import crontab
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +99,25 @@ from nfm_db.services import literature_dispatcher  # noqa: F401,E402
 celery_app.conf.task_routes = {
     "nfm_db.services.literature_dispatcher.process_literature_task": {
         "queue": "literature_processing",
+    },
+    # NFM-4539 RAG-D: route the daily reconciliation audit to the
+    # default queue so it runs alongside other light housekeeping.
+    # We deliberately do NOT route it through ``md_verification`` /
+    # ``literature_processing`` — those queues are sized for the
+    # extraction workload; the audit is a small read-mostly job.
+    "nfm_db.services.celery_app.rag_audit_index_coverage_task": {
+        "queue": "default",
+    },
+}
+
+# NFM-4539 RAG-D §4.2: register the daily audit under Celery beat at
+# 03:30 UTC, reusing NFM-4257's prune automation slot so the
+# reconciliation and the prune back-to-back minimise operational
+# surface.  Cron is UTC by convention in this project.
+celery_app.conf.beat_schedule = {
+    "rag-audit-index-coverage-daily": {
+        "task": "nfm_db.services.celery_app.rag_audit_index_coverage_task",
+        "schedule": crontab(minute=30, hour=3),  # 03:30 UTC daily
     },
 }
 
@@ -258,3 +279,64 @@ def monitor_primary_cluster_health() -> dict:
         except Exception as e:
             logger.error(f"Failed to run health monitoring: {e}")
             return {"status": "error", "message": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# NFM-4539 RAG-D — daily index-coverage reconciliation
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    name="nfm_db.services.celery_app.rag_audit_index_coverage_task",
+    max_retries=1,
+    default_retry_delay=300,
+    autoretry_for=(ConnectionError,),
+)
+def rag_audit_index_coverage_task(self) -> dict:
+    """Daily hook/对账 (NFM-4539 RAG-D §4.2).
+
+    Wraps :func:`nfm_db.services.rag_audit.run_rag_audit_index_coverage`
+    in a Celery-friendly sync boundary.  We import the async service
+    lazily to avoid a circular import at module load time.
+
+    Returns a JSON-friendly summary that downstream observability
+    surfaces; raises on irrecoverable failures so the watchdog (NFM-4406)
+    can fire.
+    """
+
+    async def _run() -> dict:
+        from nfm_db.config import get_settings
+        from nfm_db.database import get_session_factory
+        from nfm_db.services.rag_audit import run_rag_audit_index_coverage
+
+        settings = get_settings()
+        async with get_session_factory()() as session:
+            outcome = await run_rag_audit_index_coverage(
+                session,
+                lightrag_host=settings.lightrag_host,
+                lightrag_port=settings.lightrag_port,
+            )
+        return {
+            "run_date": outcome.run_date.isoformat(),
+            "completed_total": outcome.completed_total,
+            "indexed_total": outcome.indexed_total,
+            "drift_total": outcome.drift_total,
+            "reingested": outcome.reingested,
+            "errors": outcome.errors,
+        }
+
+    try:
+        asyncio.get_running_loop()
+        # Pytest async context — run in a worker thread.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, _run())
+            return future.result()
+    except RuntimeError:
+        try:
+            return asyncio.run(_run())
+        except Exception as exc:  # pragma: no cover - propagated to celery
+            logger.error("rag_audit_index_coverage_task failed: %s", exc)
+            raise
