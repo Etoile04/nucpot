@@ -14,7 +14,7 @@
 1. **开放策略**:匿名 + 登录一致体验,端点级限次(~5/min/IP,可配)。
 2. **覆盖保障**:100% completed 文献入库即索引;Celery beat 每日对账兜底 hook 静默失败。
 3. **超时降级**:超时 → 自动 ILIKE 文本检索 + 透明标注,不静默。
-4. **分层 SLA**:已索引秒级 / fresh <30s 收紧到 <10s / 空结果诚实文案。
+4. **分层 SLA**:已索引秒级 / fresh <10s(NFM-4525 修后自 <30s 收紧)/ 空结果诚实文案。
 
 ## 2. 不在本 spec 范围
 
@@ -73,19 +73,19 @@
 
 ## 5. 超时降级契约(三档超时框架)
 
-| 档位 | env | 现值(NFM-4492) | 收紧触发 |
+| 档位 | env | 现值(已部署) | 收紧触发 |
 |---|---|---|---|
-| API client 预算 | `NFM_LIGHTRAG_QUERY_TIMEOUT_S` | 30.0 | NFM-4525 修后改 10.0(NFM-4525 backlog follow-up) |
+| API client 预算 | `NFM_LIGHTRAG_QUERY_TIMEOUT_S` | 10.0(prod/staging compose;代码回退默认 8.0) | 已收紧(NFM-4525 修后;原 30.0 为 NFM-4492 天花板) |
 | Sidecar 内部 | upstream `LIGHTRAG_TIMEOUT` | 60.0 | 维持 |
-| Frontend abort | `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS` | 45000 | NFM-4525 修后改 15000 |
+| Frontend abort | `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS` | 15000 | 已收紧(NFM-4525 修后;原 45000) |
 
 降级链路:
 
 ```
 query 发起
   ├─ < 1s + 缓存命中 → 直接返回(秒级,验收 P95<1s)
-  ├─ < 30s(API 预算)+ 成功 → 返回(验收 P95<30s,NFM-4525 修后改 <10s)
-  ├─ ≥ 30s 超时 → 触发 ILIKE 文本检索回退 + 透明标注
+  ├─ < 10s(API 预算)+ 成功 → 返回(验收 P95<10s,NFM-4525 修后自 <30s 收紧)
+  ├─ ≥ 10s 超时 → 触发 ILIKE 文本检索回退 + 透明标注
   └─ ILIKE 也无结果 → "知识库暂未覆盖" 诚实文案
 ```
 
@@ -100,14 +100,13 @@ query 发起
 | 档 | 触发条件 | 承诺 | 实测基线(NFM-4492 闭环) | 验收 |
 |---|---|---|---|---|
 | **Tier-1 秒级** | 缓存命中 / 已索引 + 简单查询 | **P95 < 1s** | 0.1s 冷 / 0.1s 暖(NFM-4503 实测 02:55Z) | `access_log.time_total` P95 over 7d < 1s |
-| **Tier-2 fresh** | 新文献 / 罕见实体 / 长尾问题 | **P95 < 30s**(NFM-4525 修后收紧 **< 10s**) | 8s 预算时代 63.7s 失败;30s 后 0.2-1.5s | `access_log.time_total` P95 over 7d < 30s |
+| **Tier-2 fresh** | 新文献 / 罕见实体 / 长尾问题 | **P95 < 10s**(NFM-4525 修后自 < 30s 收紧) | 8s 预算时代 63.7s 失败;30s 后 0.2-1.5s | `access_log.time_total` P95 over 7d < 10s |
 | **Tier-3 透明回退** | 任意超时 | **ILIKE 兜底 + 徽标** | 8s API 必超时即回退(NFM-3404 经验) | `fallback.used=true` 计数 + 周报 |
 | **空结果** | 索引未覆盖 | **诚实文案 + 引用数**(0 时明示) | 已实现(NFM-4307) | UAT-6 验收 |
 
 承诺兑现节奏:
 
-- **当前(Tier-1/2)**:已闭环 NFM-4492(PR #1272 + PR #1276 + PR #1277);Tier-2 验收 30s 线先放,**收紧到 10s 等待 NFM-4525 修复**。
-- **未来(NFM-4525 修后)**:Tier-2 P95 改 <10s,前端 loading 文案相应缩短预期。
+- **当前(Tier-1/2)**:已闭环 NFM-4492(PR #1272 + PR #1276 + PR #1277);NFM-4525 已修,Tier-2 验收线已收紧到 **10s**(`TIER_2_TARGET_MS = 10_000.0`,NFM-4617-B3)。前端 loading 文案相应缩短预期。
 
 ## 7. 集成点
 
@@ -163,8 +162,8 @@ query 发起
 - **AC-1**:`/api/v1/lightrag/query` 移除 `require_editor`;匿名 + 已登录响应一致。
 - **AC-2**:端点限流 5/min/IP 生效;超限 429 + `Retry-After`。
 - **AC-3**:Celery beat 每日 03:30 UTC 跑 `rag_audit_index_coverage`;diff 行写入 `audit_log`。
-- **AC-4**:超时(≥30s)→ ILIKE 兜底 + 响应 `fallback.used=true` + UI 徽标。
-- **AC-5**:Tier-1 P95 < 1s over 7d;Tier-2 P95 < 30s over 7d(NFM-4525 修后改 < 10s)。
+- **AC-4**:超时(≥10s)→ ILIKE 兜底 + 响应 `fallback.used=true` + UI 徽标。
+- **AC-5**:Tier-1 P95 < 1s over 7d;Tier-2 P95 < 10s over 7d(NFM-4525 修后自 < 30s 收紧)。
 - **AC-6**:空结果响应带诚实文案 + `references=[]`(UAT-6)。
 - **AC-7**:`access_log` 新字段:`mode`, `was_fallback`, `was_cached`, `query_kind`, `result_count`, `time_total`。
 - **AC-8**:本周看板(可选)暴露 `lit_completed_total` / `lit_indexed_total` / `lit_diff_count`。
@@ -178,7 +177,7 @@ query 发起
 | RAG-C 前端去墙 | `/search` 移除登录拦截 + 徽标组件 | RAG-A,B |
 | RAG-D 每日对账 | `rag_audit_index_coverage` task + Celery beat 注册 |  |
 | RAG-E 看板指标 | Tier P95 / lit_diff 计数暴露 | RAG-B |
-| RAG-F NFM-4525 触发线 | backlog follow-up;修后改 `NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0` + 前端预期文案 | NFM-4525 done |
+| RAG-F NFM-4525 触发线 | 已收紧并部署:`NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0`(prod/staging compose)+ 前端 abort 15_000 | NFM-4525 done |
 
 ## 14. 依据链
 

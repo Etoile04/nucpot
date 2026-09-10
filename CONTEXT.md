@@ -185,10 +185,10 @@ property_measurements 行的复合去重键 `(dataset_id, property_type_id, sour
 domain_expert 在校对抽屉执行的六态决策集:`pending`(低置信度自动)/ `confirmed`(确认通过)/ `modified`(需修改)/ `invalid`(标记无效)/ `disputed`(来源存疑)/ `skipped`(跳过)(wayfinder #1253 Q2 决议)。写回 property_measurements 既有列(`review_status`/`reviewer_note`/`reviewed_at`),不新建 draft 表。
 
 **分层 SLA (tiered SLA)**:
-RAG 检索的三档质量承诺(Tier-1 已索引秒级 P95<1s / Tier-2 fresh P95<30s,NFM-4525 修后收紧 <10s / Tier-3 超时透明回退)(wayfinder #1256 Q4)。每档触发条件明确,周报可追。
+RAG 检索的三档质量承诺(Tier-1 已索引秒级 P95<1s / Tier-2 fresh P95<10s(NFM-4525 修后自 <30s 收紧)/ Tier-3 超时透明回退)(wayfinder #1256 Q4)。每档触发条件明确,周报可追。
 
 **匿名开放 (anonymous open)**:
 RAG 检索的开放策略——移除 `require_editor`、端点级限次 5/min/IP、匿名与登录一致体验、不做差异化(wayfinder #1255 Q1/Q3 三决议)。实施前置 #1258(NFM-4492 已闭环)。可逆:随时重挂登录墙,故不立独立 ADR。
 
 **透明回退 (transparent fallback)**:
-RAG 检索超时(≥`NFM_LIGHTRAG_QUERY_TIMEOUT_S` = 30s)→ ILIKE 文本检索兜底 + 响应 `fallback.used=true` + UI 徽标"语义检索超时,已回退文本检索",绝不静默(NFM-3404 + wayfinder #1256 Q2)。审计 `access_log.fallback_kind='iliKE'` 计数。
+RAG 检索超时(≥`NFM_LIGHTRAG_QUERY_TIMEOUT_S` = 10s,prod/staging compose 已部署;未设 env 时代码回退 8s)→ ILIKE 文本检索兜底 + 响应 `fallback.used=true` + UI 徽标"语义检索超时,已回退文本检索",绝不静默(NFM-3404 + wayfinder #1256 Q2)。审计 `access_log.fallback_kind='iliKE'` 计数。
