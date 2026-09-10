@@ -1,0 +1,67 @@
+# Skills catalog — version pin lock file (NFM-4547, ADR-016 §2.7)
+#
+# The platform NEVER internalizes the upstream skill repository; it only
+# consumes a locked git SHA via EXTRACTION_SKILL_REPO_PIN. CI fails closed
+# when this file disagrees with the env var. See docs/adr/ADR-016 §2.7 and
+# docs/specs/G1-extraction-value-presentation.md §8.1.
+#
+# To upgrade: open a PR that bumps `pin` below + `version` + (optionally)
+# adds a `registry/` metadata block. After merging, re-run the Beeler 2018
+# recall regression (≥4/4) before flipping EXTRACTION_SKILL_ENABLED=true
+# in production.
+---
+schema_version: 1
+catalog:
+  # Human-readable identifier. Used in logs + audit trail. NOT used as the
+  # primary key — pin (git SHA) is.
+  id: nuclear-materials-skills
+  # External git repository holding the upstream skill content (e.g.
+  # SKILL.md files). The platform clones at this SHA only.
+  upstream:
+    url: https://github.com/Etoile04/nuclear-materials-skills.git
+    # Immutable git SHA — exact commit. Bump only via PR.
+    pin: "0000000000000000000000000000000000000000"  # TODO NFM-4547: replace with first real pin after upstream repo lands
+    # Optional human-readable ref label for the pin (e.g. release tag).
+    ref: pending-v1.7.2
+  # Default skill used by `extract_skill_prompt()` when callers do not
+  # override. Must match a key in `skills:` below.
+  default_skill: nuclear-property-extraction-v4
+
+# Skill registry — platform-side metadata only. The actual prompt body
+# lives upstream at the pinned SHA; this file just describes how the
+# platform invokes it.
+skills:
+  nuclear-property-extraction-v4:
+    # Semantic version (calver-ish, follows upstream tag).
+    version: v1.7.2
+    # Path inside the upstream repo holding the skill entrypoint.
+    entrypoint: skills/nuclear-property-extraction-v4/SKILL.md
+    # Output schema — exact field names. The adapter in
+    # apps.api.services.extraction_skill_adapter consumes these.
+    output_fields:
+      - source_file
+      - material_name
+      - composition
+      - phase
+      - element
+      - property_category
+      - property
+      - value
+      - unit
+      - conditions
+      - context
+      - confidence
+      - reference
+    # Upstream SKILL.md does not emit source_span / dedupe_key / dataset_id.
+    # Adapter synthesises them (§3.2, §2.6 of the G1 spec).
+    adapter_synthesises:
+      - source_span    # heuristic char-window + keyword anchor (§2.6)
+      - dedupe_key     # (dataset_id, property_type_id, source_id, value_hash)
+      - dataset_id     # injected by ingestion layer
+      - dataset_version_id
+      - extraction_skill_version
+    # Recall regression floor (AC-1) — CI must observe ≥ this fraction on
+    # the Beeler 2018 fixture before any version bump merges.
+    recall_floor:
+      beeler_2018: 1.0    # 4/4 numeric domain
+      beeler_2018_min_rows: 4
