@@ -29,9 +29,12 @@ What this test enforces
    future upstream 1.x bump that breaks the asyncpg / sqlalchemy
    2.0 surface area used by LightRAG's PGVectorStorage cannot silently
    land in the prod image.
-3. At least one ``pip install`` retry uses the Tsinghua mirror (the
-   primary-host-only build path is GFW-unreliable per NFM-3328; this
-   mirrors ``test_dockerfile_binding_package.py``).
+3. The Tsinghua mirror guard lives in
+   ``test_dockerfile_binding_package.py`` (the SOLE source of truth for
+   the build-host mirror egress constraint, NFM-3328). This file does
+   NOT duplicate it — the binding-package test already covers that
+   axis, and shadowing it here would either be a verbatim duplicate
+   (zero added coverage) or drift over time.
 
 Failure modes
 -------------
@@ -44,8 +47,8 @@ Failure modes
   future upstream major bump can land in prod with a 1.x
   asyncpg-dialect break and brick PGVectorStorage. The pin keeps
   upgrades an explicit Dockerfile change.
-- Tsinghua mirror line dropped → falls back to bare ``pypi.org``; build
-  host flakes on intermittent GFW (NFM-3328).
+- Tsinghua mirror line dropped → covered by
+  ``test_dockerfile_binding_package.py``.
 
 Maintenance
 -----------
@@ -131,30 +134,11 @@ def test_dockerfile_pins_pgvector_below_1_0():
         "be baked into the image (see test_dockerfile_installs_pgvector)."
     )
     spec = spec_match.group(0)
-    assert "<1.0" in spec or "<1" in spec, (
+    assert "<1.0" in spec, (
         f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} pins `pgvector` as "
         f"`{spec}` — must carry an upper bound of `<1.0` (NFM-4600). The "
         "pin keeps upstream 1.x asyncpg/SQLAlchemy-2.0 breaking changes "
         "from silently landing in the prod image — relax only after "
         "re-validating PGVectorStorage end-to-end against the new upstream "
         "major."
-    )
-
-
-def test_dockerfile_uses_tsinghua_mirror_on_at_least_one_retry():
-    """NFM-3328: the prod build host is GFW-unreliable against pypi.org.
-    At least one retry in the ladder must point at the Tsinghua mirror.
-
-    Mirrors the same assertion in
-    ``test_dockerfile_binding_package.py`` — both tests guard the same
-    build-host egress constraint, from two angles (binding package
-    presence vs. storage package presence)."""
-    contents = DOCKERFILE_PATH.read_text()
-    flat = re.sub(r"\\\n", " ", contents)
-    found_mirror = "pypi.tuna.tsinghua.edu.cn" in flat
-    assert found_mirror, (
-        f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} has no `pip install` block "
-        "pointing at https://pypi.tuna.tsinghua.edu.cn/simple (NFM-3328). "
-        "Build host pypi.org egress is GFW-unreliable — at least one retry "
-        "in the ladder must use the Tsinghua mirror."
     )
