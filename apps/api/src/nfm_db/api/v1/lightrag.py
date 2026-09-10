@@ -9,12 +9,14 @@ Provides:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, Response
 
 from nfm_db.api.v1.auth import require_editor
 from nfm_db.config import LIGHTRAG_VERSION, get_settings
+from nfm_db.middleware.rate_limit import limiter
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.lightrag import (
@@ -32,6 +34,10 @@ from nfm_db.services.lightrag_client import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["LightRAG"])
+
+# Per-route RAG query rate limit (NFM-4539 RAG-A).
+# Default 5/min/IP; override via NFM_RAG_QUERY_RATE_LIMIT env var on the limiter.
+_RAG_QUERY_RATE_LIMIT = os.environ.get("NFM_RAG_QUERY_RATE_LIMIT", "5/minute")
 
 
 def _get_client() -> LightRAGClient:
@@ -156,9 +162,11 @@ async def ingest_document(
     summary="知识图谱语义查询",
     description="接受自然语言查询，返回生成答案及可选的来源引用。\n\nAccept a natural language query and return a generated answer with optional source references.",
 )
+@limiter.limit(_RAG_QUERY_RATE_LIMIT)
 async def query_knowledge_graph(
-    _current_user: Annotated[User, Depends(require_editor)],
-    request: QueryRequest,
+    request: Request,
+    payload: QueryRequest,
+    response: Response,
 ) -> ApiResponse[QueryResponse]:
     """Query the LightRAG knowledge graph.
 
@@ -168,9 +176,9 @@ async def query_knowledge_graph(
     client = _get_client()
     try:
         result = await client.query(
-            query=request.query,
-            mode=request.mode.value,
-            include_references=request.include_references,
+            query=payload.query,
+            mode=payload.mode.value,
+            include_references=payload.include_references,
         )
         # NFM-4522: LightRAG may return explicit JSON null for list fields
         # (notably references when include_references=false). `dict.get(key, default)`
