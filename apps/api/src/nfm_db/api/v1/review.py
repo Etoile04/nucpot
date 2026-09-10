@@ -27,7 +27,7 @@ from nfm_db.api.v1.auth import require_reviewer
 from nfm_db.database import get_db
 from nfm_db.models.extraction_result import ExtractionResult
 from nfm_db.models.kg import KGEdge, KGNode
-from nfm_db.models.property import PropertyMeasurement
+from nfm_db.models.property import PropertyMeasurement, PropertyType
 from nfm_db.models.review import VALID_TRANSITIONS, Review, ReviewStatus
 from nfm_db.models.source import DataSource
 from nfm_db.models.user import User
@@ -107,7 +107,11 @@ async def _find_review_item(
     raise HTTPException(status_code=404, detail="Review item not found")
 
 
-def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
+def _row_to_review_item(
+    row: Any,
+    table_name: str,
+    property_type_names: dict[Any, str] | None = None,
+) -> ReviewItemResponse:
     """Convert a DB row to a ReviewItemResponse."""
     source_info: ReviewSourceInfo | None = None
     if hasattr(row, "source_paragraph") and row.source_paragraph:
@@ -132,10 +136,31 @@ def _row_to_review_item(row: Any, table_name: str) -> ReviewItemResponse:
             "properties": row.properties,
         }
     elif table_name == "property_measurements":
+        resolved_name = (
+            property_type_names.get(row.property_type_id)
+            if property_type_names and row.property_type_id
+            else None
+        )
         item_data = {
             "value_scalar": float(row.value_scalar) if row.value_scalar else None,
             "unit_id": str(row.unit_id) if row.unit_id else None,
             "notes": row.notes,
+            # NFM-4554 (G1-F) — surface enough context for the
+            # proof-reading queue (spec §4.2 + §4.3) to render
+            #   • 属性 column = property_type.name (not row UUID)
+            #   • 已合并 N 行 badge = dedupe_key grouped count
+            #   • 红行 + reason = validity_check.status='fail' (G1-D
+            #     wire-up; current rows report status='unknown' until
+            #     G1-D ships, so the red-row path is dormant).
+            "property_type_id": (
+                str(row.property_type_id) if row.property_type_id else None
+            ),
+            "property_type_name": resolved_name,
+            "dedupe_key": getattr(row, "dedupe_key", None),
+            "validity_check": {
+                "status": "unknown",
+                "reason": None,
+            },
         }
     elif table_name == "extraction_results":
         item_data = row.item_data if row.item_data else {
@@ -283,10 +308,28 @@ async def get_pending_reviews(
             .order_by(model.created_at.desc())
             .limit(fetch_per_table)
         )
-        result = await db.execute(stmt)
-        rows = result.scalars().all()
+        # NFM-4554 (G1-F) — eagerly resolve property_types.name for
+        # property_measurements rows so the queue can render the
+        # property name (spec §4.2 属性 column) instead of a row UUID.
+        property_type_names: dict[Any, str] = {}
+        if table_name == "property_measurements":
+            result = await db.execute(stmt)
+            rows = result.scalars().all()
+            type_ids = {r.property_type_id for r in rows if r.property_type_id}
+            if type_ids:
+                name_stmt = select(PropertyType.id, PropertyType.name).where(
+                    PropertyType.id.in_(type_ids)
+                )
+                name_rows = (await db.execute(name_stmt)).all()
+                property_type_names = {pid: name for pid, name in name_rows}
+        else:
+            result = await db.execute(stmt)
+            rows = result.scalars().all()
         for row in rows:
-            all_items.append(_row_to_review_item(row, table_name))
+            kwargs: dict[str, Any] = {}
+            if table_name == "property_measurements":
+                kwargs["property_type_names"] = property_type_names
+            all_items.append(_row_to_review_item(row, table_name, **kwargs))
 
     # Sort by created_at desc (stable across tables).
     all_items.sort(key=lambda x: x.created_at, reverse=True)

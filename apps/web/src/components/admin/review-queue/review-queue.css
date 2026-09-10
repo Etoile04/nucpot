@@ -1,0 +1,19 @@
+/**
+ * NFM-4554 G1-F — Layout A row-level styling.
+ *
+ *   .review-row-physically-invalid → 红行 (spec §4.3, G1-D wire-up).
+ *   The red treatment only fires when validity_check.status='fail';
+ *   the row title attribute carries the reason for hover.
+ */
+
+.review-row-physically-invalid > td {
+  background-color: #fff1f0 !important;
+}
+
+.review-row-physically-invalid > td:first-child {
+  border-left: 3px solid #cf1322 !important;
+}
+
+.review-row-physically-invalid:hover > td {
+  background-color: #ffccc7 !important;
+}

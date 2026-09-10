@@ -36,9 +36,11 @@ interface ReviewDrawerProps {
   readonly onClose: () => void
   readonly onDecided: (itemId: string, action: ReviewAction) => void
   /** Optional: G1-D validity_check payload (status / reason). When
-   *  status === "fail" the row renders red and shows the reason. */
+   *  status === "fail" the row renders red and shows the reason.
+   *  "unknown" is the dormant state until G1-D (NFM-4550) ships the
+   *  validity_check column on property_measurements. */
   readonly validityCheck?: {
-    readonly status: "ok" | "warn" | "fail"
+    readonly status: "ok" | "warn" | "fail" | "unknown"
     readonly reason: string | null
   } | null
 }

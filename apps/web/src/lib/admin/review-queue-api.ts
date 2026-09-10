@@ -34,6 +34,19 @@ export interface ReviewQueueItem {
   /** Domain row that holds the actual property_type_id, dataset_id, etc. */
   readonly propertyTypeId: string | null
   readonly datasetId: string | null
+  /** NFM-4554 (G1-F) — spec §4.2 属性 column. Resolved by the backend
+   *  via JOIN onto property_types. Null for KG / extraction_results rows. */
+  readonly propertyTypeName: string | null
+  /** NFM-4548 (G1-B) — ADR-017 §2.6 composite dedupe key. Rows sharing
+   *  the same key are auto-merged; spec §4.3 calls for a "已合并 N 行"
+   *  badge when this happens. Null on legacy rows pre-G1-B. */
+  readonly dedupeKey: string | null
+  /** NFM-4550 (G1-D) — physical-validity check (spec §4.3 红行). Status
+   *  is "unknown" until G1-D lands; "fail" triggers the red-row treatment. */
+  readonly validityCheck: {
+    readonly status: "ok" | "warn" | "fail" | "unknown"
+    readonly reason: string | null
+  }
 }
 
 /** Six UI actions per spec §3.4 (the sixth — low‑confidence auto — is set
@@ -56,6 +69,11 @@ interface BackendItem {
   readonly review_status: string
   readonly source: ReviewSourceSummary | null
   readonly created_at: string
+}
+
+interface BackendValidityCheck {
+  readonly status?: "ok" | "warn" | "fail" | "unknown"
+  readonly reason?: string | null
 }
 
 interface BackendListResponse {
@@ -84,6 +102,14 @@ interface BackendDetailResponse {
 
 function mapItem(raw: BackendItem): ReviewQueueItem {
   const data = raw.item_data ?? {}
+  const validity = (data.validity_check ?? {}) as BackendValidityCheck
+  const validityStatus: "ok" | "warn" | "fail" | "unknown" =
+    validity.status === "ok" ||
+    validity.status === "warn" ||
+    validity.status === "fail" ||
+    validity.status === "unknown"
+      ? validity.status
+      : "unknown"
   return {
     id: raw.id,
     itemType: "measurement",
@@ -94,7 +120,17 @@ function mapItem(raw: BackendItem): ReviewQueueItem {
     valueScalar: typeof data.value_scalar === "number" ? data.value_scalar : null,
     unitId: typeof data.unit_id === "string" ? data.unit_id : null,
     notes: typeof data.notes === "string" ? data.notes : null,
-    propertyTypeId: null,
+    propertyTypeId:
+      typeof data.property_type_id === "string" ? data.property_type_id : null,
+    propertyTypeName:
+      typeof data.property_type_name === "string"
+        ? data.property_type_name
+        : null,
+    dedupeKey: typeof data.dedupe_key === "string" ? data.dedupe_key : null,
+    validityCheck: {
+      status: validityStatus,
+      reason: typeof validity.reason === "string" ? validity.reason : null,
+    },
     datasetId: null,
   }
 }

@@ -7,6 +7,12 @@
  *   • Row click opens the shared 5-action drawer
  *   • domain_expert (or admin during transition) only
  *
+ * Visual contract (UX-Design NFM-4552 + spec §4.3):
+ *   • 属性 column shows property_types.name (not row UUID)
+ *   • 物理无效 (validity_check.status='fail') → 红行 + 悬停原因
+ *   • dedupe_key 命中多行 → "已合并 N 行" 徽章 (spec §4.3)
+ *   • 移动端 (≤ xs) → 横向滚动表,所有列可访问;不截断
+ *
  * Data backend: `/api/v1/review/pending?item_type=measurement`
  * (ordered by created_at desc server-side; we re-sort client-side per spec).
  */
@@ -23,6 +29,7 @@ import {
   type ReviewQueueItem,
 } from "@/lib/admin/review-queue-api"
 import { ReviewDrawer } from "./ReviewDrawer"
+import "./review-queue.css"
 
 const STATUS_LABEL: Record<string, { color: string; text: string }> = {
   pending: { color: "gold", text: "待校对" },
@@ -63,6 +70,17 @@ export function ReviewQueueContent({ initialStatus = "pending" }: ReviewQueueCon
     return [...data.items].sort((a, b) => a.confidence - b.confidence)
   }, [data?.items])
 
+  // Spec §4.3 — dedupe_key badge ("已合并 N 行") when multiple rows
+  // share the same key. Computed once per query result.
+  const dedupeCounts = useMemo<Map<string, number>>(() => {
+    const counts = new Map<string, number>()
+    for (const item of sortedItems) {
+      if (!item.dedupeKey) continue
+      counts.set(item.dedupeKey, (counts.get(item.dedupeKey) ?? 0) + 1)
+    }
+    return counts
+  }, [sortedItems])
+
   const onRowClick = useCallback((rec: ReviewQueueItem) => {
     setDrawerItem(rec)
   }, [])
@@ -78,12 +96,32 @@ export function ReviewQueueContent({ initialStatus = "pending" }: ReviewQueueCon
     {
       title: "属性",
       key: "property",
-      width: 180,
-      render: (_, rec) => (
-        <Typography.Text code style={{ fontSize: 12 }}>
-          {rec.id.slice(0, 8)}
-        </Typography.Text>
-      ),
+      // Spec §4.2 — 属性 column shows the human-readable property
+      // name, NOT the row UUID. We fall back to a short id prefix
+      // only when the backend can't resolve a name (legacy rows).
+      width: 200,
+      render: (_, rec) => {
+        const sharedCount =
+          rec.dedupeKey && dedupeCounts.get(rec.dedupeKey)
+            ? dedupeCounts.get(rec.dedupeKey) ?? 1
+            : 0
+        return (
+          <Space direction="vertical" size={2} style={{ lineHeight: 1.3 }}>
+            <span style={{ fontWeight: 500 }} data-testid="property-name">
+              {rec.propertyTypeName ?? (
+                <Typography.Text type="secondary">
+                  {rec.id.slice(0, 8)}
+                </Typography.Text>
+              )}
+            </span>
+            {sharedCount > 1 && (
+              <Tag color="cyan" data-testid="dedupe-merged-badge">
+                已合并 {sharedCount} 行
+              </Tag>
+            )}
+          </Space>
+        )
+      },
     },
     {
       title: "值",
@@ -181,22 +219,47 @@ export function ReviewQueueContent({ initialStatus = "pending" }: ReviewQueueCon
       ) : sortedItems.length === 0 ? (
         <Empty description="暂无待校对行" />
       ) : (
-        <Table<ReviewQueueItem>
-          rowKey="id"
-          columns={columns}
-          dataSource={sortedItems}
-          onRow={(record) => ({
-            onClick: () => onRowClick(record),
-            style: { cursor: "pointer" },
-          })}
-          pagination={{
-            current: page,
-            pageSize,
-            total: data?.total ?? sortedItems.length,
-            showSizeChanger: false,
-            onChange: setPage,
-          }}
-        />
+        // Mobile (≤ xs) — wrap the Table in a horizontal scroll container
+        // so all six spec §4.2 columns stay reachable instead of
+        // collapsing past the viewport edge (UXDesigner Visual-Truth
+        // Gate FAIL on NFM-4554).
+        <div
+          data-testid="review-queue-table-scroll"
+          style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}
+        >
+          <Table<ReviewQueueItem>
+            rowKey="id"
+            columns={columns}
+            dataSource={sortedItems}
+            onRow={(record) => {
+              const invalid = record.validityCheck.status === "fail"
+              return {
+                onClick: () => onRowClick(record),
+                // Native title renders the validity-check reason as a
+                // hover tooltip on the row, matching spec §4.3 红行 +
+                // 悬停原因 without pulling in antd Tooltip overhead.
+                title: invalid
+                  ? record.validityCheck.reason ?? "该行未通过有效域校验"
+                  : undefined,
+                style: { cursor: "pointer" },
+              }
+            }}
+            rowClassName={(record) =>
+              record.validityCheck.status === "fail" ? "review-row-physically-invalid" : ""
+            }
+            pagination={{
+              current: page,
+              pageSize,
+              total: data?.total ?? sortedItems.length,
+              showSizeChanger: false,
+              onChange: setPage,
+            }}
+            // Wide min-width keeps all 6 columns reachable via
+            // horizontal scroll on narrow viewports without forcing
+            // them to overflow into the viewport edge.
+            scroll={{ x: 980 }}
+          />
+        </div>
       )}
 
       <ReviewDrawer
@@ -204,6 +267,7 @@ export function ReviewQueueContent({ initialStatus = "pending" }: ReviewQueueCon
         open={drawerItem !== null}
         onClose={() => setDrawerItem(null)}
         onDecided={handleDecided}
+        validityCheck={drawerItem?.validityCheck ?? null}
       />
     </div>
   )

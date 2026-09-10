@@ -29,8 +29,11 @@ const item: ReviewQueueItem = {
   valueScalar: 0.34,
   unitId: "unit-abc-123",
   notes: null,
-  propertyTypeId: null,
+  propertyTypeId: "pt-thermal-conductivity",
+  propertyTypeName: "thermal conductivity",
   datasetId: null,
+  dedupeKey: null,
+  validityCheck: { status: "unknown", reason: null },
 }
 
 const noop = () => {}
