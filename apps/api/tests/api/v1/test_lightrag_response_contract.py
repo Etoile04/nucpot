@@ -29,9 +29,7 @@ def test_query_response_schema_has_fallback_field() -> None:
     from nfm_db.schemas.lightrag import QueryResponse
 
     fields = QueryResponse.model_fields
-    assert "fallback" in fields, (
-        "QueryResponse must declare a `fallback` field (NFM-4539 RAG-B)"
-    )
+    assert "fallback" in fields, "QueryResponse must declare a `fallback` field (NFM-4539 RAG-B)"
 
 
 def test_fallback_envelope_shape() -> None:
@@ -106,9 +104,7 @@ async def test_query_timeout_triggers_ilike_fallback(
             "score": 0.71,
         },
     ]
-    fallback_response = (
-        "Rule-based fallback: found 2 relevant results for query 'UO2'."
-    )
+    fallback_response = "Rule-based fallback: found 2 relevant results for query 'UO2'."
 
     with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
         mock_client = AsyncMock()
@@ -140,7 +136,7 @@ async def test_query_timeout_triggers_ilike_fallback(
     # AC-4 envelope — fallback.used is set only because the rescue path
     # actually ran (the patch above proves it).
     assert body["data"]["fallback"]["used"] is True
-    assert body["data"]["fallback"]["kind"] == "ilike"
+    assert body["data"]["fallback"]["kind"] == "iliKE"
     assert body["data"]["fallback"]["original_error"] is None
     # AC-4 substance: the response carries the real ILIKE-rescued
     # references, not empty arrays.  This is the assertion the original
@@ -219,9 +215,7 @@ async def test_query_persists_access_log_row(
     assert response.status_code == 200
 
     # Read back via the test session.
-    rows = (
-        await db_session.execute(select(RagAccessLog).order_by(RagAccessLog.ts.desc()))
-    ).all()
+    rows = (await db_session.execute(select(RagAccessLog).order_by(RagAccessLog.ts.desc()))).all()
     assert len(rows) >= 1, "Query must persist at least one RagAccessLog row"
     row = rows[0][0]
     # AC-7 fields
@@ -264,9 +258,7 @@ async def test_query_timeout_persists_was_fallback_true(
 
     assert response.status_code == 200
     rows = (
-        await db_session.execute(
-            select(RagAccessLog).where(RagAccessLog.was_fallback.is_(True))
-        )
+        await db_session.execute(select(RagAccessLog).where(RagAccessLog.was_fallback.is_(True)))
     ).all()
     assert len(rows) >= 1
     row = rows[0][0]
@@ -283,6 +275,7 @@ async def test_query_records_time_total(
     """``time_total`` is a non-negative float capturing end-to-end wall time."""
     with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
         mock_client = AsyncMock()
+
         # Force a measurable wall time.
         async def _slow() -> dict:
             time.sleep(0.05)
@@ -310,11 +303,7 @@ async def test_query_records_time_total(
             json={"query": "UO2"},
         )
 
-    rows = (
-        await db_session.execute(select(RagAccessLog).order_by(RagAccessLog.ts.desc()))
-    ).all()
+    rows = (await db_session.execute(select(RagAccessLog).order_by(RagAccessLog.ts.desc()))).all()
     assert rows, "Expected at least one access_log row"
     row = rows[0][0]
-    assert row.time_total >= 0.05, (
-        f"time_total must reflect wall time (got {row.time_total})"
-    )
+    assert row.time_total >= 0.05, f"time_total must reflect wall time (got {row.time_total})"

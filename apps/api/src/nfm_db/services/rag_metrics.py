@@ -40,9 +40,9 @@ from nfm_db.schemas.lightrag import MetricsResponse, TierP95
 # ---------------------------------------------------------------------------
 
 DEFAULT_WINDOW_DAYS = 7
-TIER_1_TARGET_MS = 1_000.0   # < 1s
+TIER_1_TARGET_MS = 1_000.0  # < 1s
 TIER_2_TARGET_MS = 30_000.0  # < 30s (pre-NFM-4525; tightened to < 10s post-fix)
-SAMPLE_FLOOR = 5             # below this, P95 is reported as None
+SAMPLE_FLOOR = 5  # below this, P95 is reported as None
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +125,7 @@ def rolling_window(
 
 async def _count_completed_literature(session: AsyncSession) -> int:
     """``lit_completed_total`` — completed DataSource rows."""
-    stmt = select(func.count(DataSource.id)).where(
-        DataSource.parse_status == "completed"
-    )
+    stmt = select(func.count(DataSource.id)).where(DataSource.parse_status == "completed")
     return int((await session.execute(stmt)).scalar_one())
 
 
@@ -201,12 +199,10 @@ async def compute_rag_metrics(
     bounds = rolling_window(now=now, days=window_days)
     completed_total = await _count_completed_literature(session)
     indexed_total = await _latest_audit_indexed_count(session)
-    tier_1, tier_2 = await _tier_samples(
-        session, start=bounds.start, end=bounds.end
-    )
+    tier_1, tier_2 = await _tier_samples(session, start=bounds.start, end=bounds.end)
 
     diff_count = (
-        completed_total - (indexed_total or 0) if indexed_total is not None else completed_total
+        (completed_total - (indexed_total or 0)) if indexed_total is not None else completed_total
     )
 
     return MetricsResponse(

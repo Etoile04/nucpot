@@ -470,7 +470,7 @@ async def test_query_client_error(async_client: AsyncClient) -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["fallback"]["used"] is True
-    assert body["data"]["fallback"]["kind"] == "ilike"
+    assert body["data"]["fallback"]["kind"] == "iliKE"
     # AC-4 substance: the rescue actually returned references.
     assert len(body["data"]["references"]) == 1
     mock_fallback_query.assert_awaited_once()

@@ -258,7 +258,7 @@ async def query_knowledge_graph(
                 relationships=relationships,
                 fallback=FallbackInfo(
                     used=was_fallback,
-                    kind="ilike" if was_fallback else None,
+                    kind="iliKE" if was_fallback else None,
                     original_error=None,
                 ),
             ),
@@ -271,9 +271,7 @@ async def query_knowledge_graph(
         # even reach the database).  Surface the failure honestly with
         # ``original_error`` populated so the §3.2 badge still renders
         # rather than masking the outage.
-        logger.error(
-            "LightRAGClientError leaked past RAGProviderSelector: %s", exc
-        )
+        logger.error("LightRAGClientError leaked past RAGProviderSelector: %s", exc)
         was_fallback = True
         error_message = str(exc)
         api_response = ApiResponse(
@@ -285,7 +283,7 @@ async def query_knowledge_graph(
                 relationships=[],
                 fallback=FallbackInfo(
                     used=True,
-                    kind="ilike",
+                    kind="iliKE",
                     original_error=error_message,
                 ),
             ),

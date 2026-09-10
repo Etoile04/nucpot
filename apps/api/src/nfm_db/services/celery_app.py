@@ -90,7 +90,17 @@ celery_app = Celery("nfm_tasks")
 # ``from celery_app import celery_app`` in those modules is the source
 # of the circular import — we resolve it here by importing the side-
 # effect modules AFTER celery_app is created.
-from nfm_db.services import literature_dispatcher  # noqa: F401,E402
+# NFM-4539 CR fix: importing ``hpc_sync`` here (AFTER ``celery_app`` is
+# constructed) registers its ``@celery_app.task`` decorator on this app
+# instance.  Without this, the ``sync-hpc-job-status`` beat entry below
+# fires the worker into ``Received unregistered task of type
+# 'nfm_db.services.hpc_sync.sync_hpc_job_status'``.  The task module
+# itself is unchanged from its pre-NFM-4539 form — only its
+# registration point moves here.
+from nfm_db.services import (  # noqa: E402,F401
+    hpc_sync,
+    literature_dispatcher,
+)
 
 # Route literature-processing tasks to their own queue so the MD worker
 # (--queues=md_verification) and the literature worker
@@ -114,12 +124,33 @@ celery_app.conf.task_routes = {
 # 03:30 UTC, reusing NFM-4257's prune automation slot so the
 # reconciliation and the prune back-to-back minimise operational
 # surface.  Cron is UTC by convention in this project.
-celery_app.conf.beat_schedule = {
-    "rag-audit-index-coverage-daily": {
-        "task": "nfm_db.services.celery_app.rag_audit_index_coverage_task",
-        "schedule": crontab(minute=30, hour=3),  # 03:30 UTC daily
-    },
-}
+#
+# NFM-4539 CR fix: previous incarnation did
+#   celery_app.conf.beat_schedule = {...}
+# which **wipes** any default-initialised beat entries.  ``hpc_sync``'s
+# periodic ``sync-hpc-job-status`` (every 30s) used to be wired here
+# pre-NFM-4539 and ``tests/test_hpc_status_sync.py`` asserts it is in
+# the live schedule dict.  Switch to ``.update()`` so future entries
+# registered elsewhere (e.g. operator-supplied celery config) survive
+# our additions.
+celery_app.conf.beat_schedule.update(
+    {
+        "rag-audit-index-coverage-daily": {
+            "task": "nfm_db.services.celery_app.rag_audit_index_coverage_task",
+            "schedule": crontab(minute=30, hour=3),  # 03:30 UTC daily
+        },
+        # NFM-4539 CR fix: re-register the HPC sync periodic task that
+        # previously lived here.  ``hpc_sync.sync_hpc_job_status`` runs
+        # every 30 seconds to update the status of all active HPC jobs
+        # in the system (see ``tests/test_hpc_sync.py``).  30.0 is the
+        # documented contract — do not change without updating the
+        # ``tests/test_hpc_status_sync.py`` assertion.
+        "sync-hpc-job-status": {
+            "task": "nfm_db.services.hpc_sync.sync_hpc_job_status",
+            "schedule": 30.0,
+        },
+    }
+)
 
 # NFM-3902: per-task time limits.  Literature extraction drives an Ollama-
 # served LLM (qwen3.8:27b-mlx in prod) whose cold-load from disk takes
