@@ -249,7 +249,17 @@ class RuleBasedFallbackProvider(RAGProvider):
             sql,
             {"q": tsquery_str, "limit": limit},
         )
-        rows = (await result.mappings()).all()
+        # NFM-4593: ``AsyncResult.mappings()`` is a SYNC method in SQLAlchemy 2.0
+        # — it returns a ``MappingResult`` iterator wrapper directly, NOT a
+        # coroutine.  Awaiting it (the previous code) raised
+        # ``TypeError: object MappingResult can't be used in 'await' expression``
+        # on every prod query that fell through to the rule-based rescue path.
+        # The bug predates NFM-4539 (commit 6d3fcafa2, NFM-1244) but only surfaced
+        # in production after PR #1285 routed ``/lightrag/query`` through
+        # ``RAGProviderSelector`` — pre-#1285 the route's
+        # ``except LightRAGClientError`` branch swallowed errors and returned a
+        # degraded answer without ever invoking ``RuleBasedFallbackProvider.query``.
+        rows = result.mappings().all()
 
         references: list[dict[str, Any]] = []
         snippets: list[str] = []

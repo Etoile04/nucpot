@@ -14,6 +14,7 @@ from nfm_db.services.rag_metrics import (
     DEFAULT_WINDOW_DAYS,
     SAMPLE_FLOOR,
     TIER_1_TARGET_MS,
+    TIER_2_TARGET_MS,
     WindowBounds,
     compute_rag_metrics,
     percentile_p95,
@@ -73,6 +74,38 @@ def test_tier_p95_floor_is_exact_threshold() -> None:
     assert enough.p95_ms is not None
     not_enough = tier_p95([0.1] * 4, target_ms=1000.0, floor=SAMPLE_FLOOR)
     assert not_enough.p95_ms is None
+
+
+def test_tier_2_target_ms_is_ten_seconds_post_nfm_4525() -> None:
+    """NFM-4525 tightened Tier-2 P95 from < 30s to < 10s.  The constant
+    must agree — otherwise the dashboard reports ``meets_sla=true`` for
+    queries that actually exceed the spec (NFM-4617-B3 regression)."""
+    assert TIER_2_TARGET_MS == 10_000.0
+
+
+def test_tier_2_target_ms_flips_meets_sla_at_10s_threshold() -> None:
+    """When ``target_ms=TIER_2_TARGET_MS`` (post-NFM-4525 = 10s):
+
+      * p95 == 9_999.99 ms → ``meets_sla=true`` (within budget)
+      * p95 == 10_000.01 ms → ``meets_sla=false`` (over budget)
+
+    This pins the boundary semantics against the post-NFM-4525 constant
+    so a future drift can not silently re-introduce the NFM-4617-B3 bug.
+    """
+    # 5 samples * 9.99999 s = P95 = 9999.99 ms → under 10s budget.
+    inside = tier_p95([9.99999] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert inside.p95_ms == pytest.approx(9999.99)
+    assert inside.meets_sla is True
+
+    # 5 samples * 10.00001 s = P95 = 10000.01 ms → over 10s budget.
+    outside = tier_p95([10.00001] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert outside.p95_ms == pytest.approx(10000.01)
+    assert outside.meets_sla is False
+
+    # Exact target is inclusive (p95_ms <= target_ms is the rule).
+    exact = tier_p95([10.0] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert exact.p95_ms == pytest.approx(10_000.0)
+    assert exact.meets_sla is True
 
 
 def test_rolling_window_defaults_to_seven_days() -> None:
@@ -229,9 +262,7 @@ async def test_metrics_diff_count_equals_completed_minus_indexed(
     db_session: AsyncSession,
 ) -> None:
     await _seed_completed(db_session, n=10)
-    await _seed_audit(
-        db_session, run_date=date_cls(2026, 9, 10), noop_count=4
-    )
+    await _seed_audit(db_session, run_date=date_cls(2026, 9, 10), noop_count=4)
 
     payload = await compute_rag_metrics(db_session)
     assert payload.lit_completed_total == 10
@@ -251,14 +282,10 @@ async def test_metrics_tier1_partitions_by_was_cached(
         await _seed_access(db_session, time_total=0.1, was_cached=True)
     # 6 fresh semantic rows, slower.
     for _ in range(6):
-        await _seed_access(
-            db_session, time_total=2.0, was_cached=False, was_fallback=False
-        )
+        await _seed_access(db_session, time_total=2.0, was_cached=False, was_fallback=False)
     # 6 fallback rows — must NOT contribute to Tier-2.
     for _ in range(6):
-        await _seed_access(
-            db_session, time_total=5.0, was_cached=False, was_fallback=True
-        )
+        await _seed_access(db_session, time_total=5.0, was_cached=False, was_fallback=True)
 
     payload = await compute_rag_metrics(db_session)
     assert payload.tier_1_p95.sample_size == 6
@@ -274,15 +301,11 @@ async def test_metrics_window_filters_by_ts(
     """Rows older than ``window_days`` must not contribute to P95."""
     now = datetime.now(UTC)
     await _seed_completed(db_session, n=1)
-    await _seed_audit(
-        db_session, run_date=now.date(), noop_count=1
-    )
+    await _seed_audit(db_session, run_date=now.date(), noop_count=1)
 
     # Old row (8 days back) — must be ignored.
     old_ts = now - timedelta(days=8)
-    await _seed_access(
-        db_session, time_total=99.0, was_cached=True, ts=old_ts
-    )
+    await _seed_access(db_session, time_total=99.0, was_cached=True, ts=old_ts)
     # Fresh rows (within 7d) — enough to clear the 5-row sample floor.
     for i in range(5):
         await _seed_access(
@@ -319,9 +342,7 @@ async def test_metrics_tier2_target_is_configurable(
     target without redeploying."""
     await _seed_completed(db_session, n=2)
     for _ in range(6):
-        await _seed_access(
-            db_session, time_total=11.0, was_cached=False, was_fallback=False
-        )
+        await _seed_access(db_session, time_total=11.0, was_cached=False, was_fallback=False)
 
     pre_fix = await compute_rag_metrics(db_session, tier_2_target_ms=30_000.0)
     assert pre_fix.tier_2_p95.meets_sla is True
@@ -336,12 +357,8 @@ async def test_metrics_tier2_target_is_configurable(
 async def test_metrics_generated_at_is_anchor_time(
     db_session: AsyncSession,
 ) -> None:
-    payload = await compute_rag_metrics(
-        db_session, now=datetime(2026, 9, 10, 3, 30, tzinfo=UTC)
-    )
-    assert payload.generated_at == datetime(
-        2026, 9, 10, 3, 30, tzinfo=UTC
-    )
+    payload = await compute_rag_metrics(db_session, now=datetime(2026, 9, 10, 3, 30, tzinfo=UTC))
+    assert payload.generated_at == datetime(2026, 9, 10, 3, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

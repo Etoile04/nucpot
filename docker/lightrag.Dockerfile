@@ -43,14 +43,25 @@ WORKDIR /app
 # suspenders: also install httpx (a hard transitive dep of ollama) so the
 # lazy-install path is fully eliminated. Any future LLM_BINDING=<x> flip
 # MUST be paired with adding the matching client package to this line.
+#
+# NFM-4600: PGVectorStorage also resolves the ``pgvector`` PyPI package at
+# runtime (used for SQLAlchemy vector-type adapters / dialect glue). It is
+# NOT a transitive dep of ``lightrag-hku[api]``, so pipmaster hits the
+# same GFW-blocked pypi.org lazy-install path on every container START
+# and the sidecar logs show an infinite ``Updating package: pgvector``
+# spinner even when the container is otherwise ``healthy``. The loop
+# burns the post-deploy latency budget (NFM-4502) and degrades the
+# semantic RAG path silently — ILIKE fallback (RAG-B) carries user-
+# visible traffic until the loop resolves (it doesn't, from inside the
+# container). Bake it here with the same retry ladder as asyncpg.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx || \
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0' || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx) || \
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0') || \
     (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx)
+      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0')
 
 # Knowledge graph data directory (persisted via volume mount)
 RUN mkdir -p /app/data
