@@ -192,11 +192,19 @@ done
 log "installing gate to ${G2}"
 mkdir -p "${G2}/nfm_docker_gate"
 install -m 0644 -o root -g wheel "${SRC}/config.json" "${G2}/config.json"
+# NFM-4587: mirrors.json is the gate-side mirror registry config. The
+# mirror-health watchdog reads it on every tick; fronts_prod_images=true
+# gates the prod-mirror-healthy flag that alarms on a dark prod allowlist
+# mirror (the AC's `docker pull nucpot-prod-api:latest` path). The
+# companion registry-mirrors list in ~/.docker/daemon.json is the
+# operator's install step (Release Engineer), not this gate installer —
+# see the handoff comment on NFM-4587 for the daemon.json merge step.
+install -m 0644 -o root -g wheel "${SRC}/mirrors.json" "${G2}/mirrors.json"
 install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_docker_gate_proxy.py"
-for MOD in __init__ policy proxy peercred audit watchdog; do
+for MOD in __init__ policy proxy peercred audit watchdog mirror_health; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup start-proxy start-watchdog; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup start-proxy start-watchdog start-mirror-health; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place
@@ -233,11 +241,11 @@ chmod 0440 /etc/sudoers.d/nfm-prod-deploy
 # =============================================================================
 log "installing + bootstrapping LaunchDaemons"
 mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health; do
   install -m 0644 -o root -g wheel "${SRC}/launchd/${PLIST}.plist" "${PLIST_DIR}/${PLIST}.plist"
   launchctl bootout "system/${PLIST}" 2>/dev/null || true
 done
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health; do
   launchctl bootstrap system "${PLIST_DIR}/${PLIST}.plist"
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done

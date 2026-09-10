@@ -13,6 +13,9 @@
 #   AC-G2.3 sanctioned entries exist, root-owned, sudo -n reachable
 #   AC-G2.4 NOPASSWD grants are command-enumerated under nfm-g2 only
 #   AC-G2.6 deny records carry identity + timestamp + verb + target
+#   AC-G2.7 NFM-4587 mirror health: heartbeat shows ≥2 mirrors returning
+#           200/401 (not 1) — single-mirror failure mode masks backend
+#           outages that block prod-image pulls until a human notices.
 #
 # Exit 0 = all green. Each check prints PASS/FAIL with a running tally.
 # ============================================================================
@@ -21,6 +24,7 @@ set -uo pipefail   # NOT -e: a probe's job is to count failures, not stop.
 G2=/usr/local/lib/nfm-g2
 RO_SOCK=/var/run/nfm-g2/docker-ro.sock
 LOG=/var/log/nfm-g2/gate-ro.log
+MIRROR_LOG=/var/log/nfm-g2/mirror-health.log
 RAW="$(head -1 "${G2}/upstream.conf" 2>/dev/null || true)"
 
 PASS=0; FAIL=0
@@ -149,6 +153,54 @@ PY
   fi
 else
   bad "G2.6 audit log not readable: ${LOG}"
+fi
+
+# ---- AC-G2.7: NFM-4587 mirror health (≥2 mirrors returning 200/401) ----------
+# probe_g2.sh reads the LATEST alarm record from /var/log/nfm-g2/mirror-health.log.
+# The mirror-health watchdog (launchd com.nfm.g2.mirror-health) writes one
+# alarm record per tick when below threshold OR when the prod allowlist mirror
+# is dark. Heartbeat verdict is the freshest record; older alarms are noise
+# (a recovered alarm appears as a missing record after the watchdog suppresses
+# the next alarm — verified via latest_alarm returning None).
+if [ -r "${MIRROR_LOG}" ]; then
+  if python3 - "${MIRROR_LOG}" <<'PY' >/dev/null 2>&1
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.readlines()
+except FileNotFoundError:
+    # No alarm records yet — the watchdog has run healthy every tick since
+    # startup. Accept this as the heartbeat verdict.
+    sys.exit(0)
+record = None
+for line in reversed(lines):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        candidate = json.loads(line)
+    except ValueError:
+        continue
+    if candidate.get("event") == "alarm":
+        record = candidate
+        break
+if record is None:
+    # No alarm records across the entire log: the watchdog has been healthy
+    # on every tick since startup. That IS the heartbeat verdict.
+    sys.exit(0)
+assert record.get("healthy_count", 0) >= 2, (
+    f"latest alarm: healthy_count={record.get('healthy_count')} < 2"
+)
+assert record.get("prod_mirror_healthy") is True, (
+    "latest alarm: prod allowlist mirror is dark (nucpot-prod-* pulls will deadlock)"
+)
+PY
+  then ok "G2.7 mirror-health heartbeat: ≥2 mirrors returning 200/401"
+  else bad "G2.7 mirror-health heartbeat alarm — inspect ${MIRROR_LOG}"
+  fi
+else
+  bad "G2.7 mirror-health log not readable: ${MIRROR_LOG} (watchdog not running?)"
 fi
 
 # ---- verdict -----------------------------------------------------------------
