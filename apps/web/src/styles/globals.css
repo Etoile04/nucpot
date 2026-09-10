@@ -405,3 +405,99 @@ body {
 .material-property-row--grouped:hover > td {
   background-color: rgb(59 130 246 / 0.09);
 }
+
+/* ---------------------------------------------------------------------------
+ * NFM-4552 — G1 校对界面设计令牌 + 样式 hooks
+ *
+ * Spec:    docs/specs/G1-extraction-value-presentation-design.md (LE, §3/§4)
+ * Addendum: docs/design/nfm-4552-g1-review-ux-design-spec.md
+ * Consumers: G1-E (布局 B, 文献详情页) + G1-F (布局 A, /admin/review/queue)
+ *
+ * Reuses --alert-error-* (NFM-4477 §1.1) and --onto-* (NFM-3550/3551)
+ * wherever LE's spec calls for them. Only values with no existing
+ * equivalent are minted below, with LE's spec'd names.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* -- Six review_status chips (LE §3.1) ----------------------------------
+   * Hue-only is not the contract (WCAG 1.4.1). LE pairs these with shape:
+   * invalid chips are filled, disputed chips are outlined.
+   */
+  --review-status-pending:   #f59e0b;
+  --review-status-confirmed: #10b981;
+  --review-status-modified:  #6cb6c8;
+  --review-status-invalid:   #ef4444;
+  --review-status-disputed:  #c97070;
+  --review-status-skipped:   #8e8675;
+
+  /* -- Drawer focus ring (LE §3.1) ---------------------------------------- */
+  --review-drawer-focus: #93c5fd;       /* matches --color-accent */
+
+  /* -- Graph formula surface (LE §3.1, AC-5) ------------------------------ */
+  --graph-formula-bg:     #0f172a;
+  --graph-formula-border: #1e293b;
+
+  /* -- Typography (LE §3.2) ---------------------------------------------- */
+  --fs-formula:       1.0625rem;
+  --fs-error-reason:  0.8125rem;
+  --lh-formula:       1.45;
+
+  /* -- Drawer metrics (LE §3.3) ------------------------------------------- */
+  --drawer-pad-x:        1.25rem;
+  --drawer-pad-y:        1rem;
+  --drawer-section-gap:  1.25rem;
+  --drawer-action-gap:   0.75rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * NFM-4552 — 物理无效标红 (LE §4.3, AC-10)
+ *
+ * Reuses --alert-error-* from NFM-4477 §1.1. Tint is paired with a 4px
+ * left bar AND a redundant glyph in the first cell so colour is never
+ * the sole carrier of meaning (WCAG 1.4.1). One-shot 500ms shake on
+ * first paint draws the eye to a freshly-failed validity_check.
+ * ------------------------------------------------------------------------- */
+.g1-row-invalid > td {
+  background-color: var(--alert-error-bg);
+}
+.g1-row-invalid > td:first-child {
+  border-left: 4px solid var(--alert-error-border);
+}
+.g1-row-invalid > td:first-child::before {
+  content: "⚠ ";
+  color: var(--alert-error-border);
+}
+
+@keyframes g1-row-invalid-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-4px); }
+  75%      { transform: translateX( 4px); }
+}
+.g1-row-invalid > td:first-child {
+  animation: g1-row-invalid-shake 500ms var(--onto-ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g1-row-invalid > td:first-child {
+    animation: none;
+  }
+}
+
+/* KaTeX output baseline alignment (LE §3.1 + AC-5). `.g1-formula` wraps
+ * the string produced by katex.renderToString(expr, { throwOnError: false,
+ * trust: false }). `trust: false` is mandatory — it disables \href /
+ * \includegraphics, the injection vectors. */
+.g1-formula .katex {
+  font-size: var(--fs-formula);
+  line-height: var(--lh-formula);
+  background-color: var(--graph-formula-bg);
+  border: 1px solid var(--graph-formula-border);
+  border-radius: 4px;
+  padding: 0.125rem 0.375rem;
+}
+
+/* Numeric value + unit columns use the mono stack so digits align
+ * vertically down a value-comparison table (LE §6.4). */
+.g1-numeric {
+  font-family: var(--onto-font-mono);
+  font-variant-numeric: tabular-nums;
+}
