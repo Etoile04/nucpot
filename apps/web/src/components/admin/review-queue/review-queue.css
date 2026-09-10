@@ -4,16 +4,30 @@
  *   .review-row-physically-invalid → 红行 (spec §4.3, G1-D wire-up).
  *   The red treatment only fires when validity_check.status='fail';
  *   the row title attribute carries the reason for hover.
+ *
+ * Theme contract (UXDesigner Visual-Truth Gate round 2):
+ *   The app is mounted unconditionally under antd `theme.darkAlgorithm`
+ *   (see components/antd-provider.tsx). The first implementation used the
+ *   antd LIGHT error palette (#fff1f0 / #ffccc7), which painted a near-white
+ *   surface under the dark theme's light foreground text — the invalid row
+ *   became the ONLY illegible row in the table, inverting the intent of
+ *   spec §4.3. These values are the antd DARK red ramp, so the inherited
+ *   foreground keeps AA contrast:
+ *     red-1 (dark) #2a1215 → resting surface
+ *     red-2 (dark) #431418 → hover surface
+ *     red-6 (dark) #dc4446 → accent border
+ *   If the app ever gains a light theme, move these to `cssVar` tokens
+ *   (--ant-color-error-bg / --ant-color-error) instead of hardcoding.
  */
 
 .review-row-physically-invalid > td {
-  background-color: #fff1f0 !important;
+  background-color: #2a1215 !important;
 }
 
 .review-row-physically-invalid > td:first-child {
-  border-left: 3px solid #cf1322 !important;
+  border-left: 3px solid #dc4446 !important;
 }
 
 .review-row-physically-invalid:hover > td {
-  background-color: #ffccc7 !important;
+  background-color: #431418 !important;
 }
