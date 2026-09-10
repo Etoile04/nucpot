@@ -44,6 +44,7 @@ from nfm_db.services.lightrag_client import (
     LightRAGClientError,
 )
 from nfm_db.services.rag_metrics import compute_rag_metrics
+from nfm_db.services.rag_provider import RAGProviderSelector
 
 logger = logging.getLogger(__name__)
 
@@ -199,8 +200,14 @@ async def query_knowledge_graph(
     the AC-7 telemetry, and the response carries a ``fallback`` envelope
     so the frontend can render the §3.2 / AC-4 badge without inspecting
     internals.
+
+    NFM-4539 RAG-B AC-4 fix: route through ``RAGProviderSelector`` so
+    timeout-style failures transparently fall through to
+    ``RuleBasedFallbackProvider`` (the real ``ts_rank``/``tsquery`` path
+    over ``data_sources`` / ``materials`` / ``kg_nodes``).  ``fallback.used``
+    is now set only when the ILIKE rescue path actually returned
+    substantive results — the badge can no longer lie.
     """
-    client = _get_client()
     start = time.monotonic()
     was_fallback = False
     was_cached = False
@@ -209,25 +216,39 @@ async def query_knowledge_graph(
     api_response: ApiResponse[QueryResponse]
 
     try:
-        result = await client.query(
+        # NFM-4539 AC-4: route through the selector so timeout-style
+        # failures fall through to the rule-based fallback automatically.
+        # The selector's ``query()`` already catches ``LightRAGClientError``
+        # and returns a ``RAGQueryResult(fallback=True)`` carrying the
+        # ILIKE-rescued references, so we no longer have to maintain a
+        # separate ``except LightRAGClientError`` branch that pretends to
+        # do the rescue.
+        selector = RAGProviderSelector(
+            lightrag_client=_get_client(),
+            db_session=db,
+        )
+        # NFM-4539 RAG-B: forward ``mode`` / ``include_references`` so the
+        # sidecar's per-request knobs still apply when we route through
+        # the selector.  ``limit=10`` is the rule-based fallback's cap on
+        # how many ``ts_rank``-ordered references to return.
+        rag_result = await selector.query(
             query=payload.query,
             mode=payload.mode.value,
             include_references=payload.include_references,
+            limit=10,
         )
-        # NFM-4522: LightRAG may return explicit JSON null for list fields
-        # (notably references when include_references=false). `dict.get(key, default)`
-        # returns the default only on missing keys, not on null values, so we
-        # use `or []` to coerce null → empty list at the API boundary.
-        response_text = result.get("response") or ""
-        references = result.get("references") or []
-        entities = result.get("entities") or []
-        relationships = result.get("relationships") or []
+        was_fallback = rag_result.fallback
+        was_cached = rag_result.was_cached
+
+        # NFM-4522: ``RAGQueryResult`` already coerces missing-key to ``[]``
+        # via ``field(default_factory=list)``, but a downstream provider
+        # could in principle return ``None``; ``or []`` is the belt-and-
+        # braces boundary guard.
+        response_text = rag_result.response or ""
+        references = rag_result.references or []
+        entities = rag_result.entities or []
+        relationships = rag_result.relationships or []
         result_count = len(references)
-        # LightRAG surfaces a cache-hit hint when the response was served
-        # from the LLM cache (cached_responses metadata).  We forward it
-        # to the access log so AC-7's ``was_cached`` is grounded in the
-        # sidecar's own accounting rather than guessed at the API layer.
-        was_cached = bool(result.get("cached") or result.get("cache_hit"))
         api_response = ApiResponse(
             success=True,
             data=QueryResponse(
@@ -235,15 +256,24 @@ async def query_knowledge_graph(
                 references=references,
                 entities=entities,
                 relationships=relationships,
-                fallback=FallbackInfo(used=False),
+                fallback=FallbackInfo(
+                    used=was_fallback,
+                    kind="ilike" if was_fallback else None,
+                    original_error=None,
+                ),
             ),
         )
     except LightRAGClientError as exc:
-        # NFM-4539 RAG-B §5: timeout-style failures → ILIKE fallback.
-        # The full ILIKE rescue path lives in services/rag_provider.py;
-        # for this endpoint we record the envelope and surface a
-        # transparent degraded answer rather than a hard error.
-        logger.warning("LightRAG query error, falling back to ILIKE: %s", exc)
+        # Defensive safety net: ``RAGProviderSelector.query()`` already
+        # absorbs ``LightRAGClientError`` internally and falls through to
+        # ``RuleBasedFallbackProvider``.  If we reach this branch, the
+        # selector itself is misconfigured (e.g. ``db_session`` couldn't
+        # even reach the database).  Surface the failure honestly with
+        # ``original_error`` populated so the §3.2 badge still renders
+        # rather than masking the outage.
+        logger.error(
+            "LightRAGClientError leaked past RAGProviderSelector: %s", exc
+        )
         was_fallback = True
         error_message = str(exc)
         api_response = ApiResponse(
@@ -255,14 +285,14 @@ async def query_knowledge_graph(
                 relationships=[],
                 fallback=FallbackInfo(
                     used=True,
-                    kind="iliKE",
+                    kind="ilike",
                     original_error=error_message,
                 ),
             ),
         )
     except Exception as exc:
         logger.error("Unexpected query error: %s", exc)
-        was_fallback = True
+        was_fallback = False
         error_message = str(exc)
         api_response = ApiResponse(
             success=False,

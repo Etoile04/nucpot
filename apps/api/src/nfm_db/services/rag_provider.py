@@ -43,7 +43,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RAGQueryResult:
-    """Unified result from any RAG provider."""
+    """Unified result from any RAG provider.
+
+    NFM-4539 RAG-B AC-7: ``was_cached`` propagates the LightRAG sidecar's
+    cache-hit hint through the provider chain so the access_log can
+    distinguish Tier-1 (cached) vs Tier-2 (fresh) latency on the AC-8
+    dashboard.  Only the primary LightRAG provider populates it; the
+    rule-based fallback never consults the LLM cache, so it stays False.
+    """
 
     response: str
     references: list[dict[str, Any]] = field(default_factory=list)
@@ -51,6 +58,7 @@ class RAGQueryResult:
     relationships: list[dict[str, Any]] = field(default_factory=list)
     provider: str = ""
     fallback: bool = False
+    was_cached: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -112,13 +120,33 @@ class LightRAGProvider(RAGProvider):
         return "lightrag"
 
     async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        result = await self._client.query(query=query)
+        # NFM-4539 RAG-B: forward ``mode`` / ``include_references`` to the
+        # sidecar so the route's per-request knobs still apply when we
+        # route through ``RAGProviderSelector``.  ``LightRAGClient.query``
+        # accepts these as explicit kwargs (see services/lightrag_client.py
+        # line 334); the previous ``**kwargs``-only signature silently
+        # dropped them on the floor.  ``limit`` is reserved for the
+        # rule-based fallback's ts_rank cap — it is not part of the
+        # LightRAG wire protocol so we strip it before the call.
+        client_kwargs: dict[str, Any] = {
+            k: v for k, v in kwargs.items() if k in ("mode", "include_references")
+        }
+        result = await self._client.query(
+            query=query,
+            **client_kwargs,
+        )
+        # NFM-4539 RAG-B AC-7: ``was_cached`` is grounded in the sidecar's
+        # own ``cached`` / ``cache_hit`` hint (NFM-4522: ``dict.get`` does
+        # not coerce JSON null, hence the ``or`` chain).  The fallback
+        # provider never returns cache hits so its default stays False.
+        was_cached = bool(result.get("cached") or result.get("cache_hit"))
         return RAGQueryResult(
             response=result.get("response", ""),
             references=result.get("references", []),
             entities=result.get("entities", []),
             relationships=result.get("relationships", []),
             provider=self.name,
+            was_cached=was_cached,
         )
 
     async def ingest(self, *, text: str, source: str | None = None) -> str | None:

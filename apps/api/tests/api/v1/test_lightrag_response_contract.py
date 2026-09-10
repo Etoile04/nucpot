@@ -81,12 +81,35 @@ async def test_query_success_returns_fallback_unused(
 async def test_query_timeout_triggers_ilike_fallback(
     async_client: AsyncClient,
 ) -> None:
-    """When the sidecar exceeds the budget, the API reports ``iliKE`` fallback.
+    """When the sidecar exceeds the budget, the API actually invokes the
+    ILIKE rescue path and returns the rescued references.
 
-    The ILIKE rescue lives in the legacy kg.py fallback path — for this
-    endpoint we model it as a deterministic swap: timeout ⇒
-    ``fallback.used=true, kind='iliKE', original_error=<timeout text>``.
+    NFM-4539 RAG-B AC-4 fix: the previous implementation set
+    ``fallback.used=true`` without performing the ILIKE/tsvector search,
+    making the §3.2 badge a lie.  This test now patches
+    ``RuleBasedFallbackProvider.query`` to return a known payload and
+    asserts the route surfaces it.  If a future regression reverts to the
+    "set used=true without rescuing" pattern, the references assertion
+    will fail.
     """
+    from nfm_db.services.rag_provider import RAGQueryResult
+
+    fallback_references = [
+        {
+            "source_type": "data_source",
+            "source_id": "ds-001",
+            "score": 0.93,
+        },
+        {
+            "source_type": "material",
+            "source_id": "mat-042",
+            "score": 0.71,
+        },
+    ]
+    fallback_response = (
+        "Rule-based fallback: found 2 relevant results for query 'UO2'."
+    )
+
     with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
         mock_client = AsyncMock()
         # Simulate the sidecar timing out — clients raise TimeoutError on
@@ -96,17 +119,73 @@ async def test_query_timeout_triggers_ilike_fallback(
         )
         mock_get_client.return_value = mock_client
 
-        response = await async_client.post(
-            "/api/v1/lightrag/query",
-            json={"query": "UO2 conductivity"},
-        )
+        with patch(
+            "nfm_db.services.rag_provider.RuleBasedFallbackProvider.query",
+            new_callable=AsyncMock,
+        ) as mock_fallback_query:
+            mock_fallback_query.return_value = RAGQueryResult(
+                response=fallback_response,
+                references=fallback_references,
+                provider="rule-based-fallback",
+                fallback=True,
+            )
+
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "UO2 conductivity"},
+            )
 
     assert response.status_code == 200
     body = response.json()
+    # AC-4 envelope — fallback.used is set only because the rescue path
+    # actually ran (the patch above proves it).
     assert body["data"]["fallback"]["used"] is True
-    assert body["data"]["fallback"]["kind"] == "iliKE"
-    assert body["data"]["fallback"]["original_error"] is not None
-    assert "timeout" in body["data"]["fallback"]["original_error"].lower()
+    assert body["data"]["fallback"]["kind"] == "ilike"
+    assert body["data"]["fallback"]["original_error"] is None
+    # AC-4 substance: the response carries the real ILIKE-rescued
+    # references, not empty arrays.  This is the assertion the original
+    # test was missing — the badge's claim is now grounded in the data.
+    assert len(body["data"]["references"]) == len(fallback_references)
+    assert body["data"]["references"][0]["source_type"] == "data_source"
+    assert body["data"]["references"][1]["source_type"] == "material"
+    assert body["data"]["response"] == fallback_response
+    # The fallback provider was actually invoked — proof of rescue.
+    mock_fallback_query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_success_does_not_invoke_fallback(
+    async_client: AsyncClient,
+) -> None:
+    """A successful LightRAG response must NOT invoke RuleBasedFallbackProvider.
+
+    Counterpart to ``test_query_timeout_triggers_ilike_fallback``: when
+    the primary provider succeeds, the rescue path stays cold.  Guards
+    against a future refactor that double-fires (selector + rescue).
+    """
+    with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.query.return_value = {
+            "response": "UO2 is a nuclear fuel.",
+            "references": [],
+            "entities": [],
+            "relationships": [],
+        }
+        mock_get_client.return_value = mock_client
+
+        with patch(
+            "nfm_db.services.rag_provider.RuleBasedFallbackProvider.query",
+            new_callable=AsyncMock,
+        ) as mock_fallback_query:
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "What is UO2?"},
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["fallback"]["used"] is False
+    mock_fallback_query.assert_not_called()
 
 
 # ===========================================================================
@@ -160,15 +239,28 @@ async def test_query_timeout_persists_was_fallback_true(
     db_session,
 ) -> None:
     """When the fallback fires, ``was_fallback`` is True and the kind is logged."""
+    from nfm_db.services.rag_provider import RAGQueryResult
+
     with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_client.query.side_effect = LightRAGClientError("sidecar stalled")
         mock_get_client.return_value = mock_client
 
-        response = await async_client.post(
-            "/api/v1/lightrag/query",
-            json={"query": "MOX fuel behavior", "mode": "hybrid"},
-        )
+        with patch(
+            "nfm_db.services.rag_provider.RuleBasedFallbackProvider.query",
+            new_callable=AsyncMock,
+        ) as mock_fallback_query:
+            mock_fallback_query.return_value = RAGQueryResult(
+                response="fallback answer",
+                references=[{"source_type": "material", "source_id": "m-1"}],
+                provider="rule-based-fallback",
+                fallback=True,
+            )
+
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "MOX fuel behavior", "mode": "hybrid"},
+            )
 
     assert response.status_code == 200
     rows = (

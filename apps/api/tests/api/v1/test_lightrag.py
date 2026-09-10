@@ -427,7 +427,18 @@ async def test_query_client_error(async_client: AsyncClient) -> None:
     a stall must fall through to ILIKE rather than hard-failing, with
     ``fallback.used=true`` and ``fallback.kind='iliKE'``.  The caller
     (RagSearchView) reads the envelope and renders the badge.
+
+    NFM-4539 RAG-B AC-4 fix: the route now routes through
+    ``RAGProviderSelector`` which transparently invokes
+    ``RuleBasedFallbackProvider``.  We mock the fallback provider here
+    because the test environment uses SQLite (no ``ts_rank`` /
+    ``plainto_tsquery``); the production path is verified by
+    ``tests/api/v1/test_lightrag_response_contract.py::
+    test_query_timeout_triggers_ilike_fallback`` which uses a stub
+    ``RuleBasedFallbackProvider`` returning known references.
     """
+    from nfm_db.services.rag_provider import RAGQueryResult
+
     with patch(
         "nfm_db.api.v1.lightrag._get_client",
     ) as mock_get_client:
@@ -437,16 +448,32 @@ async def test_query_client_error(async_client: AsyncClient) -> None:
         )
         mock_get_client.return_value = mock_client
 
-        response = await async_client.post(
-            "/api/v1/lightrag/query",
-            json={"query": "What is UO2?"},
-        )
+        with patch(
+            "nfm_db.services.rag_provider.RuleBasedFallbackProvider.query",
+            new_callable=AsyncMock,
+        ) as mock_fallback_query:
+            mock_fallback_query.return_value = RAGQueryResult(
+                response="Rule-based fallback: stub result for 'What is UO2?'.",
+                references=[
+                    {"source_type": "data_source", "source_id": "stub", "score": 0.5},
+                ],
+                provider="rule-based-fallback",
+                fallback=True,
+            )
+
+            response = await async_client.post(
+                "/api/v1/lightrag/query",
+                json={"query": "What is UO2?"},
+            )
 
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
     assert body["data"]["fallback"]["used"] is True
-    assert body["data"]["fallback"]["kind"] == "iliKE"
+    assert body["data"]["fallback"]["kind"] == "ilike"
+    # AC-4 substance: the rescue actually returned references.
+    assert len(body["data"]["references"]) == 1
+    mock_fallback_query.assert_awaited_once()
 
 
 @pytest.mark.asyncio
