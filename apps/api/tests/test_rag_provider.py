@@ -31,12 +31,21 @@ def _make_mock_db(rows: list[dict] | None = None) -> AsyncMock:
 
     Args:
         rows: Optional list of row dicts returned by mappings().all().
+
+    NFM-4593: ``AsyncResult.mappings()`` is a SYNC method in SQLAlchemy 2.0
+    — it returns a :class:`MappingResult` directly, NOT a coroutine.  The
+    previous mock wrapped it in ``AsyncMock`` which masked the production
+    bug ``TypeError: object MappingResult can't be used in 'await'
+    expression`` (the test inadvertently conformed to the buggy code's
+    incorrect ``await result.mappings()`` shape).  Switch to ``MagicMock``
+    so the mock mirrors the real contract; the rule-based fallback then
+    hits ``result.mappings().all()`` cleanly.
     """
     db = AsyncMock()
     mappings_obj = MagicMock()
     mappings_obj.all.return_value = rows or []
     result_mock = MagicMock()
-    result_mock.mappings = AsyncMock(return_value=mappings_obj)
+    result_mock.mappings = MagicMock(return_value=mappings_obj)
     db.execute = AsyncMock(return_value=result_mock)
     return db
 

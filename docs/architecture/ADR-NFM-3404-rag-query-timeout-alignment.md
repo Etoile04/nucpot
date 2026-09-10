@@ -220,21 +220,24 @@ The existing `docker-compose.lightrag.yml:83-90` healthcheck (`curl -fsS ... /he
 This section is the operator-facing reference for the prod LightRAG
 sidecar after NFM-4521 Path A swapped the model to `qwen3.5:4b-nvfp4` and
 NFM-4525 disabled the model's thinking mode. All numbers are wall-clock
-observed end-to-end on prod (`/api/v1/lightrag/query`) with
-`NFM_LIGHTRAG_QUERY_TIMEOUT_S=30` (NFM-4492 ceiling).
+observed end-to-end on prod (`/api/v1/lightrag/query`) under the
+`NFM_LIGHTRAG_QUERY_TIMEOUT_S=30` (NFM-4492 ceiling) in effect at
+observation time; prod/staging compose now deploy
+`NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0` (post-NFM-4525 tightening), so the
+operative failure ceiling is 10 s.
 
 | Mode | Cache hit? | Expected wall-clock (post NFM-4525) | Failure ceiling (still applies from §2.1) |
 | --- | --- | --- | --- |
-| `hybrid` (default) | yes | **0.1–0.3 s** (cached extraction) | 30 s |
-| `hybrid` | no | **1–5 s** (fresh extraction w/o thinking) | 30 s |
-| `local` | yes | 0.1–0.3 s (cached) | 30 s |
-| `local` | no | 1–3 s (entity-anchored retrieval, smaller graph) | 30 s |
-| `global` | yes | 0.1–0.3 s (cached) | 30 s |
-| `global` | no | 3–7 s (full-graph traversal) | 30 s |
-| `naive` | yes | 0.1–0.3 s (cached) | 30 s |
-| `naive` | no | 1–3 s (pure vector retrieval, no graph) | 30 s |
-| `mix` | yes | 0.1–0.3 s (cached) | 30 s |
-| `mix` | no | 2–6 s (hybrid-of-hybrids) | 30 s |
+| `hybrid` (default) | yes | **0.1–0.3 s** (cached extraction) | 10 s |
+| `hybrid` | no | **1–5 s** (fresh extraction w/o thinking) | 10 s |
+| `local` | yes | 0.1–0.3 s (cached) | 10 s |
+| `local` | no | 1–3 s (entity-anchored retrieval, smaller graph) | 10 s |
+| `global` | yes | 0.1–0.3 s (cached) | 10 s |
+| `global` | no | 3–7 s (full-graph traversal) | 10 s |
+| `naive` | yes | 0.1–0.3 s (cached) | 10 s |
+| `naive` | no | 1–3 s (pure vector retrieval, no graph) | 10 s |
+| `mix` | yes | 0.1–0.3 s (cached) | 10 s |
+| `mix` | no | 2–6 s (hybrid-of-hybrids) | 10 s |
 
 **Pre-NFM-4525 (latent bug, observed during Path A validation):**
 
@@ -268,6 +271,11 @@ raise to 30 s was a safety valve while Path A was being validated; it
 can be walked back to 12 s in a follow-up that re-runs the §4 integration
 test against the post-NFM-4525 image. Tracked but not in scope for
 this docs-only landing.
+
+> **2026-09 update:** the walk-back landed tighter than proposed —
+> `docker-compose.prod.yml` / `docker-compose.staging.yml` now deploy
+> `NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0` (frontend abort 15 000 ms), per the
+> timeout contract in `docs/specs/RAG-anonymous-open-and-quality.md` §5.
 
 ### 8.1 Addendum — actual post-fix wall-clock (NFM-4527)
 
