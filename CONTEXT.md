@@ -73,6 +73,8 @@ _Avoid_: 数据来源(泛指时)、前端录入(指通道时)、抽取管线(指
 
 数据供给闭环的完整设计在 wayfinder 地图 [NFM-3830](/NFM/issues/NFM-3830) (PILOT-C G3 数据采集闭环修复设计地图) 的 Notes / 决策注释中沉淀;七个数据供给族术语加「录入通道」共同给那张地图上的 G3 闭环与双通道录入原则提供领域语言入口。后续 wayfinder 地图(数据挖掘 / 缺口闭环 / 录入通道相关)开 PR 时,Notes 应锚定本节术语而非另起本地词汇——尤其当 Notes 描述哪条通道产生了什么产物时,必须用「网页页面录入 / 智能体驱动自动提取」与「录入通道」而不是泛称「数据来源」或「前端录入」。
 
+数据集生命周期与抽取形态在 wayfinder 地图 [#1249](https://github.com/Etoile04/nucpot/issues/1249) 终点票 [#1257](https://github.com/Etoile04/nucpot/issues/1257) 坍缩入库(对应 Paperclip [NFM-4535](/NFM/issues/NFM-4535));G1 抽取价值呈现区 6 决 + RAG 开放区 3 决 + RAG 质量承诺区 4 决 + 数据集生命周期区 4 决合并为两份可建 spec([G1-extraction-value-presentation](./docs/specs/G1-extraction-value-presentation.md)、[RAG-anonymous-open-and-quality](./docs/specs/RAG-anonymous-open-and-quality.md))、两份 ADR([ADR-016 技能引擎](./docs/adr/ADR-016-NFM-4535-skills-engine-as-extraction-engine.md)、[ADR-017 数据集生命周期](./docs/adr/ADR-017-NFM-4535-dataset-lifecycle.md))与本节「数据集生命周期」术语集。后续 wayfinder 地图涉及"每文献数据集 / 快照式版本 / 整版本回退 / 按源剔除 / 技能引擎 / 目录外逃生舱 / 分层 SLA / 透明回退"等概念时,Notes 应锚定本节术语而非另起本地词汇。
+
 ### 数据访问 seam
 
 **会话提供者 (session-provider)**:
@@ -132,3 +134,61 @@ _Avoid_: 翻页控件(指能力时)
 **提交状态 (submit state)**:
 表单提交的生命周期状态:idle | submitting | success | error。由共享的提交模块统一持有与呈现,表单不自写三布尔变体。
 _Avoid_: loading 旗标、submitting 布尔
+
+### 数据集生命周期(NFM-4535 入库,wayfinder #1257 坍缩)
+
+`property_measurements` 行的存在形态与流转形态——按 ADR-017 「每文献私有数据集 + 快照式版本」落实。七个数据供给族术语(见上)描述"为什么有数据";本节描述"数据如何被组织、如何被验证、如何被回退"。
+
+**数据集 (dataset)**:
+某篇文献抽取产物的容器,每文献一个私有集;身份由文献 DOI 优先 + 内容哈希兜底判定。同文献重抽不产生新数据集,只产生新版本。
+_Avoid_: 资料库(泛指时)、验证集(指共享池时)
+
+**每文献私有数据集 (per-literature dataset)**:
+数据集的归属模型——每篇入库文献独占一个 `datasets.id`,不与同材料、同成分的他文献共享。共享池是消费层视图(同一材料下多数据集查询),不是存储层形态。
+_Avoid_: 多对一合并(指存储时)、共享池(指存储时)
+
+**数据集版本 (dataset version)**:
+数据集在某一时点的快照式版本,由通过校核门的行集合 + 来源清单 + 元数据组成(`dataset_versions` 表,wayfinder #1280 Q7 决议)。版本号单调递增;**不允许行级 delta**(增量将破坏可回退性)。验证 / 物性页 / 检索 / 导出消费发布版;校对页消费工作版。
+
+**发布版 (released)**:
+数据集的稳定对外版本,默认 API 视图(`?dataset_version=released`)。验证等级、AutoVC 验证结果均记录所用发布版号,等级可追溯到数据版本。
+_Avoid_: 稳定版(泛指时)、最新版(指快照语境时)
+
+**工作版 (draft)**:
+数据集的校对进行中版本,仅校对页可见;不对外、不参与验证、不入检索。domain_expert 校对通过 → 触发发布 → 升级为发布版。
+_Avoid_: 草稿(泛指时)、dev 版(指通道时)
+
+**按源剔除 (exclude-by-source)**:
+数据集版本回退操作之一——新建副本并移除指定 `source_id` 贡献的行(替代今日人工 SQL 路径,见 NFM-4394/4395)。owner 用例:删掉某篇文章引入的数据。每一次按源剔除写 `audit_log`,审计可追。
+
+**整版本回退 (whole-version rollback)**:
+数据集版本回退操作之二——切换 `released` 指针到任一历史版本(不必是最新)。代价低、审计完整,9-02 类事故的根治路径。
+
+**目录外逃生舱 (out-of-catalog escape hatch)**:
+抽取管线遇到本体目录未覆盖的属性类别时,显式新建 PropertyType + 标记 `pending_review`,不经 verification 主表直至人工校对通过(ADR-016 §2.3 + wayfinder #1252 Q2 决议)。它是「目录封闭性」的解药,不是目录扩充的替代品;通过条目可反哺目录扩充决策。
+_Avoid_: 新增属性(泛指时)、白名单机制(指实现时)
+
+**技能引擎 (skill engine)**:
+生产路径 A 的抽取引擎——以 `nuclear-materials-skills-v4` 的 `nuclear-property-extraction-v4` 技能替入既有本体驱动抽取 prompt(ADR-016 §2.1,wayfinder #1252 主决策)。平台不内化技能仓库;锁版引用(`EXTRACTION_SKILL_REPO_PIN`),上游独立演进。
+_Avoid_: LLM 直调(指生产路径时)、prompt 工程(指实现时)
+
+**source_span (段落级溯源)**:
+property_measurements 行级溯源,定位到原文段落:`{file, page, char_start, char_end, snippet_hash}`(ADR-016 §2.6 + wayfinder #1252 Q7)。校对页需原文段落并排展示(操作页标准);文件级溯源不够。技能版本含 source_span 之前由 adapter 启发式匹配兜底。
+
+**validity_check (validity_check)**:
+落库时按属性 `valid_range` 跑的物理有效域校验结果,落在行的 `validity_check` jsonb 列:`{status: "ok"|"warn"|"fail", reason: str|null}`。`fail` 直接标 `review_status='invalid'`,校对页红行 + 悬停原因;`warn` 不阻断但显提示(wayfinder #1253 取证 §②)。防止键长 0.3Å、密度 0.05 g/cm³ 之类物理无效值混入主表。
+
+**dedupe_key (dedupe key)**:
+property_measurements 行的复合去重键 `(dataset_id, property_type_id, source_id, value_hash)`,唯一约束,摄取 upsert 依赖。`value_hash` 同值 + 同源 + 无条件差异才合并;有条件差异保留各行(不同测量)(wayfinder #1253 取证 §①)。根治 Owen 92 行同值重复事故的存储层契约。
+
+**校对动作集 (review actions)**:
+domain_expert 在校对抽屉执行的六态决策集:`pending`(低置信度自动)/ `confirmed`(确认通过)/ `modified`(需修改)/ `invalid`(标记无效)/ `disputed`(来源存疑)/ `skipped`(跳过)(wayfinder #1253 Q2 决议)。写回 property_measurements 既有列(`review_status`/`reviewer_note`/`reviewed_at`),不新建 draft 表。
+
+**分层 SLA (tiered SLA)**:
+RAG 检索的三档质量承诺(Tier-1 已索引秒级 P95<1s / Tier-2 fresh P95<30s,NFM-4525 修后收紧 <10s / Tier-3 超时透明回退)(wayfinder #1256 Q4)。每档触发条件明确,周报可追。
+
+**匿名开放 (anonymous open)**:
+RAG 检索的开放策略——移除 `require_editor`、端点级限次 5/min/IP、匿名与登录一致体验、不做差异化(wayfinder #1255 Q1/Q3 三决议)。实施前置 #1258(NFM-4492 已闭环)。可逆:随时重挂登录墙,故不立独立 ADR。
+
+**透明回退 (transparent fallback)**:
+RAG 检索超时(≥`NFM_LIGHTRAG_QUERY_TIMEOUT_S` = 30s)→ ILIKE 文本检索兜底 + 响应 `fallback.used=true` + UI 徽标"语义检索超时,已回退文本检索",绝不静默(NFM-3404 + wayfinder #1256 Q2)。审计 `access_log.fallback_kind='iliKE'` 计数。
