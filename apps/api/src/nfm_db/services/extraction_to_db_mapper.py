@@ -1180,8 +1180,8 @@ async def map_and_persist(
             # degrades (legacy NULL partial unique path) and we surface
             # the regression loudly.
             raise RuntimeError(
-                "dataset_version_map missing for d_key=%s — mapper wiring "
-                "regression (NFM-4549 G1-C AC-9 path)." % d_key
+                f"dataset_version_map missing for d_key={d_key} — mapper wiring "
+                "regression (NFM-4549 G1-C AC-9 path)."
             )
         measurement_kwargs: dict[str, Any] = dict(value_kwargs)
         if (db.bind.dialect.name or "").lower() != "postgresql":
