@@ -15,7 +15,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import JSON, event  # noqa: E402
+from sqlalchemy import JSON, DefaultClause, event  # noqa: E402
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
@@ -69,8 +69,19 @@ def _strip_dangling_fks(metadata) -> None:
 
 
 def _replace_jsonb(metadata) -> None:
-    """Replace JSONB/ARRAY columns with TEXT/JSON for SQLite compat."""
+    """Replace JSONB/ARRAY columns with TEXT/JSON for SQLite compat.
+
+    Also strips PostgreSQL ``::type`` casts out of server defaults.  SQLite
+    emits ``server_default`` text verbatim, so a Postgres-correct default
+    like ``'{}'::jsonb`` (NFM-4548 ``property_measurements.conditions``,
+    ``dataset_versions.row_ids`` / ``source_ids``) fails ``create_all`` with
+    ``unrecognized token: ":"``.  Dropping the cast leaves ``'{}'``, which is
+    valid on SQLite and semantically identical.
+    """
+    import re
+
     from sqlalchemy import ARRAY as SA_ARRAY
+    from sqlalchemy import text as sa_text
     from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 
     for table in metadata.tables.values():
@@ -79,6 +90,11 @@ def _replace_jsonb(metadata) -> None:
                 col.type = JSON()
             if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
                 col.type = JSON()
+
+            default = getattr(col.server_default, "arg", None)
+            default_sql = getattr(default, "text", None)
+            if isinstance(default_sql, str) and "::" in default_sql:
+                col.server_default = DefaultClause(sa_text(re.sub(r"::\s*\w+", "", default_sql)))
 
 
 def _safe_create_all(sync_conn, metadata) -> None:
@@ -219,6 +235,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "no_auto_auth: disable auto-auth override for tests that verify auth behavior"
     )
+
+
 # Marker for tests that deliberately exercise the real auth chain
 # (e.g. unauthenticated -> 401, wrong role -> 403).
 no_auto_auth = pytest.mark.no_auto_auth
@@ -252,9 +270,7 @@ def _reenable_rate_limit_overrides(request) -> None:
     limiter.enabled = False
 
     # Re-strip rate-limit middleware if re-added by prior test teardown.
-    app.user_middleware = [
-        mw for mw in app.user_middleware if mw.cls is not NFMRateLimitMiddleware
-    ]
+    app.user_middleware = [mw for mw in app.user_middleware if mw.cls is not NFMRateLimitMiddleware]
 
     async def _noop() -> None:  # pragma: no cover
         pass
@@ -298,6 +314,7 @@ def _clear_v2_flag_cache() -> Generator[None, None, None]:
         from nfm_db.services.extraction_pipeline_dispatch import (
             is_extraction_v2_enabled,
         )
+
         is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
         yield
         is_extraction_v2_enabled.cache_clear()  # type: ignore[attr-defined]
@@ -395,9 +412,7 @@ async def pg_session() -> AsyncSession:
     enforced by the DB regardless of how the schema was built.
     """
     if not _NFM_TEST_PG_URL:
-        pytest.skip(
-            "NFM_TEST_DATABASE_URL is not set; skipping real-Postgres test"
-        )
+        pytest.skip("NFM_TEST_DATABASE_URL is not set; skipping real-Postgres test")
 
     engine = create_async_engine(_NFM_TEST_PG_URL, echo=False)
     # Replace JSONB/ARRAY with JSON because the test metadata is
