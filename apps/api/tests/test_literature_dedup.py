@@ -349,6 +349,37 @@ class TestComputeDedupeKey:
         s = uuid.uuid4()
         assert compute_dedupe_key(d, p1, s, "v") != compute_dedupe_key(d, p2, s, "v")
 
+    # Regression guards — SQLite tests vs PG GENERATED parity (migration 085
+    # decision (f)). compute_dedupe_key folds conditions_hash + method into
+    # the SHA-256 hex digest so SQLite-only INSERT paths collide identically
+    # to PG GENERATED ALWAYS md5(...) hashes on the same inputs.
+
+    def test_changes_with_method(self) -> None:
+        d = uuid.uuid4()
+        p = uuid.uuid4()
+        s = uuid.uuid4()
+        a = compute_dedupe_key(d, p, s, "v", conditions_hash="h", method="tensile")
+        b = compute_dedupe_key(d, p, s, "v", conditions_hash="h", method="nanoindentation")
+        assert a != b
+
+    def test_changes_with_conditions_hash(self) -> None:
+        d = uuid.uuid4()
+        p = uuid.uuid4()
+        s = uuid.uuid4()
+        a = compute_dedupe_key(d, p, s, "v", conditions_hash="hash-300K", method="tensile")
+        b = compute_dedupe_key(d, p, s, "v", conditions_hash="hash-800K", method="tensile")
+        assert a != b
+
+    def test_default_args_match_empty_conditions_and_method(self) -> None:
+        # SQLite tests using the 4-tuple signature must produce the same
+        # key as an explicit call passing empty conditions_hash + method.
+        d, p, s = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        short = compute_dedupe_key(d, p, s, "v")
+        explicit = compute_dedupe_key(
+            d, p, s, "v", conditions_hash="", method=""
+        )
+        assert short == explicit
+
 
 # ---------------------------------------------------------------------------
 # AC-9 — dedupe_key UNIQUE constraint

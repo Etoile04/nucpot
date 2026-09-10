@@ -9,10 +9,14 @@ Three concerns, one module:
    row for a freshly-ingested literature, following the
    ``DOI → content_hash → miss`` ladder from ADR-017 §2.5.
 3. ``compute_dedupe_key`` — deterministic hash of
-   ``(dataset_id, property_type_id, source_id, value_hash)`` that backs
-   the ``uq_property_measurements_dedupe_key`` unique constraint added
-   by migration 085. This is the writer-side of the (dataset, property,
-   source, value_hash) composite key from ADR-017 §2.6.
+   ``(dataset_id, property_type_id, source_id, value_hash,
+   conditions_hash, method)`` that backs the
+   ``uq_property_measurements_dedupe_key`` unique constraint added
+   by migration 085. The six-tuple mirrors the PG ``GENERATED ALWAYS``
+   formula in migration 085 decision (f) so SQLite tests and PG prod
+   agree on which rows collide. This is the writer-side of the
+   composite key from ADR-017 §2.6 (conditions + method are folded in
+   to honour the "条件差异保留各行" rule).
 
 The DOI→content_hash fallback chain is implemented in service rather
 than in SQL because the DOI column needs Unicode/case/whitespace
@@ -109,21 +113,39 @@ def compute_dedupe_key(
     property_type_id: UUID,
     source_id: UUID,
     value_hash: str,
+    conditions_hash: str | None = "",
+    method: str = "",
 ) -> str:
     """Return a deterministic dedupe key for AC-9's unique constraint.
 
-    The key is a SHA-256 hex digest of the four-tuple
-    ``(dataset_id, property_type_id, source_id, value_hash)``, prefixed
-    with the algorithm name so future migrations to a different hash
-    can be expressed without collision risk.
+    The key is a SHA-256 hex digest of the six-tuple
+    ``(dataset_id, property_type_id, source_id, value_hash,
+    conditions_hash, method)``, prefixed with the algorithm name so
+    future migrations to a different hash can be expressed without
+    collision risk.
 
-    The composite is the same as ADR-017 §2.6 / spec §3.1:
-    ``(dataset, property, source, value_hash)``. It deliberately does
-    NOT include ``conditions`` or ``method`` so two measurements taken
-    on different temperatures / pressures stay distinct rows (only
-    unconditional duplicates collapse — see spec §5 "auto-merge" rule).
+    The composite matches the PG ``GENERATED ALWAYS AS`` formula in
+    migration 085 decision (f) — Postgres prod computes md5(...) and
+    SQLite hermetic tests compute sha256(...); both paths therefore
+    fold the same inputs and exercise the same partial unique
+    ``uq_pm_dedupe_key``. Including ``conditions_hash`` and ``method``
+    honours the literal "条件差异保留各行" clause of ADR-017 §2.6:
+    two measurements with the same value but different conditions or
+    methods stay as distinct rows. Only unconditional duplicates
+    collapse — spec §5 "auto-merge" rule.
+
+    Empty defaults (``""``) for ``conditions_hash`` / ``method``
+    preserve SQLite test isolation (the bare-INSERT fixtures in
+    ``test_literature_dedup::TestDedupeKeyUniqueConstraint`` pass the
+    4-tuple and rely on the defaults being no-op-equivalent for rows
+    with no conditions_hash/method).
     """
-    payload = f"{dataset_id}|{property_type_id}|{source_id}|{value_hash}"
+    cond = conditions_hash or ""
+    meth = method or ""
+    payload = (
+        f"{dataset_id}|{property_type_id}|{source_id}|{value_hash}|"
+        f"{cond}|{meth}"
+    )
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

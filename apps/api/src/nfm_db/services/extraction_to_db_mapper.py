@@ -371,12 +371,13 @@ def _value_hash(value_kwargs: dict[str, Any]) -> str:
     rows with the same value (regardless of which value column carries it —
     scalar / min / max / expression / list / text) collapse to one row.
 
-    Only the value columns are hashed; ``method``, ``conditions_hash``,
-    and ``review_status`` are deliberately omitted — they live in the
-    ``uq_pm_dedup`` 5-tuple constraint but AC-9's "same value, same
-    source, same dataset" rule says conditions must NOT collapse (per
-    :mod:`nfm_db.services.literature_dedup` docstring, only unconditional
-    duplicates collapse).
+    Only the value columns are hashed; ``method`` and ``conditions_hash``
+    are deliberately omitted here because :func:`compute_dedupe_key`
+    folds them in at the next layer (mirroring the PG GENERATED formula
+    in migration 085 decision (f)). Two measurements with the same value
+    but different conditions or methods therefore stay distinct rows in
+    both SQLite tests and PG prod. ``review_status`` is also omitted as
+    it is not part of the dedup tuple.
     """
     # ``None``-drop values that are not set; sort by key for stability.
     serialised = json.dumps(
@@ -1188,11 +1189,16 @@ async def map_and_persist(
             # SQLite (tests): write the dedupe_key explicitly so the
             # partial unique fires on duplicates. SHA-256 client-side
             # hash; PG prod uses md5 via the GENERATED column instead.
+            # conditions_hash + method are folded in to mirror the PG
+            # GENERATED formula (migration 085 decision (f)) so the two
+            # dialects agree on which rows collide.
             measurement_kwargs["dedupe_key"] = compute_dedupe_key(
                 dataset.id,
                 property_type.id,
                 source.id,
                 _value_hash(value_kwargs),
+                conditions_hash=cond_h,
+                method=method_str,
             )
 
         # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
