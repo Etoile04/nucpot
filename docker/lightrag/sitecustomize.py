@@ -6,8 +6,8 @@ prod lightrag sidecar runs with ``LLM_BINDING=ollama``. Without this patch,
 chat template) consume the entire output token budget on internal reasoning
 before producing any user-visible content, so chat-completion requests
 return ``finish_reason=length`` with empty ``content``. The wrapper then
-hangs in the LightRAG query path and hits the 30 s ``NFM_LIGHTRAG_QUERY_TIMEOUT_S``
-ceiling.
+hangs in the LightRAG query path and hits the ``NFM_LIGHTRAG_QUERY_TIMEOUT_S``
+read-budget ceiling.
 
 Background: NFM-4525 (follow-up to NFM-4521 Path A). Ollama's OpenAI-compat
 endpoint (``/v1/chat/completions``) silently ignores ``chat_template_kwargs``,

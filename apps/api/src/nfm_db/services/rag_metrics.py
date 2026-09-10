@@ -41,7 +41,7 @@ from nfm_db.schemas.lightrag import MetricsResponse, TierP95
 
 DEFAULT_WINDOW_DAYS = 7
 TIER_1_TARGET_MS = 1_000.0  # < 1s
-TIER_2_TARGET_MS = 30_000.0  # < 30s (pre-NFM-4525; tightened to < 10s post-fix)
+TIER_2_TARGET_MS = 10_000.0  # < 10s (NFM-4525 spec; pre-NFM-4525 was < 30s)
 SAMPLE_FLOOR = 5  # below this, P95 is reported as None
 
 
