@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import JSON, event, select
-from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -53,10 +52,34 @@ from nfm_db.services.literature_dedup import (
 
 
 def _replace_jsonb(metadata) -> None:
+    """SQLite shim — drop ``PG_JSONB`` types AND ``::type`` server_default casts.
+
+    The local copy in ``conftest._replace_jsonb`` was incomplete (NFM-4549
+    pre-rebase test): it only swapped ``JSONB`` column types for ``JSON``
+    and left ``server_default='[]'::jsonb`` literals untouched, which
+    SQLite rejects at CREATE TABLE with ``unrecognized token: ":"``. After
+    G1-B (NFM-4548, abc345a39) was merged into ``main``, several
+    ``dataset_versions`` columns now ship with ``::jsonb`` defaults and the
+    bare JSON-type swap is no longer enough — the cast stripping below is
+    required. Mirrors ``conftest._replace_jsonb`` so this hermetic fixture
+    can keep using ``Base.metadata.create_all`` directly.
+    """
+    import re
+
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
+
     for table in metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, PG_JSONB):
                 col.type = JSON()
+            default = getattr(col.server_default, "arg", None)
+            default_sql = getattr(default, "text", None)
+            if isinstance(default_sql, str) and "::" in default_sql:
+                from sqlalchemy import DefaultClause
+                col.server_default = DefaultClause(
+                    sa_text(re.sub(r"::\s*\w+", "", default_sql))
+                )
 
 
 @pytest.fixture
