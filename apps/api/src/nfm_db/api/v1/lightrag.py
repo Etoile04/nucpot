@@ -322,7 +322,7 @@ async def query_knowledge_graph(
             try:
                 await db.rollback()
             except Exception:
-                pass
+                logger.debug("rag_access_log rollback failed", exc_info=True)
     return api_response
 
 

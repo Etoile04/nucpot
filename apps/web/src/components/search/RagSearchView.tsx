@@ -11,7 +11,6 @@ import {
 import type { RagCitation } from "@/lib/rag-api"
 import Link from "next/link"
 import { SemanticSearchResults } from "./SemanticSearchResults"
-import { RagFallbackBadge } from "./RagFallbackBadge"
 
 const { Text } = Typography
 
@@ -122,16 +121,13 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
           </button>
         </div>
         {/* NFM-4539 RAG-C: anonymous-open — the "需登录" copy is gone;
-            the §3.2 honest neutral copy replaces it.  The badge below
-            surfaces transparent degradation when fallback fires. */}
+            the §3.2 honest neutral copy replaces it.  The §3.2 fallback
+            badge is rendered by SemanticSearchResults (the canonical
+            owner per NFM-4545 visual QA) so the user only sees one
+            amber pill, above the AI 回答 block. */}
         <Text type="secondary" className="block mt-2 text-xs">
           输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答
         </Text>
-        {state.fallback.used && (
-          <div className="mt-2">
-            <RagFallbackBadge fallback={state.fallback} />
-          </div>
-        )}
       </div>
 
       {/* Login required: still possible for editor-only mutations (ingest)

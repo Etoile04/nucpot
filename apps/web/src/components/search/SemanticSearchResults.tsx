@@ -111,26 +111,35 @@ export function SemanticSearchResults({
     return <Empty description={`检索失败：${error}`} />
   }
 
+  // NFM-4539 RAG-B / AC-4 / §3.2: the transparent-degradation badge is
+  // the canonical owner of the fallback signal (NFM-4545 visual QA —
+  // the user must always see exactly one amber pill).  Render it
+  // whenever fallback.used=true regardless of the answer state so the
+  // "ILIKE ran but found nothing" case still surfaces the caveat.
+  const fallbackBadge = fallback?.used ? (
+    <div className="flex">
+      <RagFallbackBadge fallback={fallback} />
+    </div>
+  ) : null
+
   if (!answer) {
     // NFM-4539 RAG-C / UAT-6: only show honest empty coverage once the
     // user has actually queried — before that, an empty Empty is the
     // right "waiting for input" state.
     if (hasSearched) {
-      return <EmptyCoverageCard />
+      return (
+        <div className="space-y-4">
+          {fallbackBadge}
+          <EmptyCoverageCard />
+        </div>
+      )
     }
     return <Empty description="请输入查询内容进行语义检索" />
   }
 
   return (
     <div className="space-y-6">
-      {/* NFM-4539 RAG-B / AC-4: transparent-degradation badge when
-          fallback.used=true.  Renders above the answer block so the
-          caveat is unmissable without obscuring the answer itself. */}
-      {fallback?.used && (
-        <div className="flex">
-          <RagFallbackBadge fallback={fallback} />
-        </div>
-      )}
+      {fallbackBadge}
 
       {/* Answer */}
       <div className="rounded-lg border border-blue-500/30 bg-blue-900/20 p-5">
