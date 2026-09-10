@@ -57,7 +57,7 @@ def test_all_sanctioned_entries_exist():
     for entry in SANCTIONED:
         assert entry in names
     # the launchd start wrappers ship too
-    assert {"start-proxy.sh", "start-watchdog.sh"} <= names
+    assert {"start-proxy.sh", "start-watchdog.sh", "start-mirror-health.sh"} <= names
 
 
 # ---- sudoers fragment (AC-G2.4) ------------------------------------------------
@@ -113,6 +113,10 @@ def test_sudoers_defaults_are_command_scoped():
         ("com.nfm.g2.docker-ro.plist", ["/usr/local/lib/nfm-g2/start-proxy.sh", "ro"]),
         ("com.nfm.g2.docker-full.plist", ["/usr/local/lib/nfm-g2/start-proxy.sh", "full"]),
         ("com.nfm.g2.socket-watchdog.plist", ["/usr/local/lib/nfm-g2/start-watchdog.sh"]),
+        (
+            "com.nfm.g2.mirror-health.plist",
+            ["/usr/local/lib/nfm-g2/start-mirror-health.sh"],
+        ),
     ],
 )
 def test_plists_launch_installed_root_scripts(plist, expected_args):

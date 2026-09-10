@@ -20,6 +20,7 @@
 
 import { request, type ApiResponse } from "./api-client"
 import {
+  type RagContractFallback,
   type RagContractQueryRequest,
   type RagContractQueryResponse as BackendQueryResponse,
   type RagContractReference as BackendReference,
@@ -35,6 +36,17 @@ export interface RagCitation {
   readonly excerpt: string
   readonly confidence: number
   readonly url?: string
+}
+
+/**
+ * NFM-4539 RAG-B / §3.2 / AC-4 — fallback envelope mirrored from the
+ * backend so the UI can render the §3.2 badge without inspecting
+ * internals.
+ */
+export interface RagFallbackInfo {
+  readonly used: boolean
+  readonly kind: string | null
+  readonly originalError: string | null
 }
 
 export interface RagMessage {
@@ -63,6 +75,12 @@ export interface RagQueryResponse {
    * and threads it across turns for its own UI bookkeeping.
    */
   readonly conversationId: string
+  /**
+   * NFM-4539 RAG-B: transparent degradation envelope.  Frontend defaults
+   * to ``{used:false, kind:null, originalError:null}`` for backward
+   * compatibility with servers that pre-date the RAG-B schema.
+   */
+  readonly fallback: RagFallbackInfo
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +98,23 @@ function mapReferenceToCitation(ref: BackendReference, idx: number): RagCitation
   }
 }
 
+/**
+ * Normalise the backend fallback envelope to the frontend shape.
+ *
+ * Pre-RAG-B servers do not emit a ``fallback`` field; we default to
+ * ``used=false`` so legacy clients keep rendering the success path.
+ */
+function mapFallback(backend: RagContractFallback | undefined): RagFallbackInfo {
+  if (!backend) {
+    return { used: false, kind: null, originalError: null }
+  }
+  return {
+    used: Boolean(backend.used),
+    kind: backend.kind ?? null,
+    originalError: backend.original_error ?? null,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fast-fail contract (NFM-3426 — AC-1 / AC-4)
 // ---------------------------------------------------------------------------
@@ -87,16 +122,16 @@ function mapReferenceToCitation(ref: BackendReference, idx: number): RagCitation
 /**
  * Fallback query budget in milliseconds.
  *
- * The backend fast-fails well inside this window, so a query still
- * outstanding at 45s is stalled rather than merely slow. The previous 14s
- * budget (NFM-3426) predates the 2026-08-30 LightRAG latency fix: with
- * reasoning_effort=none a cold mix/hybrid query over the local Ollama
- * (qwen3.5:4b-nvfp4) takes ~25-35s end-to-end, so 14s aborted every cold
- * query and forced users into the timeout copy; only cache hits (<0.2s)
- * made it under the wire. 45s covers the cold path with margin while the
- * LLM-cache still serves repeat queries near-instantly.
+ * NFM-4539 RAG-F: tightened from 45_000 → 15_000 after the NFM-4525
+ * thinking-mode fix (qwen3.5:4b-nvfp4 no longer eats the token budget on
+ * internal reasoning).  Cold mix/hybrid queries now complete inside the
+ * 10s API budget, so 15s gives the abort budget a comfortable margin
+ * without leaving the user staring at a spinner when the sidecar stalls.
+ * Backend fast-fails at ``NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0``, so the
+ * client budget only fires when the abort signal itself never reaches
+ * the server (e.g. NAT timeout).
  */
-export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 45_000
+export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 15_000
 
 /** Shown when the client-side AbortController fires. */
 export const RAG_TIMEOUT_MESSAGE = "查询超时，请稍后重试，或请尝试使用关键词搜索。"
@@ -241,6 +276,9 @@ export const ragApi = {
       return {
         answer: data.response,
         citations,
+        // NFM-4539 RAG-B: forward the fallback envelope so callers can
+        // render the §3.2 badge without re-parsing the response.
+        fallback: mapFallback(data.fallback),
         // Backend is stateless; let the caller pass a stable conversationId
         // or we mint one per call (single-shot search has no continuity).
         conversationId: payload.conversationId ?? crypto.randomUUID(),

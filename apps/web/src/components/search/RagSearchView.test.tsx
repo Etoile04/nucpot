@@ -32,12 +32,15 @@ describe("RagSearchView", () => {
     expect(screen.getByText("语义检索")).toBeInTheDocument()
   })
 
-  it("renders hint text", () => {
+  it("renders hint text without the legacy '需登录' copy (RAG-C)", () => {
     render(<RagSearchView />)
 
+    // NFM-4539 RAG-C: the anonymous-open posture removes the "需登录"
+    // hint; the new copy must not mention login.
     expect(
-      screen.getByText("需登录 · 输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答"),
+      screen.getByText("输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答"),
     ).toBeInTheDocument()
+    expect(screen.queryByText(/需登录/)).not.toBeInTheDocument()
   })
 
   it("disables button when input is empty", () => {
@@ -64,6 +67,7 @@ describe("RagSearchView", () => {
       answer: "铀-235的密度约为19.1 g/cm³",
       citations: [],
       conversationId: "conv-1",
+      fallback: { used: false, kind: null, originalError: null },
     })
 
     render(<RagSearchView />)
@@ -112,6 +116,7 @@ describe("RagSearchView", () => {
         answer: "钚-239",
         citations: [],
         conversationId: "conv-2",
+        fallback: { used: false, kind: null, originalError: null },
       })
     })
   })
@@ -142,6 +147,7 @@ describe("RagSearchView", () => {
         answer: "回答",
         citations: [],
         conversationId: "conv-3",
+        fallback: { used: false, kind: null, originalError: null },
       })
     })
   })
@@ -158,6 +164,7 @@ describe("RagSearchView", () => {
         },
       ],
       conversationId: "conv-4",
+      fallback: { used: false, kind: null, originalError: null },
     })
 
     render(<RagSearchView />)

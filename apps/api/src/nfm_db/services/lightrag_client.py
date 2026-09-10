@@ -241,6 +241,52 @@ class LightRAGClient:
             return False
 
     # ------------------------------------------------------------------
+    # Documents — NFM-4539 RAG-D
+    # ------------------------------------------------------------------
+
+    async def list_indexed_documents(self) -> list[str]:
+        """Return the set of ``data_source:<uuid>`` markers currently indexed.
+
+        NFM-4539 RAG-D §4.2: the daily reconciliation task pulls the full
+        completed-literature list and diffs it against the LightRAG index.
+        We only need a stable set of identity markers; the sidecar's
+        ``/documents`` endpoint returns the raw payload, and we project
+        down to the ``data_source:<uuid>`` tag the ``ingest()`` payload
+        stamps on each document.
+        """
+        try:
+            response = await self._http_client.get(
+                "/documents",
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: {exc}"
+            ) from exc
+
+        body = response.json()
+        # LightRAG's ``/documents`` envelope is an array of dicts; each
+        # has at minimum ``id`` and ``data_source`` (or ``file_source``).
+        markers: set[str] = set()
+        for row in body if isinstance(body, list) else body.get("documents", []):
+            if not isinstance(row, dict):
+                continue
+            source = row.get("data_source") or row.get("file_source")
+            if source:
+                markers.add(str(source))
+            # Fallback: some LightRAG versions only carry ``id`` shaped as
+            # ``data_source:<uuid>``; record both shapes.
+            rid = row.get("id")
+            if isinstance(rid, str) and rid.startswith("data_source:"):
+                markers.add(rid)
+        return sorted(markers)
+
+    # ------------------------------------------------------------------
     # Ingest
     # ------------------------------------------------------------------
 

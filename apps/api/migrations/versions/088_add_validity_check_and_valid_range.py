@@ -32,8 +32,8 @@ sanity gate (catching e.g. lattice=0.3 Å or density=0.05 g/cm³), not
 a domain-specific disqualifier. domain_expert review can override
 ``review_status='invalid'`` via the校对 page (spec §8.2 step 4).
 
-Revision ID: 086_add_validity_check_and_valid_range
-Revises: 085_g1b_conditions_dataset_versions_dedupe
+Revision ID: 088_add_validity_check_and_valid_range
+Revises: 087_create_rag_index_audit_log
 Create Date: 2026-09-10
 
 Coordination
@@ -41,9 +41,12 @@ Coordination
 
 * NFM-4547 (G1-A) ships ``extraction_to_db_mapper`` writer changes that
   populate ``validity_check`` at INSERT.
-* NFM-4549 (G1-C) ships migration 085 (literature dedup). The two
-  migrations are independent — the integration owner merges siblings
-  via a merge migration when NFM-4550 is approved.
+* Renumbered 086→088 during the NFM-4556 integration merge: main's
+  NFM-4539 (#1285) took the 086 slot (086_create_rag_access_log →
+  087_create_rag_index_audit_log) in parallel, both children of
+  085_g1b_conditions_dataset_versions_dedupe (NFM-4548 G1-B, PR #1286) —
+  keeping 086 would fork the DAG into two heads. Chained on 087 so
+  ``alembic heads`` stays single (NFM-4143 class guard).
 """
 
 from collections.abc import Sequence
@@ -51,8 +54,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "086_add_validity_check_and_valid_range"
-down_revision: str | Sequence[str] | None = "085_g1b_conditions_dataset_versions_dedupe"
+revision: str = "088_add_validity_check_and_valid_range"
+down_revision: str | Sequence[str] | None = "087_create_rag_index_audit_log"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

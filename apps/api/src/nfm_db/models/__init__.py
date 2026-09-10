@@ -213,6 +213,8 @@ from nfm_db.models.property import (  # noqa: E402
     PropertyMeasurement,
     PropertyType,
 )
+from nfm_db.models.rag_access_log import RagAccessLog  # noqa: E402
+from nfm_db.models.rag_index_audit_log import RagIndexAuditLog  # noqa: E402
 from nfm_db.models.re_extraction_queue import (  # noqa: E402
     RE_EXTRACTION_STATUSES,
     ReExtractionQueue,
@@ -333,6 +335,8 @@ __all__ = [
     "PropertyCategory",
     "PropertyMeasurement",
     "PropertyType",
+    "RagAccessLog",
+    "RagIndexAuditLog",
     "ReExtractionQueue",
     "RefGapFillStaging",
     "ReferenceValue",

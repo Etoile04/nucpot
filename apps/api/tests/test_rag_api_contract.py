@@ -19,12 +19,23 @@ from httpx import AsyncClient
 # Canonical field names — single source of truth.
 # MUST match QueryResponse in lightrag.py AND RagContractQueryResponse
 # in rag-contract.ts. If you change these, update all three locations.
-QUERY_RESPONSE_FIELDS = {"response", "references", "entities", "relationships"}
+# NFM-4539 RAG-B AC-4: ``fallback`` is the AC-4 degradation envelope;
+# the frontend RagFallbackBadge reads it to render the §3.2 transparent
+# badge.  Missing it from this set makes the contract test reject every
+# real query response.
+QUERY_RESPONSE_FIELDS = {
+    "response",
+    "references",
+    "entities",
+    "relationships",
+    "fallback",
+}
 QUERY_RESPONSE_FIELD_TYPES = {
     "response": str,
     "references": list,
     "entities": list,
     "relationships": list,
+    "fallback": dict,
 }
 
 INGEST_RESPONSE_FIELDS = {"status", "message", "track_id"}
@@ -93,9 +104,7 @@ async def test_query_response_contract_shape(async_client: AsyncClient) -> None:
                 }
             ],
             "entities": [{"name": "UO2", "type": "Material"}],
-            "relationships": [
-                {"source": "UO2", "target": "fuel", "description": "is a"}
-            ],
+            "relationships": [{"source": "UO2", "target": "fuel", "description": "is a"}],
         }
         mock_get_client.return_value = mock_client
 
@@ -111,9 +120,7 @@ async def test_query_response_contract_shape(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    _assert_contract_shape(
-        body["data"], QUERY_RESPONSE_FIELDS, QUERY_RESPONSE_FIELD_TYPES
-    )
+    _assert_contract_shape(body["data"], QUERY_RESPONSE_FIELDS, QUERY_RESPONSE_FIELD_TYPES)
 
 
 @pytest.mark.asyncio
@@ -138,9 +145,7 @@ async def test_query_response_contract_empty_collections(
 
     assert response.status_code == 200
     body = response.json()
-    _assert_contract_shape(
-        body["data"], QUERY_RESPONSE_FIELDS, QUERY_RESPONSE_FIELD_TYPES
-    )
+    _assert_contract_shape(body["data"], QUERY_RESPONSE_FIELDS, QUERY_RESPONSE_FIELD_TYPES)
 
 
 # ===========================================================================
@@ -168,9 +173,7 @@ async def test_ingest_response_contract_shape(async_client: AsyncClient) -> None
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    _assert_contract_shape(
-        body["data"], INGEST_RESPONSE_FIELDS, INGEST_RESPONSE_FIELD_TYPES
-    )
+    _assert_contract_shape(body["data"], INGEST_RESPONSE_FIELDS, INGEST_RESPONSE_FIELD_TYPES)
 
 
 # ===========================================================================
@@ -191,9 +194,7 @@ async def test_health_response_contract_shape(async_client: AsyncClient) -> None
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
-    _assert_contract_shape(
-        body["data"], HEALTH_RESPONSE_FIELDS, HEALTH_RESPONSE_FIELD_TYPES
-    )
+    _assert_contract_shape(body["data"], HEALTH_RESPONSE_FIELDS, HEALTH_RESPONSE_FIELD_TYPES)
 
 
 @pytest.mark.asyncio
@@ -210,7 +211,5 @@ async def test_health_response_contract_unhealthy(
 
     assert response.status_code == 200
     body = response.json()
-    _assert_contract_shape(
-        body["data"], HEALTH_RESPONSE_FIELDS, HEALTH_RESPONSE_FIELD_TYPES
-    )
+    _assert_contract_shape(body["data"], HEALTH_RESPONSE_FIELDS, HEALTH_RESPONSE_FIELD_TYPES)
     assert body["data"]["fallback_active"] is True
