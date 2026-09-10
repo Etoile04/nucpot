@@ -6,15 +6,23 @@ Covers:
 - ``compute_dedupe_key`` — deterministic over (dataset, property, source, value_hash)
 - The DB-level UNIQUE on ``property_measurements.dedupe_key`` rejects a
   second row with the same key (AC-9 — Owen 92-row case study).
+- ``extraction_to_db_mapper.map_and_persist`` actually populates
+  ``dedupe_key`` on every new measurement (regression guard for the
+  E2E QA 2026-09-10 probe: two identical mapper calls must collapse).
+- ``extraction_to_db_mapper.map_and_persist`` stamps fresh Datasets
+  with ``literature_doi`` / ``literature_content_hash`` so the
+  cross-row DOI → content_hash ladder can hit.
 
 Pattern follows ``test_dedup_service.py``: hermetic SQLite + aiosqlite.
 """
+
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
-from sqlalchemy import JSON, event
+from sqlalchemy import JSON, event, select
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
@@ -32,6 +40,7 @@ from nfm_db.models.property import (
     PropertyType,
 )
 from nfm_db.models.source import DataSource
+from nfm_db.services.extraction_to_db_mapper import map_and_persist
 from nfm_db.services.literature_dedup import (
     compute_dedupe_key,
     normalize_doi,
@@ -132,16 +141,10 @@ class TestNormalizeDoi:
         assert normalize_doi("10.1234/ abc") == "10.1234/abc"
 
     def test_strips_url_prefix_https(self) -> None:
-        assert (
-            normalize_doi("https://doi.org/10.1234/foo")
-            == "10.1234/foo"
-        )
+        assert normalize_doi("https://doi.org/10.1234/foo") == "10.1234/foo"
 
     def test_strips_url_prefix_http(self) -> None:
-        assert (
-            normalize_doi("http://dx.doi.org/10.1234/foo")
-            == "10.1234/foo"
-        )
+        assert normalize_doi("http://dx.doi.org/10.1234/foo") == "10.1234/foo"
 
     def test_strips_doi_prefix_scheme(self) -> None:
         assert normalize_doi("doi:10.1234/foo") == "10.1234/foo"
@@ -184,9 +187,7 @@ class TestResolveLiteratureDataset:
         db_session.add(existing)
         await db_session.flush()
 
-        hit = await resolve_literature_dataset(
-            db_session, doi="10.1234/BEELER", content_hash=None
-        )
+        hit = await resolve_literature_dataset(db_session, doi="10.1234/BEELER", content_hash=None)
         assert hit is not None
         assert hit.id == existing.id
 
@@ -223,9 +224,7 @@ class TestResolveLiteratureDataset:
         db_session.add(existing)
         await db_session.flush()
 
-        hit = await resolve_literature_dataset(
-            db_session, doi=None, content_hash="sha256:abc"
-        )
+        hit = await resolve_literature_dataset(db_session, doi=None, content_hash="sha256:abc")
         assert hit is not None
         assert hit.id == existing.id
 
@@ -257,9 +256,7 @@ class TestResolveLiteratureDataset:
         assert hit is not None
         assert hit.id == doi_ds.id
 
-    async def test_miss_returns_none(
-        self, db_session: AsyncSession, material: Material
-    ) -> None:
+    async def test_miss_returns_none(self, db_session: AsyncSession, material: Material) -> None:
         # Sanity: empty DB + both signals present → no hit.
         hit = await resolve_literature_dataset(
             db_session,
@@ -281,9 +278,7 @@ class TestResolveLiteratureDataset:
         db_session.add(existing)
         await db_session.flush()
 
-        hit = await resolve_literature_dataset(
-            db_session, doi="   ", content_hash="sha256:zzz"
-        )
+        hit = await resolve_literature_dataset(db_session, doi="   ", content_hash="sha256:zzz")
         assert hit is not None
         assert hit.id == existing.id
 
@@ -316,25 +311,19 @@ class TestComputeDedupeKey:
         d = uuid.uuid4()
         p = uuid.uuid4()
         s1, s2 = uuid.uuid4(), uuid.uuid4()
-        assert compute_dedupe_key(d, p, s1, "v") != compute_dedupe_key(
-            d, p, s2, "v"
-        )
+        assert compute_dedupe_key(d, p, s1, "v") != compute_dedupe_key(d, p, s2, "v")
 
     def test_changes_with_dataset(self) -> None:
         d1, d2 = uuid.uuid4(), uuid.uuid4()
         p = uuid.uuid4()
         s = uuid.uuid4()
-        assert compute_dedupe_key(d1, p, s, "v") != compute_dedupe_key(
-            d2, p, s, "v"
-        )
+        assert compute_dedupe_key(d1, p, s, "v") != compute_dedupe_key(d2, p, s, "v")
 
     def test_changes_with_property_type(self) -> None:
         d = uuid.uuid4()
         p1, p2 = uuid.uuid4(), uuid.uuid4()
         s = uuid.uuid4()
-        assert compute_dedupe_key(d, p1, s, "v") != compute_dedupe_key(
-            d, p2, s, "v"
-        )
+        assert compute_dedupe_key(d, p1, s, "v") != compute_dedupe_key(d, p2, s, "v")
 
 
 # ---------------------------------------------------------------------------
@@ -400,11 +389,256 @@ class TestDedupeKeyUniqueConstraint:
                     dataset_id=ds.id,
                     property_type_id=property_type.id,
                     method="",
-                    dedupe_key=compute_dedupe_key(
-                        ds.id, property_type.id, data_source.id, vh
-                    ),
+                    dedupe_key=compute_dedupe_key(ds.id, property_type.id, data_source.id, vh),
                     value_scalar=float(vh),
                     review_status="pending",
                 )
             )
         await db_session.flush()  # no IntegrityError
+
+
+# ---------------------------------------------------------------------------
+# Mapper wire-up — E2E QA 2026-09-10 regression guards
+# ---------------------------------------------------------------------------
+# The component tests above prove the schema, the helper, and the resolver
+# work in isolation. They do NOT prove the production write path actually
+# fires ``compute_dedupe_key`` on INSERT — which is exactly the gap the
+# E2E QA probe found (two identical mapper calls landed two rows because
+# the column stayed NULL). These tests exercise ``map_and_persist`` end
+# to end and assert the column + ladder columns are populated.
+
+
+def _make_extraction_input(
+    *,
+    source_doi: str | None = "10.1234/sample",
+    material_name: str = "UO2",
+    composition: str = "UO2",
+    property_name: str = "melting_point",
+    value: str = "2800",
+    unit: str = "K",
+    reference: str | None = "Smith et al., J. Nucl. Mater.",
+    source_file: str | None = "literature/UO2_paper.md",
+) -> dict[str, Any]:
+    """Build an extraction payload that matches what the real pipeline emits."""
+    out: dict[str, Any] = {
+        "source_file": source_file,
+        "material_name": material_name,
+        "composition": composition,
+        "property_category": "thermal",
+        "property": property_name,
+        "value": value,
+        "unit": unit,
+        "confidence": "high",
+    }
+    if reference is not None:
+        out["reference"] = reference
+    if source_doi is not None:
+        out["source_doi"] = source_doi
+    return out
+
+
+class TestMapperWritesDedupeKey:
+    """Every mapper INSERT must populate ``dedupe_key`` (AC-9 contract)."""
+
+    async def test_mapper_writes_dedupe_key_on_insert(self, db_session: AsyncSession) -> None:
+        # Seed the catalogue rows the mapper requires.
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        result = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
+        assert result.created_measurements == 1
+
+        # The QA probe asserted both rows landed with dedupe_key=NULL.
+        # After the wire-up the column MUST be populated.
+        rows = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].dedupe_key is not None
+        assert rows[0].dedupe_key.startswith("sha256:")
+        # And it MUST match the helper exactly — no off-by-one in the
+        # composite ordering (dataset, property, source, value_hash).
+        assert rows[0].dedupe_key == compute_dedupe_key(
+            rows[0].dataset_id,
+            rows[0].property_type_id,
+            # source_id is the FK on the joined dataset row.
+            (
+                await db_session.execute(
+                    select(Dataset.source_id).where(Dataset.id == rows[0].dataset_id)
+                )
+            ).scalar_one(),
+            # value_hash mirrors the mapper's own derivation (sha1 of
+            # sorted-JSON value kwargs). Recompute the canonical form so
+            # the test fails if either side drifts.
+            _expected_value_hash({"value_scalar": 2800.0}),
+        )
+
+    async def test_mapper_dedup_via_constraint_on_identical_rerun(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Reproduces the E2E QA 2026-09-10 probe scenario.
+
+        Two ``map_and_persist`` calls with identical inputs must collapse
+        to ONE ``PropertyMeasurement`` row (Owen 2023's 92-row case).
+        """
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        first = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
+        # Second call with the same payload — without an explicit dedupe_key
+        # (the real mapper never passes one). The mapper must catch the
+        # IntegrityError internally and count the row as skipped.
+        second = await map_and_persist(db_session, [_make_extraction_input(value="2800")])
+        assert first.created_measurements == 1
+        assert second.created_measurements == 0
+        assert second.skipped_duplicate_measurements == 1
+
+        rows = (await db_session.execute(select(PropertyMeasurement))).scalars().all()
+        assert len(rows) == 1, (
+            f"AC-9 regression: identical mapper calls landed {len(rows)} rows; expected 1."
+        )
+
+
+class TestMapperStampsLiteratureIdentity:
+    """New Datasets get ``literature_doi`` + ``literature_content_hash``."""
+
+    async def test_mapper_stamps_literature_doi_and_hash(self, db_session: AsyncSession) -> None:
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        # Pre-create the DataSource with a known DOI + file_hash (the
+        # extraction_doi is the URL-prefixed form; the mapper must
+        # normalize via normalize_doi before stamping).
+        ds = DataSource(
+            doi="HTTPS://DOI.ORG/10.1234/SAMPLE",
+            title="Smith et al., J. Nucl. Mater.",
+            source_type="journal_article",
+            file_hash="sha256:file-content-hash",
+        )
+        db_session.add(ds)
+        await db_session.flush()
+
+        result = await map_and_persist(
+            db_session,
+            [_make_extraction_input(source_doi=ds.doi)],
+        )
+        assert result.created_datasets == 1
+
+        datasets = (await db_session.execute(select(Dataset))).scalars().all()
+        assert len(datasets) == 1
+        # The mapper normalizes via normalize_doi (URL prefix stripped,
+        # lowercased). E2E QA's probe found literature_doi stayed NULL —
+        # after the wire-up it MUST match the normalized form.
+        assert datasets[0].literature_doi == normalize_doi(ds.doi)
+        # And the file_hash is propagated verbatim for the content_hash
+        # fallback ladder.
+        assert datasets[0].literature_content_hash == "sha256:file-content-hash"
+
+    async def test_resolve_literature_dataset_finds_newly_stamped_dataset(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Round-trip: after the mapper stamps a Dataset, the resolver hits."""
+        cat = MaterialCategory(name="Fuel", slug="fuel")
+        db_session.add(cat)
+        await db_session.flush()
+        mat = Material(name="UO2", formula="UO2", category_id=cat.id)
+        db_session.add(mat)
+        await db_session.flush()
+
+        pcat = PropertyCategory(name="thermal", slug="thermal")
+        db_session.add(pcat)
+        await db_session.flush()
+        pt = PropertyType(
+            name="melting_point",
+            slug="melting_point",
+            category_id=pcat.id,
+            value_type="scalar",
+        )
+        db_session.add(pt)
+        await db_session.flush()
+
+        ds = DataSource(
+            doi="10.1234/round-trip",
+            title="Round trip",
+            source_type="journal_article",
+            file_hash="sha256:rt",
+        )
+        db_session.add(ds)
+        await db_session.flush()
+
+        await map_and_persist(db_session, [_make_extraction_input(source_doi=ds.doi)])
+
+        # Re-resolve using a different shape of the DOI — the resolver
+        # must hit the freshly stamped row.
+        hit = await resolve_literature_dataset(
+            db_session,
+            doi="https://doi.org/10.1234/round-trip",
+            content_hash=None,
+        )
+        assert hit is not None
+        assert hit.literature_doi == "10.1234/round-trip"
+
+
+def _expected_value_hash(value_kwargs: dict[str, Any]) -> str:
+    """Mirror :func:`extraction_to_db_mapper._value_hash` for test assertions.
+
+    The mapper's own helper uses SHA-1 over a sorted-JSON canonicalization
+    of the value kwargs. We recompute the same form so the test fails if
+    either side changes shape (drift detector).
+    """
+    import hashlib
+    import json as _json
+
+    serialised = _json.dumps(
+        {k: v for k, v in value_kwargs.items() if v is not None},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha1(serialised.encode("utf-8")).hexdigest()

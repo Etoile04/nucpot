@@ -19,6 +19,7 @@ than in SQL because the DOI column needs Unicode/case/whitespace
 normalization before lookup — easier to do once in Python and query
 the already-normalized form.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -66,6 +67,9 @@ def normalize_doi(raw: str | None) -> str | None:
     >>> normalize_doi("doi:10.1234/foo")
     '10.1234/foo'
     >>> normalize_doi("")
+
+    >>> normalize_doi("not-a-doi")
+
     """
     if raw is None:
         return None
@@ -76,7 +80,7 @@ def normalize_doi(raw: str | None) -> str | None:
     lowered = cleaned.lower()
     for prefix in _URL_PREFIXES:
         if lowered.startswith(prefix):
-            cleaned = cleaned[len(prefix):]
+            cleaned = cleaned[len(prefix) :]
             lowered = cleaned.lower()
             break
 
@@ -157,11 +161,7 @@ async def resolve_literature_dataset(
             return hit
 
     if content_hash:
-        stmt = (
-            select(Dataset)
-            .where(Dataset.literature_content_hash == content_hash)
-            .limit(1)
-        )
+        stmt = select(Dataset).where(Dataset.literature_content_hash == content_hash).limit(1)
         hit = (await db.execute(stmt)).scalar_one_or_none()
         if hit is not None:
             logger.info(

@@ -162,9 +162,7 @@ class Dataset(TimestampMixin, Base):
     literature_content_hash: Mapped[str | None] = mapped_column(
         String(128),
         nullable=True,
-        comment=(
-            "SHA-256 of the canonical PDF bytes (or normalized content_md)."
-        ),
+        comment=("SHA-256 of the canonical PDF bytes (or normalized content_md)."),
     )
 
     # -- relationships --
@@ -196,11 +194,13 @@ class PropertyMeasurement(TimestampMixin, Base):
         # ``dedupe_key`` column is a server-side composite of
         # (dataset_id, property_type_id, source_id, value_hash) —
         # the writer side is ``compute_dedupe_key`` in
-        # ``nfm_db.services.literature_dedup``. Owen 2023's 92-row
-        # duplicate case (same value, same source, same dataset)
-        # collapses to one row once the mapper calls
-        # ``compute_dedupe_key``. Migration 085 backfills legacy rows
-        # with ``sha256:legacy:<uuid>`` then flips to NOT NULL.
+        # ``nfm_db.services.literature_dedup``, called by
+        # ``extraction_to_db_mapper.map_and_persist`` on every new
+        # INSERT. Owen 2023's 92-row duplicate case (same value,
+        # same source, same dataset) collapses to one row at the DB
+        # level — the unique index turns the second INSERT into
+        # IntegrityError. Legacy rows may be NULL; PG + SQLite both
+        # permit multiple NULLs in a UNIQUE index by SQL spec.
         UniqueConstraint("dedupe_key", name="uq_property_measurements_dedupe_key"),
         # NFM-2032 / NFM-2013 AC-4: composite UNIQUE INDEX that enforces
         # the 5-tuple dedup key (NFM-1981 AC-2) at the DB level.
@@ -288,11 +288,11 @@ class PropertyMeasurement(TimestampMixin, Base):
 
     # NFM-4549 / G1-C — property_measurements dedupe_key
     # (ADR-017 §2.6 / spec §3.1). Nullable in the ORM so that
-    # lower-level tests and admin scripts can insert rows without
-    # knowing the dedup composite; the UNIQUE constraint still
-    # enforces uniqueness on the rows the mapper populates. The
-    # mapper (``extraction_to_db_mapper`` — NFM-4547) writes the
-    # ``dedupe_key`` on INSERT via
+    # legacy rows + lower-level admin scripts can insert rows
+    # without knowing the dedup composite; the UNIQUE constraint
+    # still enforces uniqueness on the rows the mapper populates.
+    # The mapper (``extraction_to_db_mapper.map_and_persist`` —
+    # NFM-4549 / G1-C) writes the ``dedupe_key`` on INSERT via
     # ``nfm_db.services.literature_dedup.compute_dedupe_key``.
     # AC-9: Owen 2023's 92-row case study (same value, same source,
     # same dataset) collapses to one row once the mapper calls

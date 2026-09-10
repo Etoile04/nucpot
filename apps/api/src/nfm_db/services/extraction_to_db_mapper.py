@@ -9,6 +9,16 @@ Mapping:
   property_category / property → PropertyType lookup
   value / unit / conditions → Dataset + PropertyMeasurement + MeasurementCondition
 
+Dedup (NFM-4549 / G1-C — AC-9):
+  The mapper writes ``property_measurements.dedupe_key`` on every
+  INSERT via :func:`nfm_db.services.literature_dedup.compute_dedupe_key`.
+  A second INSERT with the same ``(dataset_id, property_type_id, source_id,
+  value_hash)`` raises ``IntegrityError`` and is counted as a skipped
+  duplicate — Owen 2023's 92-row case collapses to one row.
+  The mapper also stamps ``Dataset.literature_doi`` / ``literature_content_hash``
+  on first creation so the cross-row DOI → content_hash ladder in
+  :func:`resolve_literature_dataset` can hit on subsequent extractions.
+
 All operations run within a single DB transaction.
 """
 
@@ -44,6 +54,10 @@ from nfm_db.services.health_event_emitter import (
     build_context,
     emit_health_event,
 )
+from nfm_db.services.literature_dedup import (
+    compute_dedupe_key,
+    normalize_doi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +66,16 @@ logger = logging.getLogger(__name__)
 # cross-request duplicate (rather than a real DB error).  The composite
 # UNIQUE INDEXes introduced by migration 032 turn any concurrent-insert
 # race into an IntegrityError; the dedup race must NOT surface as a 500.
+# ``uq_property_measurements_dedupe_key`` (NFM-4549 / G1-C, AC-9) joins the
+# list — it fires when ``compute_dedupe_key`` collides on a re-run.
 # Match by both the wrapped pgcode (Postgres) and a substring over the
 # message text for portability across SQLite and Postgres.
 _DEDUP_CONFLICT_FRAGMENTS: tuple[str, ...] = (
     "uq_pm_dedup",
     "uq_datasets_source_material",
+    "uq_datasets_literature_doi",
+    "uq_datasets_literature_content_hash",
+    "uq_property_measurements_dedupe_key",
     "unique constraint",
     "unique_violation",
     "UNIQUE constraint failed",
@@ -329,6 +348,30 @@ def _conditions_hash(conditions: dict[str, Any] | None) -> str:
     if not conditions:
         return hashlib.sha1(b"{}").hexdigest()
     serialised = json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
+
+
+def _value_hash(value_kwargs: dict[str, Any]) -> str:
+    """Stable SHA1 hex digest of the measurement value kwargs.
+
+    Used by AC-9's :func:`compute_dedupe_key` so two ``PropertyMeasurement``
+    rows with the same value (regardless of which value column carries it —
+    scalar / min / max / expression / list / text) collapse to one row.
+
+    Only the value columns are hashed; ``method``, ``conditions_hash``,
+    and ``review_status`` are deliberately omitted — they live in the
+    ``uq_pm_dedup`` 5-tuple constraint but AC-9's "same value, same
+    source, same dataset" rule says conditions must NOT collapse (per
+    :mod:`nfm_db.services.literature_dedup` docstring, only unconditional
+    duplicates collapse).
+    """
+    # ``None``-drop values that are not set; sort by key for stability.
+    serialised = json.dumps(
+        {k: v for k, v in value_kwargs.items() if v is not None},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return hashlib.sha1(serialised.encode("utf-8")).hexdigest()
 
 
@@ -891,16 +934,78 @@ async def map_and_persist(
                 dataset_map[d_key] = existing_dataset
                 reused_entities += 1
             else:
-                dataset = Dataset(
-                    material_id=material.id,
-                    source_id=source.id,
-                    title=dataset_title,
-                    is_verified=False,
-                )
-                db.add(dataset)
-                await db.flush()
-                dataset_map[d_key] = dataset
-                created_datasets += 1
+                # NFM-4549 / G1-C — stamp the dataset with the literature
+                # identity signals so the cross-row DOI → content_hash
+                # ladder (:func:`resolve_literature_dataset`) can hit on
+                # the next extraction. Both columns are partial-unique
+                # (migration 085) so two datasets sharing a NULL are
+                # legal; once one carries a non-null value it becomes
+                # the canonical row for that literature. A concurrent or
+                # sequential same-DOI cross-source race (different
+                # ``(material, source)`` pair whose normalized DOI /
+                # content_hash collides with the canonical row) must
+                # NOT abort the outer transaction: wrap the INSERT in a
+                # SAVEPOINT and recover by reusing the canonical row.
+                try:
+                    async with db.begin_nested():
+                        dataset = Dataset(
+                            material_id=material.id,
+                            source_id=source.id,
+                            title=dataset_title,
+                            is_verified=False,
+                            literature_doi=normalize_doi(source.doi),
+                            literature_content_hash=source.file_hash,
+                        )
+                        db.add(dataset)
+                        await db.flush()
+                except IntegrityError as exc:
+                    if _is_dedup_conflict(exc):
+                        # A racing request already wrote the canonical
+                        # dataset for this literature identity. Roll
+                        # back the SAVEPOINT, re-fetch by the same
+                        # ``(material, source)`` pair we just tried, and
+                        # reuse whichever canonical row the index now
+                        # resolves to.
+                        logger.debug(
+                            "Dedup conflict on dataset "
+                            "(material=%s, source=%s, literature_doi=%s, "
+                            "literature_content_hash=%s): %s",
+                            material.id,
+                            source.id,
+                            normalize_doi(source.doi),
+                            source.file_hash,
+                            exc,
+                        )
+                        existing_dataset = (
+                            (
+                                await db.execute(
+                                    select(Dataset).where(
+                                        Dataset.material_id == material.id,
+                                        Dataset.source_id == source.id,
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .first()
+                        )
+                        if existing_dataset is not None:
+                            dataset_map[d_key] = existing_dataset
+                            reused_entities += 1
+                        else:
+                            # The partial-unique index fired but no row
+                            # yet exists for this ``(material, source)``
+                            # pair — extremely unlikely (a third party
+                            # deleted the canonical row between the
+                            # conflicting INSERT and our re-read), but
+                            # propagate rather than silently drop the
+                            # measurement to avoid data loss.
+                            raise
+                    else:
+                        # Real DB error — propagate.
+                        raise
+                else:
+                    dataset_map[d_key] = dataset
+                    created_datasets += 1
 
         dataset = dataset_map[d_key]
 
@@ -970,6 +1075,21 @@ async def map_and_persist(
         # instead of being a flat 0.70.
         review_status = _confidence_to_review_status(item.confidence)
 
+        # NFM-4549 / G1-C — AC-9 dedupe_key: a deterministic SHA-256 over
+        # (dataset_id, property_type_id, source_id, value_hash). Owen 2023's
+        # 92-row case (same value, same source, same dataset) collapses to
+        # one row at the DB level via the
+        # ``uq_property_measurements_dedupe_key`` UNIQUE INDEX (migration
+        # 085). The mapper is the only writer — see
+        # :func:`nfm_db.services.literature_dedup.compute_dedupe_key`.
+        dedupe_value_hash = _value_hash(value_kwargs)
+        dedupe_key = compute_dedupe_key(
+            dataset.id,
+            property_type.id,
+            source.id,
+            dedupe_value_hash,
+        )
+
         # NFM-2032 CR Finding #4: wrap the per-measurement INSERT in a
         # SAVEPOINT so a concurrent cross-request dedup race produces
         # IntegrityError without poisoning the outer transaction.
@@ -984,6 +1104,7 @@ async def map_and_persist(
                     review_status=review_status,
                     conditions_hash=cond_h,
                     method=method_str,
+                    dedupe_key=dedupe_key,
                     **value_kwargs,
                 )
                 db.add(measurement)
@@ -994,11 +1115,12 @@ async def map_and_persist(
                 # Roll back this SAVEPOINT and count as skipped.
                 logger.debug(
                     "Dedup conflict on (dataset=%s, prop_type=%s, "
-                    "conditions_hash=%s, method=%s): %s",
+                    "conditions_hash=%s, method=%s, dedupe_key=%s): %s",
                     dataset.id,
                     property_type.id,
                     cond_h,
                     method_str,
+                    dedupe_key,
                     exc,
                 )
                 skipped_duplicate_measurements += 1

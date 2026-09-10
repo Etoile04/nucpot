@@ -564,10 +564,10 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # ADR-017 §2.5: resolve the DOI / content_hash to an existing
         # ``Dataset`` if one is already known. The match is stored as
         # a hint in ``ds.metadata_`` so the extraction mapper
-        # (``extraction_to_db_mapper`` — owned by NFM-4547) can route
-        # the new ``DataSource`` onto the existing dataset row instead
-        # of creating a fresh one. Miss path (no match) leaves the
-        # mapper to allocate a new dataset as it does today.
+        # (``extraction_to_db_mapper`` — also NFM-4549 / G1-C) can
+        # route the new ``DataSource`` onto the existing dataset row
+        # instead of creating a fresh one. Miss path (no match) leaves
+        # the mapper to allocate a new dataset as it does today.
         #
         # The hint is intentionally metadata-only: the per-literature
         # isolation + version table that ADR-017 §2.5 also requires

@@ -12,7 +12,7 @@ Implements the schema half of ADR-017 §2.5 + §2.6:
   for the same reason: a PDF SHA-256 identifies a literature, but
   legacy datasets without a recorded hash must coexist.
 
-* ``property_measurements.dedupe_key`` — NOT NULL with a **full UNIQUE**
+* ``property_measurements.dedupe_key`` — **nullable**, full UNIQUE
   constraint. This is the AC-9 hook: Owen 2023's 92-row case study
   (same value repeated) collapses to one row once the mapper writes
   ``compute_dedupe_key(...)``. The constraint is the load-bearing
@@ -21,17 +21,32 @@ Implements the schema half of ADR-017 §2.5 + §2.6:
 Notes
 =====
 
-* The dedupe_key column is NOT NULL. We backfill existing rows with
-  ``compute_dedupe_key(dataset_id, property_type_id, source_id,
-  conditions_hash)`` so the ALTER TABLE doesn't fail — the source_id
-  comes from the joined dataset (legacy ``uq_pm_dedup`` was keyed on
-  conditions_hash + method, which still works as a value_hash proxy
-  for backfill purposes).
+* ``dedupe_key`` is intentionally **nullable** (not NOT NULL):
+  legacy rows predate the dedup contract, and a backfill in this
+  migration would have to derive ``value_hash`` from heterogeneous
+  legacy data (some rows use ``value_text`` only, some use
+  ``value_scalar``, etc.) — a single shape does not fit. PG and
+  SQLite both permit multiple NULLs in a UNIQUE index by SQL spec,
+  so legacy rows coexist without a backfill. The mapper
+  (``extraction_to_db_mapper.map_and_persist``) is the only
+  writer-side caller of ``compute_dedupe_key``; it MUST populate
+  the column on every new INSERT (verified end-to-end by
+  ``tests/test_literature_dedup.py::TestMapperWritesDedupeKey``).
+  AC-9 is therefore enforced at the row level (every mapper write)
+  not at the column level (NOT NULL + backfill).
 
-* The mapper in ``extraction_to_db_mapper`` (NFM-4547) writes the
+* The mapper in ``extraction_to_db_mapper`` writes the
   ``dedupe_key`` column on INSERT. This migration only adds the
-  schema — the wire-up at write time is a sibling task. AC-9 is
-  verified at the DB level by ``test_literature_dedup.TestDedupeKeyUniqueConstraint``.
+  schema — the writer wire-up is in this same issue
+  (``extraction_to_db_mapper`` — NFM-4549, NOT NFM-4547: G1-A
+  owns the prompt / adapter / lock file, not the DB mapper). AC-9
+  is verified at the DB level by
+  ``tests/test_literature_dedup.py::TestDedupeKeyUniqueConstraint``.
+
+* ``literature_doi`` is populated by ``extraction_to_db_mapper`` when
+  a fresh ``Dataset`` row is created (via ``normalize_doi(source.doi)``
+  from the parent ``DataSource``). Legacy datasets may carry NULL until
+  a curator backfills them. Partial UNIQUE keeps NULL rows legal.
 
 * Partial UNIQUE indexes (``WHERE col IS NOT NULL``) are PG and
   SQLite-3.8+ compatible. SQLite's UNIQUE constraint doesn't accept
@@ -42,6 +57,7 @@ Revision ID: 085_literature_dedup
 Revises: 084_potentials_list_partial_index
 Create Date: 2026-09-10
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -119,8 +135,8 @@ def upgrade() -> None:
     _partial_unique("datasets", "literature_content_hash", _CONTENT_HASH_INDEX)
 
     # --- property_measurements.dedupe_key -------------------------------
-    # Nullable: the mapper (``extraction_to_db_mapper`` — NFM-4547)
-    # writes the column on INSERT. The UNIQUE index still enforces
+    # Nullable: the mapper (``extraction_to_db_mapper`` — NFM-4549 /
+    # G1-C) writes the column on INSERT. The UNIQUE index still enforces
     # AC-9 once rows are populated. PG + SQLite both permit multiple
     # NULLs in a UNIQUE column by default, so legacy rows coexist.
     op.add_column(
