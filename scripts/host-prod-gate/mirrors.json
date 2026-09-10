@@ -1,0 +1,28 @@
+{
+  "mirrors": [
+    {
+      "name": "daocloud",
+      "url": "https://docker.m.daocloud.io",
+      "fronts_prod_images": true,
+      "comment": "primary; fronts nucpot-prod-* via DaoCloud allowlist"
+    },
+    {
+      "name": "1panel",
+      "url": "https://docker.1panel.live",
+      "fronts_prod_images": true,
+      "comment": "secondary; fronts nucpot-prod-* — broken for library/alpine as of 2026-09-10"
+    },
+    {
+      "name": "dockerproxy",
+      "url": "https://dockerproxy.com",
+      "fronts_prod_images": false,
+      "comment": "fallback; does NOT front private nucpot-prod-* images"
+    },
+    {
+      "name": "ustc",
+      "url": "https://docker.mirrors.ustc.edu.cn",
+      "fronts_prod_images": false,
+      "comment": "fallback; CN-only, does NOT front private nucpot-prod-* images"
+    }
+  ]
+}

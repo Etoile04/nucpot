@@ -50,6 +50,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `nfm_docker_gate/peercred.py` | AF_UNIX peer identity (macOS LOCAL_PEERCRED/PEERPID, Linux SO_PEERCRED) |
 | `nfm_docker_gate/audit.py` | JSONL audit log |
 | `nfm_docker_gate/watchdog.py` | socket-perms + docker-context watchdog |
+| `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat) |
 | `nfm_docker_gate_proxy.py` | launchd entry for either proxy mode |
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
 | `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion |
@@ -57,12 +58,13 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` |
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
-| `entries/start-proxy.sh`, `entries/start-watchdog.sh` | launchd shims (read `upstream.conf`) |
+| `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
-| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog) |
+| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |
 | `probe_g2.sh` | AC verification probe (run as the desktop user) |
 | `config.json` | prod scope prefixes (names, not files) |
+| `mirrors.json` | NFM-4587 mirror allowlist + prod-fronting flag |
 
 ## Develop
 

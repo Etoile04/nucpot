@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-4587 (ADR-013 G2 mirror-health) — registry-mirror health watchdog.
+     Installed to /Library/LaunchDaemons by scripts/host-prod-gate/host_setup.sh.
+     Probes every mirror in /usr/local/lib/nfm-g2/mirrors.json every 30s,
+     writes an "alarm" JSONL record to /var/log/nfm-g2/mirror-health.log
+     when fewer than 2 mirrors return 200/401 or the prod allowlist mirror
+     is dark. probe_g2.sh reads the latest alarm record to verify the
+     heartbeat. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.mirror-health</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/lib/nfm-g2/start-mirror-health.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/launchd-mirror-health.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/launchd-mirror-health.log</string>
+</dict>
+</plist>

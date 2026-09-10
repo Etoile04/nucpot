@@ -62,6 +62,7 @@ import nfm_docker_gate.peercred as peercred
 import nfm_docker_gate.policy as policy
 import nfm_docker_gate.proxy as proxy
 import nfm_docker_gate.watchdog as watchdog
+import nfm_docker_gate.mirror_health as mirror_health
 
 # defect 1: the module-level Resolver alias must evaluate on 3.9
 assert policy.Resolver is not None
@@ -80,6 +81,14 @@ denied = policy.classify(
     "POST", "/v1.43/containers/nucpot-prod-api-1/stop", "", None, None, cfg
 )
 assert not denied.allowed and denied.scope == "prod", denied
+
+# NFM-4587: mirror-health module imports + classifier shape on 3.9.
+# load_mirrors is exercised by its dedicated tests; here we only prove
+# the module imports without raising (catches PEP 604 / datetime.UTC
+# regressions the same way the policy/audit smoke does above).
+assert mirror_health.Mirror is not None
+assert mirror_health.HealthSummary is not None
+assert mirror_health.DEFAULT_THRESHOLD == 2
 
 # defect 3: an idle accept() timeout must not kill serve_forever on 3.9,
 # where socket.timeout is NOT the built-in TimeoutError
