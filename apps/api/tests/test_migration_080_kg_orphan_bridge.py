@@ -110,12 +110,15 @@ class TestMigration080Chain:
         (valid_range on property_types + validity_check JSONB on
         property_measurements) originally numbered 086 forked the DAG
         against main's 086_create_rag_access_log and is renumbered
-        088_add_validity_check_and_valid_range chained after 087 —
-        088 is the current head.  This keeps asserting "exactly one
+        088_add_validity_check_and_valid_range chained after 087.
+        089_add_ix_verification_tasks_status (NFM-4636, the idempotent
+        CREATE INDEX for the latent verification_tasks.status drift)
+        chained after 088 — 089 is the current head.  This keeps
+        asserting "exactly one
         head" so a future bad down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "088_add_validity_check_and_valid_range"
+        current_head = "089_add_ix_verification_tasks_status"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
