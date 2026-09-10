@@ -35,6 +35,10 @@ from nfm_db.models.ontology_version import OntologyVersion
 from nfm_db.services.extraction_prompt import (
     build_ontology_extraction_prompt,
 )
+from nfm_db.services.extraction_skill import (
+    extract_skill_prompt,
+    is_skill_enabled,
+)
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 
 # ---------------------------------------------------------------------------
@@ -526,19 +530,34 @@ async def ontofuel_extract(
         if source_type != "datasource":
             content = _load_source_content(source_reference)
 
-        # Build system prompt — ontology-driven (NFM-3258)
+        # Build system prompt — ontology-driven (NFM-3258) with optional
+        # skill override (NFM-4547 / ADR-016 §2.7). The skill prompt is
+        # only consulted when EXTRACTION_SKILL_ENABLED=true; otherwise
+        # the legacy ontology prompt is used unchanged.
         ontology_version = await _get_latest_published_ontology(db) if db is not None else None
         if ontology_version is None:
             raise ValueError(
                 "A published ontology version is required for extraction. "
                 "No published OntologyVersion found in the database."
             )
-        system_prompt = build_ontology_extraction_prompt(ontology_version)
-        logger.info(
-            "Ontology-driven prompt: version=%s (id=%s)",
-            ontology_version.version,
-            ontology_version.id,
-        )
+        if is_skill_enabled():
+            # Skill factory performs the strict pin check (AC-8) and
+            # raises SkillPinMismatchError on drift — fail-closed.
+            system_prompt = extract_skill_prompt(
+                skill_version=None,
+                ontology_version=ontology_version,
+            )
+            logger.info(
+                "Skill-driven prompt: ontology=%s (skill flag ON)",
+                ontology_version.version,
+            )
+        else:
+            system_prompt = build_ontology_extraction_prompt(ontology_version)
+            logger.info(
+                "Ontology-driven prompt: version=%s (id=%s)",
+                ontology_version.version,
+                ontology_version.id,
+            )
 
         # Call LLM — with chunking for large inputs (NFM-1366 P3)
         # If content exceeds the model's context window, split into
