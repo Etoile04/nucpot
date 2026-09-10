@@ -38,6 +38,11 @@ const STATUS_LABEL: Record<string, { color: string; text: string }> = {
   rejected: { color: "red", text: "已无效" },
   needs_revision: { color: "orange", text: "需修改" },
   corrected: { color: "blue", text: "已修改" },
+  // NFM-4554 spec §3.4 — 跳过 → `skipped` already routes to its own Tag
+  // bucket so the row shows "已跳过" instead of falling back to the raw
+  // review_status string. Cyan tone is reserved here to avoid colliding
+  // with the dedupe-merge badge.
+  skipped: { color: "default", text: "已跳过" },
 }
 
 interface ReviewQueueContentProps {

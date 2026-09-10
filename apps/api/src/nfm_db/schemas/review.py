@@ -103,6 +103,7 @@ class ReviewStatsResponse(BaseModel):
     rejected: int = 0
     needs_revision: int = 0
     corrected: int = 0
+    skipped: int = 0  # NFM-4554 spec §3.4 — 临时跳过 / 后续仍可恢复
     # New adoption rate fields
     total_reviewed: int = 0
     adoption_rate: float | None = None  # corrected / (corrected + rejected)

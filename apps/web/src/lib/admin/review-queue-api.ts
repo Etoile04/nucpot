@@ -6,10 +6,15 @@
  * G1-extraction-value-presentation.md §4.2 + §4.3.
  *
  * UI vocabulary (§3.4 — six actions) is mapped onto the backend's current
- * transition machine (pending → approved | rejected | needs_revision →
- * corrected | pending). The "skip" and "dispute" actions have no dedicated
- * backend status yet; they reuse the closest transition with a mandatory
- * ``note`` so the intent is recoverable from the audit trail.
+ * transition machine (pending → approved | rejected | needs_revision |
+ * skipped → corrected | approved | rejected | needs_revision → pending).
+ * The "skip" action maps to the spec-faithful `skipped` status (NFM-4554
+ * E2E QA round-4 bounce-back); it is a first-class review_status with
+ * round-trip transitions (skipped ↔ pending), so the audit trail, stats
+ * aggregation, and row re-discovery by the queue stay correct.
+ *
+ * The "dispute" action reuses ``needs_revision`` (with a mandatory
+ * ``note``) until §3.4's `disputed` status lands as a follow-up.
  */
 import { request } from "@/lib/api-client"
 
@@ -61,7 +66,7 @@ export type ReviewAction =
   | "modify" // 需修改 → backend status "needs_revision"
   | "invalid" // 标记无效 → backend status "rejected"
   | "dispute" // 来源存疑 → backend status "needs_revision" + note
-  | "skip" // 跳过 → keeps status "pending" + audit note
+  | "skip" // 跳过 → backend status "skipped" (spec §3.4)
 
 /** Per spec §3.4 — actions that REQUIRE a reviewer note. */
 export const NOTE_REQUIRED_ACTIONS: ReadonlySet<ReviewAction> = new Set(["dispute", "modify"])
@@ -197,13 +202,17 @@ export async function fetchMeasurementContext(measurementId: string): Promise<{
  * forwards ``note`` to ``reviewer_note`` (mandatory for ``dispute`` and
  * ``modify`` per spec §3.4).
  *
- * Backend status vocabulary (NFM-4554 transitional mapping — see ADR and
- * the G1 spec for the eventual six-state migration):
+ * Backend status vocabulary (NFM-4554 spec §3.4 mapping):
  *   confirm → approved
  *   modify  → needs_revision
  *   invalid → rejected
- *   dispute → needs_revision (with note as the dispute rationale)
- *   skip    → pending      (note carries the skip reason)
+ *   dispute → needs_revision (with note as the dispute rationale;
+ *              the eventual `disputed` enum value is a follow-up)
+ *   skip    → skipped       (NFM-4554 round-4: was incorrectly mapped
+ *              to `pending`, which the backend's no-op self-transition
+ *              guard rejects with 409 → user-visible error toast;
+ *              `skipped` is the spec-faithful first-class status with
+ *              full round-trip transitions)
  */
 export interface ReviewDecision {
   readonly action: ReviewAction
@@ -244,6 +253,9 @@ function mapActionToBackendStatus(action: ReviewAction): string {
     case "dispute":
       return "needs_revision"
     case "skip":
-      return "pending"
+      // NFM-4554 spec §3.4 — 跳过 maps to `skipped` (first-class status).
+      // Sending `pending` here was rejected by the backend's self-transition
+      // guard (409), surfacing a raw state-machine detail to the reviewer.
+      return "skipped"
   }
 }

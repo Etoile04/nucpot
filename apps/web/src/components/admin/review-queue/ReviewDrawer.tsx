@@ -56,6 +56,37 @@ const ACTION_META: Record<
   skip: { label: "跳过", icon: <MinusCircleOutlined />, tone: "default" },
 }
 
+/**
+ * Translate raw backend / network errors into user-facing copy for the
+ * review-drawer error toast.
+ *
+ * NFM-4554 round-4 finding O1: the previous implementation surfaced the
+ * raw backend `detail` message (e.g. "Cannot transition from pending to
+ * pending. Allowed: ['approved', 'rejected', 'needs_revision']"), leaking
+ * internal state-machine detail. Now we match on the canonical 409 / 422
+ * phrases the backend emits and substitute a friendly Chinese message;
+ * any other error falls back to a generic retry hint.
+ */
+function localizeReviewSubmitError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : ""
+  if (/cannot transition/i.test(raw) || /not allowed/i.test(raw)) {
+    return "提交失败:不允许的状态转换,请刷新队列后重试"
+  }
+  if (/invalid status/i.test(raw)) {
+    return "提交失败:未知的状态值,请刷新页面后重试"
+  }
+  if (/not found/i.test(raw)) {
+    return "提交失败:该行已被其他校对员处理或已删除"
+  }
+  if (/unauthorized|forbidden/i.test(raw)) {
+    return "提交失败:没有该操作的权限"
+  }
+  if (raw) {
+    return `提交失败:${raw}`
+  }
+  return "提交失败,请稍后重试"
+}
+
 export function ReviewDrawer({ item, open, onClose, onDecided, validityCheck }: ReviewDrawerProps) {
   const [note, setNote] = useState("")
   const [pending, setPending] = useState<ReviewAction | null>(null)
@@ -87,8 +118,7 @@ export function ReviewDrawer({ item, open, onClose, onDecided, validityCheck }: 
       onDecided(item!.id, action)
       onClose()
     } catch (err) {
-      const message = err instanceof Error ? err.message : "提交失败,请稍后重试"
-      messageApi.error(message)
+      messageApi.error(localizeReviewSubmitError(err))
     } finally {
       setPending(null)
     }

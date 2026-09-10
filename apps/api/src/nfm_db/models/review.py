@@ -1,6 +1,7 @@
 """Review model and status enum for Phase 3 human review system.
 
-State machine: pending → approved | rejected | needs_revision → corrected.
+State machine: pending → approved | rejected | needs_revision → corrected,
+plus NFM-4554 spec §3.4 `skipped` state (临时跳过 / 后续仍可恢复).
 """
 
 from __future__ import annotations
@@ -20,8 +21,13 @@ class ReviewStatus(str, enum.Enum):
     """Review status values for the human review state machine.
 
     Transitions:
-        pending       → approved | rejected | needs_revision
+        pending       → approved | rejected | needs_revision | skipped
         needs_revision → corrected | approved | rejected
+        needs_revision → skipped (a row under revision can still be deferred)
+        skipped       → pending (恢复, spec §3.4)
+        skipped       → approved | rejected | needs_revision (terminal or
+                        continue revision directly without round-tripping
+                        through pending)
         approved | rejected | corrected → pending  (reset)
     """
 
@@ -31,6 +37,10 @@ class ReviewStatus(str, enum.Enum):
     REJECTED = "rejected"
     NEEDS_REVISION = "needs_revision"
     CORRECTED = "corrected"
+    # NFM-4554 spec §3.4 — 五动作 "跳过" wire-up. Distinct status (not a
+    # no-op self-loop on pending) so the audit trail, stats aggregation,
+    # and row re-discovery by the queue stay correct.
+    SKIPPED = "skipped"
 
 
 # Valid transitions enforced at the API/service layer.
@@ -39,11 +49,21 @@ VALID_TRANSITIONS: dict[ReviewStatus, frozenset[ReviewStatus]] = {
         ReviewStatus.APPROVED,
         ReviewStatus.REJECTED,
         ReviewStatus.NEEDS_REVISION,
+        ReviewStatus.SKIPPED,
     }),
     ReviewStatus.NEEDS_REVISION: frozenset({
         ReviewStatus.CORRECTED,
         ReviewStatus.APPROVED,
         ReviewStatus.REJECTED,
+        ReviewStatus.SKIPPED,
+    }),
+    # NFM-4554 spec §3.4 — 后续仍可恢复. Skipped rows can resume via
+    # either an explicit reset to pending OR a direct terminal verdict.
+    ReviewStatus.SKIPPED: frozenset({
+        ReviewStatus.PENDING,
+        ReviewStatus.APPROVED,
+        ReviewStatus.REJECTED,
+        ReviewStatus.NEEDS_REVISION,
     }),
     # Reset: allow returning from terminal states to pending.
     ReviewStatus.APPROVED: frozenset({ReviewStatus.PENDING}),

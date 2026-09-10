@@ -320,6 +320,99 @@ async def test_pending_to_pending_rejected(async_client, db_session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# R3: NFM-4554 skip action — spec §3.4 `skipped` state
+# ---------------------------------------------------------------------------
+# Spec §3.4 mandates `skipped` as a first-class review_status (临时跳过,
+# 后续仍可恢复;不阻塞版本合并). The frontend 五动作 "跳过" wire-up used
+# to map to pending (no-op self-loop), which the backend correctly rejects
+# with 409 → user-visible toast in the E2E QA round-4 probe. These tests
+# pin the spec-faithful implementation: `skipped` is a real enum value
+# with `pending ↔ skipped` round-trip transitions, and stats aggregation
+# counts it as a distinct bucket.
+
+
+@pytest.mark.asyncio
+async def test_skip_status_is_a_valid_enum_value() -> None:
+    """ReviewStatus.SKIPPED exists with value='skipped' per spec §3.4."""
+    assert hasattr(ReviewStatus, "SKIPPED"), (
+        "ReviewStatus.SKIPPED must exist for spec §3.4 'skipped' state"
+    )
+    assert ReviewStatus.SKIPPED.value == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_pending_to_skipped_accepted(async_client, db_session) -> None:
+    """Spec §3.4: pending → skipped is the 五动作 '跳过' wire-up."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.PENDING.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "skipped", "note": "稍后再校"},
+    )
+    assert response.status_code == 200, (
+        f"pending → skipped must succeed per spec §3.4, got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json()["data"]["review_status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_skipped_to_pending_round_trip(async_client, db_session) -> None:
+    """Spec §3.4: skipped → pending (恢复) is a valid transition."""
+    er = await _seed_extraction_result(
+        db_session,
+        review_status=ReviewStatus.SKIPPED.value,
+    )
+    response = await async_client.patch(
+        f"/api/v1/review/{er.id}",
+        json={"status": "pending"},
+    )
+    assert response.status_code == 200, (
+        f"skipped → pending (恢复) must succeed per spec §3.4, got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json()["data"]["review_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_skipped_does_not_block_terminal_reset(async_client, db_session) -> None:
+    """Skipped → terminal (approved/rejected/needs_revision) is allowed."""
+    for target in ("approved", "rejected", "needs_revision"):
+        # Need a fresh row per attempt because each PATCH mutates state.
+        er2 = await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.SKIPPED.value,
+        )
+        response = await async_client.patch(
+            f"/api/v1/review/{er2.id}",
+            json={"status": target},
+        )
+        assert response.status_code == 200, (
+            f"skipped → {target} must succeed (resumable per spec §3.4), "
+            f"got {response.status_code}: {response.text}"
+        )
+        assert response.json()["data"]["review_status"] == target
+
+
+@pytest.mark.asyncio
+async def test_stats_counts_skipped_bucketed(async_client, db_session) -> None:
+    """Stats aggregation surfaces skipped as its own bucket, not zeroed."""
+    for _ in range(2):
+        await _seed_extraction_result(
+            db_session,
+            review_status=ReviewStatus.SKIPPED.value,
+        )
+    response = await async_client.get("/api/v1/review/stats")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["skipped"] == 2, (
+        f"skipped must aggregate independently (spec §3.4), got {data}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # R4: POST /api/v1/review/batch — batch operations
 # ---------------------------------------------------------------------------
 

@@ -133,7 +133,7 @@ describe("submitReviewDecision (transitional mapping)", () => {
   it.each<[ReviewAction, string]>([
     ["confirm", "approved"],
     ["invalid", "rejected"],
-    ["skip", "pending"],
+    ["skip", "skipped"],
   ])("maps UI action %s → backend status %s", async (action, expectedStatus) => {
     mockedRequest.mockResolvedValueOnce({ success: true, data: {} })
     await submitReviewDecision("m-1", { action })
