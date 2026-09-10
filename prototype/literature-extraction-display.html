@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>原型 v3:文献抽取结果展示(#1251)· PROTOTYPE</title>
+<title>原型 v4:文献抽取结果展示(#1251)· PROTOTYPE</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body{background:#0b1020;color:#e2e8f0}
@@ -20,7 +20,7 @@
 <header class="mb-4 flex items-center gap-3 flex-wrap">
   <h1 class="text-xl font-bold">文献抽取结果 · 展示形态原型 v3</h1>
   <span class="badge bg-yellow-600 text-white">PROTOTYPE · 丢弃级</span>
-  <span class="text-xs text-slate-400">v3:成分/环境条件分列 · 全列排序 · 筛选栏(owner 二轮反馈)</span>
+  <span class="text-xs text-slate-400">v4:数据态切换(原始↔管线修复后)· 自动合并 · 物理有效域校验 · 条件补齐(owner 三轮反馈)</span>
 </header>
 <div id="app" class="max-w-6xl mx-auto"></div>
 
@@ -28,7 +28,7 @@
   <button onclick="setLayout('a')" id="btn-a" class="px-4 py-2 font-semibold">A · 校对表格</button>
   <button onclick="setLayout('b')" id="btn-b" class="px-4 py-2 font-semibold">B · 图谱+侧栏</button>
   <label class="px-3 py-2 text-xs flex items-center gap-1.5 border-l border-slate-600 cursor-pointer"><input type="checkbox" id="demo-low" onchange="render()"> 演示低置信度</label>
-  <label class="px-3 py-2 text-xs flex items-center gap-1.5 border-l border-slate-600 cursor-pointer"><input type="checkbox" id="demo-cond" onchange="onDemoToggle()"> 示例条件预览</label>
+  <label class="px-3 py-2 text-xs flex items-center gap-1.5 border-l border-slate-600 cursor-pointer"><input type="checkbox" id="demo-cond" checked onchange="onDemoToggle()"> 修复态(合并+校验+条件)</label>
 </div>
 
 <div id="drawer" class="fixed inset-y-0 right-0 w-[860px] bg-slate-900 border-l-2 border-blue-500 shadow-2xl translate-x-full transition-transform flex flex-col z-50">
@@ -62,27 +62,45 @@ let FILTER={n:'',comp:'',env:'',status:''};
 
 const DEMO_COMPS=["undoped","10 at.%Cr","20 at.%Cr","30 at.%Cr","40 at.%Cr","50 at.%Cr"];
 const DEMO_TEMPS=[300,1400,1600,1800,2000,2200,2400,2600,2800,3000];
+const VALID={
+ pre_exponential_factor:{min:1e-12,max:1e6,msg:"指前因子必须>0(D= D₀·exp(−Ea/kT),D₀=0 则指数项失去意义;疑科学计数法解析丢失)"},
+ activation_energy:{min:0.01,max:10,msg:"扩散活化能合理域 0.01–10 eV"},
+ density:{min:5,max:20,msg:"UO₂ 系密度合理域 5–20 g/cm³(0.05/0.3 疑量级解析错误)"},
+ bond_length:{min:0.5,max:15,msg:"原子间距合理域 0.5–15 Å"},
+ rdf_peak:{min:1,max:15,msg:"RDF 峰位合理域 1–15 Å"}};
+function validOf(n,v){const r=VALID[n];if(!r)return null;const x=parseFloat(v);if(isNaN(x))return null;return (x<r.min||x>r.max)?r.msg:null}
 
 function realEnv(d){
   const parts=(d.cond||[]).map(function(c){return [c.T?("T="+c.T+"K"):null,c.P?("P="+c.P):null,c.E].filter(Boolean).join(" ")}).filter(Boolean);
   return parts.length?parts.join(" | "):null;
 }
 function onDemoToggle(){ render(); }
+let LASTFIXED=false;
 function decorate(){
   const lowOn=document.getElementById('demo-low').checked;
-  const condOn=document.getElementById('demo-cond').checked;
+  const fixed=document.getElementById('demo-cond').checked;
+  LASTFIXED=fixed;
   let seed=7;const rnd=function(){seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff};
-  const rows=DATA.map(function(d,i){return Object.assign({},d,{
+  let rows=DATA.map(function(d,i){return Object.assign({},d,{
     c: lowOn&&rnd()<0.12? +(0.3+rnd()*0.25).toFixed(2): d.c,
     demoLow: lowOn&&rnd()<0.12,
-    comp: condOn? DEMO_COMPS[i%DEMO_COMPS.length] : null,
-    env:  condOn? "T="+DEMO_TEMPS[i%DEMO_TEMPS.length]+"K" : realEnv(d),
-    demoC: condOn})});
+    comp: fixed? DEMO_COMPS[i%DEMO_COMPS.length] : null,
+    env:  fixed? "T="+DEMO_TEMPS[i%DEMO_TEMPS.length]+"K" : realEnv(d),
+    demoC: fixed})});
   const cnt={};rows.forEach(function(r){const k=r.n+'|'+r.v;cnt[k]=(cnt[k]||0)+1});
   rows.forEach(function(r){r.dup=cnt[r.n+'|'+r.v]>1?cnt[r.n+'|'+r.v]:0});
-  return rows;
+  if(!fixed){ rows.forEach(function(r){r.merged=0}); return rows }
+  // 修复态:同值同源无条件区分 → 自动合并(摄取去重),保留一条并记合并数
+  const byKey={};
+  const mergedRows=[];
+  rows.forEach(function(r){const k=r.n+'|'+r.v+'|'+r.u;
+    if(byKey[k]===undefined){ r.merged=cnt[r.n+'|'+r.v]; mergedRows.push(r); byKey[k]=mergedRows.length-1 }
+    else { mergedRows[byKey[k]].merged=(mergedRows[byKey[k]].merged||1)+1 }});
+  return mergedRows;
 }
-function statusOf(r){ return r.c<0.6?'待校对':(r.dup>1?'重复待甄别':'已入表') }
+function statusOf(r){
+  if(validOf(r.n,r.v)) return '物理无效';
+  return r.c<0.6?'待校对':(r.merged>1?'已自动合并':(r.dup>1?'重复待甄别':'已入表')) }
 function compKey(s){ if(!s) return null; if(s==='undoped') return 0; const m=s.match(/(\\d+)/); return m?+m[1]:999 }
 function envKey(s){ if(!s) return null; const m=s.match(/T=(\\d+)/); return m?+m[1]:9999 }
 function setSort(k){ if(SORT.key===k){SORT.dir=-SORT.dir}else{SORT.key=k;SORT.dir=1} render() }
@@ -95,8 +113,7 @@ function applyView(rows){
   else if(F.comp) out=out.filter(function(o){return o.d.comp===F.comp});
   if(F.env==='__miss__') out=out.filter(function(o){return !o.d.env});
   else if(F.env==='__has__') out=out.filter(function(o){return !!o.d.env});
-  if(F.status) out=out.filter(function(o){return statusOf(o.d)===F.status});
-  const k=SORT.key, dir=SORT.dir;
+  if(F.status) out=out.filter(function(o){return statusOf(o.d)===F.status});  const k=SORT.key, dir=SORT.dir;
   const keyf={n:function(d){return d.n}, v:function(d){return parseFloat(d.v)||0}, comp:function(d){return compKey(d.comp)}, env:function(d){return envKey(d.env)}, c:function(d){return d.c}}[k];
   out.sort(function(a,b){
     const ka=keyf(a.d), kb=keyf(b.d);
@@ -113,15 +130,18 @@ function clearF(){FILTER={n:'',comp:'',env:'',status:''};render()}
 
 function openDrawer(d,i){
   const paras=PARAS[d.n]||["(示例回链——真实段落待 source_span)"];
+  const vd=validOf(d.n,d.v);
   document.getElementById('drawer-body').innerHTML=
    '<div class="bg-slate-800 rounded p-3 border border-slate-700">'+
      '<div class="text-xs text-slate-400 mb-2">提取结果(结构化)</div>'+
-     '<div class="text-lg font-bold text-blue-300">'+fmt(d.v)+' <span class="text-sm text-slate-300">'+d.u+'</span></div>'+
+     '<div class="text-lg font-bold '+(vd?'text-red-400':'text-blue-300')+'">'+fmt(d.v)+' <span class="text-sm text-slate-300">'+d.u+'</span>'+(vd?' ⚠':'')+'</div>'+
+     (vd?'<div class="mt-2 p-2 rounded bg-red-900/40 border border-red-700 text-xs text-red-200"><b>物理无效 · 需核实:</b>'+vd+'</div>':'')+
      '<div class="mt-1 text-slate-300">'+(NAME_CN[d.n]||d.n)+' · amorphous UO2</div>'+
      '<div class="mt-3 text-xs"><span class="text-slate-400">成分:</span> '+
        (d.comp?'<span class="'+(d.demoC?'text-sky-400':'')+'">'+d.comp+(d.demoC?' <span class="badge bg-sky-800 text-sky-200">示例</span>':'')+'</span>':'<span class="condmiss">⚠ 缺失(数据侧待补)</span>')+'</div>'+
      '<div class="mt-1 text-xs"><span class="text-slate-400">环境条件:</span> '+
        (d.env?'<span class="'+(d.demoC?'text-sky-400':'')+'">'+d.env+(d.demoC?' <span class="badge bg-sky-800 text-sky-200">示例</span>':'')+'</span>':'<span class="condmiss">⚠ 缺失(数据侧待补)</span>')+'</div>'+
+     (d.merged>1?'<div class="mt-1 text-[11px] text-teal-300">已自动合并 '+d.merged+' 条同值同源重复(摄取去重)</div>':'')+
      (d.attr==='lost'?'<div class="mt-1 text-[11px] text-orange-400">attribution: lost(2026-09-02 迁移痕迹,见 ADR-012)</div>':'')+
      '<div class="mt-3 flex items-center gap-2 flex-wrap"><span class="badge '+(d.c<0.6?'bg-orange-600':'bg-emerald-700')+' text-white">置信度 '+d.c+'</span>'+
      (d.c<0.6?'<span class="badge bg-yellow-600 text-white">低置信度 · 待校对</span>':'')+
@@ -143,7 +163,7 @@ function filterBar(rows){
     '<select onchange="setF(\'n\',this.value)">'+opts(props.map(function(p){return NAME_CN[p]||p}), FILTER.n, '属性:全部')+'</select>'+
     '<select onchange="setF(\'comp\',this.value)"><option value="">成分:全部</option><option value="__miss__"'+(FILTER.comp==='__miss__'?' selected':'')+'>⚠ 缺失</option>'+comps.map(function(x){return '<option'+(x===FILTER.comp?' selected':'')+'>'+x+'</option>'}).join('')+'</select>'+
     '<select onchange="setF(\'env\',this.value)"><option value="">环境:全部</option><option value="__miss__"'+(FILTER.env==='__miss__'?' selected':'')+'>⚠ 缺失</option><option value="__has__"'+(FILTER.env==='__has__'?' selected':'')+'>有条件</option></select>'+
-    '<select onchange="setF(\'status\',this.value)"><option value="">状态:全部</option>'+['待校对','重复待甄别','已入表'].map(function(s){return '<option'+(s===FILTER.status?' selected':'')+'>'+s+'</option>'}).join('')+'</select>'+
+    '<select onchange="setF(\'status\',this.value)"><option value="">状态:全部</option>'+['物理无效','待校对','重复待甄别','已自动合并','已入表'].map(function(s){return '<option'+(s===FILTER.status?' selected':'')+'>'+s+'</option>'}).join('')+'</select>'+
     '<button onclick="clearF()" class="px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600">清除</button></div>';
 }
 function renderA(){
@@ -154,7 +174,7 @@ function renderA(){
   document.getElementById('app').innerHTML=
    '<div class="bg-slate-900 rounded-xl border border-slate-700 p-5">'+
      '<div class="flex justify-between items-baseline flex-wrap gap-2"><h2 class="font-bold text-lg">Owen 2023 · amorphous UO2(未掺杂/Cr 掺杂系列)</h2><div>'+stats+'</div></div>'+
-     '<p class="text-xs text-slate-400 mt-1">多值原因:论文为「成分(0–50 at.%Cr)× 温度」矩阵 · 成分与环境条件分列 · 表头点击排序 · 点击行进校对视图 · <b id="cnt">显示 '+view.length+' / '+rows.length+'</b></p>'+
+     '<p class="text-xs text-slate-400 mt-1">多值原因:论文为「成分(0–50 at.%Cr)× 温度」矩阵 · 成分/环境条件分列 · 表头排序 · 表尾注明数据态 · 点击行进校对 · <b id="cnt">显示 '+view.length+' / '+rows.length+'</b>'+(LASTFIXED?'(修复态:同值同源已自动合并)':'(原始态)')+'</p>'+
      filterBar(rows)+
      '<table class="w-full mt-3 text-sm"><thead><tr class="text-left text-xs text-slate-400 border-b border-slate-700">'+
        '<th class="py-2 sortable" onclick="setSort(\'n\')">属性'+sortArrow('n')+'</th>'+
@@ -164,16 +184,16 @@ function renderA(){
        '<th class="sortable" onclick="setSort(\'env\')">环境条件'+sortArrow('env')+'</th>'+
        '<th class="sortable" onclick="setSort(\'c\')">置信度'+sortArrow('c')+'</th>'+
        '<th>状态</th></tr></thead><tbody>'+
-     view.map(function(o){const d=o.d,i=o.i;
-       return '<tr class="border-b border-slate-800 hover:bg-slate-800 cursor-pointer"'+(d.c<0.6?' style="background:rgba(217,119,6,.06)"':'')+' onclick="openDrawer(DATA['+i+'], '+i+')">'+
-         '<td class="py-1.5">'+(NAME_CN[d.n]||d.n)+(d.dup>1?' <span class="badge bg-red-800 text-white">×'+d.dup+'</span>':'')+'</td>'+
-         '<td class="font-mono text-blue-300">'+fmt(d.v)+'</td><td class="text-slate-400">'+d.u+'</td>'+
+     view.map(function(o){const d=o.d,i=o.i;const vd=validOf(d.n,d.v);
+       return '<tr class="border-b border-slate-800 hover:bg-slate-800 cursor-pointer"'+(vd?' style="background:rgba(239,68,68,.07)"':(d.c<0.6?' style="background:rgba(217,119,6,.06)"':''))+' onclick="openDrawer(DATA['+i+'], '+i+')">'+
+         '<td class="py-1.5">'+(NAME_CN[d.n]||d.n)+(d.merged>1?' <span class="badge bg-teal-800 text-teal-100">已合并'+d.merged+'</span>':(d.dup>1?' <span class="badge bg-red-800 text-white">×'+d.dup+'</span>':''))+'</td>'+
+         '<td class="font-mono '+(vd?'text-red-400':'text-blue-300')+'">'+fmt(d.v)+(vd?' ⚠':'')+'</td><td class="text-slate-400">'+d.u+'</td>'+
          '<td class="text-xs">'+(d.comp?'<span class="'+(d.demoC?'text-sky-400':'')+'">'+d.comp+'</span>':'<span class="condmiss">⚠ 缺失</span>')+'</td>'+
          '<td class="text-xs">'+(d.env?'<span class="'+(d.demoC?'text-sky-400':'')+'">'+d.env+'</span>':'<span class="condmiss">⚠ 缺失</span>')+'</td>'+
          '<td><span class="conf-bar"><span class="conf-fill" style="width:'+(d.c*100)+'%;background:'+confColor(d.c)+'"></span></span> <span class="text-xs">'+d.c+'</span></td>'+
-         '<td>'+(statusOf(d)==='待校对'?'<span class="badge bg-orange-600 text-white">待校对</span>':(statusOf(d)==='重复待甄别'?'<span class="badge bg-red-800 text-white">重复待甄别</span>':'<span class="badge bg-emerald-800 text-slate-300">已入表</span>'))+'</td></tr>'}).join('')+
+         '<td>'+(vd?'<span class="badge bg-red-700 text-white" title="'+vd.replace(/"/g,'&quot;')+'">物理无效</span>':(statusOf(d)==='待校对'?'<span class="badge bg-orange-600 text-white">待校对</span>':(statusOf(d)==='重复待甄别'?'<span class="badge bg-red-800 text-white">重复待甄别</span>':(statusOf(d)==='已自动合并'?'<span class="badge bg-teal-800 text-teal-100">已自动合并</span>':'<span class="badge bg-emerald-800 text-slate-300">已入表</span>'))))+'</td></tr>'}).join('')+
      '</tbody></table>'+
-     '<p class="text-[11px] text-slate-500 mt-2">真实数据:conditions 记录 40/92 存在但 temperature/pressure/environment 全为 null;成分维度在历史碎片合并时整体丢失 → 两列普遍缺失是<b class="text-orange-400">数据侧事实</b>;勾选「示例条件预览」看补齐后形态。</p></div>';
+     '<p class="text-[11px] text-slate-500 mt-2">原始态=生产库真实数据(conditions 全 null、成分维度在碎片合并时丢失、同值跨 10 个 dataset 重复);修复态=管线修复后目标形态:摄取去重(同值同源自动合并,青色徽章,无需人工)+ 物理有效域校验(D₀=0/密度 0.05 等标红并给原因)+ 条件补齐(技能引擎重抽,示例重构)。底栏勾选切换两态。</p></div>';
 }
 function renderB(){
   const rows=decorate();
