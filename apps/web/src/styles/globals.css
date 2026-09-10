@@ -455,6 +455,12 @@ body {
  * left bar AND a redundant glyph in the first cell so colour is never
  * the sole carrier of meaning (WCAG 1.4.1). One-shot 500ms shake on
  * first paint draws the eye to a freshly-failed validity_check.
+ *
+ * Two row flavours share the class (NFM-4576 W1): Layout B (NFM-4553)
+ * sidebar rows are <div role="button"> — the :not(tr) rules paint the
+ * row element itself. Layout A (NFM-4554) rows are <tr> — the `> td`
+ * rules paint the cells. :not(tr) keeps the div rules inert in table
+ * contexts, where tr borders and ::before render unreliably.
  * ------------------------------------------------------------------------- */
 .g1-row-invalid > td {
   background-color: var(--alert-error-bg);
@@ -467,6 +473,20 @@ body {
   color: var(--alert-error-border);
 }
 
+/* Layout B sidebar rows (NFM-4576 W1): paint the <div> row itself. */
+.g1-row-invalid:not(tr) {
+  background-color: var(--alert-error-bg);
+  border-left: 4px solid var(--alert-error-border);
+}
+.g1-row-invalid:not(tr)::before {
+  content: "⚠";
+  display: block;
+  color: var(--alert-error-border);
+  font-size: 13px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
 @keyframes g1-row-invalid-shake {
   0%, 100% { transform: translateX(0); }
   25%      { transform: translateX(-4px); }
@@ -475,9 +495,13 @@ body {
 .g1-row-invalid > td:first-child {
   animation: g1-row-invalid-shake 500ms var(--onto-ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
 }
+.g1-row-invalid:not(tr) {
+  animation: g1-row-invalid-shake 500ms var(--onto-ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .g1-row-invalid > td:first-child {
+  .g1-row-invalid > td:first-child,
+  .g1-row-invalid:not(tr) {
     animation: none;
   }
 }

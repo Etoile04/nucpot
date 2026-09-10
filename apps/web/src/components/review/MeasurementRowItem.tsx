@@ -86,6 +86,18 @@ function formatValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
+/** Escape HTML-significant characters. `&` goes first so the entities
+ * this function introduces are never themselves re-escaped. Exported
+ * for the unit test pinning the KaTeX-fallback hardening. */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
 function renderFormula(expr: string): string {
   // AC-5 — `value_expression` is rendered through KaTeX so the
   // canonical LaTeX (e.g. "\\frac{k}{T}", "\\rho") appears in math
@@ -105,8 +117,10 @@ function renderFormula(expr: string): string {
     })
   } catch {
     // Defensive belt-and-braces; throwOnError:false already catches
-    // the common cases.
-    return expr
+    // the common cases. The return value flows into
+    // dangerouslySetInnerHTML, so the raw source must be escaped —
+    // a non-parse exception can never smuggle markup through here.
+    return escapeHtml(expr)
   }
 }
 
@@ -120,8 +134,18 @@ export function MeasurementRowItem({ row, isSelected, onClick }: MeasurementRowI
   const rowStyle: CSSProperties = {
     cursor: "pointer",
     padding: "10px 12px 10px 16px",
-    borderLeft: `4px solid ${barColor}`,
-    backgroundColor: isSelected ? "rgba(147, 197, 253, 0.08)" : "transparent",
+    // NFM-4576 W1: on invalid rows the border + background defer to the
+    // `.g1-row-invalid` class rules in globals.css — inline declarations
+    // would win the cascade and bury the red-row treatment (AC-10).
+    // Selection feedback on an invalid row stays available via
+    // aria-pressed + the open drawer; the louder invalid signal wins
+    // the paint.
+    borderLeft: isInvalid ? undefined : `4px solid ${barColor}`,
+    backgroundColor: isInvalid
+      ? undefined
+      : isSelected
+        ? "rgba(147, 197, 253, 0.08)"
+        : "transparent",
     transition: "background-color 150ms var(--onto-ease-out, ease-out)",
   }
 
