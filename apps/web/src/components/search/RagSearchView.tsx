@@ -2,10 +2,16 @@
 
 import { useState, useCallback } from "react"
 import { Typography } from "antd"
-import { ragApi, isAuthExpiredError, RAG_LOGIN_REQUIRED_MESSAGE } from "@/lib/rag-api"
+import {
+  ragApi,
+  isAuthExpiredError,
+  RAG_LOGIN_REQUIRED_MESSAGE,
+  type RagFallbackInfo,
+} from "@/lib/rag-api"
 import type { RagCitation } from "@/lib/rag-api"
 import Link from "next/link"
 import { SemanticSearchResults } from "./SemanticSearchResults"
+import { RagFallbackBadge } from "./RagFallbackBadge"
 
 const { Text } = Typography
 
@@ -17,6 +23,7 @@ interface RagSearchState {
   readonly loading: boolean
   readonly error: string | null
   readonly hasSearched: boolean
+  readonly fallback: RagFallbackInfo
 }
 
 const INITIAL_STATE: RagSearchState = {
@@ -25,6 +32,7 @@ const INITIAL_STATE: RagSearchState = {
   loading: false,
   error: null,
   hasSearched: false,
+  fallback: { used: false, kind: null, originalError: null },
 }
 
 interface RagSearchViewProps {
@@ -61,6 +69,7 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
         loading: false,
         error: null,
         hasSearched: true,
+        fallback: response.fallback,
       })
     } catch (err: unknown) {
       const message = isAuthExpiredError(err)
@@ -112,12 +121,23 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
             {state.loading ? "检索中..." : "语义检索"}
           </button>
         </div>
+        {/* NFM-4539 RAG-C: anonymous-open — the "需登录" copy is gone;
+            the §3.2 honest neutral copy replaces it.  The badge below
+            surfaces transparent degradation when fallback fires. */}
         <Text type="secondary" className="block mt-2 text-xs">
-          需登录 · 输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答
+          输入自然语言问题，AI 将从知识图谱中检索相关内容并生成回答
         </Text>
+        {state.fallback.used && (
+          <div className="mt-2">
+            <RagFallbackBadge fallback={state.fallback} />
+          </div>
+        )}
       </div>
 
-      {/* Login required: show login link instead of generic error */}
+      {/* Login required: still possible for editor-only mutations (ingest)
+          or future scope; leave the path intact so the surface is
+          recoverable once we re-gate a write endpoint, but no longer
+          triggered by the open /query route (NFM-4539 RAG-C). */}
       {state.error === RAG_LOGIN_REQUIRED_MESSAGE ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 p-5">
           <p className="text-amber-200 text-sm">{state.error}</p>
@@ -134,6 +154,8 @@ export function RagSearchView({ initialQuery = "" }: RagSearchViewProps) {
           citations={state.citations}
           loading={state.loading}
           error={state.error}
+          fallback={state.fallback}
+          hasSearched={state.hasSearched}
         />
       )}
     </div>
