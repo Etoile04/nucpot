@@ -104,7 +104,10 @@ class TestRevisionMetadata:
         PR #1285 rebase after NFM-4548 grabbed the 085 slot) — the
         NFM-4550 G1-D migration originally numbered 086 forked the DAG
         and is renumbered 088_add_validity_check_and_valid_range
-        chained after 087 — 088 is the current head.
+        chained after 087.  089_add_ix_verification_tasks_status
+        (NFM-4636, the idempotent CREATE INDEX for the latent
+        verification_tasks.status drift) chained after 088 —
+        089 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -117,7 +120,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["088_add_validity_check_and_valid_range"], (
+        assert heads == ["089_add_ix_verification_tasks_status"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."

@@ -97,17 +97,21 @@ class SkillPinMismatchError(RuntimeError):
         lock_pin: str | None,
         env_version: str | None,
         lock_version: str | None,
+        message: str | None = None,
     ) -> None:
         self.env_pin = env_pin
         self.lock_pin = lock_pin
         self.env_version = env_version
         self.lock_version = lock_version
-        super().__init__(
-            "EXTRACTION_SKILL_REPO_PIN disagrees with packages/skills-catalog/lock.yaml: "
-            f"env={env_pin!r} vs lock={lock_pin!r}; "
-            f"env_version={env_version!r} vs lock_version={lock_version!r}. "
-            "Resolve the drift (PR or env update) — the platform fails closed."
-        )
+        if message is not None:
+            super().__init__(message)
+        else:
+            super().__init__(
+                "EXTRACTION_SKILL_REPO_PIN disagrees with packages/skills-catalog/lock.yaml: "
+                f"env={env_pin!r} vs lock={lock_pin!r}; "
+                f"env_version={env_version!r} vs lock_version={lock_version!r}. "
+                "Resolve the drift (PR or env update) — the platform fails closed."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -241,19 +245,52 @@ def assert_pin_consistent(
     env_version = env_map.get(EXTRACTION_SKILL_VERSION_ENV)
     env_pin = env_map.get(EXTRACTION_SKILL_REPO_PIN_ENV)
 
+    # NFM-4618: read the flag from env_map too (not os.environ) so the
+    # whole function stays self-contained for testing. Mirrors the
+    # NFM-4611 fix in the CI guard: the flag is part of the strict
+    # contract, not an ambient env read.
+    flag_raw = (env_map.get(EXTRACTION_SKILL_ENABLED_ENV) or "").strip().lower()
+    flag_on = flag_raw in ("1", "true", "yes", "on")
+
     default_skill = lock.skills.get(lock.default_skill) or {}
     lock_version = str(default_skill.get("version", ""))
     lock_pin = lock.pin
 
+    # NFM-4618: the pin is mandatory whenever the flag is on. Without
+    # this check, ``EXTRACTION_SKILL_ENABLED=true`` with no
+    # ``EXTRACTION_SKILL_REPO_PIN`` would fall through and
+    # ``resolve_skill_pin`` would return the lock value — which today
+    # is the 40-zero placeholder. The CI guard catches the same
+    # configuration pre-deploy; this mirrors it for any path that
+    # bypasses CI (manual container run, direct env edit, test harness).
+    if flag_on and not env_pin:
+        raise SkillPinMismatchError(
+            env_pin=env_pin or "",
+            lock_pin=lock_pin,
+            env_version=env_version,
+            lock_version=lock_version,
+            message=(
+                "EXTRACTION_SKILL_ENABLED is on but EXTRACTION_SKILL_REPO_PIN "
+                "is unset; the pin is mandatory whenever the skill path is enabled"
+            ),
+        )
+
     # When env sets the flag we require both version AND pin to be set,
     # and to match the lock. A zero SHA in the lock is treated as
     # "uninitialised" — never used at runtime.
-    if env_pin and lock_pin.startswith("0" * 40):
+    # NFM-4618: was ``if env_pin and ...``. A zero-placeholder lock pin
+    # is never runnable once the flag flips, whether or not the caller
+    # supplied env_pin.
+    if (env_pin or flag_on) and lock_pin.startswith("0" * 40):
         raise SkillPinMismatchError(
             env_pin=env_pin,
             lock_pin=lock_pin,
             env_version=env_version,
             lock_version=lock_version,
+            message=(
+                "lock file upstream.pin is the zero placeholder; "
+                "set a real SHA before flipping EXTRACTION_SKILL_ENABLED=true"
+            ),
         )
 
     if env_pin and env_pin != lock_pin:

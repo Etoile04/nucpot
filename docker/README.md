@@ -21,6 +21,7 @@
 |---------|--------------|-----------|-------------|
 | NFM API | `nucpot-prod-api` | 8001 | FastAPI backend |
 | Worker | `nucpot-prod-worker` | — | Celery MD verification |
+| Beat | `nucpot-prod-beat` | — | Celery beat scheduler (periodic tasks) |
 | Web | `nucpot-prod-web` | 3000 | Next.js frontend |
 | PostgreSQL | `nucpot-prod-db` | 5433 | PostgreSQL 16 |
 | Redis | `nucpot-prod-redis` | 6380 | Celery broker + cache |

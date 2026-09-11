@@ -398,6 +398,25 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # NFM-4611 / NFM-4547 AC-8: fail-closed skill-pin assertion.
+      # Runs first in the pre-deploy-assert job — before the env-key sync,
+      # before the --no-cache candidate build, and therefore before ANY
+      # deploy step. deploy-prod carries
+      # `needs.pre-deploy-assert.result == 'success'` in its `if:`, so a
+      # non-zero exit here SKIPS the deploy rather than merely reddening a
+      # parallel job. Sub-second, stdlib-only, no uv/venv needed (python3 is
+      # already relied on by the sibling self-hosted assert jobs).
+      #
+      # Today the EXTRACTION_SKILL_* vars are unset (dark launch) so this
+      # asserts lock-file integrity only. Once the flag flips it becomes a
+      # hard pin ↔ lock drift gate on the production path.
+      - name: Skill pin fail-closed assertion (check_skill_pin.py)
+        run: python3 apps/api/scripts/check_skill_pin.py
+        env:
+          EXTRACTION_SKILL_ENABLED: ${{ vars.EXTRACTION_SKILL_ENABLED }}
+          EXTRACTION_SKILL_REPO_PIN: ${{ vars.EXTRACTION_SKILL_REPO_PIN }}
+          EXTRACTION_SKILL_VERSION: ${{ vars.EXTRACTION_SKILL_VERSION }}
+
       - name: Verify env key sync (NFM-2406)
         run: |
           # Runs before the candidate build on purpose: env drift is a

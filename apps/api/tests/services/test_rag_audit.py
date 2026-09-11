@@ -269,6 +269,36 @@ async def test_run_accepts_bare_uuid_markers(
 
 
 @pytest.mark.asyncio
+async def test_run_accepts_embedded_uuid_markers(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NFM-4636: markers may embed the UUID in a larger ``file_path`` tag.
+
+    The NFM-4516 Path-D re-ingests landed in LightRAG as
+    ``nfm-4505-fresh-<uuid>`` ``file_path`` values; strict
+    ``uuid.UUID(marker)`` parsing rejected them, so previously-indexed
+    literature reconciled as perpetual drift.
+    """
+    indexed_id = uuid.uuid4()
+    await _seed_data_sources(db_session, indexed_id)
+    _patch_lightrag_markers(
+        monkeypatch, [f"nfm-4505-fresh-{indexed_id}"]
+    )
+
+    with patch("nfm_db.services.rag_audit._reingest", new=AsyncMock()):
+        outcome = await run_rag_audit_index_coverage(
+            db_session,
+            lightrag_host="localhost",
+            lightrag_port=9621,
+            run_date=date(2026, 9, 10),
+            reingest=False,
+        )
+
+    assert outcome.indexed_total == 1
+    assert outcome.drift_total == 0
+
+
+@pytest.mark.asyncio
 async def test_run_skips_non_uuid_indexed_markers(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -519,6 +549,71 @@ def test_celery_task_is_registered() -> None:
     )
 
 
+def test_celery_task_uses_task_scoped_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BUG-22 (NFM-4076): the task must not touch the shared engine.
+
+    The shared engine's asyncpg pool binds connections to the first
+    ``asyncio.run`` loop that used them; this task gets a fresh loop per
+    invocation in a Celery prefork child, so ``get_session_factory``
+    deterministically fails with ``InterfaceError: another operation is
+    in progress`` (verified live in prod 2026-09-10).  Regression guard:
+    the task body must acquire its session via the task-scoped
+    ``task_session_factory`` adapter (ADR-NFM-4076 D3).
+    """
+    from nfm_db.services import celery_app as celery_module
+    from nfm_db.services.rag_audit import AuditOutcome
+
+    captured: dict[str, Any] = {}
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    def _fake_task_factory() -> Any:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _ctx() -> Any:
+            captured["task_scoped"] = True
+            yield lambda: _FakeSession()
+
+        return _ctx()
+
+    async def _fake_audit(session: object, **kwargs: object) -> AuditOutcome:
+        captured["session"] = session
+        return AuditOutcome(
+            run_date=date(2026, 9, 11),
+            completed_total=0,
+            indexed_total=0,
+            drift_total=0,
+            reingested=0,
+            errors=0,
+        )
+
+    class _FakeSettings:
+        lightrag_host = "localhost"
+        lightrag_port = 9621
+
+    monkeypatch.setattr(
+        "nfm_db.database.task_session_factory", _fake_task_factory
+    )
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit.run_rag_audit_index_coverage", _fake_audit
+    )
+    monkeypatch.setattr(
+        "nfm_db.config.get_settings", lambda: _FakeSettings()
+    )
+
+    result = celery_module.rag_audit_index_coverage_task.run()
+
+    assert captured.get("task_scoped") is True
+    assert isinstance(captured.get("session"), _FakeSession)
+    assert result["indexed_total"] == 0
+
+
 # ---------------------------------------------------------------------------
 # LightRAGClient.list_indexed_documents marker extraction
 # ---------------------------------------------------------------------------
@@ -577,6 +672,45 @@ async def test_list_indexed_documents_accepts_envelope_shape(
 
     markers = await client.list_indexed_documents()
     assert expected_uuid in markers
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_parses_statuses_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4636: LightRAG 1.5.4 (prod build) answers ``/documents`` with
+    ``{"statuses": {"processed": [...], "analyzing": [...], ...}}`` —
+    the original parser read ``body["documents"]`` and silently returned
+    ``[]``, so every completed literature reconciled as drift.
+
+    Only ``processed`` rows count: ``analyzing`` / ``processing`` docs
+    are still in-flight and ``failed`` docs are absent from the index.
+    """
+    from nfm_db.services.lightrag_client import LightRAGClient
+
+    client = LightRAGClient(host="test", port=1, query_timeout=1.0)
+    processed_uuid = str(uuid.uuid4())
+    in_flight_uuid = str(uuid.uuid4())
+    payload = {
+        "statuses": {
+            "processed": [{"file_path": f"data_source:{processed_uuid}"}],
+            "analyzing": [{"file_path": f"data_source:{in_flight_uuid}"}],
+            "processing": [{"file_path": "nfm-4505-fresh-x"}],
+            "failed": [{"file_path": "data_source:dup-of-processed"}],
+        }
+    }
+    fake_get = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            json=MagicMock(return_value=payload),
+            raise_for_status=lambda: None,
+        )
+    )
+    monkeypatch.setattr(client._http_client, "get", fake_get)  # type: ignore[attr-defined]
+
+    markers = await client.list_indexed_documents()
+    assert markers == [f"data_source:{processed_uuid}"]
     await client.close()
 
 

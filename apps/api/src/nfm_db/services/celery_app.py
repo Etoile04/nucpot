@@ -338,16 +338,26 @@ def rag_audit_index_coverage_task(self) -> dict:
 
     async def _run() -> dict:
         from nfm_db.config import get_settings
-        from nfm_db.database import get_session_factory
+        from nfm_db.database import task_session_factory
         from nfm_db.services.rag_audit import run_rag_audit_index_coverage
 
         settings = get_settings()
-        async with get_session_factory()() as session:
-            outcome = await run_rag_audit_index_coverage(
-                session,
-                lightrag_host=settings.lightrag_host,
-                lightrag_port=settings.lightrag_port,
-            )
+        # BUG-22 (NFM-4076 / ADR-NFM-4076 D3): the shared engine's asyncpg
+        # pool binds its connections to the event loop that first used
+        # them.  This task runs through a fresh ``asyncio.run`` loop per
+        # invocation, so the shared engine deterministically fails with
+        # ``cannot perform operation: another operation is in progress``
+        # in a Celery prefork child that has run any prior async task
+        # (verified live in prod 2026-09-10 while manually triggering the
+        # audit for NFM-4636).  Use the task-scoped NullPool engine like
+        # every other Celery task boundary.
+        async with task_session_factory() as factory:
+            async with factory() as session:
+                outcome = await run_rag_audit_index_coverage(
+                    session,
+                    lightrag_host=settings.lightrag_host,
+                    lightrag_port=settings.lightrag_port,
+                )
         return {
             "run_date": outcome.run_date.isoformat(),
             "completed_total": outcome.completed_total,

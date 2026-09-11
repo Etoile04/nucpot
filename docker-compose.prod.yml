@@ -16,6 +16,7 @@
 #   - nucpot-prod-redis: Redis (Celery broker + cache)
 #   - nucpot-prod-api: FastAPI backend
 #   - nucpot-prod-worker: Celery worker for MD verification
+#   - nucpot-prod-beat: Celery beat scheduler (NFM-4617-B2, NFM-4539 AC-3)
 # =============================================================================
 
 name: nucpot-prod
@@ -310,7 +311,7 @@ services:
     restart: unless-stopped
     command: >
       python -m celery -A nfm_db.services.celery_app:celery_app worker
-      --queues=md_verification,literature_processing
+      --queues=md_verification,literature_processing,default,celery
       --concurrency=${PROD_WORKER_CONCURRENCY:-1}
       --loglevel=INFO
       --max-tasks-per-child=1000
@@ -321,6 +322,14 @@ services:
       REDIS_PORT: "6379"
       CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
       CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      # NFM-4636 / NFM-4539 RAG-D: the worker executes
+      # ``rag_audit_index_coverage_task`` (beat 03:30 UTC + manual
+      # triggers), which reaches LightRAG via settings.  Without these
+      # the worker falls back to ``localhost:9621`` and the audit fails
+      # with "LightRAG /documents failed: All connection attempts
+      # failed".  Must mirror the api service values above.
+      NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
@@ -358,6 +367,55 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m celery -A nfm_db.services.celery_app:celery_app inspect ping -d celery@$$HOSTNAME"]
       interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks: [prod]
+
+  # ---- Celery beat (scheduler for periodic tasks, NFM-4617-B2 / NFM-4539 AC-3) -
+  # ``apps/api/src/nfm_db/services/celery_app.py`` registers
+  # ``beat_schedule["rag-audit-index-coverage-daily"]`` at crontab(hour=3,
+  # minute=30) and ``beat_schedule["sync-hpc-job-status"]`` at 30s, but the
+  # scheduler process itself was never added to this compose file. The
+  # worker executes the task; beat queues it on the broker at the
+  # scheduled time. Without this service, prod reported
+  # ``lit_indexed_total=0`` despite ``lit_completed_total=15`` (the diff
+  # audit had never been scheduled to run). Reuses the worker image so
+  # the beat container reads the same ``nfm_db.services.celery_app``
+  # module that registered the schedule at import time.
+  beat:
+    build:
+      context: .
+      dockerfile: docker/prod-api.Dockerfile
+    image: nucpot-prod-api:${PROD_IMAGE_TAG:-latest}
+    container_name: nucpot-prod-beat
+    restart: unless-stopped
+    command: >
+      celery -A nfm_db.services.celery_app:celery_app beat
+      --loglevel=info
+    environment:
+      # Beat only needs the broker connection to publish scheduled task
+      # messages. The worker pulls and executes them. Mirror the worker's
+      # broker + result-backend URLs so both containers point at the same
+      # Redis instance compose-wide.
+      REDIS_HOST: nucpot-prod-redis
+      REDIS_PORT: "6379"
+      CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
+      CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      # NFM-1807: keep host.docker.internal traffic off the launchd-launched
+      # host proxies. Matches the worker / api NO_PROXY list.
+      NO_PROXY: ${PROD_BEAT_NO_PROXY:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,nucpot-prod-beat,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+      no_proxy: ${PROD_BEAT_no_proxy:-localhost,127.0.0.1,nucpot-prod-db,nucpot-prod-redis,nucpot-prod-api,nucpot-prod-lightrag,nucpot-prod-worker,nucpot-prod-beat,host.docker.internal,mineru.net,cdn-mineru.openxlab.org.cn,.aliyuncs.com}
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      # Beat is a scheduler, not a worker; ``celery inspect ping`` targets
+      # worker control nodes and would never receive a reply, so the
+      # container would flap to (unhealthy) every interval. Probe the
+      # broker directly — beat's only job is to publish scheduled tasks
+      # to redis, so a healthy ping means beat can do its work.
+      test: ["CMD-SHELL", "python -c \"import redis; redis.Redis(host='nucpot-prod-redis', port=6379).ping()\" || exit 1"]
+      interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
