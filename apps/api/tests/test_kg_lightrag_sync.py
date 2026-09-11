@@ -290,6 +290,38 @@ class TestIngestKGToLightRAG:
             assert call_kwargs.kwargs["source"] == "kg_pipeline"
 
     @pytest.mark.asyncio
+    async def test_forwards_custom_source_marker(self) -> None:
+        """NFM-4636: a caller-supplied ``source`` must reach the ingest.
+
+        The literature pipeline passes ``data_source:<uuid>`` so the
+        daily ``rag_audit_index_coverage`` reconciliation can match the
+        ingested doc back to its ``data_sources`` row; a hardcoded
+        ``kg_pipeline`` tag is invisible to that diff.
+        """
+        mock_provider = AsyncMock()
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
+        ):
+            await ingest_kg_to_lightrag(
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
+                source=f"data_source:{node.id}",
+            )
+
+            call_kwargs = mock_provider.ingest.call_args
+            assert call_kwargs.kwargs["source"] == f"data_source:{node.id}"
+
+    @pytest.mark.asyncio
     async def test_handles_exception_gracefully(self) -> None:
         """Should catch and log exceptions without propagating."""
         with (

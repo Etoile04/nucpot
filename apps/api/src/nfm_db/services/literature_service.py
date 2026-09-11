@@ -1098,10 +1098,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                     node_labels = {
                         n.id: n.label for n in build_result.ingest_nodes
                     }
+                    # NFM-4636: stamp the doc with the data-source identity
+                    # so the daily rag_audit_index_coverage reconciliation
+                    # (NFM-4539 RAG-D §4.2) can match it back to this row.
+                    # A generic tag leaves the literature in perpetual
+                    # "drift" even though its content is indexed.
                     await ingest_kg_to_lightrag(
                         nodes=list(build_result.ingest_nodes),
                         edges=list(build_result.ingest_edges),
                         node_labels=node_labels,
+                        source=f"data_source:{ds.id}",
                     )
                     logger.info(
                         "process_literature: datasource_id=%s LightRAG "

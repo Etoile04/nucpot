@@ -15,6 +15,7 @@ SQLAlchemy ORM primitives.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -30,6 +31,16 @@ from nfm_db.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# NFM-4636: LightRAG markers may embed the data-source UUID inside a
+# longer ``file_path`` tag (``nfm-4505-fresh-<uuid>``, ``data_source:<uuid>``
+# with extra routing prefixes, …).  Strict ``uuid.UUID(marker)`` parsing
+# rejected those shapes, so previously-indexed literature reconciled as
+# perpetual drift.  Fall back to searching the marker for a UUID.
+_UUID_IN_MARKER_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -168,9 +179,20 @@ async def run_rag_audit_index_coverage(
         try:
             indexed_ids.add(uuid.UUID(tail))
         except ValueError:
-            # Some legacy rows may carry non-UUID markers; skip rather
-            # than fail the whole run.
-            logger.debug("rag_audit: non-UUID marker %r — skipped", marker)
+            # NFM-4636: markers may embed the data-source UUID in a
+            # larger ``file_path`` tag (e.g. the NFM-4516 Path-D
+            # re-ingests landed as ``nfm-4505-fresh-<uuid>``).  Search
+            # the marker for a UUID before giving up so those rows
+            # reconcile as covered instead of perpetual drift.
+            match = _UUID_IN_MARKER_RE.search(marker)
+            if match:
+                indexed_ids.add(uuid.UUID(match.group(0)))
+            else:
+                # Some legacy rows may carry non-UUID markers; skip rather
+                # than fail the whole run.
+                logger.debug(
+                    "rag_audit: non-UUID marker %r — skipped", marker
+                )
 
     drift_ids = completed_ids - indexed_ids
     reingested = 0

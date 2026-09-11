@@ -179,6 +179,7 @@ async def ingest_kg_to_lightrag(
     edges: list[KGEdge],
     node_labels: dict[uuid.UUID, str],
     extraction_job_id: uuid.UUID | None = None,
+    source: str = "kg_pipeline",
 ) -> None:
     """Ingest serialized KG data into LightRAG (fire-and-forget safe).
 
@@ -198,6 +199,13 @@ async def ingest_kg_to_lightrag(
         node_labels: Mapping of node UUID -> label for edge serialization.
         extraction_job_id: Optional ``ExtractionJob`` PK whose ``track_id``
             column should be updated after ingest.
+        source: Source marker stamped on the ingested document.  The
+            literature pipeline (NFM-4636) passes
+            ``data_source:<datasource-uuid>`` so the daily
+            ``rag_audit_index_coverage`` reconciliation (NFM-4539 RAG-D)
+            can match the doc back to its ``data_sources`` row — a
+            generic ``kg_pipeline`` tag is invisible to that diff and
+            the row reconciles as drift forever.
     """
     if not is_lightrag_configured():
         logger.debug("LightRAG not configured — skipping KG auto-ingest")
@@ -214,7 +222,7 @@ async def ingest_kg_to_lightrag(
         text = serialize_build_result(nodes, edges, node_labels)
         shared_client = get_shared_lightrag_client()
         provider = LightRAGProvider(client=shared_client)
-        track_id = await provider.ingest(text=text, source="kg_pipeline")
+        track_id = await provider.ingest(text=text, source=source)
 
         # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
         if extraction_job_id is not None and track_id is not None:
