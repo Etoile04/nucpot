@@ -207,17 +207,24 @@ class TestRuleBasedFallbackProvider:
         db = _make_mock_db(rows=[mock_row])
         provider = RuleBasedFallbackProvider(db_session=db)  # type: ignore[arg-type]
         result = await provider.query(query="UO2 fuel")
-        assert "found 1 relevant results" in result.response
+        # NFM-4736 AC-6: rule-based fallback wrapper localized to Chinese.
+        assert "规则回退命中 1 条相关结果" in result.response
+        assert "Rule-based fallback: found" not in result.response
         assert len(result.references) == 1
         assert result.references[0]["source_type"] == "data_source"
         assert result.references[0]["source_id"] == "abc-123"
 
     @pytest.mark.asyncio
     async def test_query_no_results(self) -> None:
+        # NFM-4736 AC-6: rule-based fallback empty-state must surface honest
+        # Chinese copy.  Verify both Chinese marker and absence of the legacy
+        # English "No results found" passthrough.
         db = _make_mock_db(rows=[])
         provider = RuleBasedFallbackProvider(db_session=db)  # type: ignore[arg-type]
         result = await provider.query(query="nonexistent")
-        assert "No results found" in result.response
+        assert "未找到与查询" in result.response
+        assert "No results found" not in result.response
+        assert "nonexistent" in result.response  # query is echoed
 
     @pytest.mark.asyncio
     async def test_ingest_is_noop(self) -> None:

@@ -387,11 +387,19 @@ class RuleBasedFallbackProvider(RAGProvider):
             if snippet:
                 snippets.append(snippet[:500])
 
+        # NFM-4736 AC-6: rule-based fallback empty-state must surface honest
+        # Chinese copy rather than passthrough the English "No results found"
+        # boilerplate.  The hybrid path (mode=hybrid) that exceeds the 8s
+        # LightRAG timeout falls through here, so any wipe residue or thin
+        # VDB coverage lands in this branch with verbatim English text.
         response = (
-            f"Rule-based fallback: found {len(rows)} relevant results "
-            f"for query '{query}'.\n\n" + "\n---\n".join(snippets)
+            f"规则回退命中 {len(rows)} 条相关结果(查询:{query})。\n\n"
+            + "\n---\n".join(snippets)
             if snippets
-            else f"No results found for query '{query}'."
+            else (
+                f"未找到与查询「{query}」相关的文献。"
+                "当前知识库索引覆盖有限,建议补充文献或调整查询词后重试。"
+            )
         )
 
         return RAGQueryResult(

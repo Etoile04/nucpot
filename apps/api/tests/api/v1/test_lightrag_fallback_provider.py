@@ -130,7 +130,10 @@ async def test_rule_based_fallback_query_empty_result_set() -> None:
     assert isinstance(result, RAGQueryResult)
     assert result.fallback is True
     assert result.references == []
-    assert "No results found" in result.response
+    # NFM-4736 AC-6: rule-based fallback empty-state must surface honest
+    # Chinese copy rather than passthrough the English "No results found".
+    assert "未找到与查询" in result.response
+    assert "No results found" not in result.response
 
 
 @pytest.mark.asyncio

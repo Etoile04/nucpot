@@ -104,7 +104,8 @@ async def test_query_timeout_triggers_ilike_fallback(
             "score": 0.71,
         },
     ]
-    fallback_response = "Rule-based fallback: found 2 relevant results for query 'UO2'."
+    # NFM-4736 AC-6: rule-based fallback wrapper localized to Chinese.
+    fallback_response = "规则回退命中 2 条相关结果(查询:UO2)。"
 
     with patch("nfm_db.api.v1.lightrag._get_client") as mock_get_client:
         mock_client = AsyncMock()
