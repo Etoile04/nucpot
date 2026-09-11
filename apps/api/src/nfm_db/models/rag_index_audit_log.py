@@ -1,4 +1,4 @@
-"""RAG index-coverage audit log (NFM-4539 RAG-D).
+"""RAG index-coverage audit log (NFM-4539 RAG-D + NFM-4742-B / NFM-4744).
 
 One row per drift finding from the ``rag_audit_index_coverage`` Celery
 task.  Captures the four shapes the §8.2 contract enumerates:
@@ -9,6 +9,11 @@ task.  Captures the four shapes the §8.2 contract enumerates:
                    completed literature (e.g. a rolled-back dataset).
   - ``error``    — reingest attempt threw; ``error_message`` carries
                    the underlying failure.
+  - ``failed``   — processing-timeout reaper (NFM-4742-B) transitioned
+                   a row out of LightRAG's ``processing`` bucket;
+                   ``failure_kind`` carries the categorical reason
+                   (``processing_timeout``) and ``error_message`` the
+                   human-readable explanation.
 
 ``(routine, literature_id, run_date)`` is a composite unique constraint
 so retries are idempotent: a partial-failure replay that revisits the
@@ -40,6 +45,7 @@ class RagIndexAuditLog(Base):
         ),
         Index("ix_rag_index_audit_run_date", "run_date"),
         Index("ix_rag_index_audit_action", "action"),
+        Index("ix_rag_index_audit_failure_kind", "failure_kind"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -68,11 +74,22 @@ class RagIndexAuditLog(Base):
     action: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
-        comment="reingest | noop | stale | error",
+        comment="reingest | noop | stale | error | failed",
     )
     error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
+    )
+    failure_kind: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        comment=(
+            "NFM-4742-B classification of the ``failed`` action.  One of "
+            "``processing_timeout`` (row stranded in the LightRAG "
+            "``processing`` bucket past the reaper threshold) or NULL for "
+            "pre-NFM-4742 rows.  The 03:30Z beat (NFM-4742-D) filters on "
+            "this column to compute the reaper-saved health metric."
+        ),
     )
 
     def __repr__(self) -> str:
