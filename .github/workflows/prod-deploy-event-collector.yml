@@ -94,7 +94,7 @@ jobs:
           else
             DRY_RUN_FLAG=""
           fi
-          python scripts/okr/prod_event_collector.py \
+          python3 scripts/okr/prod_event_collector.py \
             --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
             --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
             --repo "${{ github.repository }}" \

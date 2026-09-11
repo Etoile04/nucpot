@@ -47,9 +47,16 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
+
+# NFM-2754/NFM-4652: the self-hosted runner's system python3 is 3.9 (no
+# datetime.UTC, which landed in 3.11). The script is stdlib-only by design,
+# so pin a local alias instead of requiring a newer interpreter.
+# (ruff UP017 would "fix" this back to `from datetime import UTC` — a
+# 3.11-only import — so it is deliberately suppressed below.)
+UTC = timezone.utc  # noqa: UP017
 
 # Spec §3.1 schema — verbatim, do not extend or rename.
 SCHEMA_FIELDS = frozenset(
