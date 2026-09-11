@@ -609,7 +609,7 @@ async def run_rag_audit_document_buckets(
                     error_message=f"doc_id={doc_id} age_hours={age:.2f}",
                     failure_reason=FAILURE_REASON_TIMEOUT,
                 )
-            except Exception as exc:  # noqa: BLE001 — reap is best-effort
+            except Exception as exc:
                 reap_errors += 1
                 logger.warning(
                     "rag_audit_buckets: reap failed for doc_id=%s: %s",
@@ -627,15 +627,15 @@ async def run_rag_audit_document_buckets(
 
 
 __all__ = [
-    "AuditOutcome",
-    "BucketAuditOutcome",
-    "BucketCounts",
     "DEFAULT_PROCESSING_TIMEOUT",
     "FAILURE_REASON_DUPLICATE",
     "FAILURE_REASON_EMPTY",
     "FAILURE_REASON_ERROR",
     "FAILURE_REASON_TIMEOUT",
     "FAILURE_REASON_UNKNOWN",
+    "AuditOutcome",
+    "BucketAuditOutcome",
+    "BucketCounts",
     "classify_failure_reason",
     "run_rag_audit_document_buckets",
     "run_rag_audit_index_coverage",

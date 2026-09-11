@@ -165,7 +165,6 @@ async def list_buckets(
     from datetime import UTC, datetime
 
     from nfm_db.services.rag_audit import (
-        BucketCounts,
         _bucket_counts_from_envelope,
     )
 

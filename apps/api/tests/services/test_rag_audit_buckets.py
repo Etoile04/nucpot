@@ -18,10 +18,9 @@ in ``test_rag_audit.py`` (NFM-4539 RAG-D).
 from __future__ import annotations
 
 import json
-import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -41,7 +40,6 @@ from nfm_db.services.rag_audit import (
     classify_failure_reason,
     run_rag_audit_document_buckets,
 )
-
 
 # ---------------------------------------------------------------------------
 # classify_failure_reason
