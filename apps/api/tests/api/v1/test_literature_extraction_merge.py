@@ -56,8 +56,14 @@ async def _seed_kg_node(
     label: str = "Uranium Dioxide",
     confidence: float = 0.95,
     properties: dict | None = None,
+    created_at: datetime | None = None,
 ) -> KGNode:
-    """Insert a KGNode row linked to ``source_id``."""
+    """Insert a KGNode row linked to ``source_id``.
+
+    ``created_at`` pins the row's timestamp so ordering assertions stay
+    deterministic regardless of ``func.now()`` clock resolution on the test
+    back-end (same pattern as the explicit ordering test below).
+    """
     node = KGNode(
         node_type=node_type,
         label=label,
@@ -65,6 +71,7 @@ async def _seed_kg_node(
         source_id=source_id,
         properties=properties or {"value": 9.5, "unit": "W/(m·K)", "source_page": 3},
         status="active",
+        created_at=created_at,
     )
     db_session.add(node)
     await db_session.commit()
@@ -200,6 +207,7 @@ async def test_get_literature_detail_merges_legacy_and_kg_results(
     """Items from extraction_results + kg_nodes + kg_edges all coexist, each
     tagged with its own ``source_type``."""
     source = await _seed_source(db_session)
+    base = datetime.now(tz=UTC)
     legacy = await _seed_legacy_result(
         db_session,
         source_id=source.id,
@@ -210,12 +218,14 @@ async def test_get_literature_detail_merges_legacy_and_kg_results(
         source_id=source.id,
         label="Uranium Dioxide",
         properties={"value": 10.97, "unit": "g/cm^3"},
+        created_at=base - timedelta(minutes=10),
     )
     target = await _seed_kg_node(
         db_session,
         source_id=source.id,
         node_type="Property",
         label="density",
+        created_at=base - timedelta(minutes=5),
     )
     edge = await _seed_kg_edge(
         db_session,
@@ -234,7 +244,12 @@ async def test_get_literature_detail_merges_legacy_and_kg_results(
 
     by_type = {t: [i for i in items if i["source_type"] == t] for t in types}
     assert by_type["manual"][0]["id"] == str(legacy.id)
-    assert by_type["kg_node"][0]["id"] == str(node.id)
+    # Documented contract (_dedupe_and_sort): newest first. ``target`` is the
+    # newer kg_node, so it precedes ``node`` deterministically — no dependence
+    # on same-second ``func.now()`` ties, which made the old ``[0] == node.id``
+    # assertion flip whenever the two seed commits straddled a second boundary
+    # (CI flake on main b9b8ac718, NFM-4652 / GH #1301).
+    assert [i["id"] for i in by_type["kg_node"]] == [str(target.id), str(node.id)]
     assert by_type["kg_edge"][0]["id"] == str(edge.id)
 
 
