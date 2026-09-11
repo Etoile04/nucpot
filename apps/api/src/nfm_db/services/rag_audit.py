@@ -399,12 +399,24 @@ def _parse_lightrag_timestamp(raw: str) -> datetime | None:
     * ISO 8601 with explicit ``+00:00``
     * epoch milliseconds (older builds)
     """
-    try:
-        if raw.endswith("Z"):
+    if raw.endswith("Z"):
+        try:
             return datetime.fromisoformat(raw[:-1]).replace(tzinfo=UTC)
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        pass
+        except ValueError:
+            logger.debug(
+                "rag_audit_buckets: timestamp %r is not ISO-8601 with Z; "
+                "falling through to epoch-ms parser",
+                raw,
+            )
+    else:
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            logger.debug(
+                "rag_audit_buckets: timestamp %r is not ISO-8601; "
+                "falling through to epoch-ms parser",
+                raw,
+            )
     try:
         return datetime.fromtimestamp(float(raw) / 1000.0, tz=UTC)
     except (ValueError, OSError):
