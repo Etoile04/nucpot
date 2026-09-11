@@ -118,6 +118,13 @@ celery_app.conf.task_routes = {
     "nfm_db.services.celery_app.rag_audit_index_coverage_task": {
         "queue": "default",
     },
+    # NFM-4742 F-3 §4: bucket-segregation + processing reaper also
+    # runs on the default queue.  Same rationale as the index-coverage
+    # task — small, read-mostly, runs back-to-back with the audit
+    # so a single LightRAG ``/documents`` call covers both windows.
+    "nfm_db.services.celery_app.rag_audit_document_buckets_task": {
+        "queue": "default",
+    },
 }
 
 # NFM-4539 RAG-D §4.2: register the daily audit under Celery beat at
@@ -138,6 +145,18 @@ celery_app.conf.beat_schedule.update(
         "rag-audit-index-coverage-daily": {
             "task": "nfm_db.services.celery_app.rag_audit_index_coverage_task",
             "schedule": crontab(minute=30, hour=3),  # 03:30 UTC daily
+        },
+        # NFM-4742 F-3 §4: bucket segregation + processing reaper
+        # runs one minute after the index-coverage audit so both
+        # consume the same daily ``/documents`` snapshot in close
+        # succession.  Output lives in
+        # ``rag_index_audit_log`` rows with
+        # ``action='bucket_counts'`` (totals) /
+        # ``action='failed_<reason>'`` (segregated) /
+        # ``action='processing_reaped'`` (timeout cleanup).
+        "rag-audit-document-buckets-daily": {
+            "task": "nfm_db.services.celery_app.rag_audit_document_buckets_task",
+            "schedule": crontab(minute=31, hour=3),  # 03:31 UTC daily
         },
         # NFM-4539 CR fix: re-register the HPC sync periodic task that
         # previously lived here.  ``hpc_sync.sync_hpc_job_status`` runs
@@ -380,4 +399,70 @@ def rag_audit_index_coverage_task(self) -> dict:
             return asyncio.run(_run())
         except Exception as exc:  # pragma: no cover - propagated to celery
             logger.error("rag_audit_index_coverage_task failed: %s", exc)
+            raise
+
+
+# ---------------------------------------------------------------------------
+# NFM-4742 F-3 §3 — daily bucket segregation + processing reaper
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    name="nfm_db.services.celery_app.rag_audit_document_buckets_task",
+    max_retries=1,
+    default_retry_delay=300,
+    autoretry_for=(ConnectionError,),
+)
+def rag_audit_document_buckets_task(self) -> dict:
+    """Daily bucket-segregation audit + processing reaper (NFM-4742 F-3 §3).
+
+    Wraps :func:`nfm_db.services.rag_audit.run_rag_audit_document_buckets`
+    in the same Celery-friendly sync boundary as the index-coverage
+    task above (BUG-22 / NFM-4076 — see the ``task_session_factory``
+    comment for why we cannot use the shared engine).
+
+    The task is intentionally idempotent: re-running on the same day
+    adds extra audit rows but never corrupts state.  Operators can
+    trigger it manually via ``celery_app.send_task(
+    "nfm_db.services.celery_app.rag_audit_document_buckets_task")``
+    when F-3 evidence needs a fresh snapshot between the 03:31 UTC
+    windows.
+    """
+
+    async def _run() -> dict:
+        from nfm_db.config import get_settings
+        from nfm_db.database import task_session_factory
+        from nfm_db.services.rag_audit import run_rag_audit_document_buckets
+
+        settings = get_settings()
+        async with task_session_factory() as factory:
+            async with factory() as session:
+                outcome = await run_rag_audit_document_buckets(
+                    session,
+                    lightrag_host=settings.lightrag_host,
+                    lightrag_port=settings.lightrag_port,
+                )
+        return {
+            "run_date": outcome.run_date.isoformat(),
+            "counts": outcome.counts.as_dict(),
+            "processing_reaped": outcome.processing_reaped,
+            "processing_reap_errors": outcome.processing_reap_errors,
+            "failures_classified": outcome.failures_classified,
+            "error_message": outcome.error_message,
+        }
+
+    try:
+        asyncio.get_running_loop()
+        # Pytest async context — run in a worker thread.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, _run())
+            return future.result()
+    except RuntimeError:
+        try:
+            return asyncio.run(_run())
+        except Exception as exc:  # pragma: no cover - propagated to celery
+            logger.error("rag_audit_document_buckets_task failed: %s", exc)
             raise

@@ -311,3 +311,68 @@ class MetricsResponse(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# NFM-4742 F-3 §3.2 — document bucket counts
+# ---------------------------------------------------------------------------
+
+
+class BucketCountsResponse(BaseModel):
+    """Per-bucket counts for the LightRAG ``/documents`` index.
+
+    Returned by ``GET /api/v1/lightrag/buckets``.  Mirrors
+    :class:`nfm_db.services.rag_audit.BucketCounts` so the admin
+    dashboard and the F-3 evidence report can render the same
+    numbers.  ``failed_*`` are sub-buckets of ``failed`` — health
+    metrics must filter on ``failed_error + failed_empty`` (real
+    failures) and exclude ``failed_duplicate`` (dedupe working as
+    intended).
+    """
+
+    processed: int = Field(
+        0,
+        description="Documents fully indexed and queryable.",
+    )
+    analyzing: int = Field(
+        0,
+        description="Documents in the LightRAG analysis pipeline.",
+    )
+    processing: int = Field(
+        0,
+        description="Documents queued or actively extracting chunks.",
+    )
+    failed: int = Field(
+        0,
+        description="Documents rejected by the sidecar (sum of the three ``failed_*`` sub-buckets).",
+    )
+    failed_duplicate: int = Field(
+        0,
+        description="Failed docs rejected by LightRAG dedupe (Identical/File already exists). Health-neutral.",
+    )
+    failed_error: int = Field(
+        0,
+        description="Failed docs with a non-empty error_message — actionable, must count toward the F1 acceptance gate.",
+    )
+    failed_empty: int = Field(
+        0,
+        description="Failed docs with an empty error_message — chunking pipeline bug; replay to capture the real error.",
+    )
+    pending: int = Field(
+        0,
+        description="Documents accepted by the sidecar but not yet started.",
+    )
+    other: int = Field(
+        0,
+        description="Documents in an unknown bucket — surfaces sidecar format drift instead of silently dropping rows.",
+    )
+    # Snapshot metadata so operators know how fresh the counts are
+    # without having to cross-reference the audit log.
+    fetched_at: datetime = Field(
+        description="UTC timestamp at which the counts were pulled from the sidecar.",
+    )
+    lightrag_host: str = Field(
+        description="LightRAG sidecar host the counts were pulled from.",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
