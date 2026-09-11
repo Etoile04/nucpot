@@ -322,6 +322,14 @@ services:
       REDIS_PORT: "6379"
       CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
       CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      # NFM-4636 / NFM-4539 RAG-D: the worker executes
+      # ``rag_audit_index_coverage_task`` (beat 03:30 UTC + manual
+      # triggers), which reaches LightRAG via settings.  Without these
+      # the worker falls back to ``localhost:9621`` and the audit fails
+      # with "LightRAG /documents failed: All connection attempts
+      # failed".  Must mirror the api service values above.
+      NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
+      NFM_LIGHTRAG_PORT: "9621"
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}
       NFM_HPC_PRIMARY_SSH_KEY_PATH: /run/secrets/hpc_ssh_key
