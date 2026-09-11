@@ -325,15 +325,22 @@ def monitor_primary_cluster_health() -> dict:
     autoretry_for=(ConnectionError,),
 )
 def rag_audit_index_coverage_task(self) -> dict:
-    """Daily hook/对账 (NFM-4539 RAG-D §4.2).
+    """Daily hook/对账 (NFM-4539 RAG-D §4.2) + NFM-4746 health output.
 
     Wraps :func:`nfm_db.services.rag_audit.run_rag_audit_index_coverage`
     in a Celery-friendly sync boundary.  We import the async service
     lazily to avoid a circular import at module load time.
 
-    Returns a JSON-friendly summary that downstream observability
-    surfaces; raises on irrecoverable failures so the watchdog (NFM-4406)
-    can fire.
+    NFM-4746 extends the return payload with three bucket counts
+    (``failed_duplicate`` / ``failed_error`` / ``processing``) plus a
+    ``beat_late`` flag + ``last_success_at`` timestamp so observability
+    surfaces can distinguish a silent sidecar from a legitimate zero
+    result.  A single structured ``logger.info(...)`` line carries the
+    same fields at log level so the journalctl scraper picks them up
+    without a second query.
+
+    Returns a JSON-friendly summary; raises on irrecoverable failures
+    so the watchdog (NFM-4406) can fire.
     """
 
     async def _run() -> dict:
@@ -358,6 +365,32 @@ def rag_audit_index_coverage_task(self) -> dict:
                     lightrag_host=settings.lightrag_host,
                     lightrag_port=settings.lightrag_port,
                 )
+        # NFM-4746: structured log line carries every health field so the
+        # journalctl scraper / log-aggregator can chart ``beat_late``
+        # transitions without joining against the audit table.  The
+        # ``rag_audit.bucket_health`` logger keeps the noise out of the
+        # default Celery stream for callers that only want task status.
+        bucket_logger = logging.getLogger("rag_audit.bucket_health")
+        bucket_logger.info(
+            "rag_audit_bucket_health",
+            extra={
+                "run_date": outcome.run_date.isoformat(),
+                "completed_total": outcome.completed_total,
+                "indexed_total": outcome.indexed_total,
+                "drift_total": outcome.drift_total,
+                "reingested": outcome.reingested,
+                "errors": outcome.errors,
+                "failed_duplicate": outcome.failed_duplicate,
+                "failed_error": outcome.failed_error,
+                "processing": outcome.processing,
+                "beat_late": outcome.beat_late,
+                "last_success_at": (
+                    outcome.last_success_at.isoformat()
+                    if outcome.last_success_at is not None
+                    else None
+                ),
+            },
+        )
         return {
             "run_date": outcome.run_date.isoformat(),
             "completed_total": outcome.completed_total,
@@ -365,6 +398,16 @@ def rag_audit_index_coverage_task(self) -> dict:
             "drift_total": outcome.drift_total,
             "reingested": outcome.reingested,
             "errors": outcome.errors,
+            # NFM-4746 health payload — see :class:`AuditOutcome`.
+            "failed_duplicate": outcome.failed_duplicate,
+            "failed_error": outcome.failed_error,
+            "processing": outcome.processing,
+            "beat_late": outcome.beat_late,
+            "last_success_at": (
+                outcome.last_success_at.isoformat()
+                if outcome.last_success_at is not None
+                else None
+            ),
         }
 
     try:

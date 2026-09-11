@@ -79,6 +79,24 @@ def _patch_lightrag_markers(monkeypatch: pytest.MonkeyPatch, markers: list[str])
     return fake
 
 
+def _patch_lightrag_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+    envelope: dict[str, list[dict[str, Any]]],
+) -> MagicMock:
+    """Stub ``_list_document_buckets`` to return ``envelope`` deterministically.
+
+    NFM-4746: the 03:30Z beat now also queries ``/documents`` for the
+    bucket envelope.  Older tests predate this and only patched the
+    indexed-markers helper; without this stub they hit the real
+    LightRAG sidecar and fail with HTTP 502 in CI.
+    """
+    fake = AsyncMock(return_value=envelope)
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._list_document_buckets", fake
+    )
+    return fake
+
+
 # ---------------------------------------------------------------------------
 # Diff logic
 # ---------------------------------------------------------------------------
@@ -198,6 +216,7 @@ async def test_run_does_not_reingest_when_reingest_flag_false(
     drift_id = uuid.uuid4()
     await _seed_data_sources(db_session, drift_id)
     _patch_lightrag_markers(monkeypatch, [])
+    _patch_lightrag_buckets(monkeypatch, {})
 
     reingest = AsyncMock()
     with patch("nfm_db.services.rag_audit._reingest", new=reingest):
@@ -211,9 +230,13 @@ async def test_run_does_not_reingest_when_reingest_flag_false(
 
     reingest.assert_not_called()
     assert outcome.reingested == 0
-    # drift rows are still recorded, just as 'noop' under dry-run.
+    # NFM-4746: dry-run still emits a ``bucket_health`` summary row so
+    # observability stays dark-free even when ``reingest=False``.  The
+    # assertion below filters it out so the diff/classification contract
+    # (``noop`` rows for drift rows under dry-run) is still tested in
+    # isolation.
     rows = (await db_session.execute(select(RagIndexAuditLog))).scalars().all()
-    actions = sorted(r.action for r in rows)
+    actions = sorted(r.action for r in rows if r.action != "bucket_health")
     assert actions == ["noop"]
 
 
@@ -465,6 +488,7 @@ async def test_audit_row_carries_full_metadata(
     lit_id = uuid.uuid4()
     await _seed_data_sources(db_session, lit_id)
     _patch_lightrag_markers(monkeypatch, [])
+    _patch_lightrag_buckets(monkeypatch, {})
 
     with patch("nfm_db.services.rag_audit._reingest", new=AsyncMock()):
         await run_rag_audit_index_coverage(
@@ -474,7 +498,14 @@ async def test_audit_row_carries_full_metadata(
             run_date=date(2026, 9, 10),
         )
 
-    rows = (await db_session.execute(select(RagIndexAuditLog))).scalars().all()
+    # NFM-4746: the beat now emits an additional ``bucket_health`` summary
+    # row alongside the per-literature ``reingest`` row.  Filter down to
+    # the reingest row for the metadata contract assertion.
+    rows = (
+        await db_session.execute(
+            select(RagIndexAuditLog).where(RagIndexAuditLog.action == "reingest")
+        )
+    ).scalars().all()
     assert len(rows) == 1
     row = rows[0]
     assert row.routine == "rag_audit_index_coverage"
