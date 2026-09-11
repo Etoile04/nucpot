@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -158,7 +158,18 @@ class QueryResponse(BaseModel):
 
 
 class FallbackInfo(BaseModel):
-    """Fallback envelope (NFM-4539 RAG-B / §3.2 / AC-4)."""
+    """Fallback envelope (NFM-4539 RAG-B / §3.2 / AC-4 + NFM-4734 §3).
+
+    ``reason`` is the first-class machine-readable code that lets the
+    UI distinguish a *semantic timeout* (LightRAG sidecar exceeded its
+    10s budget) from a *semantic empty* (LightRAG answered with zero
+    references — KG coverage gap) from a clean response (``none``).
+
+    NFM-4734 §3 / AC-2: the previous "silent fallback" surface masked
+    outages behind a single ``used=true`` flag.  Operators could not
+    tell whether to fix the embedding index (empty case) or scale the
+    sidecar (timeout case).  This enum closes that gap.
+    """
 
     used: bool = Field(
         False,
@@ -169,6 +180,16 @@ class FallbackInfo(BaseModel):
         description=(
             "Fallback kind; currently ``'iliKE'`` for ILIKE rescue. "
             "``None`` when no fallback fired."
+        ),
+    )
+    reason: Literal["none", "semantic_timeout", "semantic_empty", "provider_error"] = Field(
+        "none",
+        description=(
+            "NFM-4734 first-class reason code: "
+            "'none' (steady state), 'semantic_timeout' (LightRAG exceeded its "
+            "budget and was rescued), 'semantic_empty' (LightRAG answered with "
+            "zero references — KG coverage gap), 'provider_error' (defensive "
+            "safety net path)."
         ),
     )
     original_error: str | None = Field(
@@ -276,6 +297,17 @@ class MetricsResponse(BaseModel):
     )
     generated_at: datetime = Field(
         description="UTC timestamp at which this payload was computed.",
+    )
+    # NFM-4734 §3 / AC-3: Tier-2 P95 踩线告警。Operator can pin a single
+    # dashboard panel and the boolean flips the row red without any
+    # extra Prometheus rule.  Computed in ``compute_rag_metrics`` as
+    # ``tier_2_p95.p95_ms is not None and not tier_2_p95.meets_sla``.
+    tier_2_breach: bool = Field(
+        False,
+        description=(
+            "NFM-4734 SLA-breach signal: True iff Tier-2 P95 has at "
+            "least SAMPLE_FLOOR samples AND exceeds the 10s target."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True)

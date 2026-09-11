@@ -32,6 +32,9 @@ export default function RagChatPage() {
           'assistant',
           response.answer,
           response.citations,
+          // NFM-4734 §3 / AC-1: thread the fallback envelope through
+          // to the chat surface so the badge renders on Layout B too.
+          response.fallback,
         )
 
         setMessages((prev) => [...prev, assistantMessage])

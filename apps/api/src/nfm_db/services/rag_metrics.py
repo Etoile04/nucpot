@@ -205,15 +205,23 @@ async def compute_rag_metrics(
         (completed_total - (indexed_total or 0)) if indexed_total is not None else completed_total
     )
 
+    tier_2_p95_obj = tier_p95(tier_2, target_ms=tier_2_target_ms)
+    # NFM-4734 §3 / AC-3: Tier-2 P95 踩线告警。tier_p95 returns
+    # ``meets_sla=False`` when ``p95_ms`` is None (under the sample
+    # floor), so the breach signal only flips True when we have a
+    # statistically meaningful sample that is over budget.
+    tier_2_breach = tier_2_p95_obj.p95_ms is not None and not tier_2_p95_obj.meets_sla
+
     return MetricsResponse(
         lit_completed_total=completed_total,
         lit_indexed_total=indexed_total if indexed_total is not None else 0,
         lit_indexed_source="rag_index_audit_log",
         lit_diff_count=diff_count,
         tier_1_p95=tier_p95(tier_1, target_ms=TIER_1_TARGET_MS),
-        tier_2_p95=tier_p95(tier_2, target_ms=tier_2_target_ms),
+        tier_2_p95=tier_2_p95_obj,
         window_days=window_days,
         generated_at=bounds.end,
+        tier_2_breach=tier_2_breach,
     )
 
 

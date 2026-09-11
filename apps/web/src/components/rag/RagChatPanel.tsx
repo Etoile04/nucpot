@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import type { RagMessage } from '@/lib/rag-api'
 import { CitationCard } from '@/components/rag/CitationCard'
 import { TypingIndicator } from '@/components/rag/TypingIndicator'
+import { RagFallbackBadge } from '@/components/search/RagFallbackBadge'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +32,17 @@ function MessageBubble({ message }: { readonly message: RagMessage }) {
     <li role="article" aria-label={isUser ? '用户消息' : '助手消息'}>
       <div className={baseClasses}>
         <p className="whitespace-pre-wrap">{message.content}</p>
+        {/* NFM-4734 §3 / AC-1: render the fallback badge on the chat
+            (Layout B) surface too — pre-4734 only the search page
+            (Layout A) surfaced the badge and the 校对抽屉, the chat
+            silently showed the ILIKE-rescued answer without telling
+            the user.  We render the badge inside the bubble so the
+            badge rides the assistant message across chat history. */}
+        {!isUser && message.fallback?.used ? (
+          <div className="mt-2">
+            <RagFallbackBadge fallback={message.fallback} />
+          </div>
+        ) : null}
         {message.citations.length > 0 && (
           <div className="mt-2 space-y-2">
             {message.citations.map((citation) => (

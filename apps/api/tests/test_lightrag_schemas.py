@@ -195,6 +195,74 @@ class TestQueryResponse:
 
 
 # ---------------------------------------------------------------------------
+# FallbackInfo reason codes — NFM-4734 §3 / AC-2
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackInfoReasonCodes:
+    """NFM-4734: transparent reason codes so users can tell semantic-timeout
+    from semantic-empty from a successful answer.
+
+    Legacy ``kind`` field stays as a family label (``"iliKE"`` for the
+    text-search rescue) so pre-4734 clients keep working.  The new
+    ``reason`` field carries the first-class machine-readable code.
+    """
+
+    def test_no_fallback_default(self) -> None:
+        """Default FallbackInfo carries ``reason='none'`` and no error."""
+        from nfm_db.schemas.lightrag import FallbackInfo
+
+        info = FallbackInfo()
+        assert info.used is False
+        assert info.kind is None
+        assert info.reason == "none"
+        assert info.original_error is None
+
+    def test_semantic_timeout_reason(self) -> None:
+        """LightRAG sidecar timed out → ``reason='semantic_timeout'``."""
+        from nfm_db.schemas.lightrag import FallbackInfo
+
+        info = FallbackInfo(
+            used=True,
+            kind="iliKE",
+            reason="semantic_timeout",
+            original_error="Read timed out after 10s",
+        )
+        assert info.reason == "semantic_timeout"
+        assert info.used is True
+        assert info.kind == "iliKE"
+
+    def test_semantic_empty_reason(self) -> None:
+        """LightRAG returned zero references → ``reason='semantic_empty'``."""
+        from nfm_db.schemas.lightrag import FallbackInfo
+
+        info = FallbackInfo(used=True, kind="iliKE", reason="semantic_empty")
+        assert info.reason == "semantic_empty"
+
+    def test_provider_error_reason(self) -> None:
+        """Defensive safety net path → ``reason='provider_error'``."""
+        from nfm_db.schemas.lightrag import FallbackInfo
+
+        info = FallbackInfo(used=True, kind="iliKE", reason="provider_error")
+        assert info.reason == "provider_error"
+
+    def test_invalid_reason_rejected(self) -> None:
+        """Unknown reason strings must be rejected — no freeform code drift."""
+        from nfm_db.schemas.lightrag import FallbackInfo
+
+        with pytest.raises(ValidationError):
+            FallbackInfo(reason="made_up_code")
+
+    def test_reason_in_query_response_default(self) -> None:
+        """QueryResponse's nested FallbackInfo carries ``reason='none'`` by default."""
+        from nfm_db.schemas.lightrag import QueryResponse
+
+        resp = QueryResponse(response="hello")
+        assert resp.fallback.reason == "none"
+        assert resp.fallback.used is False
+
+
+# ---------------------------------------------------------------------------
 # HealthResponse
 # ---------------------------------------------------------------------------
 

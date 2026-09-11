@@ -5,6 +5,10 @@
  * default 14 000 ms) and AC-4 (every failure surfaces a friendly Chinese
  * message that suggests keyword search; the raw abort text and the removed
  * "查询超时（60秒），请缩短问题后重试" copy must never reach the UI).
+ *
+ * NFM-4734 — first-class reason codes on the fallback envelope.  Tests
+ * below the timeout block exercise ``mapFallback``-equivalent behaviour
+ * by mocking ``request`` and inspecting the resolved ``fallback`` field.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
@@ -296,5 +300,145 @@ describe("regression — successful query mapping", () => {
         signal: expect.any(AbortSignal),
       }),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// NFM-4734 §3 / AC-2 — fallback envelope mapping
+// ---------------------------------------------------------------------------
+
+describe("ragApi.query — NFM-4734 fallback reason codes", () => {
+  let mockFetch: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.stubEnv(TIMEOUT_ENV_VAR, "")
+    mockFetch = vi.fn()
+    vi.stubGlobal("fetch", mockFetch)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  it("threads semantic_timeout reason through to RagQueryResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          response: "fallback answer",
+          references: [{ source_type: "data_source", source_id: "x" }],
+          entities: [],
+          relationships: [],
+          fallback: {
+            used: true,
+            kind: "iliKE",
+            reason: "semantic_timeout",
+            original_error: "Read timed out after 10s",
+          },
+        },
+      }),
+    )
+
+    const result = await ragApi.query({ query: "UO2 thermal conductivity" })
+    expect(result.fallback.used).toBe(true)
+    expect(result.fallback.reason).toBe("semantic_timeout")
+    expect(result.fallback.originalError).toBe("Read timed out after 10s")
+  })
+
+  it("threads semantic_empty reason through to RagQueryResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          response: "",
+          references: [],
+          entities: [],
+          relationships: [],
+          fallback: {
+            used: true,
+            kind: "iliKE",
+            reason: "semantic_empty",
+            original_error: null,
+          },
+        },
+      }),
+    )
+
+    const result = await ragApi.query({ query: "nonexistent concept" })
+    expect(result.fallback.reason).toBe("semantic_empty")
+  })
+
+  it("defaults reason to 'none' when the server omits the field", async () => {
+    // Pre-4734 server: kind set but reason missing.  We must not crash
+    // and must default to 'none' so the chat badge logic can short-
+    // circuit cheaply.
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          response: "clean answer",
+          references: [],
+          entities: [],
+          relationships: [],
+          fallback: {
+            used: false,
+            kind: null,
+            original_error: null,
+          },
+        },
+      }),
+    )
+
+    const result = await ragApi.query({ query: "x" })
+    expect(result.fallback.reason).toBe("none")
+  })
+
+  it("maps legacy kind='iliKE' to reason='semantic_timeout' when server omits reason", async () => {
+    // Legacy RAG-B server: ``used=true, kind='iliKE'`` but no ``reason``.
+    // The frontend must not render an "everything is fine" state for a
+    // degraded answer — map the missing reason to ``semantic_timeout``
+    // (the only legacy rescue path) so the badge logic keeps working.
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          response: "legacy fallback",
+          references: [],
+          entities: [],
+          relationships: [],
+          fallback: {
+            used: true,
+            kind: "iliKE",
+            original_error: "timeout",
+          },
+        },
+      }),
+    )
+
+    const result = await ragApi.query({ query: "x" })
+    expect(result.fallback.used).toBe(true)
+    expect(result.fallback.reason).toBe("semantic_timeout")
+  })
+
+  it("defaults to used=false when the envelope itself is missing", async () => {
+    // Belt-and-braces: server omits the ``fallback`` field entirely.
+    // Pre-RAG-B response shape.  Map to a used=false envelope with
+    // ``reason='none'`` so the UI badge short-circuits cheaply.
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          response: "clean answer",
+          references: [],
+          entities: [],
+          relationships: [],
+        },
+      }),
+    )
+
+    const result = await ragApi.query({ query: "x" })
+    expect(result.fallback.used).toBe(false)
+    expect(result.fallback.reason).toBe("none")
   })
 })

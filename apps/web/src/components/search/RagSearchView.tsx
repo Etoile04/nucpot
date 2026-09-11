@@ -31,7 +31,10 @@ const INITIAL_STATE: RagSearchState = {
   loading: false,
   error: null,
   hasSearched: false,
-  fallback: { used: false, kind: null, originalError: null },
+  // NFM-4734 §3 / AC-2: the seed fallback now carries ``reason='none'``
+  // so the badge label resolution and the header check both have a
+  // stable string to compare against.
+  fallback: { used: false, kind: null, reason: "none", originalError: null },
 }
 
 interface RagSearchViewProps {
