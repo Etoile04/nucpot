@@ -349,6 +349,77 @@ class LightRAGClient:
         return []
 
     # ------------------------------------------------------------------
+    # NFM-4746 — full bucket enumeration for the 03:30Z beat
+    # ------------------------------------------------------------------
+
+    async def list_document_buckets(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the raw ``/documents`` ``statuses`` envelope.
+
+        Unlike :meth:`list_indexed_documents` (which projects only the
+        ``processed`` bucket for index-coverage reconciliation), this
+        returns **every** bucket the sidecar reports so the audit task
+        can count ``failed`` / ``processing`` rows and classify
+        failure reasons.
+
+        NFM-4636: LightRAG 1.5.4 (the prod sidecar build) answers with
+        a ``{"statuses": {<status>: [...]}}`` envelope, NOT the bare
+        array / ``{"documents": [...]}`` shapes; we project both for
+        forward-compat with older builds and so unit tests can drive
+        the legacy shapes directly.
+
+        Returns an empty dict when the sidecar is unreachable so the
+        caller can decide whether to surface an ``error`` audit row or
+        silently no-op.
+        """
+        try:
+            response = await self._http_client.get(
+                "/documents",
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: {exc}"
+            ) from exc
+
+        body = response.json()
+        return self._extract_statuses_envelope(body)
+
+    @staticmethod
+    def _extract_statuses_envelope(
+        body: Any,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Normalise the three ``/documents`` shapes to a status→rows map.
+
+        Unknown / empty responses return an empty dict so the audit task
+        can still log a structured ``bucket_health`` audit row with
+        zeros instead of crashing on a sidecar format change.
+        """
+        if isinstance(body, list):
+            # Oldest builds — every row is implicitly ``processed``; we
+            # keep that semantic so the bucket report matches what the
+            # sidecar actually has.
+            return {"processed": [r for r in body if isinstance(r, dict)]}
+        if isinstance(body, dict):
+            statuses = body.get("statuses")
+            if isinstance(statuses, dict):
+                return {
+                    str(status): [r for r in rows if isinstance(r, dict)]
+                    for status, rows in statuses.items()
+                    if isinstance(rows, list)
+                }
+            documents = body.get("documents")
+            if isinstance(documents, list):
+                return {
+                    "processed": [r for r in documents if isinstance(r, dict)]
+                }
+        return {}
+
+    # ------------------------------------------------------------------
     # Ingest
     # ------------------------------------------------------------------
 
