@@ -113,12 +113,16 @@ class TestMigration080Chain:
         088_add_validity_check_and_valid_range chained after 087.
         089_add_ix_verification_tasks_status (NFM-4636, the idempotent
         CREATE INDEX for the latent verification_tasks.status drift)
-        chained after 088 — 089 is the current head.  This keeps
+        chained after 088.  NFM-4743 chained
+        090_add_lightrag_doc_failure after 089 (NFM-4742-A failure
+        classification mirror table); NFM-4744's
+        091_add_rag_index_audit_failure_kind chains after 090 — 091 is
+        the current head.  This keeps
         asserting "exactly one
         head" so a future bad down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "090_add_lightrag_doc_failure"
+        current_head = "091_add_rag_index_audit_failure_kind"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 

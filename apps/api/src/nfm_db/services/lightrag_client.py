@@ -118,6 +118,51 @@ class LightRAGClientError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Status-bucket selectors (NFM-4742-B / NFM-4744)
+# ---------------------------------------------------------------------------
+# ``_extract_document_rows`` accepts one of three selectors on its
+# ``only_status`` kwarg.  Module-level sentinels keep the call sites
+# readable and prevent accidental string-typo regressions.
+
+
+class _AllStatuses:
+    """Sentinel: return rows from every ``/documents`` bucket.
+
+    Used by the bucket-segregation audit (NFM-4742-A) which counts
+    *every* status so the dashboard can surface
+    ``failed_duplicate / failed_error / failed_empty`` separately from
+    the in-flight ``processing`` rows the reaper sweeps.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return "<all statuses>"
+
+
+_ALL_STATUSES = _AllStatuses()
+
+
+class _DefaultProcessedOnly:
+    """Sentinel: the pre-NFM-4742-B default (only ``processed`` rows).
+
+    Pinned via a sentinel rather than the literal string ``"processed"``
+    so callers can tell "I want only the indexed rows" apart from
+    "I want the processed bucket specifically" — semantically
+    identical today, but the bucket name could drift in a future
+    LightRAG release and a sentinel survives that rename.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return "<default: processed only>"
+
+
+_DEFAULT_STATUS = _DefaultProcessedOnly()
+
+
+# ---------------------------------------------------------------------------
 # Module-level config helper
 # ---------------------------------------------------------------------------
 
@@ -325,21 +370,34 @@ class LightRAGClient:
     def _extract_document_rows(
         body: Any,
         *,
-        include_statuses: set[str] | None = None,
+        only_status: str | None | type[_ALL_STATUSES] = _DEFAULT_STATUS,
     ) -> list[Any]:
         """Project the three ``/documents`` envelope shapes to row dicts.
 
         * bare JSON array (oldest builds) — all rows, no status known;
         * ``{"documents": [...]}`` (older builds) — all rows;
         * ``{"statuses": {<status>: [...]}}`` (1.5.4, prod) — only rows
-          whose bucket is in ``include_statuses``.  When ``include_statuses``
-          is ``None`` (default), only ``processed`` rows are returned so the
-          coverage audit doesn't reconcile failed / processing rows as
-          "indexed".  Pass ``{"failed"}`` to pull the failure bucket
-          (NFM-4743).
+          whose bucket matches the ``only_status`` selector.
 
-        Empty / non-dict bodies return ``[]`` so the caller does not have
-        to defensively guard against every envelope shape.
+        ``only_status`` is the explicit bucket selector:
+
+        * :data:`_DEFAULT_STATUS` (default — sentinel) preserves the
+          pre-NFM-4742-B behaviour: only ``processed`` rows count as
+          "in the index" so the daily reconciliation does not flag
+          in-flight / failed rows as drift;
+        * any other status string narrows the result to that bucket —
+          ``"failed"`` for the F-3 dedupe-vs-error classification
+          (NFM-4742-A / NFM-4743), ``"processing"`` for the
+          processing-timeout reaper (NFM-4742-B / NFM-4744);
+        * :data:`_ALL_STATUSES` (a sentinel class) returns rows from
+          every bucket — useful for the bucket-segregation audit
+          (NFM-4742-A) which counts everything.
+
+        On the non-``statuses`` envelope shapes the filter is ignored
+        because there is no per-status information to filter on.
+
+        Empty / non-dict bodies return ``[]`` so the caller does not
+        have to defensively guard against every envelope shape.
         """
         if isinstance(body, list):
             return body
@@ -349,14 +407,18 @@ class LightRAGClient:
                 return documents
             statuses = body.get("statuses")
             if isinstance(statuses, dict):
-                wanted = (
-                    include_statuses
-                    if include_statuses is not None
-                    else {"processed"}
-                )
                 rows: list[Any] = []
                 for status, status_rows in statuses.items():
-                    if status in wanted and isinstance(status_rows, list):
+                    if only_status is _ALL_STATUSES:
+                        pass
+                    elif only_status is _DEFAULT_STATUS:
+                        # Pre-NFM-4742-B default: only ``processed`` rows
+                        # count as "in the index".
+                        if status != "processed":
+                            continue
+                    elif status != only_status:
+                        continue
+                    if isinstance(status_rows, list):
                         rows.extend(status_rows)
                 return rows
         return []
@@ -364,9 +426,10 @@ class LightRAGClient:
     async def list_failed_documents(self) -> list[dict[str, Any]]:
         """Return the rows from LightRAG's ``failed`` bucket.
 
-        NFM-4743: the F-3 audit (``rag-comprehensive-test-report-2026-09-11.md``)
-        found the LightRAG ``failed`` bucket mixed 20 dedupe-rejected rows
-        with 10 real chunking failures.  We project the full row payload
+        NFM-4743 / NFM-4742-A: the F-3 audit
+        (``rag-comprehensive-test-report-2026-09-11.md``) found the
+        LightRAG ``failed`` bucket mixed 20 dedupe-rejected rows with
+        10 real chunking failures.  We project the full row payload
         (``id`` / ``file_source`` / ``error_msg`` / ``status``) so
         ``lightrag_failure.record_doc_failures`` can bucket each row by
         ``failure_kind`` and the /metrics endpoint can report the split
@@ -392,12 +455,89 @@ class LightRAGClient:
             ) from exc
 
         body = response.json()
-        rows = self._extract_document_rows(body, include_statuses={"failed"})
+        rows: list[Any] = self._extract_document_rows(
+            body, only_status="failed"
+        )
         out: list[dict[str, Any]] = []
         for row in rows:
             if isinstance(row, dict):
                 out.append(dict(row))
         return out
+
+    async def list_processing_documents(self) -> list[dict[str, Any]]:
+        """Return the raw rows currently in LightRAG's ``processing`` bucket.
+
+        NFM-4742-B / NFM-4744: the processing-timeout sweep pulls these
+        rows, computes their age from ``updated_at`` /
+        ``started_at`` / ``created_at``, and reaps the ones that have
+        been in-flight past the threshold.  The shape mirrors what the
+        sidecar returns so the caller can pick the timestamp key it
+        prefers without re-querying the HTTP endpoint.
+
+        Raises:
+            LightRAGClientError: On HTTP errors or connection failures.
+        """
+        try:
+            response = await self._http_client.get(
+                "/documents",
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: {exc}"
+            ) from exc
+
+        body = response.json()
+        rows: list[Any] = self._extract_document_rows(
+            body, only_status="processing"
+        )
+        return [row for row in rows if isinstance(row, dict)]
+
+    async def delete_document(self, doc_id: str) -> bool:
+        """Remove a single document from the LightRAG index.
+
+        NFM-4742-B / NFM-4744: the processing-timeout reaper calls this
+        after writing the ``failed`` audit row so the doc stops blocking
+        the bucket counter and the operator-driven replay task
+        (NFM-4742-C) can re-submit cleanly.
+
+        Returns ``True`` when the sidecar reports the row was removed
+        (HTTP 200/204), ``False`` when the doc was already absent
+        (HTTP 404).  All other HTTP failures raise
+        :class:`LightRAGClientError`.
+        """
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            raise LightRAGClientError("delete_document requires a non-empty doc_id")
+        # LightRAG's ``/documents`` DELETE accepts the doc-id as a query
+        # parameter (``?doc_id=<id>``); the sidecar does not expose a
+        # JSON body contract for delete, so query-param is the safest
+        # shape across the builds we've observed.
+        try:
+            response = await self._http_client.delete(
+                "/documents",
+                params={"doc_id": doc_id},
+                timeout=self.query_timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents DELETE failed: {exc}"
+            ) from exc
+        if response.status_code in (200, 204):
+            return True
+        if response.status_code == 404:
+            return False
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents DELETE failed: HTTP {exc.response.status_code}"
+            ) from exc
+        return False
 
     # ------------------------------------------------------------------
     # Ingest
