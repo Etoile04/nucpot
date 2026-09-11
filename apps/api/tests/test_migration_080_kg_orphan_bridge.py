@@ -118,7 +118,7 @@ class TestMigration080Chain:
         head" so a future bad down_revision still fails loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "089_add_ix_verification_tasks_status"
+        current_head = "090_add_lightrag_doc_failure"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 

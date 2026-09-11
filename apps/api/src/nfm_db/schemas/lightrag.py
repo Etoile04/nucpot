@@ -309,5 +309,18 @@ class MetricsResponse(BaseModel):
             "least SAMPLE_FLOOR samples AND exceeds the 10s target."
         ),
     )
+    # NFM-4743 F-3 AC: split the LightRAG ``failed`` bucket by kind so
+    # dedupe-rejected rows (``duplicate``) do not pollute the
+    # ``failed.error`` health alert.  Always carries the three known
+    # kinds (zero-filled) so the dashboard renders a stable shape.
+    failed_by_kind: dict[str, int] = Field(
+        default_factory=lambda: {"duplicate": 0, "error": 0, "processing_timeout": 0},
+        description=(
+            "NFM-4743 per-kind failure counts. Keys: 'duplicate', "
+            "'error', 'processing_timeout'. The 'error' bucket excludes "
+            "the 'duplicate' rows that previously polluted the failed "
+            "health metric (NFM-4738 F-3 audit)."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)

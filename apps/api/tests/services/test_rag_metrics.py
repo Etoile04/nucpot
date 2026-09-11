@@ -475,3 +475,88 @@ async def test_metrics_ignores_non_default_routine_in_audit(
 
     payload = await compute_rag_metrics(db_session)
     assert payload.lit_indexed_total == 0
+
+
+# ---------------------------------------------------------------------------
+# NFM-4743 — failed_by_kind surfaces on /metrics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_metrics_failed_by_kind_zero_on_empty_table(
+    db_session: AsyncSession,
+) -> None:
+    """Empty failure table renders the three-kind shape with zeros.
+
+    The dashboard renders a stable shape even on a fresh deployment;
+    keys are stable so the frontend does not need a runtime guard.
+    """
+    payload = await compute_rag_metrics(db_session)
+    assert payload.failed_by_kind == {
+        "duplicate": 0,
+        "error": 0,
+        "processing_timeout": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_metrics_failed_by_kind_separates_duplicate_from_error(
+    db_session: AsyncSession,
+) -> None:
+    """The F-3 audit scenario: 20 dedupe + 10 real failures split cleanly.
+
+    Without this split, the ``failed.error`` health alert would have
+    flipped red on the 20 dedupe rows even though no real chunking
+    regression had occurred.  NFM-4743 AC: ``Health metric / metrics
+    endpoint must separate ``failed.duplicate`` from ``failed.error``
+    (do not sum them)``.
+    """
+    from nfm_db.services.lightrag_failure import record_doc_failures
+
+    rows = []
+    # 20 dedupe-rejected rows (mix of the three known phrases)
+    for i in range(12):
+        rows.append(
+            {
+                "doc_id": f"dup-identical-{i}",
+                "file_source": f"data_source:dup{i}",
+                "error_message": "Identical content already exists",
+            }
+        )
+    for i in range(7):
+        rows.append(
+            {
+                "doc_id": f"dup-filename-{i}",
+                "file_source": f"data_source:fn{i}",
+                "error_message": "File name already exists",
+            }
+        )
+    rows.append(
+        {
+            "doc_id": "dup-hash",
+            "file_source": "data_source:hash",
+            "error_message": "Duplicate content hash detected",
+        }
+        # total: 12 + 7 + 1 = 20 dedupe
+    )
+    # 10 real chunking failures
+    for i in range(10):
+        rows.append(
+            {
+                "doc_id": f"err-{i}",
+                "file_source": f"data_source:err{i}",
+                "error_message": f"Chunking failed at offset {i}: invalid encoding",
+            }
+        )
+
+    await record_doc_failures(db_session, rows)
+
+    payload = await compute_rag_metrics(db_session)
+    assert payload.failed_by_kind["duplicate"] == 20
+    assert payload.failed_by_kind["error"] == 10
+    assert payload.failed_by_kind["processing_timeout"] == 0
+    # And critically, the dashboard can NOT silently re-sum them.
+    assert (
+        payload.failed_by_kind["duplicate"] + payload.failed_by_kind["error"]
+        == 30
+    )

@@ -742,3 +742,91 @@ async def test_list_indexed_documents_raises_on_http_error(
     with pytest.raises(LightRAGClientError, match="500"):
         await client.list_indexed_documents()
     await client.close()
+
+
+# ---------------------------------------------------------------------------
+# NFM-4743 — LightRAGClient.list_failed_documents
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_failed_documents_returns_failed_bucket_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``list_failed_documents`` projects only the ``failed`` status bucket.
+
+    NFM-4738 F-3 audit: the LightRAG ``/documents`` envelope splits docs
+    into processed / analyzing / processing / failed / pending.  Only
+    the ``failed`` bucket is interesting for the NFM-4743 mirror table;
+    the other buckets must not pollute the failure audit.
+    """
+    from nfm_db.services.lightrag_client import LightRAGClient
+
+    client = LightRAGClient(host="test", port=1, query_timeout=1.0)
+    payload = {
+        "statuses": {
+            "processed": [{"id": "proc-1"}],
+            "analyzing": [{"id": "an-1"}],
+            "failed": [
+                {
+                    "id": "fail-dedupe",
+                    "file_source": "data_source:abc",
+                    "error_msg": "Identical content already exists",
+                },
+                {
+                    "id": "fail-error",
+                    "file_source": "data_source:def",
+                    "error_msg": "Chunking failed: empty content",
+                },
+            ],
+        }
+    }
+    fake_get = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            json=MagicMock(return_value=payload),
+            raise_for_status=lambda: None,
+        )
+    )
+    monkeypatch.setattr(client._http_client, "get", fake_get)  # type: ignore[attr-defined]
+
+    rows = await client.list_failed_documents()
+    assert [r["id"] for r in rows] == ["fail-dedupe", "fail-error"]
+    # The error_msg is preserved so ``classify_failure_kind`` can
+    # bucket it at write time, never read time.
+    assert rows[0]["error_msg"] == "Identical content already exists"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_failed_documents_empty_when_no_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean sidecar returns ``[]`` rather than raising.
+
+    The beat must run every day regardless of whether failures exist;
+    treating "no rows" as an error would force operators to investigate
+    the dashboard after every clean run.
+    """
+    from nfm_db.services.lightrag_client import LightRAGClient
+
+    client = LightRAGClient(host="test", port=1, query_timeout=1.0)
+    payload = {
+        "statuses": {
+            "processed": [{"id": "proc-1"}],
+            "analyzing": [],
+            "failed": [],
+        }
+    }
+    fake_get = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            json=MagicMock(return_value=payload),
+            raise_for_status=lambda: None,
+        )
+    )
+    monkeypatch.setattr(client._http_client, "get", fake_get)  # type: ignore[attr-defined]
+
+    rows = await client.list_failed_documents()
+    assert rows == []
+    await client.close()

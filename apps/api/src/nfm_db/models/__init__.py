@@ -176,6 +176,7 @@ from nfm_db.models.knowledge_gap import (  # noqa: E402
     GapType,
     KnowledgeGap,
 )
+from nfm_db.models.lightrag_doc_failure import LightragDocFailure  # noqa: E402
 from nfm_db.models.material import (  # noqa: E402
     Material,
     MaterialAlias,
@@ -317,6 +318,7 @@ __all__ = [
     "KGReviewQueue",
     "KRelationType",
     "KnowledgeGap",
+    "LightragDocFailure",
     "MDSimulationResult",
     "MDVerificationJob",
     "MatchMethod",
