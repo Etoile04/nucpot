@@ -94,7 +94,11 @@ jobs:
           else
             DRY_RUN_FLAG=""
           fi
-          python scripts/okr/prod_event_collector.py \
+          # NFM-4698: the runner host (wenjiedeMac-Studio, brew-installed Python)
+          # exposes only `python3` — no `python` symlink. The "Set up Python" step
+          # above is a probe (python3 --version), not an install (see NFM-2754),
+          # so the bare `python` invocation below has been failing with exit 127.
+          python3 scripts/okr/prod_event_collector.py \
             --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
             --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
             --repo "${{ github.repository }}" \
