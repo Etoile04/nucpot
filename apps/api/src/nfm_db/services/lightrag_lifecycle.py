@@ -48,11 +48,41 @@ logger = logging.getLogger(__name__)
 _shared_client: LightRAGClient | None = None
 
 
+def _client_bound_to_open_loop(client: LightRAGClient | None) -> bool:
+    """Return True iff ``client`` is bound to an open event loop.
+
+    NFM-4719 / NFM-4717 / NFM-4083 family: ``httpx.AsyncClient`` binds to
+    the loop that constructed it.  In a Celery worker each task runs in a
+    throwaway ``asyncio.run`` loop; the singleton survives across tasks
+    (module-level) so the SECOND task hits a closed-loop client and every
+    POST raises ``RuntimeError: Event loop is closed``.  Detect this and
+    force a rebuild instead of letting the silent-failure swallow the
+    exception downstream.
+    """
+    if client is None:
+        return False
+    if not hasattr(client, "_loop"):
+        return True  # backward-compat: legacy clients without the marker
+    loop = client._loop
+    if loop is None:
+        return True  # built off-loop; first in-loop caller rebinds
+    return not loop.is_closed()
+
+
 def get_shared_lightrag_client() -> LightRAGClient | None:
     """Return the shared ``LightRAGClient`` singleton.
 
     On first call (or after ``close_lightrag_client``), lazily creates
     a new client from environment variables / application settings.
+
+    NFM-4719: when the existing singleton is bound to a closed event
+    loop (Celery worker re-entry path), reset it so the caller gets a
+    fresh client bound to the current loop.  Without this, every POST
+    on the SECOND task in a worker process would raise
+    ``RuntimeError: Event loop is closed`` — silently swallowed by the
+    outer ``except Exception`` in ``ingest_kg_to_lightrag`` and
+    misreported as "LightRAG inline ingest done" while no VDB rows
+    landed.
 
     Returns:
         A ``LightRAGClient`` instance, or ``None`` if LightRAG is
@@ -60,11 +90,21 @@ def get_shared_lightrag_client() -> LightRAGClient | None:
     """
     global _shared_client
 
+    if not is_lightrag_configured():
+        if _shared_client is not None:
+            # Mis-config change at runtime — drop the stale client.
+            _shared_client = None
+        return None
+
+    if _shared_client is not None and not _client_bound_to_open_loop(_shared_client):
+        logger.debug(
+            "Shared LightRAG client bound to closed loop (%s); recreating",
+            _shared_client.base_url,
+        )
+        _shared_client = None
+
     if _shared_client is not None:
         return _shared_client
-
-    if not is_lightrag_configured():
-        return None
 
     _shared_client = LightRAGClient()
     logger.debug("Created shared LightRAG client: %s", _shared_client.base_url)

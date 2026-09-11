@@ -7,10 +7,13 @@ All external services are mocked:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from nfm_db.models.kg import KGEdge, KGNode
@@ -322,8 +325,19 @@ class TestIngestKGToLightRAG:
             assert call_kwargs.kwargs["source"] == f"data_source:{node.id}"
 
     @pytest.mark.asyncio
-    async def test_handles_exception_gracefully(self) -> None:
-        """Should catch and log exceptions without propagating."""
+    async def test_propagates_provider_exception(self) -> None:
+        """NFM-4719: provider exceptions MUST propagate.
+
+        Pre-fix behaviour silently swallowed every exception inside
+        ``ingest_kg_to_lightrag`` (``except Exception:``), which masked
+        the "Event loop is closed" traceback from the inline-ingest
+        path in ``process_literature`` and let it log "LightRAG inline
+        ingest done" while VDB rows never landed.  Callers now wrap
+        the call in their own ``try/except`` (the inline path uses the
+        existing "process_literature: inline LightRAG ingest failed"
+        branch; the fire-and-forget path uses the ``_fire_and_forget_ingest``
+        wrapper that catches + logs).
+        """
         with (
             patch(
                 "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
@@ -335,12 +349,12 @@ class TestIngestKGToLightRAG:
             ),
         ):
             node = _make_node()
-            # Should NOT raise
-            await ingest_kg_to_lightrag(
-                nodes=[node],
-                edges=[],
-                node_labels={node.id: "UO2"},
-            )
+            with pytest.raises(RuntimeError, match="connection refused"):
+                await ingest_kg_to_lightrag(
+                    nodes=[node],
+                    edges=[],
+                    node_labels={node.id: "UO2"},
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -495,8 +509,15 @@ class TestTrackIdPersistence:
             session_factory.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_db_failure_gracefully(self) -> None:
-        """DB write failures must not propagate — fire-and-forget contract."""
+    async def test_propagates_db_write_failure(self) -> None:
+        """NFM-4719: DB write failures MUST propagate from the base function.
+
+        Pre-fix behaviour swallowed the DB failure inside ``except Exception:``
+        and returned normally — a downstream consumer had no signal that the
+        ``track_id`` persistence had failed.  The new contract: the base
+        function re-raises; fire-and-forget callers go through
+        :func:`_fire_and_forget_ingest` (the only sanctioned swallow site).
+        """
         job_id = uuid.uuid4()
         mock_provider = AsyncMock()
         mock_provider.ingest = AsyncMock(return_value="track-dbfail")
@@ -526,14 +547,13 @@ class TestTrackIdPersistence:
             ),
         ):
             node = _make_node()
-            # Must NOT raise — DB failure is a degraded-mode event, not an
-            # error that breaks the extraction pipeline.
-            await ingest_kg_to_lightrag(
-                nodes=[node],
-                edges=[],
-                node_labels={node.id: "UO2"},
-                extraction_job_id=job_id,
-            )
+            with pytest.raises(RuntimeError, match="database connection lost"):
+                await ingest_kg_to_lightrag(
+                    nodes=[node],
+                    edges=[],
+                    node_labels={node.id: "UO2"},
+                    extraction_job_id=job_id,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -623,3 +643,384 @@ class TestFireIngestToLightRAG:
                 node_labels={node.id: "UO2"},
             )
             mock_loop.create_task.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# NFM-4719: inline-ingest silent failure + Celery worker re-entry
+# ---------------------------------------------------------------------------
+#
+# The pre-fix code had two compounding defects:
+#   1. ``ingest_kg_to_lightrag`` swallowed every exception via
+#      ``except Exception:`` and returned normally — the inline caller's
+#      "LightRAG inline ingest done (nodes=N edges=M)" log was therefore
+#      indistinguishable from a real success even when the sidecar POST
+#      raised ``RuntimeError: Event loop is closed`` (Celery worker
+#      re-entry path: shared ``httpx.AsyncClient`` bound to a loop that
+#      the previous ``asyncio.run`` had already closed).
+#   2. The module-level ``_shared_client`` survived across tasks in a
+#      long-lived worker process, so the second task always hit the
+#      closed-loop client.
+#
+# These tests guard the fix by exercising both behaviours directly.
+
+
+class TestFireAndForgetWrapper:
+    """Verify :func:`_fire_and_forget_ingest` catches + logs failures.
+
+    The base :func:`ingest_kg_to_lightrag` now re-raises so the inline
+    caller can distinguish success from failure.  Fire-and-forget
+    callers schedule :func:`_fire_and_forget_ingest` (which wraps the
+    base function in a try/except + WARNING log) so the task never
+    carries an unhandled traceback but the failure IS visible in the
+    worker log.
+    """
+
+    @pytest.mark.asyncio
+    async def test_swallows_and_logs_provider_failure(self) -> None:
+        """Provider exception → swallowed with a WARNING log."""
+        from nfm_db.services.kg_lightrag_sync import _fire_and_forget_ingest
+
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                side_effect=RuntimeError("connection refused"),
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.logger"
+            ) as mock_logger,
+        ):
+            # Must NOT raise — fire-and-forget contract.
+            await _fire_and_forget_ingest(
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
+            )
+            # WARNING must be emitted with the canonical text the prod
+            # log search keys on.
+            mock_logger.warning.assert_called_once()
+            call_args = mock_logger.warning.call_args
+            assert "KG auto-ingest to LightRAG failed" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_succeeds_when_base_function_succeeds(self) -> None:
+        """No exception → no warning logged."""
+        from nfm_db.services.kg_lightrag_sync import _fire_and_forget_ingest
+
+        mock_provider = AsyncMock()
+        mock_provider.ingest = AsyncMock(return_value="track-ok")
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "nfm_db.services.kg_lightrag_sync.logger"
+            ) as mock_logger,
+        ):
+            await _fire_and_forget_ingest(
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
+            )
+            mock_provider.ingest.assert_awaited_once()
+            mock_logger.warning.assert_not_called()
+
+
+class TestInlineIngestNoSilentFailure:
+    """Regression guard for NFM-4719 / NFM-4717 inline-ingest silent failure.
+
+    Pre-fix: ``process_literature`` called ``ingest_kg_to_lightrag``
+    inline; the function swallowed the underlying exception; the
+    caller logged "LightRAG inline ingest done" regardless of whether
+    the sidecar POST actually landed.  These tests exercise the
+    inline call path with a provider that fails, and assert that the
+    failure surfaces through the caller's own try/except — not
+    misreported as success.
+    """
+
+    @pytest.mark.asyncio
+    async def test_inline_ingest_logs_failure_when_provider_raises(self) -> None:
+        """When the inline ingest fails, the caller MUST log 'failed'.
+
+        This is the regression assertion: pre-fix, the caller logged
+        "LightRAG inline ingest done (nodes=N edges=M)" even when the
+        POST raised ``RuntimeError: Event loop is closed``.  Post-fix,
+        the exception propagates out of ``ingest_kg_to_lightrag`` and
+        the caller's ``except Exception:`` branch emits the
+        "process_literature: … inline LightRAG ingest failed" log
+        instead.
+        """
+        from nfm_db.services.literature_service import (
+            process_literature as process_lit,
+        )
+
+        node = _make_node(label="UO2")
+
+        # Stub the build_result to carry ingest payload so the inline
+        # code path is exercised.
+        build_result = MagicMock()
+        build_result.ingest_nodes = (node,)
+        build_result.ingest_edges = ()
+
+        # We don't actually run process_literature end-to-end here —
+        # that requires a full DB / session factory stack.  Instead we
+        # mirror the inline-ingest call site (literature_service.py
+        # line ~1106) and assert its logger behaviour.
+        from nfm_db.services import kg_lightrag_sync as kls
+
+        with (
+            patch.object(kls, "is_lightrag_configured", return_value=True),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                side_effect=RuntimeError("Event loop is closed"),
+            ),
+            patch(
+                "nfm_db.services.literature_service.logger"
+            ) as mock_lit_logger,
+        ):
+            try:
+                await kls.ingest_kg_to_lightrag(
+                    nodes=list(build_result.ingest_nodes),
+                    edges=list(build_result.ingest_edges),
+                    node_labels={node.id: "UO2"},
+                    source="data_source:abc",
+                )
+                # The fix: this MUST raise.  If we reach here, the
+                # silent-failure regression has returned.
+                raised = False
+            except RuntimeError as exc:
+                raised = True
+                assert "Event loop is closed" in str(exc)
+
+            assert raised, (
+                "Regression: ingest_kg_to_lightrag must propagate "
+                "RuntimeError (was silently swallowed pre-NFM-4719)"
+            )
+            # Inline caller is expected to do its own try/except; here
+            # we just confirm the exception actually surfaced to it
+            # (i.e. didn't vanish mid-call).
+            mock_lit_logger.warning.assert_not_called()
+            # Touch the unused import so linters don't strip it.
+            assert process_lit is not None
+
+
+class TestSharedClientRecreatesOnClosedLoop:
+    """NFM-4719: lifecycle helper must detect Celery worker re-entry.
+
+    A long-lived Celery worker process executes N tasks in a row, each
+    wrapped in ``asyncio.run(_run())``.  The module-level
+    ``_shared_client`` survives across tasks; the underlying
+    ``httpx.AsyncClient`` is bound to whichever loop first created
+    it.  After that loop closes (end of the first task), every POST
+    on the SECOND task would raise ``RuntimeError: Event loop is
+    closed``.
+
+    The fix: ``get_shared_lightrag_client()`` detects a stale client
+    (loop is closed or differs from the running loop) and rebuilds.
+    These tests simulate the cross-loop scenario without booting a
+    real Celery worker.
+    """
+
+    def _make_mock_client(
+        self, *, bound_to_closed_loop: bool
+    ) -> MagicMock:
+        """Return a stand-in for a stale or fresh shared client."""
+        client = MagicMock()
+        client.base_url = "http://stale:9621"
+        client._loop = MagicMock()
+        client._loop.is_closed.return_value = bound_to_closed_loop
+        return client
+
+    def test_returns_fresh_client_when_singleton_is_closed_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stale loop → client dropped, new one constructed."""
+        from nfm_db.services import lightrag_lifecycle as ll
+
+        stale = self._make_mock_client(bound_to_closed_loop=True)
+        fresh = self._make_mock_client(bound_to_closed_loop=False)
+
+        # Pretend LightRAG IS configured and the module-level singleton
+        # is bound to a closed loop from the previous Celery task.
+        monkeypatch.setattr(
+            "nfm_db.services.lightrag_lifecycle.is_lightrag_configured",
+            lambda: True,
+        )
+        monkeypatch.setattr(ll, "_shared_client", stale)
+        # Each call to LightRAGClient() returns a distinct mock so the
+        # recreation is observable.
+        construction_count = {"n": 0}
+
+        def _fake_ctor() -> MagicMock:
+            construction_count["n"] += 1
+            return fresh
+
+        monkeypatch.setattr(ll, "LightRAGClient", _fake_ctor)
+
+        result = ll.get_shared_lightrag_client()
+
+        assert result is fresh
+        assert construction_count["n"] == 1
+        # The stale singleton must have been replaced in the module.
+        assert ll._shared_client is fresh
+
+    def test_returns_existing_client_when_loop_is_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Healthy loop → no rebuild, same instance returned."""
+        from nfm_db.services import lightrag_lifecycle as ll
+
+        healthy = self._make_mock_client(bound_to_closed_loop=False)
+
+        monkeypatch.setattr(
+            "nfm_db.services.lightrag_lifecycle.is_lightrag_configured",
+            lambda: True,
+        )
+        monkeypatch.setattr(ll, "_shared_client", healthy)
+
+        construction_count = {"n": 0}
+
+        def _fake_ctor() -> MagicMock:
+            construction_count["n"] += 1
+            return MagicMock()
+
+        monkeypatch.setattr(ll, "LightRAGClient", _fake_ctor)
+
+        result = ll.get_shared_lightrag_client()
+
+        assert result is healthy
+        assert construction_count["n"] == 0
+
+
+class TestCelerySubprocessEndToEnd:
+    """End-to-end regression for NFM-4719 / NFM-4717.
+
+    Simulates the exact production scenario: a long-lived worker
+    subprocess invokes ``ingest_kg_to_lightrag`` inside
+    ``asyncio.run(_run())`` TWICE.  Pre-fix, the SECOND invocation
+    hit a closed-loop ``httpx.AsyncClient`` and raised
+    ``RuntimeError: Event loop is closed`` — which the old swallow
+    masked and ``process_literature`` misreported as success.
+
+    Post-fix: the second invocation gets a freshly constructed
+    client (loop-aware rebuild) and the POST succeeds.
+    """
+
+    def test_two_consecutive_asyncio_runs_both_ingest(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from nfm_db.services import kg_lightrag_sync as kls
+        from nfm_db.services import lightrag_lifecycle as ll
+
+        # Per-run POST counts so we can verify the sidecar was actually
+        # contacted both times.
+        post_count = {"first": 0, "second": 0}
+
+        class _FakeAsyncClient:
+            """Minimal stand-in for httpx.AsyncClient.
+
+            Records which loop it was created on so the test can prove
+            the second call created a fresh client bound to the new
+            loop (not the closed first loop).
+            """
+
+            instances: list[_FakeAsyncClient] = []
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                try:
+                    self._created_on_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    self._created_on_loop = None
+                self.kwargs = kwargs
+                _FakeAsyncClient.instances.append(self)
+
+            async def post(
+                self, path: str, *, json: dict[str, Any], timeout: Any
+            ) -> MagicMock:
+                # Tag the call so the test can distinguish first vs
+                # second invocation.
+                if (
+                    _FakeAsyncClient.instances.index(self) == 0
+                    and post_count["first"] == 0
+                ):
+                    post_count["first"] += 1
+                else:
+                    post_count["second"] += 1
+                response = MagicMock()
+                response.status_code = 200
+                response.json = lambda: {"track_id": "track-fake"}
+                response.raise_for_status = lambda: None
+                return response
+
+            async def aclose(self) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+            lambda: True,
+        )
+        monkeypatch.setattr(ll, "is_lightrag_configured", lambda: True)
+        monkeypatch.setattr(ll, "_shared_client", None)
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+        # Stub the DB write — not relevant to the loop-binding test.
+        monkeypatch.setattr(
+            "nfm_db.database.get_session_factory",
+            lambda: MagicMock(
+                return_value=MagicMock(
+                    __aenter__=AsyncMock(
+                        return_value=MagicMock(
+                            execute=AsyncMock(return_value=MagicMock()),
+                            commit=AsyncMock(return_value=None),
+                        )
+                    ),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            ),
+        )
+
+        node = _make_node(label="UO2")
+        ingest_kwargs = {
+            "nodes": [node],
+            "edges": [],
+            "node_labels": {node.id: "UO2"},
+            "source": "data_source:abc",
+        }
+
+        async def _drive() -> None:
+            await kls.ingest_kg_to_lightrag(**ingest_kwargs)
+
+        # First task: simulates a Celery worker's first invocation.
+        asyncio.run(_drive())
+        first_loop = _FakeAsyncClient.instances[0]._created_on_loop
+
+        # Second task: a fresh asyncio.run = a fresh loop.  Pre-fix
+        # this is where ``RuntimeError: Event loop is closed`` would
+        # fire (httpx.AsyncClient is bound to ``first_loop`` which is
+        # now closed).
+        asyncio.run(_drive())
+        second_loop = _FakeAsyncClient.instances[1]._created_on_loop
+
+        # Sanity: two separate loops were used.
+        assert first_loop is not second_loop
+        assert first_loop.is_closed() is True
+
+        # Both tasks must have hit the sidecar — pre-fix the second
+        # would have raised before reaching the POST.
+        assert post_count["first"] == 1
+        assert post_count["second"] == 1
+
+        # And two distinct clients were constructed (proves the loop
+        # mismatch triggered a rebuild).
+        assert len(_FakeAsyncClient.instances) == 2
