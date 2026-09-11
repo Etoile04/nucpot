@@ -245,4 +245,76 @@ describe('RagChatPanel', () => {
     })
     expect(input.value).toBe('')
   })
+
+  // -- NFM-4734: fallback badge on assistant messages (Layout B) -------------
+
+  it('renders the fallback badge on assistant messages when fallback.used=true', () => {
+    const messages: ReadonlyArray<RagMessage> = [
+      BASE_MESSAGE,
+      {
+        ...createAssistantMessage('基于关键词的兜底回答'),
+        fallback: {
+          used: true,
+          kind: 'iliKE',
+          reason: 'semantic_timeout',
+          originalError: 'Read timed out',
+        },
+      },
+    ]
+    render(<RagChatPanel {...defaultProps} messages={messages} />)
+
+    const badge = screen.getByTestId('rag-fallback-badge')
+    expect(badge).toBeInTheDocument()
+    expect(badge).toHaveAttribute('data-fallback-reason', 'semantic_timeout')
+  })
+
+  it('does not render the fallback badge when fallback.used=false', () => {
+    const messages: ReadonlyArray<RagMessage> = [
+      BASE_MESSAGE,
+      {
+        ...createAssistantMessage('clean answer'),
+        fallback: {
+          used: false,
+          kind: null,
+          reason: 'none',
+          originalError: null,
+        },
+      },
+    ]
+    render(<RagChatPanel {...defaultProps} messages={messages} />)
+
+    expect(screen.queryByTestId('rag-fallback-badge')).not.toBeInTheDocument()
+  })
+
+  it('does not render the fallback badge on user messages', () => {
+    // User messages never carry a fallback envelope — even if a
+    // caller mistakenly threads one onto a user bubble, the panel
+    // must not surface a badge (the user did not produce a fallback).
+    const userWithFallback: RagMessage = {
+      ...BASE_MESSAGE,
+      fallback: {
+        used: true,
+        kind: 'iliKE',
+        reason: 'semantic_timeout',
+        originalError: 'should not render',
+      },
+    }
+    render(<RagChatPanel {...defaultProps} messages={[userWithFallback]} />)
+
+    expect(screen.queryByTestId('rag-fallback-badge')).not.toBeInTheDocument()
+  })
+
+  it('tolerates assistant messages without a fallback field (pre-4734)', () => {
+    // Backward compatibility: messages produced by older code paths
+    // (before NFM-4734) won't have a ``fallback`` field.  The panel
+    // must render cleanly without crashing.
+    const messages: ReadonlyArray<RagMessage> = [
+      BASE_MESSAGE,
+      createAssistantMessage('legacy answer'),
+    ]
+    render(<RagChatPanel {...defaultProps} messages={messages} />)
+
+    expect(screen.getByText('legacy answer')).toBeInTheDocument()
+    expect(screen.queryByTestId('rag-fallback-badge')).not.toBeInTheDocument()
+  })
 })

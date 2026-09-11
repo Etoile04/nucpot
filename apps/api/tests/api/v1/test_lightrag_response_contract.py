@@ -137,7 +137,19 @@ async def test_query_timeout_triggers_ilike_fallback(
     # actually ran (the patch above proves it).
     assert body["data"]["fallback"]["used"] is True
     assert body["data"]["fallback"]["kind"] == "iliKE"
-    assert body["data"]["fallback"]["original_error"] is None
+    # NFM-4734 §3 / AC-2: on the degraded path the route projects the
+    # selector's ``fallback_reason`` and ``original_error`` onto the
+    # envelope so the §3.2 badge carries machine-readable provenance.
+    # Previously this asserted ``original_error is None`` (steady-state
+    # contract); the NFM-4734 selector now stamps
+    # ``fallback_reason='semantic_timeout'`` on ``LightRAGClientError``
+    # and threads the exception text verbatim.
+    assert body["data"]["fallback"]["reason"] == "semantic_timeout"
+    assert body["data"]["fallback"]["original_error"] is not None
+    assert "Read timeout" in body["data"]["fallback"]["original_error"]
+    # NFM-4734 §3 / AC-2: the route also stamps X-RAG-Fallback-Reason
+    # on the degraded path; steady state stays header-clean.
+    assert response.headers.get("X-RAG-Fallback-Reason") == "semantic_timeout"
     # AC-4 substance: the response carries the real ILIKE-rescued
     # references, not empty arrays.  This is the assertion the original
     # test was missing — the badge's claim is now grounded in the data.

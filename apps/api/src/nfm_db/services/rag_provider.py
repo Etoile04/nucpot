@@ -50,6 +50,17 @@ class RAGQueryResult:
     distinguish Tier-1 (cached) vs Tier-2 (fresh) latency on the AC-8
     dashboard.  Only the primary LightRAG provider populates it; the
     rule-based fallback never consults the LLM cache, so it stays False.
+
+    NFM-4734 §3 / AC-2: ``fallback_reason`` is the first-class
+    machine-readable code that lets the API route project the reason
+    onto the ``FallbackInfo.reason`` field without inspecting
+    ``original_error``.  ``"none"`` is the steady state; ``"semantic_timeout"``
+    surfaces a LightRAGClientError (including the read-timeout path);
+    ``"semantic_empty"`` would be set by an API-layer policy that
+    escalates an empty-but-successful semantic hit to the ILIKE rescue
+    path (not currently used at the selector layer — see api/v1/lightrag.py).
+    ``original_error`` carries the verbatim upstream exception text so
+    the access_log row and the UI badge can correlate on it.
     """
 
     response: str
@@ -59,6 +70,8 @@ class RAGQueryResult:
     provider: str = ""
     fallback: bool = False
     was_cached: bool = False
+    fallback_reason: str = "none"
+    original_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -467,12 +480,38 @@ class RAGProviderSelector:
         return self._lightrag
 
     async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        """Query using LightRAG with automatic fallback on error."""
+        """Query using LightRAG with automatic fallback on error.
+
+        NFM-4734 §3 / AC-2: when the LightRAG sidecar raises
+        :class:`LightRAGClientError` (incl. read-timeout) the selector
+        surfaces the original error on the result and stamps
+        ``fallback_reason='semantic_timeout'``.  The API route projects
+        both onto the response envelope without re-parsing strings.
+        """
         try:
             return await self._lightrag.query(query=query, **kwargs)
-        except LightRAGClientError:
-            logger.warning("LightRAG query failed, falling back to rule-based")
-            return await self._fallback.query(query=query, **kwargs)
+        except LightRAGClientError as exc:
+            logger.warning(
+                "LightRAG query failed (%s), falling back to rule-based",
+                exc,
+            )
+            fallback = await self._fallback.query(query=query, **kwargs)
+            # Project the reason + original_error onto the rule-based
+            # result so the API route can stamp them on FallbackInfo
+            # without re-inspecting ``original_error``.  We rebuild the
+            # frozen dataclass rather than mutating because RAGQueryResult
+            # is ``frozen=True``.
+            return RAGQueryResult(
+                response=fallback.response,
+                references=fallback.references,
+                entities=fallback.entities,
+                relationships=fallback.relationships,
+                provider=fallback.provider,
+                fallback=fallback.fallback,
+                was_cached=fallback.was_cached,
+                fallback_reason="semantic_timeout",
+                original_error=str(exc),
+            )
 
     async def ingest(self, *, text: str, source: str | None = None) -> str | None:
         """Ingest using LightRAG with automatic fallback on error.

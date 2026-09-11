@@ -222,6 +222,7 @@ async def query_knowledge_graph(
     was_cached = False
     error_message: str | None = None
     result_count = 0
+    fallback_reason: str = "none"
     api_response: ApiResponse[QueryResponse]
 
     try:
@@ -248,6 +249,10 @@ async def query_knowledge_graph(
         )
         was_fallback = rag_result.fallback
         was_cached = rag_result.was_cached
+        # NFM-4734 §3 / AC-2: project the selector's reason code onto
+        # the response envelope.  ``"none"`` for the steady state so the
+        # frontend can short-circuit the badge logic cheaply.
+        fallback_reason = rag_result.fallback_reason
 
         # NFM-4522: ``RAGQueryResult`` already coerces missing-key to ``[]``
         # via ``field(default_factory=list)``, but a downstream provider
@@ -268,7 +273,8 @@ async def query_knowledge_graph(
                 fallback=FallbackInfo(
                     used=was_fallback,
                     kind="iliKE" if was_fallback else None,
-                    original_error=None,
+                    reason=fallback_reason,
+                    original_error=rag_result.original_error,
                 ),
             ),
         )
@@ -282,6 +288,7 @@ async def query_knowledge_graph(
         # rather than masking the outage.
         logger.error("LightRAGClientError leaked past RAGProviderSelector: %s", exc)
         was_fallback = True
+        fallback_reason = "provider_error"
         error_message = str(exc)
         api_response = ApiResponse(
             success=True,
@@ -293,6 +300,7 @@ async def query_knowledge_graph(
                 fallback=FallbackInfo(
                     used=True,
                     kind="iliKE",
+                    reason=fallback_reason,
                     original_error=error_message,
                 ),
             ),
@@ -332,6 +340,12 @@ async def query_knowledge_graph(
                 await db.rollback()
             except Exception:
                 logger.debug("rag_access_log rollback failed", exc_info=True)
+    # NFM-4734 §3 / AC-2: stamp the reason code on the response header
+    # so operators can grep access logs without unpacking JSON.  We only
+    # stamp when the reason is non-steady-state ("none") so the success
+    # path stays header-clean.
+    if fallback_reason and fallback_reason != "none":
+        response.headers["X-RAG-Fallback-Reason"] = fallback_reason
     return api_response
 
 

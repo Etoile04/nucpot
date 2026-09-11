@@ -259,10 +259,41 @@ class TestQueryEndpoint:
         assert data["success"] is True
         assert data["data"]["fallback"]["used"] is True
         assert data["data"]["fallback"]["kind"] == "iliKE"
+        # NFM-4734 AC-2: the first-class reason code surfaces in JSON
+        assert data["data"]["fallback"]["reason"] == "semantic_timeout"
+        # NFM-4734 AC-2: the reason code also rides the response header
+        assert response.headers.get("x-rag-fallback-reason") == "semantic_timeout"
         # The rescue path actually ran — references are populated.
         assert len(data["data"]["references"]) == 1
         assert data["data"]["references"][0]["source_type"] == "data_source"
         mock_fallback_query.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_query_success_emits_no_fallback_header(self, client: AsyncClient) -> None:
+        """NFM-4734: when LightRAG answers cleanly, no fallback header is set
+        and ``fallback.reason='none'`` so the dashboard can ignore the
+        steady state cheaply.
+        """
+        with patch("nfm_db.api.v1.lightrag.LightRAGClient") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query = AsyncMock(
+                return_value={
+                    "response": "Clean answer.",
+                    "references": [{"source_type": "kg_node", "source_id": "x"}],
+                    "entities": [],
+                    "relationships": [],
+                }
+            )
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                response = await ac.post("/api/v1/lightrag/query", json={"query": "clean"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["fallback"]["used"] is False
+        assert data["data"]["fallback"]["reason"] == "none"
+        # NFM-4734 AC-2: success path MUST NOT stamp the fallback header
+        assert "x-rag-fallback-reason" not in {k.lower() for k in response.headers}
 
     @pytest.mark.asyncio
     async def test_query_with_null_list_fields_succeeds(self, client: AsyncClient) -> None:

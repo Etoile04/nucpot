@@ -108,6 +108,77 @@ def test_tier_2_target_ms_flips_meets_sla_at_10s_threshold() -> None:
     assert exact.meets_sla is True
 
 
+# ---------------------------------------------------------------------------
+# NFM-4734 — Tier-2 SLA breach detection
+# ---------------------------------------------------------------------------
+
+
+class TestTier2SlaBreachSignal:
+    """NFM-4734 §3 / AC-3: Tier-2 P95踩线(Tier-2 P95 > 10s)时告警。
+
+    The breach signal rides on the AC-8 dashboard payload via a new
+    ``tier_2_breach`` boolean + a ``tier_2_breach_at`` timestamp.  Operators
+    pin a single Grafana panel and the boolean flips the row red without
+    any extra Prometheus rule.
+    """
+
+    def test_metrics_response_has_tier_2_breach_field(self) -> None:
+        """Schema exposes the breach signal."""
+        from nfm_db.schemas.lightrag import MetricsResponse, TierP95
+
+        resp = MetricsResponse(
+            lit_completed_total=0,
+            lit_indexed_total=0,
+            lit_diff_count=0,
+            tier_1_p95=TierP95(target_ms=1000.0),
+            tier_2_p95=TierP95(target_ms=10000.0),
+            generated_at=datetime.now(UTC),
+            tier_2_breach=False,
+        )
+        assert resp.tier_2_breach is False
+
+    def test_metrics_response_default_tier_2_breach_is_false(self) -> None:
+        """Default value is False so legacy callers keep working."""
+        from nfm_db.schemas.lightrag import MetricsResponse, TierP95
+
+        resp = MetricsResponse(
+            lit_completed_total=0,
+            lit_indexed_total=0,
+            lit_diff_count=0,
+            tier_1_p95=TierP95(target_ms=1000.0),
+            tier_2_p95=TierP95(target_ms=10000.0),
+            generated_at=datetime.now(UTC),
+        )
+        assert resp.tier_2_breach is False
+
+    def test_breach_signal_flips_when_p95_exceeds_target(self) -> None:
+        """A single Tier-2 sample over the 10s target flips the signal True."""
+        # 5 samples, one is 12s (clearly over), p95 lands above 10s.
+        out = tier_p95([9.0, 9.5, 10.0, 10.5, 12.0], target_ms=TIER_2_TARGET_MS)
+        assert out.p95_ms is not None
+        assert out.p95_ms > TIER_2_TARGET_MS
+        # The boolean is a pure projection of ``meets_sla``:
+        #   meets_sla=False → tier_2_breach=True
+        breach = out.p95_ms is not None and not out.meets_sla
+        assert breach is True
+
+    def test_breach_signal_stays_false_when_under_target(self) -> None:
+        """All samples under 10s → ``tier_2_breach=False``."""
+        out = tier_p95([0.5, 0.7, 0.9, 1.1, 1.3], target_ms=TIER_2_TARGET_MS)
+        assert out.meets_sla is True
+        breach = out.p95_ms is not None and not out.meets_sla
+        assert breach is False
+
+    def test_breach_signal_stays_false_when_below_sample_floor(self) -> None:
+        """Below the 5-row floor, ``tier_2_breach=False`` — we do NOT alert
+        on a percentile computed from 1-4 samples.
+        """
+        out = tier_p95([15.0], target_ms=TIER_2_TARGET_MS)  # 1 sample < 5
+        assert out.p95_ms is None
+        breach = out.p95_ms is not None and not out.meets_sla
+        assert breach is False
+
+
 def test_rolling_window_defaults_to_seven_days() -> None:
     now = datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC)
     bounds = rolling_window(now=now)

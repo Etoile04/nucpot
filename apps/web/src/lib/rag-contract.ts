@@ -68,13 +68,34 @@ export interface RagContractQueryResponse {
 
 /**
  * Mirrors nfm_db.schemas.lightrag.FallbackInfo.  ``kind`` is the
- * fallback family (``"iliKE"`` today); ``original_error`` carries the
- * upstream failure message so logs can correlate the UI badge with the
- * access_log row.
+ * fallback family (``"iliKE"`` today); ``reason`` is the first-class
+ * machine-readable code from NFM-4734 AC-2; ``original_error`` carries
+ * the upstream failure message so logs can correlate the UI badge
+ * with the access_log row.
+ *
+ * NFM-4734 reason-code contract:
+ *   - "none"            — steady state, no fallback fired
+ *   - "semantic_timeout" — LightRAG sidecar exceeded its 10s budget
+ *   - "semantic_empty"   — LightRAG answered with zero references
+ *   - "provider_error"   — defensive safety-net path
+ *   - legacy: "iliKE" / "ilike" / unknown string — render as timeout-ish
  */
+export type RagFallbackReason =
+  | "none"
+  | "semantic_timeout"
+  | "semantic_empty"
+  | "provider_error"
+  | (string & {}) // accept legacy / future codes without breaking clients
+
 export interface RagContractFallback {
   readonly used: boolean
   readonly kind: string | null
+  /**
+   * Optional first-class machine-readable code (NFM-4734 AC-2).
+   * Pre-4734 servers do not emit the field; the frontend default is
+   * ``"none"`` so legacy clients keep rendering the success path.
+   */
+  readonly reason?: RagFallbackReason
   readonly original_error: string | null
 }
 

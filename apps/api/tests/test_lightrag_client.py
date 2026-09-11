@@ -658,4 +658,16 @@ class TestQueryTimeoutDegradesToFallback:
             result = await selector.query(query="what is UO2?")
 
         mock_fallback.assert_awaited_once()
-        assert result is fallback_result
+        # NFM-4734 §3 / AC-2: the selector wraps the fallback result in
+        # a fresh ``RAGQueryResult`` carrying ``fallback_reason`` and
+        # ``original_error`` so the API route can project both onto
+        # ``FallbackInfo`` without re-parsing strings.  Identity on
+        # ``fallback_result`` no longer holds by design — assert the
+        # new envelope instead.  ``fallback_result`` here is an
+        # ``AsyncMock`` so we do not assert on the ``fallback`` field
+        # (truthy mock vs ``True``); the NFM-4734 selector copies it
+        # through verbatim from the rule-based provider.
+        assert result is not fallback_result
+        assert result.fallback_reason == "semantic_timeout"
+        assert result.original_error is not None
+        assert "Timed out" in result.original_error
