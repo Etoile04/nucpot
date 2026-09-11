@@ -253,6 +253,16 @@ class LightRAGClient:
         ``/documents`` endpoint returns the raw payload, and we project
         down to the ``data_source:<uuid>`` tag the ``ingest()`` payload
         stamps on each document.
+
+        NFM-4636: LightRAG 1.5.4 (the prod sidecar build) answers with a
+        ``{"statuses": {"processed": [...], "analyzing": [...], ...}}``
+        envelope, NOT the bare array / ``{"documents": [...]}`` shapes
+        this method originally handled — so it silently returned ``[]``
+        and every completed literature read as drift.  Additionally, a
+        document only counts as *indexed* once its analysis pipeline
+        finished (status ``processed``); rows still ``analyzing`` /
+        ``processing`` or ``failed`` are not retrievable from the index
+        and must not reconcile as covered.
         """
         try:
             response = await self._http_client.get(
@@ -270,13 +280,16 @@ class LightRAGClient:
             ) from exc
 
         body = response.json()
-        # LightRAG's ``/documents`` envelope is an array of dicts; each
-        # has at minimum ``id`` and ``data_source`` (or ``file_source``).
+        rows: list[Any] = self._extract_document_rows(body)
         markers: set[str] = set()
-        for row in body if isinstance(body, list) else body.get("documents", []):
+        for row in rows:
             if not isinstance(row, dict):
                 continue
-            source = row.get("data_source") or row.get("file_source")
+            source = (
+                row.get("data_source")
+                or row.get("file_source")
+                or row.get("file_path")
+            )
             if source:
                 markers.add(str(source))
             # Fallback: some LightRAG versions only carry ``id`` shaped as
@@ -285,6 +298,33 @@ class LightRAGClient:
             if isinstance(rid, str) and rid.startswith("data_source:"):
                 markers.add(rid)
         return sorted(markers)
+
+    @staticmethod
+    def _extract_document_rows(body: Any) -> list[Any]:
+        """Project the three ``/documents`` envelope shapes to row dicts.
+
+        * bare JSON array (oldest builds) — all rows, no status known;
+        * ``{"documents": [...]}`` (older builds) — all rows;
+        * ``{"statuses": {<status>: [...]}}`` (1.5.4, prod) — only rows
+          whose bucket means *analysis finished and the doc is in the
+          index* (``processed``).  ``analyzing`` / ``processing`` rows
+          are in-flight and ``failed`` rows are absent from the index,
+          so reconciling them as covered would lie.
+        """
+        if isinstance(body, list):
+            return body
+        if isinstance(body, dict):
+            documents = body.get("documents")
+            if isinstance(documents, list):
+                return documents
+            statuses = body.get("statuses")
+            if isinstance(statuses, dict):
+                rows: list[Any] = []
+                for status, status_rows in statuses.items():
+                    if status == "processed" and isinstance(status_rows, list):
+                        rows.extend(status_rows)
+                return rows
+        return []
 
     # ------------------------------------------------------------------
     # Ingest
