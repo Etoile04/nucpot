@@ -322,16 +322,24 @@ class LightRAGClient:
         return sorted(markers)
 
     @staticmethod
-    def _extract_document_rows(body: Any) -> list[Any]:
+    def _extract_document_rows(
+        body: Any,
+        *,
+        include_statuses: set[str] | None = None,
+    ) -> list[Any]:
         """Project the three ``/documents`` envelope shapes to row dicts.
 
         * bare JSON array (oldest builds) — all rows, no status known;
         * ``{"documents": [...]}`` (older builds) — all rows;
         * ``{"statuses": {<status>: [...]}}`` (1.5.4, prod) — only rows
-          whose bucket means *analysis finished and the doc is in the
-          index* (``processed``).  ``analyzing`` / ``processing`` rows
-          are in-flight and ``failed`` rows are absent from the index,
-          so reconciling them as covered would lie.
+          whose bucket is in ``include_statuses``.  When ``include_statuses``
+          is ``None`` (default), only ``processed`` rows are returned so the
+          coverage audit doesn't reconcile failed / processing rows as
+          "indexed".  Pass ``{"failed"}`` to pull the failure bucket
+          (NFM-4743).
+
+        Empty / non-dict bodies return ``[]`` so the caller does not have
+        to defensively guard against every envelope shape.
         """
         if isinstance(body, list):
             return body
@@ -341,12 +349,55 @@ class LightRAGClient:
                 return documents
             statuses = body.get("statuses")
             if isinstance(statuses, dict):
+                wanted = (
+                    include_statuses
+                    if include_statuses is not None
+                    else {"processed"}
+                )
                 rows: list[Any] = []
                 for status, status_rows in statuses.items():
-                    if status == "processed" and isinstance(status_rows, list):
+                    if status in wanted and isinstance(status_rows, list):
                         rows.extend(status_rows)
                 return rows
         return []
+
+    async def list_failed_documents(self) -> list[dict[str, Any]]:
+        """Return the rows from LightRAG's ``failed`` bucket.
+
+        NFM-4743: the F-3 audit (``rag-comprehensive-test-report-2026-09-11.md``)
+        found the LightRAG ``failed`` bucket mixed 20 dedupe-rejected rows
+        with 10 real chunking failures.  We project the full row payload
+        (``id`` / ``file_source`` / ``error_msg`` / ``status``) so
+        ``lightrag_failure.record_doc_failures`` can bucket each row by
+        ``failure_kind`` and the /metrics endpoint can report the split
+        separately (F-3 AC).
+
+        Returns a list of dicts with at least ``id``, ``file_source``,
+        ``status``, and ``error_msg`` keys (extra fields pass through
+        untouched so future LightRAG versions are forward-compatible).
+        """
+        try:
+            response = await self._http_client.get(
+                "/documents",
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: {exc}"
+            ) from exc
+
+        body = response.json()
+        rows = self._extract_document_rows(body, include_statuses={"failed"})
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                out.append(dict(row))
+        return out
 
     # ------------------------------------------------------------------
     # Ingest

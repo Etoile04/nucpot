@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import DataSource, RagAccessLog, RagIndexAuditLog
 from nfm_db.schemas.lightrag import MetricsResponse, TierP95
+from nfm_db.services.lightrag_failure import count_failures_by_kind
 
 # ---------------------------------------------------------------------------
 # Constants (NFM-4539 §3.3 / AC-5)
@@ -212,6 +213,12 @@ async def compute_rag_metrics(
     # statistically meaningful sample that is over budget.
     tier_2_breach = tier_2_p95_obj.p95_ms is not None and not tier_2_p95_obj.meets_sla
 
+    # NFM-4743: split the LightRAG ``failed`` bucket by kind so dedupe
+    # rejections do not count toward the failed-error health alert.
+    # The helper always returns the three known kinds (zero-filled),
+    # so the dashboard shape is stable even when the audit hasn't run.
+    failed_by_kind = await count_failures_by_kind(session)
+
     return MetricsResponse(
         lit_completed_total=completed_total,
         lit_indexed_total=indexed_total if indexed_total is not None else 0,
@@ -222,6 +229,7 @@ async def compute_rag_metrics(
         window_days=window_days,
         generated_at=bounds.end,
         tier_2_breach=tier_2_breach,
+        failed_by_kind=failed_by_kind,
     )
 
 
