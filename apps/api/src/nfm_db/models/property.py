@@ -438,6 +438,10 @@ class PropertyMeasurement(TimestampMixin, Base):
     # row is excluded from the mergeable set (spec §2.6 / §8.2
     # step 4).
     validity_check: Mapped[dict[str, object] | None] = mapped_column(
+        # NFM-4633: must be CompatJSONB (JSONB on PostgreSQL), not the
+        # generic JSON — migration 088 creates the column as JSONB, so a
+        # generic JSON here drifts in Base.metadata and reds the
+        # schema-drift guard (``DRIFT: modify_type property_measurements``).
         CompatJSONB,
         nullable=True,
         comment=(
