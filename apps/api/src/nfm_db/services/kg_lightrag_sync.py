@@ -181,17 +181,32 @@ async def ingest_kg_to_lightrag(
     extraction_job_id: uuid.UUID | None = None,
     source: str = "kg_pipeline",
 ) -> None:
-    """Ingest serialized KG data into LightRAG (fire-and-forget safe).
+    """Ingest serialized KG data into LightRAG.
 
     This is the main entry point called by ``GraphBuilder`` after
-    constructing nodes and edges.  It:
+    constructing nodes and edges, and is also reused by the literature
+    pipeline's inline-ingest path (``process_literature`` awaits it
+    inside the Celery worker's ``asyncio.run`` loop).  It:
 
     1. Checks ``is_lightrag_configured()`` — skips entirely if not.
     2. Serializes the build result to structured text.
     3. Calls ``LightRAGProvider.ingest()`` directly.
     4. Persists the returned ``track_id`` to the ``ExtractionJob`` row
        when *extraction_job_id* is provided (NFM-2881).
-    5. Catches and logs all exceptions — never propagates failures.
+
+    NFM-4719: this function NO LONGER swallows exceptions.  The
+    previous ``except Exception:`` masked the inline-ingest silent
+    failure — when the shared ``httpx.AsyncClient`` was bound to a
+    closed loop (Celery worker re-entry), the POST raised
+    ``RuntimeError: Event loop is closed`` and the caller logged
+    "LightRAG inline ingest done (nodes=N edges=M)" anyway because
+    the function returned normally.  The new contract is: any
+    failure surfaces to the caller; the inline path wraps this call
+    in its own ``try/except`` that logs the failure as
+    ``process_literature: … inline LightRAG ingest failed (non-fatal)``,
+    and the fire-and-forget wrapper
+    (:func:`_fire_and_forget_ingest`) catches + logs without losing
+    visibility.
 
     Args:
         nodes: Newly created ``KGNode`` records.
@@ -214,40 +229,65 @@ async def ingest_kg_to_lightrag(
     if not nodes and not edges:
         return
 
+    from nfm_db.database import get_session_factory
+    from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
+    from nfm_db.services.rag_provider import LightRAGProvider
+
+    text = serialize_build_result(nodes, edges, node_labels)
+    shared_client = get_shared_lightrag_client()
+    provider = LightRAGProvider(client=shared_client)
+    track_id = await provider.ingest(text=text, source=source)
+
+    # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
+    if extraction_job_id is not None and track_id is not None:
+        async with get_session_factory()() as session:
+            from sqlalchemy import update
+
+            from nfm_db.models.extraction_job import ExtractionJob
+
+            await session.execute(
+                update(ExtractionJob)
+                .where(ExtractionJob.id == extraction_job_id)
+                .values(track_id=track_id)
+            )
+            await session.commit()
+            logger.info(
+                "Persisted track_id=%s to ExtractionJob %s",
+                track_id,
+                extraction_job_id,
+            )
+
+    logger.info(
+        "KG auto-ingest complete: %d nodes, %d edges (%d chars)",
+        len(nodes),
+        len(edges),
+        len(text),
+    )
+
+
+async def _fire_and_forget_ingest(
+    *,
+    nodes: list[KGNode],
+    edges: list[KGEdge],
+    node_labels: dict[uuid.UUID, str],
+    extraction_job_id: uuid.UUID | None = None,
+) -> None:
+    """Wrapper around :func:`ingest_kg_to_lightrag` for fire-and-forget use.
+
+    NFM-4719: this wrapper is what ``fire_ingest_to_lightrag`` schedules.
+    It catches every exception (so the loop-level ``Task`` never carries
+    an unhandled traceback) AND logs a single WARNING that surfaces in
+    the worker log.  The previous code path relied on the swallow inside
+    ``ingest_kg_to_lightrag`` itself, which is now removed to fix the
+    inline-ingest silent failure — so this wrapper is the dedicated
+    place fire-and-forget callers report their (expected) failure.
+    """
     try:
-        from nfm_db.database import get_session_factory
-        from nfm_db.services.lightrag_lifecycle import get_shared_lightrag_client
-        from nfm_db.services.rag_provider import LightRAGProvider
-
-        text = serialize_build_result(nodes, edges, node_labels)
-        shared_client = get_shared_lightrag_client()
-        provider = LightRAGProvider(client=shared_client)
-        track_id = await provider.ingest(text=text, source=source)
-
-        # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
-        if extraction_job_id is not None and track_id is not None:
-            async with get_session_factory()() as session:
-                from sqlalchemy import update
-
-                from nfm_db.models.extraction_job import ExtractionJob
-
-                await session.execute(
-                    update(ExtractionJob)
-                    .where(ExtractionJob.id == extraction_job_id)
-                    .values(track_id=track_id)
-                )
-                await session.commit()
-                logger.info(
-                    "Persisted track_id=%s to ExtractionJob %s",
-                    track_id,
-                    extraction_job_id,
-                )
-
-        logger.info(
-            "KG auto-ingest complete: %d nodes, %d edges (%d chars)",
-            len(nodes),
-            len(edges),
-            len(text),
+        await ingest_kg_to_lightrag(
+            nodes=nodes,
+            edges=edges,
+            node_labels=node_labels,
+            extraction_job_id=extraction_job_id,
         )
     except Exception:
         logger.warning(
@@ -281,8 +321,13 @@ def fire_ingest_to_lightrag(
 
     try:
         loop = asyncio.get_running_loop()
+        # NFM-4719: schedule the dedicated fire-and-forget wrapper, which
+        # catches + logs failures.  Previously the swallow lived inside
+        # ``ingest_kg_to_lightrag`` itself and silently dropped the
+        # "Event loop is closed" traceback (Celery worker re-entry path),
+        # leaving no breadcrumb in the worker log.
         task = loop.create_task(
-            ingest_kg_to_lightrag(
+            _fire_and_forget_ingest(
                 nodes=nodes,
                 edges=edges,
                 node_labels=node_labels,

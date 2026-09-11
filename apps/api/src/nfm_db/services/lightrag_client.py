@@ -12,6 +12,7 @@ Configuration via environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -184,6 +185,27 @@ class LightRAGClient:
         self.timeout = timeout if timeout is not None else _DEFAULT_TIMEOUT
 
         self._base_url = f"http://{self.host}:{self.port}"
+
+        # NFM-4719: record the loop on which this client was created so the
+        # shared lifecycle helper can detect Celery worker re-entry (each
+        # task spins up a fresh ``asyncio.run`` loop, but the module-level
+        # singleton client is bound to whichever loop first called
+        # ``get_shared_lightrag_client()``).  When the loop changes, the
+        # underlying ``httpx.AsyncClient`` is bound to a closed selector
+        # and every POST raises ``RuntimeError: Event loop is closed``,
+        # which the previous ``except Exception`` in
+        # ``ingest_kg_to_lightrag`` silently swallowed — leading to the
+        # prod "inline ingest done (nodes=N edges=M)" log + empty VDB
+        # symptom (NFM-4680 / NFM-4717).
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = (
+                asyncio.get_running_loop()
+            )
+        except RuntimeError:
+            # Constructed off-loop (e.g. test setup). The lifecycle helper
+            # will rebind on first use.
+            self._loop = None
+
         # NFM-3367 / NFM-3404: split the transport-level timeout so a stalled
         # TCP handshake cannot blow past the per-request query budget.
         #
