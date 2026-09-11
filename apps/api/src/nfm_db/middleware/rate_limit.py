@@ -5,11 +5,18 @@ Uses the ``slowapi`` library with the ``limits`` storage backend.  Only
 pass through unrestricted.  The health endpoint is exempt via
 ``@limiter.exempt``.
 
-**Production note:** the default ``memory://`` storage is suitable for
-single-instance deployments.  For multi-instance or long-running
-deployments, set ``RATE_LIMIT_STORAGE_URI=redis://localhost:6379`` so that
-counters are shared across workers and don't grow unboundedly in process
-memory.
+**Production note (NFM-4681):** the prod API runs with 4 uvicorn workers
+(``docker/prod-api.Dockerfile``'s ``--workers 4``).  The default
+``memory://`` storage is per-process, so each worker holds its own
+counter and a single client can spend 4x the budget before the first
+429.  ``docker-compose.prod.yml`` therefore sets
+``RATE_LIMIT_STORAGE_URI=redis://nucpot-prod-redis:6379/2`` so all
+workers share one counter (DB 2 keeps it isolated from Celery on DBs
+0/1).  Staging keeps the default ``memory://`` because its Dockerfile
+pins a single uvicorn worker.  The IP key is the real visitor IP —
+``ProxyHeadersMiddleware`` (see ``nfm_db.main``) already rewrites
+``scope['client']`` from ``X-Forwarded-For`` so slowapi's
+``get_remote_address`` reflects the public client behind the CF tunnel.
 
 Env vars
 --------
@@ -45,7 +52,9 @@ limiter = Limiter(
 )
 
 
-def _inject_global_headers(limiter_instance: Limiter, request: Request, response: Response) -> Response:
+def _inject_global_headers(
+    limiter_instance: Limiter, request: Request, response: Response
+) -> Response:
     """Inject X-RateLimit-* headers for globally-limited routes.
 
     slowapi's ``SlowAPIMiddleware`` only injects headers when a per-endpoint

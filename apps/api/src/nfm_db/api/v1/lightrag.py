@@ -11,6 +11,15 @@ to a slowapi ``@limiter.limit`` decorator driven by the
 ``NFM_RAG_QUERY_RATE_LIMIT`` env var (default ``5/minute``).  The global
 ``RATE_LIMIT_DEFAULT`` / ``RATE_LIMIT_BURST`` remain the upstream safety
 net; slowapi applies the per-route limit *before* the application limits.
+
+NFM-4681: the 5/minute quota is enforced through slowapi's storage
+backend declared in ``apps/api/src/nfm_db/middleware/rate_limit.py``.
+In prod / preview that backend is the shared Redis container (DB 2)
+wired in ``docker-compose.prod.yml`` so all four uvicorn workers see
+one counter; staging keeps ``memory://`` because its Dockerfile pins a
+single worker.  The IP key is the real visitor IP because
+``ProxyHeadersMiddleware`` rewrites ``scope['client']`` from
+``X-Forwarded-For`` before slowapi reads it.
 """
 
 from __future__ import annotations

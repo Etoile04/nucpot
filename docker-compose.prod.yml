@@ -97,6 +97,17 @@ services:
       REDIS_PORT: "6379"
       CELERY_BROKER_URL: redis://nucpot-prod-redis:6379/0
       CELERY_RESULT_BACKEND: redis://nucpot-prod-redis:6379/1
+      # NFM-4681: prod API runs with 4 workers (docker/prod-api.Dockerfile
+      # ``uvicorn … --workers 4``). The slowapi default
+      # ``memory://`` storage is per-process, so each worker has its own
+      # counter and a single client can spend 4× the budget before the
+      # first 429. Point the limiter at the shared Redis container that
+      # is already wired above (DB 2 keeps it isolated from the Celery
+      # broker / result backend on DBs 0 and 1). Staging keeps
+      # ``memory://`` because its Dockerfile pins a single uvicorn
+      # worker; the env var is only set on prod / preview so staging's
+      # in-process counter remains the source of truth there.
+      RATE_LIMIT_STORAGE_URI: redis://nucpot-prod-redis:6379/2
       NFM_LIGHTRAG_HOST: nucpot-prod-lightrag
       NFM_LIGHTRAG_PORT: "9621"
       # NFM-4502 / NFM-4492: raise the LightRAG query ceiling from the

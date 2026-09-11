@@ -160,6 +160,48 @@ def test_burst_limit_reads_env() -> None:
     assert os.environ.get("RATE_LIMIT_BURST", "20/second") == _BURST_LIMIT
 
 
+def test_storage_uri_reads_env() -> None:
+    """Module-level _STORAGE_URI matches RATE_LIMIT_STORAGE_URI env var.
+
+    NFM-4681: prod now wires this to ``redis://nucpot-prod-redis:6379/2``
+    so the four uvicorn workers share one counter.  The default stays
+    ``memory://`` so single-worker deployments (staging) keep an
+    in-process counter without needing a Redis sidecar.
+    """
+    from nfm_db.middleware.rate_limit import _STORAGE_URI
+
+    assert os.environ.get("RATE_LIMIT_STORAGE_URI", "memory://") == _STORAGE_URI
+
+
+def test_storage_uri_accepts_redis_uri() -> None:
+    """Limiter can be constructed with a Redis storage URI (smoke-only).
+
+    Slowapi parses the URI on first use, so we only need to confirm a
+    Redis URI is accepted by the ``Limiter`` constructor — production
+    instantiation failures surface on the first rate-limited request
+    and are caught by ``scripts/check_prod_ratelimit_storage.py``.
+
+    This test deliberately does **not** reload the
+    ``nfm_db.middleware.rate_limit`` module: the reload pattern in
+    ``test_custom_default_via_env`` / ``test_custom_burst_via_env``
+    already mutates the singleton limiter once, and a second reload
+    would orphan the route-limit registrations on the live app and
+    turn the per-IP 429 test red.  Constructing a fresh ``Limiter``
+    in isolation exercises the same parsing code path without
+    disturbing the shared state.
+    """
+    fresh = Limiter(
+        key_func=get_remote_address,
+        application_limits=["5/minute"],
+        storage_uri="redis://nucpot-prod-redis:6379/2",
+        headers_enabled=True,
+    )
+    # The constructor accepts the URI without raising; the storage
+    # backend is lazily resolved on the first request, so we don't
+    # need to verify connectivity here (no Redis sidecar in CI).
+    assert fresh._storage_uri == "redis://nucpot-prod-redis:6379/2"
+
+
 def test_custom_default_via_env() -> None:
     """Setting RATE_LIMIT_DEFAULT changes the parsed limit string."""
     with patch.dict(os.environ, {"RATE_LIMIT_DEFAULT": "5/minute"}, clear=False):
