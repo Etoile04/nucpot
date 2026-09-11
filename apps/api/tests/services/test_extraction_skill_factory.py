@@ -271,6 +271,91 @@ def test_resolve_skill_pin_falls_back_to_lock(env_off: None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pin resolution — NFM-4626 lenient-twin fail-closed guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_skill_pin_fails_closed_when_flag_on_and_pin_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4626 regression — the lenient twin must not leak the zero SHA.
+
+    Exact scenario from the issue: ``EXTRACTION_SKILL_ENABLED=true`` with
+    no ``EXTRACTION_SKILL_REPO_PIN`` against the shipped lock file (whose
+    ``upstream.pin`` is still the 40-zero placeholder). Prior to NFM-4626
+    ``resolve_skill_pin`` never looked at the flag, fell back to the lock
+    value, and returned ``('v1.7.2', '0' * 40)`` — reopening at the public
+    resolution layer the exact hole NFM-4618 closed in the strict twin.
+    """
+    from nfm_db.services.extraction_skill import SkillsLock
+
+    monkeypatch.setenv(EXTRACTION_SKILL_ENABLED_ENV, "true")
+    monkeypatch.delenv(EXTRACTION_SKILL_REPO_PIN_ENV, raising=False)
+    monkeypatch.delenv(EXTRACTION_SKILL_VERSION_ENV, raising=False)
+    zero_lock = SkillsLock(
+        catalog_id="x",
+        upstream_url="https://example.com/repo.git",
+        pin="0" * 40,
+        ref=None,
+        default_skill="nuclear-property-extraction-v4",
+        skills={
+            "nuclear-property-extraction-v4": {
+                "version": "v1.7.2",
+                "entrypoint": "skills/nuclear-property-extraction-v4/SKILL.md",
+            }
+        },
+        raw={},
+    )
+    with pytest.raises(SkillPinMismatchError) as excinfo:
+        resolve_skill_pin(env=None, lock=zero_lock)
+    combined = str(excinfo.value).lower()
+    assert "mandatory" in combined or "unset" in combined
+
+
+@pytest.mark.unit
+def test_resolve_skill_pin_is_strict_when_flag_on_and_pins_agree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NFM-4626 — flag on delegates to the strict check; the happy path
+    (env pin matching the lock) still resolves the env values."""
+    monkeypatch.setenv(EXTRACTION_SKILL_ENABLED_ENV, "true")
+    monkeypatch.setenv(EXTRACTION_SKILL_REPO_PIN_ENV, "a" * 40)
+    monkeypatch.setenv(EXTRACTION_SKILL_VERSION_ENV, "v1.7.2")
+    version, sha = resolve_skill_pin(env=None, lock=_stub_lock())
+    assert version == "v1.7.2"
+    assert sha == "a" * 40
+
+
+@pytest.mark.unit
+def test_resolve_skill_pin_keeps_lock_fallback_when_flag_off_even_with_zero_lock(
+    env_off: None,
+) -> None:
+    """NFM-4626 non-regression — flag OFF must keep the documented lock
+    fallback (NFM-4618 AC3: the fallback is load-bearing for the
+    dark-launch default and every existing test that plumbs no env)."""
+    from nfm_db.services.extraction_skill import SkillsLock
+
+    zero_lock = SkillsLock(
+        catalog_id="x",
+        upstream_url="https://example.com/repo.git",
+        pin="0" * 40,
+        ref=None,
+        default_skill="nuclear-property-extraction-v4",
+        skills={
+            "nuclear-property-extraction-v4": {
+                "version": "v1.7.2",
+                "entrypoint": "skills/nuclear-property-extraction-v4/SKILL.md",
+            }
+        },
+        raw={},
+    )
+    version, sha = resolve_skill_pin(env={}, lock=zero_lock)
+    assert version == "v1.7.2"
+    assert sha == "0" * 40
+
+
+# ---------------------------------------------------------------------------
 # Factory — dark-launch behaviour
 # ---------------------------------------------------------------------------
 

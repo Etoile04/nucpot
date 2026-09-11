@@ -21,7 +21,8 @@ Rollout posture (§4.1 of ADR-016, "dark-then-light"):
 Public API:
     extract_skill_prompt(skill_version, ontology_version) -> str
     load_lock_file() -> SkillsLock
-    resolve_skill_pin() -> tuple[str, str]   # (version, sha)
+    resolve_skill_pin() -> tuple[str, str]   # (version, sha); strict when the
+    # flag is on, lock fallback when off (NFM-4626)
     SkillPinMismatchError
 """
 
@@ -197,10 +198,17 @@ def load_lock_file(path: Path | str | None = None) -> SkillsLock:
 # ---------------------------------------------------------------------------
 
 
+_FLAG_TRUTHY_VALUES: tuple[str, ...] = ("1", "true", "yes", "on")
+
+
+def _flag_is_on(raw: str | None) -> bool:
+    """Truthiness test shared by every reader of ``EXTRACTION_SKILL_ENABLED``."""
+    return (raw or "").strip().lower() in _FLAG_TRUTHY_VALUES
+
+
 def is_skill_enabled() -> bool:
     """Read ``EXTRACTION_SKILL_ENABLED``. Default ``False`` (dark launch)."""
-    raw = os.environ.get(EXTRACTION_SKILL_ENABLED_ENV, "")
-    return raw.strip().lower() in ("1", "true", "yes", "on")
+    return _flag_is_on(os.environ.get(EXTRACTION_SKILL_ENABLED_ENV))
 
 
 def resolve_skill_pin(
@@ -210,13 +218,29 @@ def resolve_skill_pin(
 ) -> tuple[str, str]:
     """Return ``(version, sha)`` after cross-checking env ↔ lock file.
 
-    Returns the env values when they are present; falls back to the lock
-    file values when env is unset (e.g. in tests where the lock file is
-    the source of truth). The CI guard script is the strict variant
-    that raises on disagreement.
+    NFM-4626: when ``EXTRACTION_SKILL_ENABLED`` is on this is the strict
+    variant — it delegates to ``assert_pin_consistent`` so a missing
+    ``EXTRACTION_SKILL_REPO_PIN`` (or a zero-placeholder lock pin)
+    raises instead of resolving. When the flag is off (the dark-launch
+    default) it returns the env values when present and falls back to
+    the lock file values when env is unset (e.g. in tests where the lock
+    file is the source of truth) — that fallback is load-bearing
+    (NFM-4618 AC3) and must not tighten.
     """
     env_map = env if env is not None else os.environ
     lock = lock or load_lock_file()
+
+    # NFM-4626: read the flag from env_map (not os.environ) so the
+    # function stays self-contained for testing — mirrors the NFM-4618
+    # fix in ``assert_pin_consistent``.
+    flag_on = _flag_is_on(env_map.get(EXTRACTION_SKILL_ENABLED_ENV))
+
+    if flag_on:
+        # NFM-4626 (Option 1): the lenient fallback must never apply to
+        # an enabled skill path — delegate to the strict twin so the
+        # two resolvers cannot diverge again (the exact hole NFM-4618
+        # closed in ``assert_pin_consistent`` only).
+        return assert_pin_consistent(env=env, lock=lock)
 
     env_version = env_map.get(EXTRACTION_SKILL_VERSION_ENV)
     env_pin = env_map.get(EXTRACTION_SKILL_REPO_PIN_ENV)
@@ -249,8 +273,7 @@ def assert_pin_consistent(
     # whole function stays self-contained for testing. Mirrors the
     # NFM-4611 fix in the CI guard: the flag is part of the strict
     # contract, not an ambient env read.
-    flag_raw = (env_map.get(EXTRACTION_SKILL_ENABLED_ENV) or "").strip().lower()
-    flag_on = flag_raw in ("1", "true", "yes", "on")
+    flag_on = _flag_is_on(env_map.get(EXTRACTION_SKILL_ENABLED_ENV))
 
     default_skill = lock.skills.get(lock.default_skill) or {}
     lock_version = str(default_skill.get("version", ""))
