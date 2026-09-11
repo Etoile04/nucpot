@@ -180,7 +180,42 @@ class LightRAGProvider(RAGProvider):
 # Rule-based fallback provider (PG full-text search)
 # ---------------------------------------------------------------------------
 
-_QUERY_TOKEN_RE = re.compile(r"\w+")
+_QUERY_TOKEN_RE = re.compile(r"\w+")  # legacy tokeniser; kept for module-surface compat
+
+
+# ---------------------------------------------------------------------------
+# NFM-4733: language-tolerant query tokenisation
+# ---------------------------------------------------------------------------
+# The previous implementation AND-joined every ``\w+`` token under an English
+# tsvector via ``plainto_tsquery`` — which made every Chinese query return
+# zero matches because:
+#
+#   * the Chinese tokens never appear in the English titles/abstracts;
+#   * ``plainto_tsquery`` AND-joins by default, so a single absent token
+#     kills the match;
+#   * the English stemmer also rewrote hyphenated scientific terms
+#     (``Cr-doped`` → ``cr-dop``) so even a Latin-only token could lose
+#     partial-match coverage.
+#
+# The replacement splits the query into Latin and CJK tokens, runs an
+# OR-joined Latin tsvector match (so partial matches contribute), and
+# pairs it with an ILIKE partial-match for the CJK characters (which the
+# ``english``/``simple`` tsvector configs do not lemmatise into searchable
+# tokens).
+_LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]+")
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿]+")
+_TSQUERY_OPERATOR_RE = re.compile(r"[&|!()]")
+
+
+def _escape_tsquery_literal(token: str) -> str:
+    """Strip ``to_tsquery`` operator characters from a literal token.
+
+    PostgreSQL ``to_tsquery`` raises ``syntax error in tsquery`` on a
+    literal that contains ``& | ! ( )`` — operators must be removed at
+    the boundary so the SQL never trips the parser.  Whitespace is
+    collapsed and edges are trimmed.
+    """
+    return _TSQUERY_OPERATOR_RE.sub(" ", token).strip()
 
 
 class RuleBasedFallbackProvider(RAGProvider):
@@ -204,8 +239,17 @@ class RuleBasedFallbackProvider(RAGProvider):
         return "rule-based-fallback"
 
     async def query(self, *, query: str, **kwargs: Any) -> RAGQueryResult:
-        tokens = _QUERY_TOKEN_RE.findall(query)
-        if not tokens:
+        # NFM-4733: split the query into Latin tokens (tsvector path) and
+        # CJK tokens (ILIKE path) before issuing the SQL.  The previous
+        # implementation AND-joined every ``\w+`` token under an English
+        # tsvector — Chinese queries always returned zero matches because
+        # (a) the CJK tokens never appear in English titles/abstracts, and
+        # (b) AND semantics require every token to be present.  See the
+        # ``_LATIN_TOKEN_RE`` / ``_CJK_RE`` definitions above for the
+        # full rationale.
+        latin_tokens = _LATIN_TOKEN_RE.findall(query)
+        cjk_tokens = _CJK_RE.findall(query)
+        if not latin_tokens and not cjk_tokens:
             return RAGQueryResult(
                 response="",
                 provider=self.name,
@@ -213,54 +257,109 @@ class RuleBasedFallbackProvider(RAGProvider):
             )
 
         limit = kwargs.get("limit", 5)
-        tsquery_str = " & ".join(tokens[:10])
+        # OR-join the Latin tokens so any single term match contributes
+        # to the rank.  Operators inside a literal are stripped first so
+        # the call cannot trip ``to_tsquery``'s parser.
+        latin_tsquery = " | ".join(
+            _escape_tsquery_literal(t) for t in latin_tokens[:10]
+        )
+        # ``unnest`` cannot accept an empty array; provide a sentinel
+        # whose ``ILIKE`` is guaranteed to be false so the CJK branch
+        # contributes zero rows when no CJK characters are present.
+        cjk_patterns = (
+            [f"%{t}%" for t in cjk_tokens[:10]]
+            if cjk_tokens
+            else ["__NO_CJK_NEVER_MATCH__"]
+        )
 
         sql = text(
             """
-            SELECT source_type, source_id, snippet_text, rank
+            SELECT source_type, source_id, snippet_text, MAX(rank) AS rank
             FROM (
                 SELECT 'data_source' AS source_type, id AS source_id,
                        COALESCE(title, '') || ' ' || COALESCE(abstract, '') AS snippet_text,
-                       ts_rank(
-                         to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '')),
-                         plainto_tsquery(:q)
-                       ) AS rank
+                       CASE WHEN :latin_tsquery <> '' THEN
+                         ts_rank(
+                           to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(abstract, '')),
+                           to_tsquery('simple', :latin_tsquery)
+                         )
+                       ELSE 0 END AS rank
                 FROM data_sources
-                WHERE to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, ''))
-                      @@ plainto_tsquery(:q)
+                WHERE :latin_tsquery <> ''
+                  AND to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(abstract, ''))
+                      @@ to_tsquery('simple', :latin_tsquery)
+
+                UNION ALL
+
+                SELECT 'data_source' AS source_type, id AS source_id,
+                       COALESCE(title, '') || ' ' || COALESCE(abstract, '') AS snippet_text,
+                       1.0 AS rank
+                FROM data_sources, unnest(CAST(:cjk_patterns AS text[])) AS p
+                WHERE COALESCE(title, '') ILIKE p
+                   OR COALESCE(abstract, '') ILIKE p
 
                 UNION ALL
 
                 SELECT 'material' AS source_type, id AS source_id,
                        COALESCE(name, '') || ' ' || COALESCE(description, '') AS snippet_text,
-                       ts_rank(
-                         to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, '')),
-                         plainto_tsquery(:q)
-                       ) AS rank
+                       CASE WHEN :latin_tsquery <> '' THEN
+                         ts_rank(
+                           to_tsvector('simple', COALESCE(name, '') || ' ' || COALESCE(description, '')),
+                           to_tsquery('simple', :latin_tsquery)
+                         )
+                       ELSE 0 END AS rank
                 FROM materials
-                WHERE to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, ''))
-                      @@ plainto_tsquery(:q)
+                WHERE :latin_tsquery <> ''
+                  AND to_tsvector('simple', COALESCE(name, '') || ' ' || COALESCE(description, ''))
+                      @@ to_tsquery('simple', :latin_tsquery)
+
+                UNION ALL
+
+                SELECT 'material' AS source_type, id AS source_id,
+                       COALESCE(name, '') || ' ' || COALESCE(description, '') AS snippet_text,
+                       1.0 AS rank
+                FROM materials, unnest(CAST(:cjk_patterns AS text[])) AS p
+                WHERE COALESCE(name, '') ILIKE p
+                   OR COALESCE(description, '') ILIKE p
 
                 UNION ALL
 
                 SELECT 'kg_node' AS source_type, id AS source_id,
                        COALESCE(label, '') || ' ' || COALESCE(aliases, '') AS snippet_text,
-                       ts_rank(
-                         to_tsvector('english', COALESCE(label, '') || ' ' || COALESCE(aliases, '')),
-                         plainto_tsquery(:q)
-                       ) AS rank
+                       CASE WHEN :latin_tsquery <> '' THEN
+                         ts_rank(
+                           to_tsvector('simple', COALESCE(label, '') || ' ' || COALESCE(aliases, '')),
+                           to_tsquery('simple', :latin_tsquery)
+                         )
+                       ELSE 0 END AS rank
                 FROM kg_nodes
                 WHERE status = 'active'
-                  AND to_tsvector('english', COALESCE(label, '') || ' ' || COALESCE(aliases, ''))
-                      @@ plainto_tsquery(:q)
+                  AND :latin_tsquery <> ''
+                  AND to_tsvector('simple', COALESCE(label, '') || ' ' || COALESCE(aliases, ''))
+                      @@ to_tsquery('simple', :latin_tsquery)
+
+                UNION ALL
+
+                SELECT 'kg_node' AS source_type, id AS source_id,
+                       COALESCE(label, '') || ' ' || COALESCE(aliases, '') AS snippet_text,
+                       1.0 AS rank
+                FROM kg_nodes, unnest(CAST(:cjk_patterns AS text[])) AS p
+                WHERE status = 'active'
+                  AND (COALESCE(label, '') ILIKE p
+                       OR COALESCE(aliases, '') ILIKE p)
             ) combined
-            ORDER BY rank DESC
+            GROUP BY source_type, source_id, snippet_text
+            ORDER BY MAX(rank) DESC
             LIMIT :limit
             """
         )
         result = await self._db.execute(
             sql,
-            {"q": tsquery_str, "limit": limit},
+            {
+                "latin_tsquery": latin_tsquery,
+                "cjk_patterns": cjk_patterns,
+                "limit": limit,
+            },
         )
         # NFM-4593: ``AsyncResult.mappings()`` is a SYNC method in SQLAlchemy 2.0
         # — it returns a ``MappingResult`` iterator wrapper directly, NOT a
