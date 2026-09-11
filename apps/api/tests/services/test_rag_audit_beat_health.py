@@ -29,8 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import DataSource, RagIndexAuditLog
 from nfm_db.services.rag_audit import (
+    DEFAULT_PROCESSING_TIMEOUT,
     AuditOutcome,
     BucketHealthCounts,
+    ProcessingReapOutcome,
     classify_failure_reason,
     last_successful_beat_at,
     lightrag_doc_status,
@@ -473,6 +475,185 @@ async def test_last_successful_beat_at_returns_none_on_empty_table(
     assert last is None
 
 
+# ---------------------------------------------------------------------------
+# NFM-4744 / NFM-4742-AC3 — 03:30Z beat wires the processing reaper
+# ---------------------------------------------------------------------------
+
+
+def _patch_celery_beat_task_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    audit_session: object,
+    audit_outcome: AuditOutcome | None = None,
+    reaper_outcome: ProcessingReapOutcome | None = None,
+    reaper_exception: BaseException | None = None,
+) -> dict[str, Any]:
+    """Stub the beat task's collaborators so it runs in-process.
+
+    Returns the ``captured`` dict so callers can assert on which kwargs
+    the reaper saw (session reuse + lightrag host/port).
+    """
+    captured: dict[str, Any] = {}
+
+    class _FakeSession:
+        """Async-context-manager shim so ``async with factory() as session:`` works."""
+
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    session_singleton = _FakeSession() if audit_session is None else audit_session
+
+    def _factory() -> Any:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _ctx() -> Any:
+            captured["task_scoped"] = True
+            yield lambda: session_singleton
+
+        return _ctx()
+
+    async def _fake_audit(session: object, **kwargs: object) -> AuditOutcome:
+        captured["audit_session"] = session
+        captured["audit_kwargs"] = kwargs
+        return audit_outcome or AuditOutcome(
+            run_date=date(2026, 9, 12),
+            completed_total=0,
+            indexed_total=0,
+            drift_total=0,
+            reingested=0,
+            errors=0,
+        )
+
+    async def _fake_reaper(session: object, **kwargs: object) -> ProcessingReapOutcome:
+        captured["reaper_session"] = session
+        captured["reaper_kwargs"] = kwargs
+        if reaper_exception is not None:
+            raise reaper_exception
+        return reaper_outcome or ProcessingReapOutcome(
+            run_date=date(2026, 9, 12),
+            timeout=DEFAULT_PROCESSING_TIMEOUT,
+            inspected=0,
+            reaped=0,
+            errors=0,
+        )
+
+    class _FakeSettings:
+        lightrag_host = "localhost"
+        lightrag_port = 9621
+
+    monkeypatch.setattr("nfm_db.database.task_session_factory", _factory)
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit.run_rag_audit_index_coverage", _fake_audit
+    )
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit.reap_processing_documents", _fake_reaper
+    )
+    monkeypatch.setattr("nfm_db.config.get_settings", lambda: _FakeSettings())
+    return captured
+
+
+def test_beat_task_invokes_reaper_with_same_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3: the 03:30Z beat MUST call ``reap_processing_documents``.
+
+    The reaper and the audit share the session object — both writes
+    land in the same transaction context — and the reaper receives the
+    same ``lightrag_host`` / ``lightrag_port`` as the audit.
+    """
+    from datetime import date as _date
+
+    from nfm_db.services import celery_app as celery_module
+    from nfm_db.services.rag_audit import (
+        DEFAULT_PROCESSING_TIMEOUT,
+        ProcessingReapOutcome,
+    )
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    shared_session = _FakeSession()
+
+    captured = _patch_celery_beat_task_env(
+        monkeypatch,
+        audit_session=shared_session,
+        reaper_outcome=ProcessingReapOutcome(
+            run_date=_date(2026, 9, 12),
+            timeout=DEFAULT_PROCESSING_TIMEOUT,
+            inspected=4,
+            reaped=2,
+            errors=0,
+        ),
+    )
+
+    result = celery_module.rag_audit_index_coverage_task.run()
+
+    # Reaper must have been called once.
+    assert captured.get("reaper_session") is captured["audit_session"], (
+        "reaper must reuse the audit's session so writes land in the "
+        "same beat-scoped transaction"
+    )
+    # Reaper must have received the configured sidecar coordinates.
+    reaper_kwargs = captured["reaper_kwargs"]
+    assert reaper_kwargs["lightrag_host"] == "localhost"
+    assert reaper_kwargs["lightrag_port"] == 9621
+    # Return payload must carry the reaper summary.
+    assert result["reaper_inspected"] == 4
+    assert result["reaper_reaped"] == 2
+    assert result["reaper_errors"] == 0
+    assert result["reaper_error"] is None
+
+
+def test_beat_task_swallows_reaper_exception_and_reports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3: a reaper-side outage MUST NOT suppress the audit outcome.
+
+    The beat's bucket_health row already committed inside
+    ``run_rag_audit_index_coverage`` (via the per-row ``_record``
+    commit), so a reaper failure only loses its own audit rows.  The
+    beat returns normally with ``reaper_error`` populated so operators
+    can chart the sidecar outage separately from the index-coverage
+    totals.
+    """
+    from nfm_db.services import celery_app as celery_module
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    captured = _patch_celery_beat_task_env(
+        monkeypatch,
+        audit_session=_FakeSession(),
+        reaper_exception=RuntimeError("sidecar 503"),
+    )
+
+    # The beat must NOT propagate the reaper's exception to Celery —
+    # otherwise the audit's outcome is masked and NFM-4406 fires on
+    # every sidecar blip.
+    result = celery_module.rag_audit_index_coverage_task.run()
+
+    # Reaper was invoked and raised.
+    assert "reaper_session" in captured
+    # Return payload surfaces the failure mode without raising.
+    assert result["reaper_inspected"] == 0
+    assert result["reaper_reaped"] == 0
+    assert result["reaper_errors"] == 0
+    assert result["reaper_error"] is not None
+    assert "sidecar 503" in result["reaper_error"]
+
+
 __all__ = [
     "test_audit_outcome_carries_failed_duplicate_count",
     "test_audit_outcome_carries_failed_error_count",
@@ -480,6 +661,8 @@ __all__ = [
     "test_beat_late_false_when_audit_log_has_recent_success",
     "test_beat_late_true_when_audit_log_silent_over_25h",
     "test_beat_late_true_when_no_prior_success_row",
+    "test_beat_task_invokes_reaper_with_same_session",
+    "test_beat_task_swallows_reaper_exception_and_reports_it",
     "test_beat_writes_bucket_health_audit_row",
     "test_bucket_counts_match_lightrag_doc_status_query",
     "test_bucket_health_counts_dataclass_is_immutable",

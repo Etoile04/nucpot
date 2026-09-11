@@ -346,7 +346,11 @@ def rag_audit_index_coverage_task(self) -> dict:
     async def _run() -> dict:
         from nfm_db.config import get_settings
         from nfm_db.database import task_session_factory
-        from nfm_db.services.rag_audit import run_rag_audit_index_coverage
+        from nfm_db.services.rag_audit import (
+            ProcessingReapOutcome,
+            reap_processing_documents,
+            run_rag_audit_index_coverage,
+        )
 
         settings = get_settings()
         # BUG-22 (NFM-4076 / ADR-NFM-4076 D3): the shared engine's asyncpg
@@ -358,6 +362,18 @@ def rag_audit_index_coverage_task(self) -> dict:
         # (verified live in prod 2026-09-10 while manually triggering the
         # audit for NFM-4636).  Use the task-scoped NullPool engine like
         # every other Celery task boundary.
+        # NFM-4744 / NFM-4742-AC3: the processing-timeout reaper
+        # (``reap_processing_documents``) is the auto-transition safety
+        # net for documents stranded in LightRAG's ``processing`` bucket
+        # for ≥24 h.  Without a production caller it sat as orphan code
+        # — flagged FAIL by the F-1 E2E QA pass on 2026-09-11.  Wire it
+        # into the 03:30Z beat (this task) so AC3 is satisfied end-to-end.
+        # The reaper operates on its own transaction inside the same
+        # session; an exception there MUST NOT suppress the audit's
+        # ``bucket_health`` row, so we catch + log and surface the
+        # failure mode in the structured payload.
+        reaper_outcome: ProcessingReapOutcome | None = None
+        reaper_error: str | None = None
         async with task_session_factory() as factory:
             async with factory() as session:
                 outcome = await run_rag_audit_index_coverage(
@@ -365,6 +381,17 @@ def rag_audit_index_coverage_task(self) -> dict:
                     lightrag_host=settings.lightrag_host,
                     lightrag_port=settings.lightrag_port,
                 )
+                try:
+                    reaper_outcome = await reap_processing_documents(
+                        session,
+                        lightrag_host=settings.lightrag_host,
+                        lightrag_port=settings.lightrag_port,
+                    )
+                except Exception as exc:
+                    reaper_error = repr(exc)
+                    logger.error(
+                        "rag_audit_index_coverage_task: reaper failed: %s", exc
+                    )
         # NFM-4746: structured log line carries every health field so the
         # journalctl scraper / log-aggregator can chart ``beat_late``
         # transitions without joining against the audit table.  The
@@ -389,6 +416,11 @@ def rag_audit_index_coverage_task(self) -> dict:
                     if outcome.last_success_at is not None
                     else None
                 ),
+                # NFM-4744 reaper summary — distinct from audit counts.
+                "reaper_inspected": reaper_outcome.inspected if reaper_outcome else 0,
+                "reaper_reaped": reaper_outcome.reaped if reaper_outcome else 0,
+                "reaper_errors": reaper_outcome.errors if reaper_outcome else 0,
+                "reaper_error": reaper_error,
             },
         )
         return {
@@ -408,6 +440,11 @@ def rag_audit_index_coverage_task(self) -> dict:
                 if outcome.last_success_at is not None
                 else None
             ),
+            # NFM-4744 reaper summary — see ``ProcessingReapOutcome``.
+            "reaper_inspected": reaper_outcome.inspected if reaper_outcome else 0,
+            "reaper_reaped": reaper_outcome.reaped if reaper_outcome else 0,
+            "reaper_errors": reaper_outcome.errors if reaper_outcome else 0,
+            "reaper_error": reaper_error,
         }
 
     try:
