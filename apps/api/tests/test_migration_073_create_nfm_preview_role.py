@@ -106,8 +106,11 @@ class TestRevisionMetadata:
         and is renumbered 088_add_validity_check_and_valid_range
         chained after 087.  089_add_ix_verification_tasks_status
         (NFM-4636, the idempotent CREATE INDEX for the latent
-        verification_tasks.status drift) chained after 088 —
-        089 is the current head.
+        verification_tasks.status drift) chained after 088.
+        090_add_rag_audit_failure_reason (NFM-4742 F-3, the
+        failure_reason column on rag_index_audit_log for the
+        bucket-segregation beat) chained after 089 —
+        090 is the current head.
         pre-deploy-assert checks this in CI, but a sub-second check here
         keeps the PR signal clean — a "two heads" failure here is a
         red-flag stop-the-line, not a 6-minute build.
@@ -120,7 +123,7 @@ class TestRevisionMetadata:
         migrations_dir = _MIGRATION_PATH.parents[1]  # .../apps/api/migrations
         sd = ScriptDirectory(str(migrations_dir))
         heads = list(sd.get_heads())
-        assert heads == ["089_add_ix_verification_tasks_status"], (
+        assert heads == ["090_add_rag_audit_failure_reason"], (
             f"alembic heads is {heads}; pre-deploy-assert would block the "
             f"deploy. Update the new migration's down_revision to point at "
             f"the actual chain head."
