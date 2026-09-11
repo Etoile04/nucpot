@@ -164,6 +164,21 @@ def _pip_install_packages(dockerfile_text: str) -> set[str]:
     return packages
 
 
+def _pip_install_lines(dockerfile_text: str) -> list[str]:
+    """Return each ``RUN pip install`` block as a single logical line.
+
+    Continuation backslashes are collapsed to spaces so the whole retry
+    ladder reads as one logical line per ``RUN``. The mirror assertion
+    scopes its search to this set so a ``pypi.tuna.tsinghua.edu.cn``
+    reference that lives in a comment (or anywhere outside an actual
+    ``pip install`` rung) does NOT count as a satisfied guard — the
+    previous whole-text search let the NFM-3328 build-host guard slip
+    through exactly that mutation.
+    """
+    flat = re.sub(r"\\\n", " ", dockerfile_text)
+    return re.findall(r"RUN\s+pip\s+install[^\n]*", flat)
+
+
 # ---------------------------------------------------------------------------
 # Static guards
 # ---------------------------------------------------------------------------
@@ -247,13 +262,24 @@ def test_dockerfile_installs_httpx_explicit_transitive_dep():
 
 def test_dockerfile_uses_tsinghua_mirror_on_at_least_one_retry():
     """NFM-3328: the prod build host is GFW-unreliable against pypi.org.
-    At least one retry in the ladder must point at the Tsinghua mirror."""
+    At least one ``pip install`` rung must point at the Tsinghua mirror.
+
+    The search is scoped to actual ``RUN pip install`` lines via
+    ``_pip_install_lines()`` so a ``pypi.tuna.tsinghua.edu.cn`` reference
+    that lives in a comment (or any text outside an actual pip-install
+    rung) does NOT count as a satisfied guard — that mutation previously
+    passed and let the build-host egress constraint slip through.
+    """
     contents = DOCKERFILE_PATH.read_text()
-    flat = re.sub(r"\\\n", " ", contents)
-    found_mirror = "pypi.tuna.tsinghua.edu.cn" in flat
+    pip_lines = _pip_install_lines(contents)
+    found_mirror = any(
+        "pypi.tuna.tsinghua.edu.cn" in line for line in pip_lines
+    )
     assert found_mirror, (
-        f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} has no `pip install` block "
+        f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} has no `pip install` rung "
         "pointing at https://pypi.tuna.tsinghua.edu.cn/simple (NFM-3328). "
         "Build host pypi.org egress is GFW-unreliable — at least one retry "
-        "in the ladder must use the Tsinghua mirror."
+        "in the ladder must use the Tsinghua mirror. (The URL must appear on "
+        "an actual `RUN pip install` line — references in comments do not "
+        "count, since `pip` itself does not parse comments.)"
     )
