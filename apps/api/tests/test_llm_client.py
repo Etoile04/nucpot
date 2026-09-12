@@ -1623,3 +1623,333 @@ class TestContextWindowWarning:
         assert not warnings, (
             f"unknown model should not warn; got: {[r.getMessage() for r in warnings]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 17. NFM-4779 — native Ollama /api/chat binding (think=false takes effect)
+# ---------------------------------------------------------------------------
+
+
+class TestNativeOllamaBinding:
+    """NFM-4779: dispatcher routes to native Ollama /api/chat when provider=ollama.
+
+    The openai-compat layer (the previous binding) silently drops ``think`` and
+    ``chat_template_kwargs`` (NFM-4525). Native /api/chat honors both, which is
+    what finally suppresses qwen3.5:4b-nvfp4's thinking-mode token burn that
+    NFM-4730-FixB / NFM-4758 / NFM-4759 attempted to mitigate on the openai-compat
+    layer. This test class locks in the binding switch.
+    """
+
+    @staticmethod
+    def _build_mock_http_client(
+        response_body: dict[str, Any],
+        status_code: int = 200,
+    ) -> AsyncMock:
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json.return_value = response_body
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "error body"
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+
+    @staticmethod
+    def _native_ollama_response(content: str = '{"properties": []}') -> dict[str, Any]:
+        """Build a realistic native Ollama /api/chat response (post-`done`)."""
+        return {
+            "model": "qwen3.5:4b-nvfp4",
+            "created_at": "2026-09-12T08:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": content,
+                # NFM-4779 AC2: thinking must be null/absent after think=false
+                "thinking": None,
+            },
+            "done_reason": "stop",
+            "done": True,
+            "total_duration": 1_500_000_000,
+            "load_duration": 200_000_000,
+            "prompt_eval_count": 320,
+            "prompt_eval_duration": 400_000_000,
+            "eval_count": 64,
+            "eval_duration": 800_000_000,
+        }
+
+    @pytest.mark.asyncio
+    async def test_ollama_provider_hits_api_chat_not_chat_completions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """provider=ollama must POST to ``/api/chat``, not ``/v1/chat/completions``.
+
+        This is the binding switch — the openai-compat layer's ``/v1/chat/completions``
+        silently drops ``think`` / ``chat_template_kwargs``, which is the root
+        cause of NFM-4525. Without this routing change, the NFM-4759 plumbing
+        (chat_template_kwargs on the wire) would still be a no-op.
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "ollama")
+
+        body = self._native_ollama_response('{"properties": []}')
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+        url = mock_http.post.call_args[0][0]
+        # The default base_url is /v1 (openai-compat root) — we strip the /v1
+        # to land on the Ollama daemon's native /api/chat path.
+        assert url == "http://localhost:11434/api/chat", (
+            f"expected native /api/chat, got {url!r}; the openai-compat "
+            "binding silently drops think/chat_template_kwargs (NFM-4525)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_think_false_set_when_chat_template_kwargs_has_enable_thinking_false(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``think: false`` MUST be present in the body when the caller
+        passes ``chat_template_kwargs={"enable_thinking": False}``.
+
+        NFM-4779 AC #2 (LE scope): ``enable_thinking=False`` honored end-to-end.
+        ``think`` is native Ollama's thinking-disabler (Ollama 0.5.0+).
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "ollama")
+
+        body = self._native_ollama_response('{"properties": []}')
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                chat_template_kwargs={"enable_thinking": False},
+            )
+
+        payload = mock_http.post.call_args[1]["json"]
+        assert payload.get("think") is False, (
+            f"think must be False to suppress qwen3.5 thinking mode; got {payload.get('think')!r}"
+        )
+        # The chat_template_kwargs plumbing from NFM-4759 is also kept on the wire.
+        assert payload.get("chat_template_kwargs") == {"enable_thinking": False}
+        # Stream is always false for the legacy call_llm path (no SSE plumbing
+        # in this function — streaming was never wired in for the dispatcher).
+        assert payload.get("stream") is False
+
+    @pytest.mark.asyncio
+    async def test_num_predict_in_options_for_native_binding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """For the native binding, ``num_predict`` lives at ``options.num_predict``.
+
+        The openai-compat path used ``max_tokens`` at the top level; the native
+        /api/chat binding uses ``options.num_predict`` (Ollama's native field).
+        The per-call ``num_predict`` arg from NFM-4730-FixB / NFM-4759 must
+        land in the native location so the Ollama daemon can honor it.
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "ollama")
+
+        body = self._native_ollama_response('{"ok": true}')
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                num_predict=8192,
+                temperature=0.0,
+            )
+
+        payload = mock_http.post.call_args[1]["json"]
+        options = payload.get("options") or {}
+        assert options.get("num_predict") == 8192, (
+            f"options.num_predict must be 8192 (NFM-4730-FixB cap); got {options.get('num_predict')!r}"
+        )
+        assert options.get("temperature") == 0.0
+        # Native binding does NOT use the openai-compat top-level max_tokens field.
+        assert "max_tokens" not in payload, (
+            "native /api/chat binding must not send openai-compat max_tokens; "
+            f"got top-level keys: {sorted(payload.keys())}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_native_response_normalized_to_openai_compat_shape(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A native Ollama /api/chat response must be parsed into the same
+        internal shape the openai-compat layer produced.
+
+        Native Ollama returns ``{message, done_reason, prompt_eval_count, eval_count}``.
+        Downstream code (call_llm post-parse block + extraction_pipeline) expects
+        ``{choices[0].message.content, choices[0].finish_reason, usage.{prompt,completion,total}_tokens}``.
+        Without normalization, the function would raise ``RuntimeError: LLM returned
+        empty choices`` because the native body has no ``choices`` field.
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "ollama")
+
+        native_body = {
+            "model": "qwen3.5:4b-nvfp4",
+            "message": {
+                "role": "assistant",
+                "content": '{"k": "v"}',
+                "thinking": None,
+            },
+            "done_reason": "stop",
+            "done": True,
+            "prompt_eval_count": 320,
+            "eval_count": 64,
+        }
+        mock_http = self._build_mock_http_client(native_body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            result = await call_llm(system_prompt="S", user_message="U")
+
+        assert result == {"k": "v"}, (
+            "native /api/chat response must parse to the same dict the openai-compat "
+            f"layer would produce; got {result!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_native_response_length_finish_reason_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A native ``done_reason='length'`` must map to the openai-compat
+        ``finish_reason='length'`` so the existing thinking-exhaustion guard fires.
+
+        NFM-4730-FixB's diagnostic (cites ``num_predict``) only fires when
+        finish_reason='length' is detected. If native binding maps done_reason
+        to ``stop`` instead, the thinking-exhaustion guard never trips and
+        callers see ``LLM returned empty content`` instead of the diagnostic.
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+        monkeypatch.setenv("LLM_API_KEY", "ollama")
+
+        native_body = {
+            "model": "qwen3.5:4b-nvfp4",
+            "message": {
+                "role": "assistant",
+                "content": "",  # empty → triggers thinking-exhaustion diagnostic
+                "thinking": None,
+            },
+            "done_reason": "length",
+            "done": True,
+            "prompt_eval_count": 320,
+            "eval_count": 8192,
+        }
+        mock_http = self._build_mock_http_client(native_body)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_http,
+            ),
+            pytest.raises(RuntimeError, match="num_predict"),
+        ):
+            await call_llm(system_prompt="S", user_message="U", num_predict=8192)
+
+    def test_ollama_native_chat_url_strips_v1(self) -> None:
+        """The URL helper must convert /v1 (openai-compat root) to /api/chat
+        (native Ollama path). Both with and without trailing slash."""
+        from nfm_db.services.llm_client import _ollama_native_chat_url
+
+        assert _ollama_native_chat_url("http://localhost:11434/v1") == (
+            "http://localhost:11434/api/chat"
+        )
+        assert _ollama_native_chat_url("http://localhost:11434/v1/") == (
+            "http://localhost:11434/api/chat"
+        )
+        # Operator may already point LLM_BASE_URL at the bare root.
+        assert _ollama_native_chat_url("http://localhost:11434") == (
+            "http://localhost:11434/api/chat"
+        )
+
+    def test_ollama_native_to_openai_shape_maps_done_reason(self) -> None:
+        """The shape-normalizer must map done_reason 'stop'/'length' to the
+        openai-compat finish_reason vocabulary so downstream guards fire."""
+        from nfm_db.services.llm_client import _ollama_native_to_openai_shape
+
+        normalized = _ollama_native_to_openai_shape(
+            {
+                "message": {"role": "assistant", "content": '{"a": 1}'},
+                "done_reason": "stop",
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+        )
+        assert normalized["choices"][0]["finish_reason"] == "stop"
+        assert normalized["choices"][0]["message"]["content"] == '{"a": 1}'
+        assert normalized["usage"]["total_tokens"] == 15
+
+        length_normalized = _ollama_native_to_openai_shape(
+            {
+                "message": {"role": "assistant", "content": ""},
+                "done_reason": "length",
+                "prompt_eval_count": 100,
+                "eval_count": 8192,
+            }
+        )
+        assert length_normalized["choices"][0]["finish_reason"] == "length"
+
+    @pytest.mark.asyncio
+    async def test_non_ollama_provider_still_uses_openai_compat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression guard: non-ollama providers MUST still hit /chat/completions.
+
+        Only the ollama provider switches to native /api/chat. openai/deepseek
+        keep the openai-compat layer (they don't have a /api/chat equivalent).
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "openai")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+        url = mock_http.post.call_args[0][0]
+        assert url == "https://api.example.com/v1/chat/completions", (
+            f"non-ollama provider must keep openai-compat binding; got {url!r}"
+        )
+        payload = mock_http.post.call_args[1]["json"]
+        # openai-compat binding keeps max_tokens at top level + Authorization header.
+        assert "max_tokens" in payload
+        assert "Authorization" in mock_http.post.call_args[1]["headers"]
