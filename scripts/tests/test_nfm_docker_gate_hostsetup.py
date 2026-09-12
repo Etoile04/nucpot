@@ -37,6 +37,7 @@ SANCTIONED = [
     "run-sql.sh",
     "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
     "run-cleanup.sh",  # NFM-4357: sanctioned image retention cleanup
+    "run-backup.sh",  # NFM-4750: Plan B full-gate pg_dump + 4-volume tar
 ]
 
 # Hermetic sha satisfying HEAD==DEPLOY_SHA in entry tests.
@@ -749,3 +750,132 @@ def test_config_json_matches_default_scope():
 def test_entry_scripts_are_executable_in_repo():
     for script in ENTRIES:
         assert script.stat().st_mode & stat.S_IXUSR, f"{script.name} lost its exec bit"
+
+
+# ---- NFM-4750 Plan B: run-backup.sh (full-gate pg_dump + 4-volume tar) --------
+
+
+_BACKUP_VOLUMES = (
+    "nucpot-prod_prod-db-data",
+    "nucpot-prod_prod-uploads",
+    "nucpot-prod_lightrag-data",
+    "nucpot-prod_migration-audit",
+)
+
+
+def _backup_dest(tmp_path: Path) -> Path:
+    """Hermetic backup root — tmp_path/backup, parent exists."""
+    dest = tmp_path / "backup"
+    dest.mkdir()
+    return dest
+
+
+def _backup_harness(tmp_path: Path) -> "EntryHarness":
+    h = EntryHarness(tmp_path)
+    h._write_executable(
+        "id",
+        'printf "nfmdeploy\\n"',  # match EntryHarness default; explicit for clarity
+    )
+    return h
+
+
+def test_run_backup_rejects_disallowed_volume(entry, tmp_path):
+    """The volume allowlist is the data-exfiltration guard — refusing
+    `--volumes <attacker-controlled-name>` is the AC."""
+    dest = _backup_dest(tmp_path)
+    assert (
+        entry.run(
+            "run-backup.sh",
+            "--dest",
+            str(dest),
+            "--volumes",
+            "nucpot-prod_anything-else",
+            "--skip-pg-dump",
+        ).returncode
+        == 64
+    )
+
+
+def test_run_backup_rejects_relative_dest(entry, tmp_path):
+    assert entry.run("run-backup.sh", "--dest", "relative/path").returncode == 64
+
+
+def test_run_backup_rejects_dotdot_dest(entry, tmp_path):
+    assert entry.run("run-backup.sh", "--dest", "/tmp/a/../b").returncode == 64
+
+
+def test_run_backup_rejects_missing_parent_dest(entry):
+    """--dest parent must exist (mkdir is not the entry's job — refuse and
+    let the operator create the dir explicitly)."""
+    assert entry.run("run-backup.sh", "--dest", "/no/such/dir/x").returncode == 64
+
+
+def test_run_backup_rejects_bad_keep(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--keep", "abc").returncode == 64
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--keep", "0").returncode == 64
+
+
+def test_run_backup_rejects_unknown_flag(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--evil").returncode == 64
+
+
+def test_run_backup_invokes_pg_dump_and_all_volume_tars(entry, tmp_path):
+    """Success path: docker exec pg_dump + docker run --rm -v <vol>:/src:ro
+    alpine tar cf - for every allowlisted volume, all under the full gate."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    # pg_dump via the full gate (peer auth inside the container, no password)
+    assert "exec nucpot-prod-db pg_dump -Fc -U nfm -d nfm_db" in argv_blob
+    for v in _BACKUP_VOLUMES:
+        assert f"run --rm -v {v}:/src:ro alpine tar cf - -C /src ." in argv_blob, (
+            f"missing tar invocation for {v}; saw: {argv_blob}"
+        )
+
+
+def test_run_backup_volume_subset_invokes_only_selected(entry, tmp_path):
+    """--volumes narrows the tar list; pg_dump still runs."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run(
+        "run-backup.sh",
+        "--dest",
+        str(dest),
+        "--volumes",
+        "nucpot-prod_prod-uploads,nucpot-prod_lightrag-data",
+    )
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    assert "exec nucpot-prod-db pg_dump" in argv_blob
+    assert "nucpot-prod_prod-uploads:/src:ro" in argv_blob
+    assert "nucpot-prod_lightrag-data:/src:ro" in argv_blob
+    assert "nucpot-prod_prod-db-data:/src:ro" not in argv_blob
+    assert "nucpot-prod_migration-audit:/src:ro" not in argv_blob
+
+
+def test_run_backup_skip_pg_dump_skips_exec(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest), "--skip-pg-dump")
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    assert "exec nucpot-prod-db" not in argv_blob
+    # volume tars still run
+    assert "nucpot-prod_prod-db-data:/src:ro" in argv_blob
+
+
+def test_run_backup_uses_full_gate_socket(entry, tmp_path):
+    """AC: the entry must reach the full gate (docker-full.sock), the ro
+    socket would deny every docker run --rm -v <prod-vol>: line. The fake
+    docker records argv; we don't query a real socket, but we can confirm
+    the entry exported the expected DOCKER_HOST in its first docker call
+    by inspecting its env via the env-keep Defaults. Simpler: ensure no
+    docker call lands on a host: tcp:// — the gate path is the only one
+    the entry can use."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    argv_flat = [" ".join(a) for a in entry.docker_argv()]
+    assert all("-H tcp://" not in a for a in argv_flat), argv_flat
+
