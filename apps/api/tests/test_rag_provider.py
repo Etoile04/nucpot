@@ -168,6 +168,180 @@ class TestLightRAGProvider:
 
 
 # ---------------------------------------------------------------------------
+# NFM-4804 item 2: cache-hit reference refill
+# ---------------------------------------------------------------------------
+
+
+class TestNFM4804CacheHitReferenceRefill:
+    """LightRAGProvider must rebuild references when a cache hit strips them.
+
+    Prod evidence (2026-09-12): the canonical query「UO2 热导率」returned 10
+    references on first execution and 0 on the second — the sidecar's
+    llm_response_cache hit replays the answer text without a reference list
+    our wrapper can reuse. Stock LightRAG 1.5.4 cannot be patched, so the
+    provider refills references via the retrieval-only ``/query/data``
+    endpoint on exactly that degraded path.
+    """
+
+    def _cached_client(
+        self,
+        *,
+        query_data_result: dict | None = None,
+        query_data_error: Exception | None = None,
+    ) -> AsyncMock:
+        """Mock client whose /query hit is cached with empty references."""
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "cached answer about UO2 thermal conductivity",
+                "references": [],
+                "entities": [],
+                "relationships": [],
+                "cached": True,
+            }
+        )
+        if query_data_error is not None:
+            client.query_data = AsyncMock(side_effect=query_data_error)
+        else:
+            client.query_data = AsyncMock(
+                return_value=query_data_result
+                if query_data_result is not None
+                else {
+                    "status": "success",
+                    "data": {
+                        "references": [
+                            {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+                        ]
+                    },
+                }
+            )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_empty_refs_refills_from_query_data(self) -> None:
+        client = self._cached_client()
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.response == "cached answer about UO2 thermal conductivity"
+        assert result.references == [
+            {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+        ]
+        assert result.was_cached is True
+        client.query_data.assert_called_once_with(query="UO2 热导率", mode="mix")
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_without_include_references_skips_refill(self) -> None:
+        """A caller that did not ask for references gets none — no refill."""
+        client = self._cached_client()
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(query="UO2 热导率", mode="mix")
+
+        assert result.references == []
+        client.query_data.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fresh_query_with_empty_refs_no_refill(self) -> None:
+        """Empty references on a non-cached execution are an honest empty
+        retrieval — the refill must not paper over it with a second call."""
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "fresh answer",
+                "references": [],
+                "entities": [],
+                "relationships": [],
+            }
+        )
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.references == []
+        client.query_data.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_refs_present_no_refill(self) -> None:
+        """A cache hit that still carries references needs no refill."""
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "cached answer",
+                "references": [{"file_path": "doc.pdf"}],
+                "entities": [],
+                "relationships": [],
+                "cache_hit": True,
+            }
+        )
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.references == [{"file_path": "doc.pdf"}]
+        client.query_data.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_empty_answer_no_refill(self) -> None:
+        """A cached no-answer (empty response text) has nothing worth
+        citing — the refill must not burn a retrieval pass on it."""
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "",
+                "references": [],
+                "entities": [],
+                "relationships": [],
+                "cached": True,
+            }
+        )
+        client.query_data = AsyncMock()
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.references == []
+        client.query_data.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refill_failure_is_non_fatal(self) -> None:
+        """/query/data failing must not fail the cached answer — the query
+        still serves, references stay honestly empty."""
+        client = self._cached_client(
+            query_data_error=LightRAGClientError("LightRAG /query/data failed: HTTP 500")
+        )
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.response == "cached answer about UO2 thermal conductivity"
+        assert result.references == []
+        assert result.was_cached is True
+
+    @pytest.mark.asyncio
+    async def test_refill_empty_references_keeps_empty(self) -> None:
+        """A refill that legitimately finds nothing leaves references [] —
+        the empty retrieval is the truth for the current corpus."""
+        client = self._cached_client(
+            query_data_result={"status": "success", "data": {"references": []}}
+        )
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.references == []
+
+
+# ---------------------------------------------------------------------------
 # RuleBasedFallbackProvider
 # ---------------------------------------------------------------------------
 
