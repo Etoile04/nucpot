@@ -245,8 +245,22 @@ services:
       # NFM-1764: pgvector storage backend (CTO ADR Option C — hybrid)
       LIGHTRAG_VECTOR_STORAGE: ${PROD_LIGHTRAG_VECTOR_STORAGE:-PGVectorStorage}
       LIGHTRAG_GRAPH_STORAGE: ${PROD_LIGHTRAG_GRAPH_STORAGE:-NetworkXStorage}
-      LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-JsonKVStorage}
-      LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-JsonDocStatusStorage}
+      # NFM-4736: KV + doc-status MUST be PG-backed. The JSON default
+      # rewrites the whole storage file on every mutation, so concurrent
+      # writers (daily 03:30Z reingest + inline KG sync + operator replay)
+      # race and a writer holding an empty/stale snapshot truncates it.
+      # This is the structural root cause of BOTH corpus wipes (2026-09-05
+      # and 2026-09-11 03:24-08:29Z window): lightrag_doc_full/doc_status/
+      # doc_chunks zeroed while PGVector rows lost their doc anchors.
+      # PG tables already exist (lightrag_doc_status/lightrag_doc_full/
+      # lightrag_doc_chunks, workspace='_app_data') and stock 1.5.4
+      # PGKVStorage/PGDocStatusStorage key on (workspace, id) — no schema
+      # migration needed. LIGHTRAG_GRAPH_STORAGE stays NetworkXStorage
+      # because PGGraphStorage requires the AGE extension, which the
+      # pgvector/pgvector:pg16 image does not ship; the graph is fully
+      # derivable by re-ingest.
+      LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-PGKVStorage}
+      LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-PGDocStatusStorage}
       # NFM-4492 follow-up (rerank): local Qwen3-Reranker-0.6B (Q8_0) served by
       # llama-server --reranking --pooling rank as launchd agent
       # ai.nfm.rerank-server on 127.0.0.1:8109 (KeepAlive). LightRAG's cohere
