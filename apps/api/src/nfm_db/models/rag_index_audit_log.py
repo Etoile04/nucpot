@@ -68,17 +68,30 @@ class RagIndexAuditLog(Base):
     action: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
-        comment="reingest | noop | stale | error",
+        comment="reingest | noop | stale | error | failed_duplicate "
+        "| failed_error | failed_empty | processing_reaped | bucket_counts",
     )
     error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
+    # NFM-4742 F-3 §3.2: segregate the ``failed`` bucket into the
+    # categorically distinct outcomes the LightRAG sidecar reports
+    # (``duplicate`` = dedupe, ``error`` = real failure, ``empty`` =
+    # failed-but-no-message).  Mirrors migration 090; the column is
+    # nullable so pre-NFM-4742 audit rows keep their shape and
+    # historical backfill stays out of scope.
+    failure_reason: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        comment="duplicate | error | empty | timeout | unknown",
+    )
 
     def __repr__(self) -> str:
         return (
             f"<RagIndexAuditLog id={self.id!s} routine={self.routine!r} "
-            f"action={self.action!r} literature={self.literature_id!s} "
+            f"action={self.action!r} failure_reason={self.failure_reason!r} "
+            f"literature={self.literature_id!s} "
             f"run_date={self.run_date.isoformat()}>"
         )
 
