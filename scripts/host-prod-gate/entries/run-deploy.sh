@@ -16,8 +16,9 @@
 #   NFM_G2_DEPLOY_IDENTITY=1                              (git sync → verify)
 #
 # Env (survive sudo via the sudoers Defaults! env_keep lines):
-#   DEPLOY_SHA  (required) — github.sha being deployed
-#   PROXY_PORT  (optional) — egress proxy port, default 7897
+#   DEPLOY_SHA   (required) — github.sha being deployed
+#   PROXY_PORT   (optional, ADR-018 / NFM-4762) — when set, deploy session
+#                 exports HTTP(S)_PROXY. Default unset = direct egress.
 #
 # Repo sync is NOT done here — the repo is owned by the desktop user; the
 # caller syncs it (git fetch origin && git reset --hard $DEPLOY_SHA) and this
@@ -60,11 +61,12 @@ if [ "$("${ID_BIN}" -un)" != "${DEPLOY_USER}" ]; then
 fi
 
 : "${DEPLOY_SHA:?DEPLOY_SHA not provided — run via: DEPLOY_SHA=<github.sha> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh}"
-PROXY_PORT="${PROXY_PORT:-7897}"
+# ADR-018 / NFM-4762: PROXY_PORT is optional and not exported by default;
+# deploy_prod.sh honors it when set, otherwise direct egress everywhere.
 # NFM-4273: DEPLOY_ACTOR rides env_keep too (see sudoers.d) so the GH
 # workflow's gh-runner:<actor> provenance reaches the in-script G4a
 # manifest recorder; unset for manual runs — deploy_prod.sh defaults it.
-export PROXY_PORT DEPLOY_SHA
+export DEPLOY_SHA
 export DEPLOY_ACTOR="${DEPLOY_ACTOR:-}"
 
 # --- NFM-4297 CR F7: entry mutual exclusion --------------------------------

@@ -12,14 +12,16 @@
 #
 # Execution contract (from the workflow step):
 #   scp scripts/deploy_prod.sh  host:/tmp/nfm-deploy-prod.sh
-#   ssh host "PROXY_PORT=<port> DEPLOY_SHA=<github.sha> bash /tmp/nfm-deploy-prod.sh"
+#   ssh host "DEPLOY_SHA=<github.sha> bash /tmp/nfm-deploy-prod.sh"
 #
 # The script runs FROM DISK on the remote host — stdin is never the script
 # transport, so nothing inside can eat the rest of the deploy. All inputs are
 # environment variables validated with :? (empty → immediate loud failure,
 # fixing the empty-variable command-mangling class seen in issue #1050).
 #
-# Requires (validated up front): PROXY_PORT, DEPLOY_SHA.
+# Requires (validated up front): DEPLOY_SHA.
+# Optional: PROXY_PORT (ADR-018 / NFM-4762) — when set, applies HTTP_PROXY/
+# HTTPS_PROXY for the deploy session. Default unset = direct egress everywhere.
 # Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert.
 # ============================================================================
 set -euo pipefail
@@ -51,8 +53,9 @@ fi
 
 # --- Input validation (empty variable = loud failure, never a mangled cmd) --
 : "${DEPLOY_SHA:?DEPLOY_SHA (github.sha) not provided — refusing to deploy}"
-: "${PROXY_PORT:=7897}"
-
+# ADR-018 / NFM-4762: PROXY_PORT is now optional. When unset, deploy runs
+# direct. Backward-compatible: any caller that still sets PROXY_PORT keeps
+# working unchanged.
 
 # NFM-4272 / ADR-013 §2 G4b — deploy lockfile. The drift-checker cron
 # (scripts/check_deploy_drift.py, per runbook §8) diffs live container
@@ -93,11 +96,14 @@ trap 'rm -f "$NFM_DEPLOY_LOCK"' EXIT
 
 cd ~/Projects/nucpot
 
-export HTTP_PROXY="http://127.0.0.1:${PROXY_PORT}" HTTPS_PROXY="http://127.0.0.1:${PROXY_PORT}"
-# github.com must go DIRECT: the proxy route for it is dead (verified 5/5
-# fail via proxy, 5/5 pass direct). SSH sessions do not inherit job env.
-export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
-export no_proxy="$NO_PROXY"
+# ADR-018 / NFM-4762: CI egress = direct by default. When PROXY_PORT is
+# provided (legacy CI or manual run), apply HTTP(S)_PROXY for the deploy
+# session; otherwise no proxy env is set and all traffic goes direct.
+if [ -n "${PROXY_PORT:-}" ]; then
+  export HTTP_PROXY="http://127.0.0.1:${PROXY_PORT}" HTTPS_PROXY="http://127.0.0.1:${PROXY_PORT}"
+  export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
+  export no_proxy="$NO_PROXY"
+fi
 
 # NFM-848: DOCKER_CONFIG redirects the CLI-plugin search path away from the
 # credential helper that breaks daemon-side metadata resolution.

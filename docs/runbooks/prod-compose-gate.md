@@ -77,7 +77,7 @@ behavior in `scripts/tests/test_nfm_docker_gate_*`.
 
 | Operation | Command |
 | --- | --- |
-| Deploy (CI does this) | repo owner: `cd ~/Projects/nucpot && git fetch origin && git reset --hard <sha>`, then `DEPLOY_SHA=<sha> PROXY_PORT=<port> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh` |
+| Deploy (CI does this) | repo owner: `cd ~/Projects/nucpot && git fetch origin && git reset --hard <sha>`, then `DEPLOY_SHA=<sha> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh` (ADR-018 / NFM-4762: PROXY_PORT no longer required — direct egress by default; set `PROXY_PORT=<port>` to override for legacy/manual runs) |
 | Restart a sick service | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh restart api\|web\|worker\|lightrag\|db` |
 | Rollback (NFM-2148 SHA-tagged) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <last-good-sha>` |
 | Standalone SQL (run-migration.yml) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh <repo-relative.sql>` (or `-` for stdin) |
