@@ -51,6 +51,37 @@ limiter = Limiter(
     headers_enabled=True,
 )
 
+# NFM-4736 F2: the multi-worker shared-counter wiring was silently inert in
+# prod — the env var was present in the container, yet live bursts behaved
+# as per-process ``memory://`` counters (24 parallel requests: 14 got 429,
+# consistent with 4 workers each enforcing 5/minute independently); zero
+# limiter keys existed in any Redis DB. A per-process counter multiplies the budget by the worker count,
+# which is exactly what NFM-4681 wired the shared Redis storage to
+# prevent, so a silent regression here is a security-relevant drift, not a
+# cosmetic one. Log the effective backend at import (once per worker) and
+# scream if the configured URI and the materialized storage disagree —
+# this turns any recurrence of that failure mode into a one-deploy
+# observation instead of a forensic session.
+_STORAGE_BACKEND = type(getattr(limiter, "_storage", None)).__name__
+logger.info(
+    "rate-limit storage backend resolved: %s (RATE_LIMIT_STORAGE_URI=%s)",
+    _STORAGE_BACKEND,
+    _STORAGE_URI,
+)
+if _STORAGE_URI.startswith(("redis://", "rediss://")) and _STORAGE_BACKEND in (
+    "MemoryStorage",
+    "Storage",
+):
+    logger.error(
+        "rate-limit storage drift: RATE_LIMIT_STORAGE_URI=%s but the "
+        "materialized backend is %s — limits are being enforced "
+        "per-process, multiplying the effective budget by the uvicorn "
+        "worker count. Check container env propagation and Redis "
+        "reachability from the API container.",
+        _STORAGE_URI,
+        _STORAGE_BACKEND,
+    )
+
 
 def _inject_global_headers(
     limiter_instance: Limiter, request: Request, response: Response
