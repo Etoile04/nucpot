@@ -94,6 +94,16 @@ async def _get_latest_published_ontology(
 # prefix, times 0.8 safety margin.
 _CHUNK_MAX_CHARS = 20_000  # max chars of source content per LLM call
 
+# NFM-4778 Option 2: per-chunk LLM output budget (num_predict tokens).
+# NFM-4730-FixB set this to 8192 to stop qwen3.5:4b-nvfp4's thinking mode
+# from burning the output budget — but with thinking now suppressed natively
+# (NFM-4779 /api/chat binding), the cap only bounds content, and 8192
+# truncated property-dense JSON mid-array (~25k chars) on 2 of 6 NFM-4680
+# lits → invalid JSON → empty extraction. 32768 fits the model's 262144
+# context with the ~10k-token chunk inputs and is a ceiling, not an
+# allocation: generation still stops at the natural end of the JSON.
+_NUM_PREDICT_BUDGET = 32_768
+
 
 def _chunk_content(content: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str]:
     """Split *content* into chunks ≤ *max_chars*, preferring paragraph
@@ -588,14 +598,13 @@ async def ontofuel_extract(
             raw_result = await (llm_call or call_llm)(
                 system_prompt=system_prompt,
                 user_message=chunk_message,
-                # NFM-4730-FixB: cap the per-chunk response budget at 8192
-                # so qwen3.5:4b-nvfp4 cannot burn the entire output budget
-                # on thinking-mode reasoning (was 16384 → finish_reason=length
-                # with empty content). Pair with enable_thinking=False so
-                # future native-Ollama bindings suppress thinking mode
-                # automatically; the flag is a no-op against the current
-                # openai-compat layer (see NFM-4525).
-                num_predict=8192,
+                # NFM-4778 Option 2: raise the per-chunk output budget
+                # 8192 → 32768. Thinking is already suppressed by the native
+                # Ollama binding (NFM-4779), so this cap now bounds content
+                # only; 8192 truncated property-dense JSON mid-array (prod
+                # evidence 2026-09-12: char 27501 / 24892 cuts → invalid
+                # JSON → empty list). Pair kept with enable_thinking=False.
+                num_predict=_NUM_PREDICT_BUDGET,
                 chat_template_kwargs={"enable_thinking": False},
             )
 

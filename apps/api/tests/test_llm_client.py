@@ -1329,6 +1329,46 @@ class TestFixBNFM4730:
         assert payload["max_tokens"] == 8192
 
     @pytest.mark.asyncio
+    async def test_truncated_json_with_length_finish_names_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NFM-4778: JSON truncated by the output cap must say so.
+
+        Prod evidence (2026-09-12): 8192-token num_predict cut property-dense
+        JSON mid-array — ``Unterminated string ... (char 27501)`` — and the
+        generic "not valid JSON" error hid the cap as the cause. When
+        finish_reason=length accompanies a JSON parse failure, the error
+        must name the truncation and the budget so the fix is one grep away.
+        """
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+
+        body = {
+            "choices": [
+                {
+                    "message": {"content": '[{"property": "CRSS", "value": '},
+                    "finish_reason": "length",
+                }
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            with pytest.raises(RuntimeError, match="truncated by output cap") as exc_info:
+                await call_llm(
+                    system_prompt="S",
+                    user_message="U",
+                    num_predict=8192,
+                )
+
+        assert "num_predict=8192" in str(exc_info.value)
+        assert "finish_reason=length" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_call_llm_accepts_chat_template_kwargs_kwarg(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
