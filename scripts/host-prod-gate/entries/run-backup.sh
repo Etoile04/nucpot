@@ -28,16 +28,24 @@
 #   sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-backup.sh --keep 14 \
 #     --dest /var/lib/nfmdeploy/nucpot-backups --volumes nucpot-prod_prod-uploads
 #
-# What it does (mirrors ~/nucpot-backups/backup-prod.sh body verbatim):
+# What it does (mirrors ~/nucpot-backups/backup-prod.sh body, with
+# fail-closed gates on the manifest + current symlink — see NF-4750 CR
+# round 1 finding; original 2026-09-06 03:30 incident motivated NFM-4749
+# AC #3 + AC #4):
 #   1. STAMP=$(date +%Y%m%d-%H%M); DEST="${BACKUP_ROOT:-...}/${STAMP}"
 #   2. docker exec nucpot-prod-db pg_dump -Fc -U nfm -d nfm_db   (peer auth)
 #        > DEST/db/nfm_db.dump
 #   3. for v in SELECTED_VOLUMES:
 #        docker run --rm -v "${v}":/src:ro alpine tar cf - -C /src . \
 #          | gzip > DEST/volumes/${v}.tar.gz
-#   4. ( cd DEST && find . -type f ! -name MANIFEST.sha256 \
+#   4. IF fail=0: ( cd DEST && find . -type f ! -name MANIFEST.sha256 \
 #          -exec shasum -a 256 {} \; ) > MANIFEST.sha256
-#   5. ln -sfn DEST "${BACKUP_ROOT}/current"
+#      ELSE:    leave the partial stamp dir on disk (forensics) but DO NOT
+#               write MANIFEST (NFM-4749 AC #3 — no false-green evidence)
+#   5. IF fail=0: ln -sfn DEST "${BACKUP_ROOT}/current"
+#               (consumers: NFM-4684 restore drill, NFM-4749 Plan A)
+#      ELSE:    `current` stays pointing at the previous good stamp
+#               (NFM-4749 AC #4 — pg_dump failure must not update `current`)
 #   6. prune: keep newest --keep stamps (default 7) under ${BACKUP_ROOT}
 #
 # NEVER mutates: prod containers, prod images, prod volumes, prod networks.
@@ -200,13 +208,30 @@ for V in "${SELECTED_VOLUMES[@]}"; do
   fi
 done
 
-# 3) manifest of every artifact under BACKUP_DIR (excludes itself).
-( cd "${BACKUP_DIR}" && find . -type f ! -name MANIFEST.sha256 -exec shasum -a 256 {} \; > MANIFEST.sha256 )
-MANIFEST_COUNT=$(wc -l < "${BACKUP_DIR}/MANIFEST.sha256" | tr -d ' ')
-echo "  manifest: ${MANIFEST_COUNT} entries"
-
-# 4) current symlink (consumers: NFM-4684 restore drill, NFM-4749 Plan A).
-ln -sfn "${BACKUP_DIR}" "${DEST}/current"
+# 3) manifest + current symlink — BOTH gated on fail=0 (NFM-4749 AC #3 + AC #4).
+#    The 2026-09-06 03:30 incident is the exact case to prevent: pg_dump
+#    produced a 0-byte file, all 4 volume tars came out as 20-byte empty
+#    gzips, but MANIFEST.sha256 was written and `current` was flipped —
+#    cron reported green and consumers (NFM-4684 restore drill, NFM-4749
+#    Plan A) read the empty shell as the "latest good" backup. AC #4
+#    says: pg_dump failure must NOT update `current`. AC #3 says: a
+#    failed backup must be loud (cron alert) and must NOT publish a
+#    MANIFEST (the false-green evidence). Volume-tar failures are
+#    covered by the same fail-closed posture: a half-dump is the same
+#    shell as a fully-empty dump from a consumer's point of view.
+#    The partial stamp directory is LEFT on disk under its stamp name
+#    (NOT under `current`) for operator forensics — retention below
+#    will age it out like any other stamp once KEEP good stamps land.
+if [ "${fail}" -eq 0 ]; then
+  ( cd "${BACKUP_DIR}" && find . -type f ! -name MANIFEST.sha256 -exec shasum -a 256 {} \; > MANIFEST.sha256 )
+  MANIFEST_COUNT=$(wc -l < "${BACKUP_DIR}/MANIFEST.sha256" | tr -d ' ')
+  echo "  manifest: ${MANIFEST_COUNT} entries"
+  # 4) current symlink (consumers: NFM-4684 restore drill, NFM-4749 Plan A).
+  ln -sfn "${BACKUP_DIR}" "${DEST}/current"
+  echo "  current -> ${BACKUP_DIR}"
+else
+  echo "  manifest/current SKIPPED (fail=1) — NFM-4749 AC #3/#4 fail-closed" >&2
+fi
 
 # 5) retention — keep newest KEEP stamps under DEST (any leading-2* dir).
 PRUNED=0

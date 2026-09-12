@@ -879,3 +879,134 @@ def test_run_backup_uses_full_gate_socket(entry, tmp_path):
     argv_flat = [" ".join(a) for a in entry.docker_argv()]
     assert all("-H tcp://" not in a for a in argv_flat), argv_flat
 
+
+# ---- NFM-4750 R2 fix: NFM-4749 AC #3 + AC #4 fail-closed contract ----------
+#
+# AC #4: pg_dump failure must NOT update `current` symlink.
+# AC #3: failed backup must be LOUD (cron alert) and must NOT publish a
+#         MANIFEST (no false-green evidence).
+#
+# 2026-09-06 03:30 incident: pg_dump + all 4 volume tars produced empty
+# shells (0-byte dump, 20-byte empty gzips) but MANIFEST.sha256 was
+# written and `current` was flipped — cron reported green. These tests
+# pin the fail-closed contract: any non-zero fail leaves BOTH the
+# MANIFEST and the `current` symlink pointing at the previous good
+# stamp, the new stamp dir is left on disk for forensics but is NOT
+# promoted to "latest good".
+
+
+def _install_failing_docker(entry, fail_substr: str) -> None:
+    """Replace the default fake docker with one that exits 1 when the
+    argv contains `fail_substr` (e.g. "pg_dump" or a specific volume
+    name) and exits 0 otherwise. All calls are still recorded to the
+    harness's docker_calls file so the test can assert what was tried."""
+    body = (
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {entry.docker_calls}\n"
+        f"case \" $* \" in\n"
+        f'  *"{fail_substr}"*) echo "fake-docker: forced fail on {fail_substr}" >&2; exit 1 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    entry.bin_dir.joinpath("docker").write_text(body)
+
+
+def _new_stamp_dir(dest: Path, exclude: str) -> Path:
+    """Return the one stamp dir under dest that isn't `exclude`."""
+    # Stamp dirs are real directories; the `current` symlink resolves to a
+    # directory but pathlib follows it for is_dir(), so we must also
+    # exclude symlinks explicitly.
+    candidates = [
+        p for p in dest.iterdir() if p.is_dir() and not p.is_symlink() and p.name != exclude
+    ]
+    assert len(candidates) == 1, (
+        f"expected exactly one new stamp dir, got: {[p.name for p in candidates]}"
+    )
+    return candidates[0]
+
+
+def test_run_backup_pg_dump_failure_skips_manifest_and_current(entry, tmp_path):
+    """AC #4 + AC #3 — pg_dump fails: exit 1, NO MANIFEST, `current`
+    stays at the prior good stamp. The 2026-09-06 03:30 incident is
+    exactly this case; the new behavior is fail-closed."""
+    dest = _backup_dest(tmp_path)
+    prior = "20990101-0000"
+    (dest / prior).mkdir()
+    (dest / prior / "marker.txt").write_text("good")
+    (dest / "current").symlink_to(f"./{prior}")
+
+    _install_failing_docker(entry, "pg_dump")
+
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 1, (
+        f"pg_dump failure must exit 1; stderr: {result.stderr}"
+    )
+    # Fail-closed message reaches stderr (operator can read it in cron alert)
+    assert "fail=1" in result.stderr or "manifest/current SKIPPED" in result.stderr, (
+        f"expected fail-closed marker in stderr; got: {result.stderr}"
+    )
+
+    new_stamp = _new_stamp_dir(dest, prior)
+    # AC #3: no MANIFEST on the failed stamp
+    assert not (new_stamp / "MANIFEST.sha256").exists(), (
+        f"MANIFEST.sha256 was written despite pg_dump failure: {new_stamp}"
+    )
+    # AC #4: `current` still points at the prior good stamp
+    current_target = os.readlink(dest / "current")
+    assert current_target == f"./{prior}", (
+        f"current symlink was flipped despite pg_dump failure: "
+        f"current -> {current_target}, expected ./{prior}"
+    )
+
+
+def test_run_backup_volume_failure_skips_manifest_and_current(entry, tmp_path):
+    """AC #3 — a volume-tar failure is the same fail-closed contract:
+    no MANIFEST (no false green), `current` not flipped."""
+    dest = _backup_dest(tmp_path)
+    prior = "20990101-0000"
+    (dest / prior).mkdir()
+    (dest / "current").symlink_to(f"./{prior}")
+
+    # Make a SPECIFIC volume fail; pg_dump and other volumes succeed.
+    _install_failing_docker(entry, "nucpot-prod_migration-audit")
+
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 1, result.stderr
+    new_stamp = _new_stamp_dir(dest, prior)
+    assert not (new_stamp / "MANIFEST.sha256").exists()
+    current_target = os.readlink(dest / "current")
+    assert current_target == f"./{prior}", (
+        f"current was flipped despite volume failure: -> {current_target}"
+    )
+
+
+def test_run_backup_success_writes_manifest_and_flips_current(entry, tmp_path):
+    """Positive control: on the success path the entry DOES write
+    MANIFEST.sha256 and DOES flip `current` to the new stamp. Guards
+    against a future refactor that over-gates the manifest/current
+    block on something other than `fail=0`."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    # Exactly one stamp dir under dest (the `current` symlink points at
+    # a dir but is not itself a stamp)
+    stamps = [p for p in dest.iterdir() if p.is_dir() and not p.is_symlink()]
+    assert len(stamps) == 1, f"expected one stamp dir, got: {[p.name for p in stamps]}"
+    new_stamp = stamps[0]
+    assert (new_stamp / "MANIFEST.sha256").exists(), (
+        f"MANIFEST.sha256 missing on success path: {new_stamp}"
+    )
+    # The MANIFEST must checksum the dump + the 4 volume tars + dump.err = 6
+    manifest_lines = (new_stamp / "MANIFEST.sha256").read_text().strip().splitlines()
+    assert len(manifest_lines) == 6, (
+        f"expected 6 manifest entries (1 dump + 1 dump.err + 4 volume tars), "
+        f"got {len(manifest_lines)}: {manifest_lines}"
+    )
+    # `current` resolves to the new stamp (the script stores an absolute
+    # path; the prior-good tests use a relative symlink for clarity).
+    current_resolved = os.path.realpath(dest / "current")
+    assert current_resolved == str(new_stamp), (
+        f"current -> {current_resolved}, expected {new_stamp}"
+    )
+
+
