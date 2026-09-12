@@ -100,9 +100,16 @@ class FakeDeployHost:
             "#!/bin/bash\n"
             'printf "DOCKER_CONFIG=%s\\n" "${DOCKER_CONFIG:-<unset>}"'
             ' >> "${DEPLOY_DOCKER_ENV_LOG:-/dev/null}"\n'
-            'mode="$(stat -f %Lp "${DOCKER_CONFIG:-/nonexistent}" 2>/dev/null'
-            ' || stat -c %a "${DOCKER_CONFIG:-/nonexistent}" 2>/dev/null'
-            ' || echo unknown)"\n'
+            # BSD and GNU stat disagree on -f: GNU -f is the *filesystem*
+            # stat and exits 0 with a "File:" header, so a || fallback never
+            # fires. Dispatch on uname instead — fail closed to "unknown",
+            # which the mode assertion rejects.
+            'case "$(uname -s)" in\n'
+            '  Darwin*) mode="$(stat -f %Lp "${DOCKER_CONFIG:-/nonexistent}"'
+            ' 2>/dev/null || echo unknown)" ;;\n'
+            '  *) mode="$(stat -c %a "${DOCKER_CONFIG:-/nonexistent}"'
+            ' 2>/dev/null || echo unknown)" ;;\n'
+            'esac\n'
             'printf "DOCKER_CONFIG_MODE=%s\\n" "$mode"'
             ' >> "${DEPLOY_DOCKER_ENV_LOG:-/dev/null}"\n'
             'exec python3 "${0%/*}/_deploy_docker.py" "$@"\n',
