@@ -569,7 +569,12 @@ class GraphBuilder:
                     "uuid.uuid4() at construction time)."
                 )
 
-            edge = await self._create_edge(relation, source_node.id, target_node.id)
+            edge = await self._create_edge(
+                relation,
+                source_node.id,
+                target_node.id,
+                node_labels=all_labels,
+            )
             if edge is not None:
                 new_edges.append(edge)
                 edges_created += 1
@@ -777,12 +782,22 @@ class GraphBuilder:
         relation: ExtractedRelation,
         source_node_id: uuid.UUID,
         target_node_id: uuid.UUID,
+        node_labels: dict[uuid.UUID, str] | None = None,
     ) -> KGEdge:
         """Create a new KGEdge from an extracted relation.
 
         Deduplicates against existing edges with the same (source, target,
         relation_type) to avoid UNIQUE constraint violations when the
         extraction pipeline re-processes overlapping content.
+
+        NFM-4804: when *node_labels* (the run's id → label map consumed by
+        the LightRAG ingest serializer) is provided and the dedup probe
+        returns an existing edge, the endpoints' labels are back-filled
+        into the map from ``kg_nodes`` for any id the entity loop did not
+        register. ``serialize_build_result`` now SKIPS edges with missing
+        endpoint labels (never renders a bare UUID — that fallback minted
+        junk UUID-named entities into the LightRAG entity vdb), so the
+        back-fill is what keeps dedup-returned edges serializable.
         """
         # NFM-1499 fix: assign a concrete UUID to the edge itself so that
         # downstream consumers (_queue_for_review for low-confidence
@@ -817,6 +832,11 @@ class GraphBuilder:
                 relation.relation_type,
                 target_node_id,
             )
+            if node_labels is not None:
+                await self._register_endpoint_labels(
+                    (source_node_id, target_node_id),
+                    node_labels,
+                )
             return existing
 
         edge = KGEdge(
@@ -850,6 +870,32 @@ class GraphBuilder:
                 )
 
         return edge
+
+    async def _register_endpoint_labels(
+        self,
+        node_ids: tuple[uuid.UUID, ...],
+        node_labels: dict[uuid.UUID, str],
+    ) -> None:
+        """Back-fill the run's node_labels map for ids the entity loop
+        did not register (NFM-4804).
+
+        Only MISSING (or empty) entries are filled — labels already
+        registered by the entity loop take precedence, so the back-fill
+        can never clobber a fresher resolution. Nodes whose DB label is
+        itself empty stay unregistered: the serializer must skip those
+        edges rather than emit an empty endpoint.
+        """
+        missing = [nid for nid in node_ids if not node_labels.get(nid)]
+        if not missing:
+            return
+        rows = (
+            await self._session.execute(
+                select(KGNode.id, KGNode.label).where(KGNode.id.in_(missing))
+            )
+        ).all()
+        for node_id, label in rows:
+            if label:
+                node_labels[node_id] = label
 
     async def _queue_for_review(
         self,

@@ -837,6 +837,194 @@ class TestEntityLinkerDuplicateLabels:
         assert match.id == older.id, "oldest node wins deterministically"
 
 
+class TestCreateEdgeDedupRegistersEndpointLabels:
+    """NFM-4804 item 1: the ``_create_edge`` dedup-hit branch must resolve
+    the existing edge's endpoint labels into the run's node_labels map.
+
+    ``serialize_build_result`` now SKIPS edges whose endpoint label is
+    missing (never renders a bare UUID — that fallback was the minting
+    surface for 17 junk UUID-named entities in the prod entity vdb on
+    2026-09-12). To keep dedup-returned edges serializable even when the
+    entity loop did not register their endpoints (duplicate nodes, empty
+    labels, future code paths), the dedup hit back-fills the map from
+    ``kg_nodes`` directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dedup_hit_backfills_missing_endpoint_labels(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """A dedup-returned existing edge whose endpoints are absent from
+        node_labels gets both labels registered from kg_nodes."""
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        db_session.add_all(
+            [
+                KGNode(
+                    id=source_id,
+                    label="UO2",
+                    node_type="Material",
+                    corpus_id="test-corpus",
+                    review_status="approved",
+                ),
+                KGNode(
+                    id=target_id,
+                    label="thermal_conductivity",
+                    node_type="Property",
+                    corpus_id="test-corpus",
+                    review_status="approved",
+                ),
+            ]
+        )
+        await db_session.flush()
+
+        existing_edge = KGEdge(
+            id=uuid.uuid4(),
+            source_node_id=source_id,
+            target_node_id=target_id,
+            relation_type="hasProperty",
+            confidence=0.9,
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(existing_edge)
+        await db_session.flush()
+
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+        relation = ExtractedRelation(
+            source_label="UO2",
+            source_type="Material",
+            target_label="thermal_conductivity",
+            target_type="Property",
+            relation_type="hasProperty",
+            confidence=0.95,
+            properties={},
+            source_id=None,
+        )
+
+        node_labels: dict[uuid.UUID, str] = {}
+        edge = await builder._create_edge(
+            relation, source_id, target_id, node_labels=node_labels
+        )
+
+        assert edge.id == existing_edge.id, "dedup must return the existing edge"
+        assert node_labels.get(source_id) == "UO2", (
+            "dedup-hit must back-fill the source endpoint label — otherwise "
+            "serialization skips the edge (or worse, renders a bare UUID)"
+        )
+        assert node_labels.get(target_id) == "thermal_conductivity"
+
+    @pytest.mark.asyncio
+    async def test_dedup_hit_does_not_clobber_existing_map_entries(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Labels already registered by the entity loop take precedence —
+        the back-fill only fills MISSING entries."""
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        db_session.add_all(
+            [
+                KGNode(
+                    id=source_id,
+                    label="UO2",
+                    node_type="Material",
+                    corpus_id="test-corpus",
+                    review_status="approved",
+                ),
+                KGNode(
+                    id=target_id,
+                    label="thermal_conductivity",
+                    node_type="Property",
+                    corpus_id="test-corpus",
+                    review_status="approved",
+                ),
+            ]
+        )
+        await db_session.flush()
+
+        existing_edge = KGEdge(
+            id=uuid.uuid4(),
+            source_node_id=source_id,
+            target_node_id=target_id,
+            relation_type="hasProperty",
+            confidence=0.9,
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(existing_edge)
+        await db_session.flush()
+
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+        relation = ExtractedRelation(
+            source_label="UO2",
+            source_type="Material",
+            target_label="thermal_conductivity",
+            target_type="Property",
+            relation_type="hasProperty",
+            confidence=0.95,
+            properties={},
+            source_id=None,
+        )
+
+        node_labels: dict[uuid.UUID, str] = {source_id: "UO2 (dioxide)"}
+        await builder._create_edge(relation, source_id, target_id, node_labels=node_labels)
+
+        assert node_labels[source_id] == "UO2 (dioxide)", (
+            "entity-loop registration must win; the dedup back-fill must "
+            "only fill missing entries"
+        )
+        assert node_labels.get(target_id) == "thermal_conductivity"
+
+    @pytest.mark.asyncio
+    async def test_build_passes_label_map_through_dedup_path(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """End-to-end: a re-extraction whose every edge is a dedup hit
+        still produces a node_labels map covering every serialized edge's
+        endpoints (no edge silently dropped for missing labels)."""
+        # First build creates nodes + edge.
+        props = [
+            {
+                "material_name": "UO2",
+                "property": "thermal_conductivity",
+                "confidence": 0.95,
+            }
+        ]
+        builder1 = GraphBuilder(
+            session=db_session, corpus_id="test-corpus", sync_to_age=False
+        )
+        await builder1.build_from_extraction(props)
+        await db_session.flush()
+
+        # Second build over the same content: every entity MATCHES and the
+        # edge is a dedup hit — the classic re-extract shape that leaked
+        # UUID endpoints in prod.
+        builder2 = GraphBuilder(
+            session=db_session, corpus_id="test-corpus", sync_to_age=False
+        )
+        result2 = await builder2.build_from_extraction(props)
+
+        assert result2.ingest_edges, "dedup-returned edges ride ingest_edges"
+        for edge in result2.ingest_edges:
+            assert edge.source_node_id in result2.node_labels, (
+                "dedup edge source endpoint missing from node_labels"
+            )
+            assert edge.target_node_id in result2.node_labels, (
+                "dedup edge target endpoint missing from node_labels"
+            )
+
+
 def test_all_build_from_extraction_callers_dispatch() -> None:
     """Static guard: every caller of GraphBuilder.build_from_extraction() in
     apps/api/src must pair the call with a dispatch_build_result() call in
