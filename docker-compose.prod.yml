@@ -259,8 +259,20 @@ services:
       # because PGGraphStorage requires the AGE extension, which the
       # pgvector/pgvector:pg16 image does not ship; the graph is fully
       # derivable by re-ingest.
-      LIGHTRAG_KV_STORAGE: ${PROD_LIGHTRAG_KV_STORAGE:-PGKVStorage}
-      LIGHTRAG_DOC_STATUS_STORAGE: ${PROD_LIGHTRAG_DOC_STATUS_STORAGE:-PGDocStatusStorage}
+      #
+      # NFM-4736 follow-up: these two are PINNED (no ${VAR:-default}
+      # indirection). The #1334 change shipped them as overridable
+      # defaults, and docker/.env.prod turned out to still pin
+      # PROD_LIGHTRAG_KV_STORAGE=JsonKVStorage /
+      # PROD_LIGHTRAG_DOC_STATUS_STORAGE=JsonDocStatusStorage from an
+      # earlier era — the override silently defeated the durability
+      # default and the 2026-09-12 cutover deploy no-opped (verified on
+      # the running container: env still Json* after ea95ce3a0). If an
+      # operator ever needs the JSON backends back, they must edit this
+      # file — that friction is the point; the file-backed stores are
+      # the structural root cause of both corpus wipes.
+      LIGHTRAG_KV_STORAGE: PGKVStorage
+      LIGHTRAG_DOC_STATUS_STORAGE: PGDocStatusStorage
       # NFM-4492 follow-up (rerank): local Qwen3-Reranker-0.6B (Q8_0) served by
       # llama-server --reranking --pooling rank as launchd agent
       # ai.nfm.rerank-server on 127.0.0.1:8109 (KeepAlive). LightRAG's cohere
