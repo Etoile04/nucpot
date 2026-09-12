@@ -509,3 +509,194 @@ def test_main_writes_startup_record_and_logs_first_probe(tmp_path, monkeypatch):
     assert any(record.get("event") == "startup" for record in records), (
         f"expected a startup record, got {records!r}"
     )
+
+
+# ---- NFM-4805: recovery verdict records (de-latch the G2.7 heartbeat) ----------
+#
+# The G2.7 heartbeat used to read the LATEST ALARM record as the standing
+# verdict. Healthy ticks wrote nothing, and an alarm record by construction
+# always fails the probe's asserts — so once any alarm existed, G2.7 was red
+# forever, even hours after the fleet recovered and across watchdog restarts
+# (observed 2026-09-13: the 2026-09-12T15:03Z alarm still failing probes at
+# 16:47Z with both prod mirrors back). These tests pin the fix: the watchdog
+# writes `recovery` verdict records (transition + healthy first tick) and
+# the probe reads the newest record across BOTH verdict events.
+
+
+def _healthy_summary():
+    return HealthSummary(
+        results=(
+            ProbeResult("daocloud", "u1", "ok", 401, None, 12),
+            ProbeResult("1panel", "u2", "ok", 200, None, 11),
+        ),
+        healthy_count=2,
+        prod_mirror_healthy=True,
+        healthy_below_threshold=False,
+    )
+
+
+def _tripped_summary():
+    return HealthSummary(
+        results=(
+            ProbeResult("daocloud", "u1", "ok", 401, None, 12),
+            ProbeResult("1panel", "u2", "tls_timeout", None, "handshake timed out", 5282),
+        ),
+        healthy_count=1,
+        prod_mirror_healthy=True,
+        healthy_below_threshold=True,
+    )
+
+
+def test_write_recovery_carries_verdict_fields(tmp_path):
+    from nfm_docker_gate.mirror_health import write_recovery
+
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    write_recovery(audit, _healthy_summary(), threshold=2)
+    write_recovery(audit, _healthy_summary(), threshold=2, first_tick=True)
+    records = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert [record["event"] for record in records] == ["recovery", "recovery"]
+    assert records[0]["first_tick"] is False  # transition recovery (default)
+    assert records[1]["first_tick"] is True  # post-startup verdict
+    assert records[1]["healthy_count"] == 2
+    assert records[1]["threshold"] == 2
+    assert records[1]["prod_mirror_healthy"] is True
+
+
+def test_run_once_writes_recovery_on_first_healthy_tick(tmp_path, monkeypatch):
+    """A watchdog restart into a healthy fleet must clear pre-restart alarm
+    records: the first tick writes a first_tick recovery verdict, so
+    latest_verdict() no longer latches onto stale alarms from a previous
+    process lifetime."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def lit(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", lit)
+    mirrors = (
+        Mirror(name="daocloud", url="https://docker.m.daocloud.io", fronts_prod_images=True),
+        Mirror(name="1panel", url="https://docker.1panel.live", fronts_prod_images=True),
+    )
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(mirrors, audit, threshold=2, timeout=1.0, previous_tripped=None)
+    record = json.loads(audit_path.read_text().strip().splitlines()[-1])
+    assert record["event"] == "recovery"
+    assert record["first_tick"] is True
+    assert record["healthy_count"] == 2
+
+
+def test_run_once_writes_alarm_then_recovery_then_stays_quiet(tmp_path, monkeypatch):
+    """Tick sequence: tripped first tick writes an alarm; the first healthy
+    tick after it writes exactly one recovery; steady-state healthy ticks
+    after that write nothing (healthy ticks remain noise-free)."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    def lit(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    mirrors = (
+        Mirror(name="daocloud", url="https://docker.m.daocloud.io", fronts_prod_images=True),
+        Mirror(name="1panel", url="https://docker.1panel.live", fronts_prod_images=True),
+    )
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    _run_once(mirrors, audit, threshold=2, timeout=1.0, previous_tripped=None)
+    monkeypatch.setattr(mirror_health, "probe_mirror", lit)
+    _run_once(mirrors, audit, threshold=2, timeout=1.0, previous_tripped=True)
+    _run_once(mirrors, audit, threshold=2, timeout=1.0, previous_tripped=False)
+
+    records = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+    assert [record["event"] for record in records] == ["alarm", "recovery"]
+    assert records[1]["first_tick"] is False
+
+
+def test_latest_verdict_prefers_newest_recovery_over_older_alarm(tmp_path):
+    from nfm_docker_gate.mirror_health import latest_verdict, write_recovery
+
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    write_alarm_if_below(audit, _tripped_summary(), threshold=2)
+    write_recovery(audit, _healthy_summary(), threshold=2)
+    record = latest_verdict(str(audit_path))
+    assert record is not None
+    assert record["event"] == "recovery"
+    assert record["healthy_count"] == 2
+
+
+def test_latest_verdict_returns_alarm_while_fleet_tripped(tmp_path):
+    """The latch fix must not swing to false-green: while the newest verdict
+    is an alarm (fleet currently below threshold), G2.7 must still fail —
+    even when newer NON-verdict records (drift/startup) sit after it."""
+    from nfm_docker_gate.mirror_health import latest_verdict
+
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    write_alarm_if_below(audit, _tripped_summary(), threshold=2)
+    audit.write("drift", {"known": False}, detail="probe tick failed: simulated")
+    record = latest_verdict(str(audit_path))
+    assert record is not None
+    assert record["event"] == "alarm"
+    assert record["healthy_count"] == 1
+
+
+def test_latest_verdict_returns_none_when_log_has_no_verdict_records(tmp_path):
+    from nfm_docker_gate.mirror_health import latest_verdict
+
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    audit.write("startup", None, ok=True, mirrors=["daocloud", "1panel"], threshold=2)
+    assert latest_verdict(str(audit_path)) is None
+
+
+def test_main_first_tick_healthy_writes_recovery_verdict(tmp_path, monkeypatch):
+    """End-to-end: launchd entry restarting into a healthy fleet appends
+    [startup, recovery(first_tick)] — the record probe_g2.sh G2.7 reads to
+    clear stale pre-restart alarms."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import latest_verdict, main
+
+    cfg = tmp_path / "mirrors.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mirrors": [
+                    {
+                        "name": "daocloud",
+                        "url": "https://docker.m.daocloud.io",
+                        "fronts_prod_images": True,
+                    },
+                    {"name": "1panel", "url": "https://docker.1panel.live"},
+                ]
+            }
+        )
+    )
+    log = tmp_path / "audit.log"
+
+    def lit(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 12)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", lit)
+
+    def fake_sleep(_seconds):
+        raise SystemExit(0)
+
+    monkeypatch.setattr(mirror_health.time, "sleep", fake_sleep)
+    try:
+        main(["--config", str(cfg), "--log", str(log), "--interval", "30"])
+    except SystemExit as exit_code:
+        assert exit_code.code == 0, f"main() exited non-zero: {exit_code.code}"
+
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert [record.get("event") for record in records] == ["startup", "recovery"]
+    assert records[1]["first_tick"] is True
+    verdict = latest_verdict(str(log))
+    assert verdict is not None and verdict["event"] == "recovery"

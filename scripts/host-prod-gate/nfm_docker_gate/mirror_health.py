@@ -34,8 +34,11 @@ This module is the gate-side half of the fix:
     nucpot-prod-api:latest`` succeeds, which requires the prod allowlist
     mirror to be reachable — even with healthy fallbacks, a dark prod
     mirror fails the deploy path).
-  * ``latest_alarm(path)`` is the heartbeat reader used by probe_g2.sh
-    to verify ≥2 mirrors returning 200/401.
+  * ``latest_verdict(path)`` is the heartbeat reader used by probe_g2.sh
+    to verify ≥2 mirrors returning 200/401. It reads the newest record
+    across BOTH verdict events — ``alarm`` (tripped) and ``recovery``
+    (cleared, NFM-4805) — so the standing verdict reflects current
+    fleet state instead of latching the last alarm forever.
 
 The launchd loop wrapper (``entries/start-mirror-health.sh``) polls on
 a fixed interval, runs a probe + summarize + write per tick, and the
@@ -381,16 +384,45 @@ def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> No
     )
 
 
-def latest_alarm(path: str) -> Optional[dict]:
-    """Read the most-recent ``alarm`` JSONL record from the mirror-health log.
+def _tripped(summary: HealthSummary) -> bool:
+    """The alarm condition for one tick: below threshold OR prod mirror dark."""
+    return summary.healthy_below_threshold or not summary.prod_mirror_healthy
 
-    Returns ``None`` if the file is missing or has no alarm records.
-    Used by ``probe_g2.sh`` to verify the heartbeat's most recent verdict:
-    if the latest alarm is healthy (``healthy_count >= threshold`` AND
-    ``prod_mirror_healthy=True``), the heartbeat check passes. Older
-    alarms in the same log are noise — only the freshest verdict is
-    authoritative.
+
+def write_recovery(
+    audit,
+    summary: HealthSummary,
+    *,
+    threshold: int,
+    first_tick: bool = False,
+) -> None:
+    """Append a ``recovery`` JSONL record when an alarmed state clears.
+
+    NFM-4805: healthy ticks used to write nothing, so the most recent
+    ``alarm`` record stayed the standing heartbeat verdict forever —
+    probe_g2.sh's G2.7 latched red across mirror recoveries AND across
+    watchdog restarts into a healthy fleet (an ``alarm`` record by
+    construction always fails the probe's asserts, so once any alarm
+    existed the check could never pass again). Writing a ``recovery``
+    verdict on the alarmed→healthy transition — and on the first tick
+    after startup when that tick is healthy — lets the heartbeat reader
+    reflect current fleet state instead of stale history.
+
+    ``first_tick=True`` marks the post-startup verdict that clears any
+    pre-restart alarm records in the same log.
     """
+    audit.write(
+        "recovery",
+        None,
+        healthy_count=summary.healthy_count,
+        threshold=threshold,
+        prod_mirror_healthy=summary.prod_mirror_healthy,
+        first_tick=first_tick,
+    )
+
+
+def _latest_event(path: str, events: tuple[str, ...]) -> Optional[dict]:
+    """Scan the JSONL log newest-first for the first record in ``events``."""
     try:
         with open(path, encoding="utf-8") as handle:
             lines = handle.readlines()
@@ -404,9 +436,40 @@ def latest_alarm(path: str) -> Optional[dict]:
             record = json.loads(line)
         except ValueError:
             continue
-        if record.get("event") == "alarm":
+        if record.get("event") in events:
             return record
     return None
+
+
+# Verdict events: the records that carry a standing fleet verdict. The
+# watchdog writes ``alarm`` while tripped and ``recovery`` when the alarm
+# clears (or on a healthy first tick after startup); everything else
+# (``startup``, ``drift``) is lifecycle noise, not a verdict.
+_VERDICT_EVENTS = ("alarm", "recovery")
+
+
+def latest_alarm(path: str) -> Optional[dict]:
+    """Read the most-recent ``alarm`` JSONL record from the mirror-health log.
+
+    Returns ``None`` if the file is missing or has no alarm records.
+    Operator-facing triage helper: shows the last time the fleet was
+    below threshold — NOT the standing verdict (see ``latest_verdict``).
+    """
+    return _latest_event(path, ("alarm",))
+
+
+def latest_verdict(path: str) -> Optional[dict]:
+    """Read the most-recent verdict record (``alarm`` OR ``recovery``).
+
+    This is the heartbeat reader used by ``probe_g2.sh`` G2.7. A
+    ``recovery`` record newer than the last ``alarm`` means the fleet
+    is currently healthy; an ``alarm`` newer than the last ``recovery``
+    means it is currently tripped. Returns ``None`` when the file is
+    missing or holds no verdict records at all — the watchdog has been
+    healthy on every tick since install, which the probe accepts as a
+    pass.
+    """
+    return _latest_event(path, _VERDICT_EVENTS)
 
 
 # AC threshold: probe_g2.sh and write_alarm_if_below share this default.
@@ -422,11 +485,28 @@ def _run_once(
     *,
     threshold: int,
     timeout: float,
+    previous_tripped: Optional[bool] = None,
 ) -> HealthSummary:
+    """Probe + summarize + write the tick's verdict record.
+
+    ``previous_tripped`` is the previous tick's alarm state (``None``
+    before the first tick after startup). A tripped tick writes an
+    ``alarm`` record every tick (operator-visible persistence of an
+    ongoing condition). A healthy tick writes a ``recovery`` record only
+    on the alarmed→healthy transition or on the first tick after
+    startup — so steady-state health stays quiet, but the NEWEST record
+    in the log always carries the current verdict for
+    ``latest_verdict``/probe_g2.sh instead of latching the last alarm.
+    """
     results = tuple(probe_mirror(mirror, timeout=timeout) for mirror in mirrors)
     mirrors_by_name = {mirror.name: mirror for mirror in mirrors}
     summary = summarize(results, threshold=threshold, mirrors_by_name=mirrors_by_name)
-    write_alarm_if_below(audit, summary, threshold=threshold)
+    if _tripped(summary):
+        write_alarm_if_below(audit, summary, threshold=threshold)
+    elif previous_tripped is None or previous_tripped:
+        write_recovery(
+            audit, summary, threshold=threshold, first_tick=previous_tripped is None
+        )
     return summary
 
 
@@ -477,14 +557,22 @@ def main(argv: Optional[list[str]] = None) -> None:
         interval=args.interval,
         threshold=args.threshold,
     )
+    # Alarm-state carry across ticks: None until the first tick completes,
+    # then the tick's _tripped() verdict. A watchdog restart resets this to
+    # None, so the first post-startup tick always writes a verdict record
+    # (alarm if tripped, recovery if healthy) — clearing any stale
+    # pre-restart alarm the probe would otherwise latch onto (NFM-4805).
+    previous_tripped = None
     while True:
         try:
             summary = _run_once(
-                mirrors, audit, threshold=args.threshold, timeout=args.timeout
+                mirrors,
+                audit,
+                threshold=args.threshold,
+                timeout=args.timeout,
+                previous_tripped=previous_tripped,
             )
-            # Successful probe tick — nothing more to log (alarm records
-            # are the only persistent signal; healthy ticks are noise).
-            _ = summary
+            previous_tripped = _tripped(summary)
         except (OSError, ValueError) as error:
             audit.write("drift", {"known": False}, detail=f"probe tick failed: {error}")
         time.sleep(args.interval)
