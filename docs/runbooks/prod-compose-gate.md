@@ -57,7 +57,9 @@ sudo bash scripts/host-prod-gate/host_setup.sh
 Idempotent; every step is guarded. It creates group `prod-deploy` + user
 `nfmdeploy` (no login password; reachable only via `sudo -u`), installs the
 gate to `/usr/local/lib/nfm-g2/` (root-owned), the sudoers fragment to
-`/etc/sudoers.d/nfm-prod-deploy` (visudo-validated), three LaunchDaemons,
+`/etc/sudoers.d/nfm-prod-deploy` (visudo-validated), five LaunchDaemons
+(incl. `com.nfm.g2.cleanup-daily`, the NFM-4802 daily 04:20 run of
+`run-cleanup.sh`),
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.
 

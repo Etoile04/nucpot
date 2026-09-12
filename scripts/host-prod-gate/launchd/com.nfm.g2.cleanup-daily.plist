@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-4802 (ADR-013 G2) — daily sanctioned cleanup pass.
+     Installed to /Library/LaunchDaemons by scripts/host-prod-gate/host_setup.sh.
+     Runs the root-owned run-cleanup.sh entry as the deploy identity
+     (nfmdeploy) once a day at 04:20 local — quiet hours, deliberately clear
+     of the 02:00 backup beat (NFM-4749) and outside deploy-treadmill hours.
+     Pool data from NFM-4800: deploy waves add ~3.7 GiB per full generation;
+     a daily pass holds steady state and prevents repeat 88% disk
+     escalations. RunAtLoad/KeepAlive stay off: install must not prune.
+     If the host is asleep at 04:20, launchd fires the missed calendar job
+     once on wake. Output lands in /var/log/nfm-g2/launchd-cleanup-daily.log
+     (the entry's own before/after `docker system df` summary line). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.cleanup-daily</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/sudo</string>
+        <string>-n</string>
+        <string>-u</string>
+        <string>nfmdeploy</string>
+        <string>/usr/local/lib/nfm-g2/run-cleanup.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+</dict>
+</plist>
