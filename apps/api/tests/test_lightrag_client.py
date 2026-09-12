@@ -210,6 +210,148 @@ class TestIngest:
         ):
             await client.ingest(text="test content")
 
+    @pytest.mark.asyncio
+    async def test_ingest_409_raises_conflict_error(self) -> None:
+        """NFM-4758 / NFM-4730-FixA: 409 raises LightRAGConflictError with structured fields.
+
+        The upstream sidecar returns ``409 Document storage already contains
+        '<doc_id>'`` when a ``file_source`` marker is already in
+        ``lightrag_doc_status``.  We surface this as a typed
+        :class:`LightRAGConflictError` so callers can dispatch on the
+        ``status_code`` / ``doc_id`` attributes without parsing the
+        message text — which is the contract :func:`ingest_kg_to_lightrag`
+        relies on to drive its delete-then-retry path.
+        """
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            LightRAGClient,
+            LightRAGConflictError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            409,
+            text=(
+                "Document storage already contains 'data_source:abc'. "
+                "Please use a different id or delete the existing document."
+            ),
+            request=httpx.Request("POST", "http://localhost:9621/documents/text"),
+        )
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            with pytest.raises(LightRAGConflictError) as excinfo:
+                await client.ingest(
+                    text="UO2 ...",
+                    file_source="data_source:abc",
+                )
+            assert excinfo.value.status_code == 409
+            assert excinfo.value.doc_id == "data_source:abc"
+            assert "data_source:abc" in excinfo.value.response_body
+
+
+# ---------------------------------------------------------------------------
+# Delete document (NFM-4758 / NFM-4730-FixA)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteDocument:
+    """Tests for the client delete_document method (NFM-4758).
+
+    The reextract idempotency path issues ``DELETE /documents?doc_id=...``
+    after a 409 ingest to evict the stale marker.  These tests pin the
+    URL shape and the 404-is-OK contract.
+    """
+
+    @pytest.mark.asyncio
+    async def test_delete_uses_doc_id_query_param(self) -> None:
+        """delete_document must hit DELETE /documents?doc_id=<doc_id>."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            200,
+            json={"status": "deleted", "doc_id": "data_source:abc"},
+            request=httpx.Request(
+                "DELETE", "http://localhost:9621/documents?doc_id=data_source:abc"
+            ),
+        )
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "delete",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_delete:
+            result = await client.delete_document("data_source:abc")
+            assert result["status"] == "deleted"
+            mock_delete.assert_called_once()
+            call_kwargs = mock_delete.call_args[1]
+            assert call_kwargs["params"] == {"doc_id": "data_source:abc"}
+
+    @pytest.mark.asyncio
+    async def test_delete_404_is_treated_as_success(self) -> None:
+        """404 (already absent) MUST NOT raise.
+
+        The sidecar can return 404 when the marker was wiped out-of-band
+        (a recovery script, a manual ops deletion, a dropped VDB row).
+        The caller's invariant ``the marker is gone before the retry``
+        still holds — raising here would force the caller to choose
+        between a swallowed DELETE (false-negative on the retry) and
+        propagating a misleading transport error.
+        """
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            404,
+            text="Not found",
+            request=httpx.Request(
+                "DELETE", "http://localhost:9621/documents?doc_id=data_source:abc"
+            ),
+        )
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "delete",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await client.delete_document("data_source:abc")
+            assert result["status"] == "deleted"
+            assert result["already_absent"] is True
+
+    @pytest.mark.asyncio
+    async def test_delete_500_raises(self) -> None:
+        """A real sidecar failure (5xx) MUST propagate."""
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            500,
+            text="Internal server error",
+            request=httpx.Request(
+                "DELETE", "http://localhost:9621/documents?doc_id=data_source:abc"
+            ),
+        )
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "delete",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
+            await client.delete_document("data_source:abc")
+
 
 # ---------------------------------------------------------------------------
 # Query

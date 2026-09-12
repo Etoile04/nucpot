@@ -1258,6 +1258,185 @@ class TestCallLlm:
 
 
 # ---------------------------------------------------------------------------
+# 13b. NFM-4730 FixB — per-call num_predict + chat_template_kwargs
+# (prevents qwen3.5:4b-nvfp4 thinking from burning the 16K token budget)
+# ---------------------------------------------------------------------------
+
+
+class TestFixBNFM4730:
+    """NFM-4730-FixB: per-call num_predict + chat_template_kwargs support.
+
+    The qwen3.5:4b-nvfp4 dispatcher hits the 16384 num_predict ceiling while
+    in thinking mode, returning finish_reason=length with empty content.
+    The fix threads a per-call ``num_predict`` (default 8192) and
+    ``chat_template_kwargs`` (default ``{"enable_thinking": False}``) through
+    ``call_llm`` so the extraction pipeline can force non-thinking output
+    and cap the response budget per chunk.
+    """
+
+    @staticmethod
+    def _build_mock_http_client(
+        response_body: dict[str, Any],
+        status_code: int = 200,
+    ) -> AsyncMock:
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json.return_value = response_body
+        mock_response.raise_for_status = MagicMock()
+        mock_response.text = "error body"
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_call_llm_accepts_num_predict_kwarg(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm must accept ``num_predict`` and forward it to the payload.
+
+        Default max_tokens=16384 was burning the budget for thinking models
+        (NFM-4730 FixB). The per-call override lets callers cap at 8192.
+        """
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                num_predict=8192,
+            )
+
+        call_args = mock_http.post.call_args
+        payload = call_args[1]["json"]
+        # OpenAI-compat field name is max_tokens; Ollama native binding maps
+        # this to num_predict. The wire field MUST be <= 8192 to avoid
+        # re-hitting the 16384 thinking-exhaustion regression.
+        assert payload["max_tokens"] == 8192
+
+    @pytest.mark.asyncio
+    async def test_call_llm_accepts_chat_template_kwargs_kwarg(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm must accept ``chat_template_kwargs`` and forward it.
+
+        Default ``{"enable_thinking": False}`` flips off qwen3.5 thinking mode
+        when the underlying Ollama binding honors the flag (NFM-4525-aligned).
+        The flag is a no-op against the openai-compat layer but is included
+        for forward compat — when the binding is migrated to native Ollama
+        the flag takes effect automatically.
+        """
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                chat_template_kwargs={"enable_thinking": False},
+            )
+
+        call_args = mock_http.post.call_args
+        payload = call_args[1]["json"]
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+    @pytest.mark.asyncio
+    async def test_call_llm_uses_safe_defaults_when_unspecified(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_llm must default to 8192 max_tokens + enable_thinking=False.
+
+        Hard-coded 16384 was the regression — the new defaults are safe
+        even when a caller forgets to pass the override.
+        """
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+
+        body = {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with patch(
+            "nfm_db.services.llm_client.httpx.AsyncClient",
+            return_value=mock_http,
+        ):
+            await call_llm(system_prompt="S", user_message="U")
+
+        call_args = mock_http.post.call_args
+        payload = call_args[1]["json"]
+        assert payload["max_tokens"] <= 8192, (
+            f"default max_tokens={payload['max_tokens']} exceeds 8192 cap; "
+            "this is the NFM-4730 thinking-exhaustion regression."
+        )
+        # chat_template_kwargs is added unconditionally so future binding
+        # migrations pick up the enable_thinking=False flag automatically.
+        assert payload.get("chat_template_kwargs") == {"enable_thinking": False}
+
+    @pytest.mark.asyncio
+    async def test_call_llm_thinking_exhaustion_message_cites_num_predict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty content + finish_reason=length must mention ``num_predict``.
+
+        Original message cited ``max_tokens`` only — operators who
+        bumped num_predict on the Ollama server got no signal that the
+        OpenAI-compat field they were configuring was the wrong knob.
+        """
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
+        monkeypatch.setenv("LLM_BASE_URL", "https://api.example.com/v1")
+        monkeypatch.setenv("LLM_MODEL", "qwen3.5:4b-nvfp4")
+
+        body = {
+            "choices": [
+                {"message": {"content": ""}, "finish_reason": "length"}
+            ]
+        }
+        mock_http = self._build_mock_http_client(body)
+
+        with (
+            patch(
+                "nfm_db.services.llm_client.httpx.AsyncClient",
+                return_value=mock_http,
+            ),
+            pytest.raises(RuntimeError, match="num_predict"),
+        ):
+            await call_llm(
+                system_prompt="S",
+                user_message="U",
+                num_predict=8192,
+            )
+
+
+# ---------------------------------------------------------------------------
 # 14. _strip_code_fences edge cases
 # ---------------------------------------------------------------------------
 

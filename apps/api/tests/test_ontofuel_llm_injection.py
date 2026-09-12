@@ -134,3 +134,50 @@ def test_get_config_resolves_ollama_provider(monkeypatch: pytest.MonkeyPatch) ->
 
     assert cfg["base_url"] == "http://localhost:11434/v1"
     assert cfg["api_key"] == "ollama"
+
+
+# ---------------------------------------------------------------------------
+# NFM-4730-FixB — per-chunk dispatcher passes num_predict + enable_thinking=False
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ontofuel_extract_passes_num_predict_and_disable_thinking(
+    tmp_path: Any,
+    db_session: AsyncSession,
+) -> None:
+    """NFM-4730-FixB: per-chunk call site must pass num_predict=8192 + chat_template_kwargs={'enable_thinking': False}.
+
+    Without these overrides the qwen3.5:4b-nvfp4 dispatcher burns the
+    entire 16K output budget on thinking-mode reasoning and returns
+    finish_reason=length with empty content. See NFM-4525 for why the
+    chat_template_kwargs flag is a no-op against the openai-compat layer
+    but is included for forward-compat with a future native-Ollama binding.
+    """
+    await _seed_published_ontology(db_session)
+    source = _write_markdown(
+        tmp_path,
+        "# paper\n\ncohesive energy of UO2 is 5.47 eV",
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_llm(**kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(kwargs)
+        return [dict(_FAKE_PROPERTIES[0])]
+
+    await ontofuel_extract(
+        source,
+        "other",
+        db=db_session,
+        llm_call=fake_llm,
+    )
+
+    assert calls, "injected llm_call must be invoked at least once"
+    kwargs = calls[0]
+    assert kwargs.get("num_predict") == 8192, (
+        f"per-chunk num_predict must be 8192, got {kwargs.get('num_predict')!r}"
+    )
+    assert kwargs.get("chat_template_kwargs") == {"enable_thinking": False}, (
+        "per-chunk chat_template_kwargs must disable thinking mode"
+    )
