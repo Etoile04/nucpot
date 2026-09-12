@@ -363,19 +363,14 @@ jobs:
     runs-on: [self-hosted, production]
     needs: [pre-flight, build-web, test-api]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success'
+    # ADR-018 / NFM-4762: CI egress = direct. The 7897 bridge proxy was a
+    # pure DIRECT alias (empty Clash Verge ruleset, no subscription) that
+    # added 12s to pypi for zero capability. All CI endpoints (pypi,
+    # files.pythonhosted, ghcr.io, objects.githubusercontent.com,
+    # github.com, api.github.com) are DIRECT-reachable from this host.
+    # NO_PROXY is retained for explicitness; it is a no-op without a proxy.
     env:
-      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      # NFM-4355 RC12: Azure storage suffixes go DIRECT. upload-artifact's
-      # blob PUT would otherwise ride the local bridge proxy (127.0.0.1:7897,
-      # a crash-looping python process) and die with ECONNREFUSED whenever
-      # it flaps — redding the run AFTER a successful deploy. Direct egress
-      # to *.blob.core.windows.net verified reachable from this host. The
-      # twirp host results-receiver.actions.github.com does not resolve via
-      # the system resolver while the local bridge stack is down, so the
-      # upload keeps a transitive bridge dependency — see the pre-upload
-      # wait step (NFM-4355 RC12).
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
       # ADR §5 D2 "distinct exit code". 64 = EX_USAGE (sysexits.h).
       # The smoke-test job uses a different value (42) so the two jobs
       # never collide on a single exit-code namespace.
@@ -427,15 +422,12 @@ jobs:
           # because .env.prod and docker/.env.prod are gitignored — they exist
           # only on the production host. `git pull` first so the check runs the
           # script from the commit being deployed, not the last deploy's copy.
+          # ADR-018 / NFM-4762: SSH heredoc runs direct — no proxy env to
+          # re-export. SSH sessions do not inherit job env, but the job no
+          # longer sets HTTP_PROXY either.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << 'ENDSSH'
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-            # github.com must go DIRECT: the proxy route for it is dead
-            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
-            # do not inherit job env, so this must be re-exported here.
-            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
-            export no_proxy=$NO_PROXY
             for i in 1 2 3 4 5; do
               git fetch origin main && break
               [ "$i" = 5 ] && { echo "FATAL: git fetch failed 5x"; exit 1; }
@@ -464,15 +456,11 @@ jobs:
           # The SSH heredoc opens a new shell that does NOT inherit GHA env vars,
           # so DOCKER_CONFIG must be set explicitly inside the heredoc to prevent
           # docker-credential-desktop from prompting for the locked keychain.
+          # ADR-018 / NFM-4762: direct egress — no HTTP_PROXY/HTTPS_PROXY to
+          # re-export in the SSH heredoc.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 << ENDSSH
             set -euo pipefail
             cd ~/Projects/nucpot
-            export HTTP_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }} HTTPS_PROXY=http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-            # github.com must go DIRECT: the proxy route for it is dead
-            # (verified 5/5 fail via proxy, 5/5 pass direct). SSH sessions
-            # do not inherit job env, so this must be re-exported here.
-            export NO_PROXY=localhost,127.0.0.1,github.com,.githubusercontent.com,.githubassets.com
-            export no_proxy=$NO_PROXY
             # NFM-848: SSH heredoc opens a fresh shell that does NOT inherit
             # GHA env vars. Docker Desktop rewrites credsStore:"desktop" into
             # NFM-3328: rebuild deploy keychain failure chain. DOCKER_CONFIG
@@ -565,13 +553,9 @@ jobs:
     runs-on: [self-hosted, production]
     needs: [pre-flight, build-web, test-api, pre-deploy-assert]
     if: always() && needs.build-web.result == 'success' && needs.test-api.result == 'success' && needs.pre-deploy-assert.result == 'success'
+    # ADR-018 / NFM-4762: direct egress. NO_PROXY retained for explicitness.
     env:
-      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      # NFM-4355 RC12: Azure storage suffixes go DIRECT (see deploy-prod env
-      # note) so artifact uploads stop dying with ECONNREFUSED when the
-      # local bridge proxy flaps.
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
       AUDIT_LOG: "${{ github.workspace }}/migration-on-main-audit.jsonl"
     steps:
       - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
@@ -665,13 +649,9 @@ jobs:
     name: Pre-deploy-assert smoke test (NFM-2149)
     runs-on: [self-hosted, production]
     needs: [pre-flight]
+    # ADR-018 / NFM-4762: direct egress. NO_PROXY retained for explicitness.
     env:
-      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      # NFM-4355 RC12: Azure storage suffixes go DIRECT (see deploy-prod env
-      # note) so artifact uploads stop dying with ECONNREFUSED when the
-      # local bridge proxy flaps.
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
     steps:
       - name: Configure SSH egress via ssh.github.com:443 (NFM-3842)
         # Mirror of the migration-on-main-assert fix. Direct github.com
@@ -748,9 +728,9 @@ jobs:
       # network. See memory: nucpot-deploy / docker-pull-via-keychain pitfall.
       # ===================================================================
       - name: Pre-pull images without credential helper (NFM-2564)
+        # ADR-018 / NFM-4762: direct egress — no HTTP_PROXY needed; classic
+        # `docker pull` reaches GHCR directly.
         env:
-          HTTP_PROXY: http://127.0.0.1:7897
-          HTTPS_PROXY: http://127.0.0.1:7897
           NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com
         run: |
           # NFM-848 root cause re-verified 2026-08-16 (empirical):
@@ -827,19 +807,10 @@ jobs:
     runs-on: [self-hosted, production]
     needs: [pre-flight, build-web, test-api, pre-deploy-assert, migration-on-main-assert]
     if: always() && needs.build-web.result == 'success' && needs.pre-deploy-assert.result == 'success' && needs.migration-on-main-assert.result == 'success'
+    # ADR-018 / NFM-4762: direct egress. NO_PROXY retained for explicitness;
+    # artifact upload (results-receiver.actions.github.com) goes direct.
     env:
-      HTTP_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      HTTPS_PROXY: http://127.0.0.1:${{ vars.PROXY_PORT || '7897' }}
-      # NFM-4355 RC12: Azure storage suffixes go DIRECT. upload-artifact's
-      # blob PUT would otherwise ride the local bridge proxy (127.0.0.1:7897,
-      # a crash-looping python process) and die with ECONNREFUSED whenever
-      # it flaps — redding the run AFTER a successful deploy. Direct egress
-      # to *.blob.core.windows.net verified reachable from this host. The
-      # twirp host results-receiver.actions.github.com does not resolve via
-      # the system resolver while the local bridge stack is down, so the
-      # upload keeps a transitive bridge dependency — see the pre-upload
-      # wait step (NFM-4355 RC12).
-      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org,.blob.core.windows.net,.table.core.windows.net,.queue.core.windows.net
+      NO_PROXY: localhost,127.0.0.1,10.0.0.0/8,172.17.0.0/16,192.168.0.0/16,github.com,.githubusercontent.com,.githubassets.com,nucpot.dpdns.org,verify.nucpot.dpdns.org
       # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying
       # commit SHA. The deploy heredoc re-exports this on the host so the
       # compose step and the manual rollback recipe both use the same tag.
@@ -874,8 +845,9 @@ jobs:
           # cutover, assertions, health gates — while the job stayed green.
           # GH expressions are injected via environment (never interpolated
           # into the script body) and validated with :? inside the script.
+          #
+          # ADR-018 / NFM-4762: PROXY_PORT removed — CI egress = direct.
           DEPLOY_SHA: ${{ github.sha }}
-          PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
         run: |
           set -euo pipefail
           # NFM-4270 (ADR-013 G2): repo sync stays with lwj04 (repo owner);
@@ -890,8 +862,9 @@ jobs:
           # NFM-4271: DEPLOY_ACTOR tells the in-script manifest recorder this
           # deploy's path is the GH runner (a manual deploy_prod.sh run keeps
           # the deploy_prod.sh:<user> default inside the script).
+          # ADR-018 / NFM-4762: PROXY_PORT dropped from the sudo invocation.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "DEPLOY_SHA='${{ github.sha }}' PROXY_PORT='${{ vars.PROXY_PORT || '7897' }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh"
+            "DEPLOY_SHA='${{ github.sha }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh"
 
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
@@ -959,12 +932,10 @@ jobs:
 
       - name: External smoke tests
         id: external-smoke-tests
-        env:
-          # Bypass the deploy proxy — these are public URLs accessible directly
-          # GitHub Actions env var names are case-insensitive; do NOT add
-          # lowercase duplicates (http_proxy / https_proxy) here.
-          HTTP_PROXY: ""
-          HTTPS_PROXY: ""
+        # ADR-018 / NFM-4762: no proxy bypass needed — the job no longer
+        # sets HTTP_PROXY, so these public URLs hit the direct route by
+        # default. The previous `HTTP_PROXY: "" HTTPS_PROXY: ""` override
+        # was only required because deploy-prod set the bridge proxy env.
         run: |
           # Retry loop: give Cloudflare Tunnel time to stabilize after container restart
           for i in 1 2 3; do
@@ -1083,39 +1054,34 @@ jobs:
           _prod_emit "$SUCCESS" "$FIRST_POLL"
           exit 0
 
-      - name: Wait for local proxy bridge before artifact upload (NFM-4355 RC12)
+      # ADR-018 / NFM-4762: bridge proxy 7897 retired. The artifact upload
+      # step (actions/upload-artifact@v7) reaches results-receiver.actions
+      # .github.com via direct egress; no bridge wait is required. The
+      # prior step existed only to wait for the local forwarder or the
+      # results-receiver DNS to recover (NFM-4355 RC12, ECONNREFUSED when
+      # the bridge proxy flapped). With no proxy, both failure modes are
+      # closed.
+      - name: Wait for results-receiver DNS before artifact upload (NFM-4355 RC12, de-proxied by NFM-4762)
         if: always()
-        env:
-          PROXY_PORT: ${{ vars.PROXY_PORT || '7897' }}
         run: |
-          # The artifact upload transitively depends on the local bridge
-          # stack: the failing run's upload died with "Unable to make
-          # request: ECONNREFUSED" (connect to the dead 127.0.0.1
-          # forwarder), and results-receiver.actions.github.com does NOT
-          # resolve via the system resolver while the bridge stack is down
-          # (verified 2026-09-06). Wait, deadline-capped at 90s, for either
-          # bridge forwarding health or name resolution before the
-          # drift-critical fragment upload. Warning-only on exhaustion: the
-          # upload step itself keeps the strict drift-alarm contract
-          # (if-no-files-found: error) and decides pass/fail.
+          # Belt-and-braces: if results-receiver.actions.github.com does not
+          # resolve via the system resolver, the artifact upload step will
+          # fail with "Could not resolve host". 30s deadline-capped DNS
+          # probe, warning-only on exhaustion — the upload step itself
+          # owns the strict if-no-files-found: error contract.
           i=0
-          END=$(( $(date +%s) + 90 ))
+          END=$(( $(date +%s) + 30 ))
           while [ "$(date +%s)" -lt "$END" ]; do
             i=$(( i + 1 ))
-            if curl -sf -x "http://127.0.0.1:${PROXY_PORT}" --max-time 6 \
-                 -o /dev/null https://www.gstatic.com/generate_204; then
-              echo "bridge forwarding (attempt $i)"
-              exit 0
-            fi
             if dscacheutil -q host -a name results-receiver.actions.github.com 2>/dev/null \
                  | grep -q ip_address; then
               echo "results-receiver resolvable via system resolver (attempt $i)"
               exit 0
             fi
-            echo "bridge stack not healthy (attempt $i), waiting 5s..."
-            sleep 5
+            echo "results-receiver not resolvable (attempt $i), waiting 3s..."
+            sleep 3
           done
-          echo "::warning::bridge stack (127.0.0.1:${PROXY_PORT} forwarder + results-receiver DNS) not healthy after 90s; artifact upload may fail (NFM-4355 RC12)"
+          echo "::warning::results-receiver.actions.github.com did not resolve within 30s; artifact upload may fail"
 
       - name: Upload prod deploy-event fragment
         if: always()
