@@ -244,9 +244,12 @@ class TestNFM4804CacheHitReferenceRefill:
         client.query_data.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_fresh_query_with_empty_refs_no_refill(self) -> None:
-        """Empty references on a non-cached execution are an honest empty
-        retrieval — the refill must not paper over it with a second call."""
+    async def test_fresh_query_with_empty_refs_still_refills(self) -> None:
+        """Empty references with a non-empty answer trigger the refill even
+        when the sidecar reports no cache hint — the pinned 1.5.4 ``/query``
+        response model never carries one, so the observable degradation is
+        the only reliable gate (NFM-4804 rev 2).  The retrieval-only pass
+        decides: refs found → served; nothing found → honest empty."""
         client = _make_mock_lightrag_client(
             query_result={
                 "response": "fresh answer",
@@ -255,6 +258,44 @@ class TestNFM4804CacheHitReferenceRefill:
                 "relationships": [],
             }
         )
+        client.query_data = AsyncMock(
+            return_value={
+                "status": "success",
+                "data": {
+                    "references": [
+                        {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+                    ]
+                },
+            }
+        )
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        result = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        assert result.references == [
+            {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+        ]
+        assert result.was_cached is False
+        client.query_data.assert_called_once_with(query="UO2 热导率", mode="mix")
+
+    @pytest.mark.asyncio
+    async def test_fresh_query_refill_finds_nothing_keeps_empty(self) -> None:
+        """Fresh no-match query whose refill also finds nothing: the empty
+        reference list is the truth for the current corpus and stays [] —
+        the second retrieval pass is bounded, not fabricating citations."""
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "fresh answer",
+                "references": [],
+                "entities": [],
+                "relationships": [],
+            },
+        )
+        client.query_data = AsyncMock(
+            return_value={"status": "success", "data": {"references": []}}
+        )
         provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
 
         result = await provider.query(
@@ -262,7 +303,7 @@ class TestNFM4804CacheHitReferenceRefill:
         )
 
         assert result.references == []
-        client.query_data.assert_not_called()
+        client.query_data.assert_called_once_with(query="UO2 热导率", mode="mix")
 
     @pytest.mark.asyncio
     async def test_cache_hit_with_refs_present_no_refill(self) -> None:
