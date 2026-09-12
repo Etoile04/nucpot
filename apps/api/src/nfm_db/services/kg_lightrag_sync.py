@@ -46,6 +46,7 @@ import uuid
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_utils import parse_aliases
 from nfm_db.services.lightrag_client import (
+    LightRAGClient,
     LightRAGConflictError,
     is_lightrag_configured,
 )
@@ -237,7 +238,15 @@ async def ingest_kg_to_lightrag(
     from nfm_db.services.rag_provider import LightRAGProvider
 
     text = serialize_build_result(nodes, edges, node_labels)
-    shared_client = get_shared_lightrag_client()
+    shared_client: LightRAGClient | None = get_shared_lightrag_client()
+    # ``is_lightrag_configured()`` is the gate above; in production
+    # the shared client exists.  Tests exercise this path with
+    # ``shared_client=None`` and rely on ``LightRAGProvider.ingest``
+    # to be a no-op when the sidecar isn't reachable.  Build the
+    # provider unconditionally; for the 409-recovery branch (which
+    # calls ``shared_client.delete_document`` directly) we narrow to
+    # non-None at the call site, since ``delete_document`` requires
+    # a live HTTP client.
     provider = LightRAGProvider(client=shared_client)
 
     # NFM-4758 / NFM-4730-FixA: the reextract path can hit a 409
@@ -262,6 +271,17 @@ async def ingest_kg_to_lightrag(
             source,
         )
         try:
+            if shared_client is None:
+                # Lifecycle invariant: ``is_lightrag_configured()``
+                # returned True but no shared client exists.  We can't
+                # DELETE the marker — propagate the original conflict
+                # so the caller's error path still fires.
+                logger.warning(
+                    "LightRAG 409 received but shared_client is None; "
+                    "cannot DELETE marker source=%r",
+                    source,
+                )
+                raise exc
             await shared_client.delete_document(source)
         except Exception:
             # ``delete_document`` already raises a structured
