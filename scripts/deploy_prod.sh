@@ -107,9 +107,32 @@ fi
 
 # NFM-848: DOCKER_CONFIG redirects the CLI-plugin search path away from the
 # credential helper that breaks daemon-side metadata resolution.
-export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
-mkdir -p /tmp/nfm848-no-cred-docker-config/cli-plugins
-printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+#
+# NFM-4807: the redirect dir is PER-DEPLOY and PRIVATE. The old shared
+# literal /tmp/nfm848-no-cred-docker-config was a global race: any other
+# session executing this script under a fake HOME (notably scripts/tests)
+# re-pointed the shared cli-plugins/docker-compose symlink at a pytest
+# tmpdir target that garbage-collects, leaving it dangling — a deploy
+# then lost `docker compose` mid-flight (exit 125, "unknown shorthand
+# flag: -f"; 2026-09-12 run 34705930216 died at prod_migrate after the
+# NFM-4803 deploy overlapped a deploy-test pytest session). mktemp -d
+# yields a 0700 deploy-owned dir no other uid/session can write or
+# traverse, and the EXIT trap below removes it on every exit path.
+# NFMD_DOCKER_CONFIG opts a caller (tests, manual G2 entry) into
+# supplying its own dir; such a dir is caller-owned and is never
+# trap-removed by this script.
+if [ -n "${NFMD_DOCKER_CONFIG:-}" ]; then
+  export DOCKER_CONFIG="${NFMD_DOCKER_CONFIG}"
+else
+  DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/nfm-deploy-docker-config.XXXXXXXX")"
+  export DOCKER_CONFIG
+  NFMD_DC_PRIVATE=1
+  # fold private-dir cleanup into the deploy-lock EXIT trap (line 89);
+  # single trap statement — a second `trap ... EXIT` would replace it
+  trap 'rm -f "$NFM_DEPLOY_LOCK"; if [ "${NFMD_DC_PRIVATE:-}" = "1" ]; then rm -rf "${DOCKER_CONFIG:-}"; fi' EXIT
+fi
+mkdir -p "${DOCKER_CONFIG}/cli-plugins"
+printf '{}' > "${DOCKER_CONFIG}/config.json"
 
 # NFM-3777/#1050: stale-marker poisoning (seen 2026-08-18 and in NFM-3845
 # UPDATE 4) — a leftover health marker from a PRIOR deploy made
@@ -161,7 +184,7 @@ if [ -x "${NFMD_DC_SRC}" ]; then
     chmod 0755 "${NFMD_DC}"
   fi
 fi
-ln -sf "${NFMD_DC}" /tmp/nfm848-no-cred-docker-config/cli-plugins/docker-compose
+ln -sf "${NFMD_DC}" "${DOCKER_CONFIG}/cli-plugins/docker-compose"
 docker compose version
 
 # NFM-2148 / ADR-NFM-2139 §5 D1: pin every image to the deploying commit SHA

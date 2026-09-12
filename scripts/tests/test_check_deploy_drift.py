@@ -36,6 +36,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+from shared_docker_config import snapshot_shared_config as _shared_docker_config_snapshot
 
 TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = TESTS_DIR.parent
@@ -1185,7 +1186,7 @@ def test_env_override_beats_canonical_and_home(tmp_path: Path, monkeypatch: pyte
 
 
 def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_paperclip: "StubPaperclip"
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_paperclip: StubPaperclip
 ):
     """Hermetic deploy run (replaces the source-grep coherence test): the
     REAL deploy_prod.sh runs end-to-end against a deploy-capable fake docker
@@ -1251,6 +1252,12 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     monkeypatch.setenv("DEPLOY_ACTOR", "gh-runner:lwj04")
     monkeypatch.setenv("NFM_G2_DEPLOY_IDENTITY", "1")
     monkeypatch.setenv("NFM_G2_VAR_DIR", str(gate_var))
+    # NFM-4807: sandbox the DOCKER_CONFIG wiring — a test executing the
+    # deploy body must never write the production /tmp literal (the race
+    # that left run 34705930216 without `docker compose` mid-migrate).
+    dc_sandbox = tmp_path / "dc-config"
+    monkeypatch.setenv("NFMD_DOCKER_CONFIG", str(dc_sandbox))
+    shared_dc_before = _shared_docker_config_snapshot()
 
     result = subprocess.run(
         ["bash", str(DEPLOY_PROD_SH)],
@@ -1260,6 +1267,13 @@ def test_deploy_prod_sh_and_checker_agree_on_g4_paths(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"DEPLOY_SCRIPT_COMPLETED_OK sha={DEPLOY_SHA}" in result.stdout
+
+    # NFM-4807: the deploy wired its DOCKER_CONFIG inside the sandbox and
+    # left the production shared literal byte-for-byte untouched.
+    assert (dc_sandbox / "cli-plugins" / "docker-compose").is_symlink()
+    assert _shared_docker_config_snapshot() == shared_dc_before, (
+        "deploy under test sandbox must not touch /tmp/nfm848-no-cred-docker-config"
+    )
 
     # -- the manifest: canonical path, world-readable, real-recorder shape --
     manifest = gate_var / "prod-deploy-manifest.json"

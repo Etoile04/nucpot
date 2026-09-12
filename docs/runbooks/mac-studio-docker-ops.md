@@ -69,7 +69,7 @@ docker inspect nucpot-prod-api --format '{{.State.StartedAt}}'     # 启动时�
 | 陷阱 | 症状 | 规避 |
 |---|---|---|
 | `ssh host "cmd"` 非登录 zsh | `docker: command not found`（不读 .zprofile） | 命令前缀 `export PATH="/usr/local/bin:..."` |
-| Docker keychain 锁死构建 | build 阶段 credential helper 卡死 | `DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config` + symlink compose 插件（部署脚本已内置） |
+| Docker keychain 锁死构建 | build 阶段 credential helper 卡死 | 无凭据 `DOCKER_CONFIG`（每次部署 `mktemp -d` 私有目录 + trap 清理，NFM-4807 根治共享 `/tmp/nfm848-no-cred-docker-config` 竞态；compose 插件 symlink 进该私有目录，部署脚本已内置） |
 | `docker compose run < /dev/null` | 曾经吞掉 heredoc 后续所有命令 | 已根治（脚本化）；迁移类临时容器仍注意 stdin |
 | 全局 gitconfig insteadOf | runner checkout 失败（某 agent 改全局配置污染所有 GHA job） | 自定义 git 配置一律 `--local` |
 | GFW 网络抖动 | pip 清华源 setuptools 拉取失败、apt 53KB/s | Dockerfile 三级 pip 重试链可自愈；job 失败先 rerun 再排查 |
