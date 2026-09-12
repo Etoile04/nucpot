@@ -322,6 +322,11 @@ def _get_config() -> dict[str, str]:
     Provider-aware like :class:`LLMClient`: ``LLM_PROVIDER`` selects a
     default base URL, and the local Ollama provider works without
     ``LLM_API_KEY`` (placeholder on the wire).
+
+    NFM-4779: ``provider`` is exposed so :func:`call_llm` can route to
+    the native Ollama ``/api/chat`` binding (where ``think`` /
+    ``chat_template_kwargs`` take effect) instead of the openai-compat
+    ``/v1/chat/completions`` layer (where they are silently dropped).
     """
     provider = os.environ.get("LLM_PROVIDER", "openai")
     return {
@@ -332,6 +337,7 @@ def _get_config() -> dict[str, str]:
             _PROVIDER_DEFAULTS.get(provider, "https://api.openai.com/v1"),
         ),
         "model": os.environ.get("LLM_MODEL", "gpt-4o"),
+        "provider": provider,
     }
 
 
@@ -361,6 +367,13 @@ async def call_llm(
     (NFM-4525-aligned), the thinking mode is suppressed automatically. The
     flag is a no-op against the current openai-compat layer; see NFM-4525
     for the binding-migration path.
+
+    NFM-4779: when ``config["provider"] == "ollama"`` (or the env-var
+    ``LLM_PROVIDER`` is ``"ollama"``), the dispatcher routes to the native
+    Ollama ``/api/chat`` binding instead of the openai-compat
+    ``/v1/chat/completions`` layer. This is the binding switch that makes
+    ``think`` / ``chat_template_kwargs`` actually take effect — see
+    NFM-4525 for why the openai-compat layer silently drops them.
     """
     cfg = config or _get_config()
 
@@ -377,24 +390,53 @@ async def call_llm(
         else {"enable_thinking": False}
     )
 
-    url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {cfg['api_key']}",
-        "Content-Type": "application/json",
-    }
-    payload: dict[str, Any] = {
-        "model": cfg["model"],
-        "temperature": temperature,
-        "max_tokens": effective_max_tokens,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        "chat_template_kwargs": effective_chat_template_kwargs,
-    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+    # NFM-4779: native Ollama /api/chat binding for the ollama provider.
+    # The openai-compat layer silently drops ``think`` / ``chat_template_kwargs``
+    # (NFM-4525), so we route ollama calls to the native endpoint where both
+    # ``think: false`` and ``chat_template_kwargs.enable_thinking`` are honored.
+    is_ollama_native = cfg.get("provider") == "ollama"
+    if is_ollama_native:
+        url = _ollama_native_chat_url(cfg["base_url"])
+        headers = {"Content-Type": "application/json"}
+        payload: dict[str, Any] = {
+            "model": cfg["model"],
+            "messages": messages,
+            "stream": False,
+            # Native Ollama thinking-disabler (Ollama 0.5.0+). The Ollama
+            # server skips chain-of-thought prefill when this is set to false,
+            # which is what NFM-4525 needs to suppress qwen3.5:4b-nvfp4's
+            # thinking-token burn.
+            "think": False,
+            # NFM-4759 plumbing — now actually honored because we are talking
+            # to native Ollama (the openai-compat layer dropped it).
+            "chat_template_kwargs": effective_chat_template_kwargs,
+            "options": {
+                "num_predict": effective_max_tokens,
+                "temperature": temperature,
+            },
+        }
+    else:
+        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {cfg['api_key']}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": cfg["model"],
+            "temperature": temperature,
+            "max_tokens": effective_max_tokens,
+            "messages": messages,
+            "chat_template_kwargs": effective_chat_template_kwargs,
+        }
 
     logger.info(
-        "LLM request: model=%s, system_prompt_len=%d, user_message_len=%d",
+        "LLM request: provider=%s, model=%s, system_prompt_len=%d, user_message_len=%d",
+        cfg.get("provider", "unknown"),
         cfg["model"],
         len(system_prompt),
         len(user_message),
@@ -512,6 +554,13 @@ async def call_llm(
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"LLM response is not valid JSON: {exc}") from exc
 
+    # NFM-4779: native Ollama /api/chat returns a flat ``message`` object +
+    # ``done_reason`` / token counts, not the openai-compat ``choices[]`` +
+    # ``usage`` envelope. Normalize so downstream parsing is identical for
+    # both bindings.
+    if is_ollama_native and "message" in body and "choices" not in body:
+        body = _ollama_native_to_openai_shape(body)
+
     choices = body.get("choices", [])
     if not choices:
         raise RuntimeError("LLM returned empty choices")
@@ -552,6 +601,84 @@ async def call_llm(
 
     logger.info("LLM response parsed successfully (type=%s)", type(result).__name__)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Native Ollama /api/chat helpers (NFM-4779)
+# ---------------------------------------------------------------------------
+
+
+def _ollama_native_chat_url(base_url: str) -> str:
+    """Convert a base_url (with or without ``/v1``) to the native Ollama /api/chat URL.
+
+    The default ``_PROVIDER_DEFAULTS['ollama']`` is ``http://localhost:11434/v1``,
+    which is the OpenAI-compat root. The native Ollama API lives at
+    ``http://localhost:11434/api/chat``. Strip a trailing ``/v1`` (with or
+    without trailing slash) so both conventions resolve to the same URL.
+    """
+    cleaned = base_url.rstrip("/")
+    if cleaned.endswith("/v1"):
+        cleaned = cleaned[: -len("/v1")]
+    return f"{cleaned}/api/chat"
+
+
+def _ollama_native_to_openai_shape(body: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a native Ollama /api/chat response to the openai-compat envelope.
+
+    Native Ollama returns::
+
+        {
+          "model": "...",
+          "message": {"role": "assistant", "content": "...", "thinking": null},
+          "done_reason": "stop" | "length",
+          "done": true,
+          "prompt_eval_count": <int>,
+          "eval_count": <int>,
+          ...
+        }
+
+    The downstream parser (see ``call_llm`` post-parse block) expects the
+    openai-compat envelope::
+
+        {
+          "choices": [{"message": {"content": "..."}, "finish_reason": "..."}],
+          "usage": {"prompt_tokens": ..., "completion_tokens": ..., "total_tokens": ...}
+        }
+    """
+    message = body.get("message") or {}
+    content = message.get("content", "")
+    done_reason = body.get("done_reason", "")
+    # Ollama's done_reason values include "stop", "length", "load" (and others).
+    # Map to the openai-compat finish_reason vocabulary. Default to "stop"
+    # when done=True (clean completion) and "length" when the model hit the
+    # num_predict cap.
+    if done_reason == "length":
+        finish_reason = "length"
+    elif done_reason in ("stop", "eos"):
+        finish_reason = "stop"
+    else:
+        finish_reason = done_reason or "stop"
+
+    prompt_tokens = body.get("prompt_eval_count") or 0
+    completion_tokens = body.get("eval_count") or 0
+    usage: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    return {
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": message.get("role", "assistant"),
+                    "content": content,
+                },
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": usage,
+    }
 
 
 def _strip_code_fences(text: str) -> str:
