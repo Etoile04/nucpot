@@ -776,16 +776,20 @@ class GraphBuilder:
         # would raise MultipleResultsFound on them. Any single existing row
         # is enough to skip, so take the first deterministically.
         existing = (
-            await self._session.execute(
-                select(KGEdge)
-                .where(
-                    KGEdge.source_node_id == source_node_id,
-                    KGEdge.target_node_id == target_node_id,
-                    KGEdge.relation_type == relation.relation_type,
+            (
+                await self._session.execute(
+                    select(KGEdge)
+                    .where(
+                        KGEdge.source_node_id == source_node_id,
+                        KGEdge.target_node_id == target_node_id,
+                        KGEdge.relation_type == relation.relation_type,
+                    )
+                    .order_by(KGEdge.created_at, KGEdge.id)
                 )
-                .order_by(KGEdge.created_at, KGEdge.id)
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             logger.debug(
                 "Skipping duplicate edge %s -[%s]-> %s",
