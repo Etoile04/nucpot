@@ -742,3 +742,109 @@ async def test_list_indexed_documents_raises_on_http_error(
     with pytest.raises(LightRAGClientError, match="500"):
         await client.list_indexed_documents()
     await client.close()
+
+
+# ---------------------------------------------------------------------------
+# NFM-4742 F-3 §3.2 / §4 — bucket-segregation Celery wiring
+# ---------------------------------------------------------------------------
+
+
+def test_celery_beat_schedule_registers_document_buckets_audit() -> None:
+    """F-3 §4 requires the bucket task at 03:31 UTC daily."""
+    from nfm_db.services.celery_app import celery_app
+
+    schedule = celery_app.conf.beat_schedule
+    assert "rag-audit-document-buckets-daily" in schedule
+    entry = schedule["rag-audit-document-buckets-daily"]
+    assert (
+        entry["task"]
+        == "nfm_db.services.celery_app.rag_audit_document_buckets_task"
+    )
+    # crontab(minute=31, hour=3) → 03:31 UTC daily (one minute after the
+    # index-coverage audit so both consume the same ``/documents``
+    # snapshot in close succession).
+    assert entry["schedule"].minute == {31}
+    assert entry["schedule"].hour == {3}
+
+
+def test_celery_task_route_registers_default_queue_for_buckets() -> None:
+    """The bucket task must run on ``default`` (same as the index audit)."""
+    from nfm_db.services.celery_app import celery_app
+
+    routes = celery_app.conf.task_routes
+    assert (
+        routes[
+            "nfm_db.services.celery_app.rag_audit_document_buckets_task"
+        ]["queue"]
+        == "default"
+    )
+
+
+def test_celery_buckets_task_is_registered() -> None:
+    """Worker must be able to dispatch by name."""
+    from nfm_db.services.celery_app import celery_app
+
+    assert (
+        "nfm_db.services.celery_app.rag_audit_document_buckets_task"
+        in celery_app.tasks
+    )
+
+
+def test_celery_buckets_task_uses_task_scoped_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same BUG-22 (NFM-4076) regression guard as the index audit task."""
+    from nfm_db.services import celery_app as celery_module
+    from nfm_db.services.rag_audit import (
+        BucketAuditOutcome,
+        BucketCounts,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _FakeSession:
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    def _fake_task_factory() -> Any:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _ctx() -> Any:
+            captured["task_scoped"] = True
+            yield lambda: _FakeSession()
+
+        return _ctx()
+
+    async def _fake_buckets(session: object, **kwargs: object) -> BucketAuditOutcome:
+        captured["session"] = session
+        return BucketAuditOutcome(
+            run_date=date(2026, 9, 12),
+            counts=BucketCounts(processed=5, failed_error=2),
+            failures_classified=2,
+        )
+
+    class _FakeSettings:
+        lightrag_host = "localhost"
+        lightrag_port = 9621
+
+    monkeypatch.setattr(
+        "nfm_db.database.task_session_factory", _fake_task_factory
+    )
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit.run_rag_audit_document_buckets", _fake_buckets
+    )
+    monkeypatch.setattr(
+        "nfm_db.config.get_settings", lambda: _FakeSettings()
+    )
+
+    result = celery_module.rag_audit_document_buckets_task.run()
+
+    assert captured.get("task_scoped") is True
+    assert isinstance(captured.get("session"), _FakeSession)
+    assert result["counts"]["processed"] == 5
+    assert result["counts"]["failed_error"] == 2
+    assert result["failures_classified"] == 2

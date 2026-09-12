@@ -40,6 +40,7 @@ from nfm_db.models.rag_access_log import RagAccessLog
 from nfm_db.models.user import User
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.lightrag import (
+    BucketCountsResponse,
     FallbackInfo,
     HealthResponse,
     IngestRequest,
@@ -128,6 +129,72 @@ async def health_check() -> ApiResponse[HealthResponse]:
                 fallback_active=True,
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4742 F-3 §3.2 — bucket counts
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/buckets",
+    response_model=ApiResponse[BucketCountsResponse],
+    summary="LightRAG文档桶计数",
+    description=(
+        "返回 LightRAG ``/documents`` 状态桶计数,failed 桶按 "
+        "duplicate/error/empty 细分 (NFM-4742 F-3 §3.2)。\n\n"
+        "Return per-bucket counts of the LightRAG ``/documents`` "
+        "index, with the ``failed`` bucket split into "
+        "``duplicate`` / ``error`` / ``empty`` so health metrics "
+        "can exclude dedupe hits."
+    ),
+)
+async def list_buckets(
+    _current_user: Annotated[User, Depends(require_editor)],
+) -> ApiResponse[BucketCountsResponse]:
+    """Per-bucket counts of the LightRAG ``/documents`` index.
+
+    Auth: ``require_editor`` — pipeline state is not user data, but
+    exposing failed-bucket volumes to anonymous traffic arms
+    scrapers that probe dedupe regressions.  Editors and admins get
+    the live snapshot via this endpoint; the daily 03:31 UTC
+    ``rag_audit_document_buckets_task`` records the same numbers
+    into ``rag_index_audit_log`` so historical health metrics do
+    not require a live sidecar.
+    """
+    from datetime import UTC, datetime
+
+    from nfm_db.services.rag_audit import (
+        _bucket_counts_from_envelope,
+    )
+
+    settings = get_settings()
+    client = _get_client()
+    try:
+        envelope = await client.list_document_buckets()
+    except LightRAGClientError as exc:
+        logger.error("LightRAG bucket query failed: %s", exc)
+        return ApiResponse(
+            success=False,
+            error=f"LightRAG bucket query failed: {exc}",
+        )
+    counts = _bucket_counts_from_envelope(envelope)
+    return ApiResponse(
+        success=True,
+        data=BucketCountsResponse(
+            processed=counts.processed,
+            analyzing=counts.analyzing,
+            processing=counts.processing,
+            failed=counts.failed,
+            failed_duplicate=counts.failed_duplicate,
+            failed_error=counts.failed_error,
+            failed_empty=counts.failed_empty,
+            pending=counts.pending,
+            other=counts.other,
+            fetched_at=datetime.now(UTC),
+            lightrag_host=settings.lightrag_host,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

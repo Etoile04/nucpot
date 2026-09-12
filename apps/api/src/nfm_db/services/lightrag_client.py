@@ -429,6 +429,112 @@ class LightRAGClient:
             return {"status": "deleted", "doc_id": doc_id}
 
     # ------------------------------------------------------------------
+    # NFM-4742 F-3 §3 — bucket enumeration + delete for replay
+    # ------------------------------------------------------------------
+
+    async def list_document_buckets(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the raw ``/documents`` ``statuses`` envelope.
+
+        Unlike :meth:`list_indexed_documents` (which projects only the
+        ``processed`` bucket for index-coverage reconciliation), this
+        returns **every** bucket the sidecar reports so the audit task
+        can count ``failed`` / ``processing`` / ``pending`` rows and
+        classify failure reasons (NFM-4742 F-3 §3.2).
+
+        NFM-4636: LightRAG 1.5.4 (the prod sidecar build) answers with
+        a ``{"statuses": {<status>: [...]}}`` envelope, NOT the bare
+        array / ``{"documents": [...]}`` shapes; we project both for
+        forward-compat with older builds (so a stale deployment still
+        reports ``processed`` rows under the ``processed`` synthetic
+        bucket) and so unit tests can drive the legacy shapes directly.
+
+        Returns an empty dict when the sidecar is unreachable so the
+        caller can decide whether to surface an ``error`` audit row or
+        silently no-op.
+        """
+        try:
+            response = await self._http_client.get(
+                "/documents",
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents failed: {exc}"
+            ) from exc
+
+        body = response.json()
+        return self._extract_statuses_envelope(body)
+
+    @staticmethod
+    def _extract_statuses_envelope(body: Any) -> dict[str, list[dict[str, Any]]]:
+        """Normalise the three ``/documents`` shapes to a status→rows map.
+
+        Unknown / empty responses return an empty dict so the audit task
+        can still log a structured ``bucket_counts`` audit row with
+        zeros instead of crashing on a sidecar format change.
+        """
+        if isinstance(body, list):
+            # Oldest builds — every row is implicitly ``processed``; we
+            # keep that semantic so the bucket report matches what the
+            # sidecar actually has.
+            return {"processed": [r for r in body if isinstance(r, dict)]}
+        if isinstance(body, dict):
+            statuses = body.get("statuses")
+            if isinstance(statuses, dict):
+                return {
+                    str(status): [r for r in rows if isinstance(r, dict)]
+                    for status, rows in statuses.items()
+                    if isinstance(rows, list)
+                }
+            documents = body.get("documents")
+            if isinstance(documents, list):
+                return {
+                    "processed": [r for r in documents if isinstance(r, dict)]
+                }
+        return {}
+
+    async def delete_document_by_id(self, *, doc_id: str) -> None:
+        """Delete a single LightRAG document by id.
+
+        Used by the F-3 processing reaper (NFM-4742 §3) to evict
+        ``processing`` rows stranded ``>=24h`` so the canonical ingest
+        path can re-attempt; also used by operator-driven replay when
+        a doc is stuck in ``failed`` with an empty error_message and
+        needs a fresh ingest cycle to surface the real failure.
+
+        LightRAG 1.5.4 ``DELETE /documents/{id}`` is the documented
+        end-point.  The sidecar may respond 200 (success) or 404
+        (already gone, idempotent) — both are treated as success.
+        """
+        if not doc_id:
+            raise ValueError("doc_id is required")
+        # Reject anything that isn't a safe slug — LightRAG ids look like
+        # ``data_source:<uuid>`` or ``nfm-4505-fresh-<uuid>`` and we don't
+        # want a malicious marker smuggling path traversal into the URL.
+        if "/" in doc_id or ".." in doc_id:
+            raise ValueError(f"unsafe doc_id: {doc_id!r}")
+        try:
+            response = await self._http_client.delete(
+                f"/documents/{doc_id}",
+                timeout=self.query_timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG DELETE /documents/{doc_id} failed: {exc}"
+            ) from exc
+        if response.status_code in (200, 202, 204, 404):
+            return
+        raise LightRAGClientError(
+            f"LightRAG DELETE /documents/{doc_id} failed: "
+            f"HTTP {response.status_code} - {response.text}"
+        )
+
+    # ------------------------------------------------------------------
     # Ingest
     # ------------------------------------------------------------------
 

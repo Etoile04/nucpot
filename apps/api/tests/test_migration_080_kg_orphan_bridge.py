@@ -113,12 +113,15 @@ class TestMigration080Chain:
         088_add_validity_check_and_valid_range chained after 087.
         089_add_ix_verification_tasks_status (NFM-4636, the idempotent
         CREATE INDEX for the latent verification_tasks.status drift)
-        chained after 088 — 089 is the current head.  This keeps
-        asserting "exactly one
-        head" so a future bad down_revision still fails loudly here.
+        chained after 088.  090_add_rag_audit_failure_reason
+        (NFM-4742 F-3, the failure_reason column on
+        rag_index_audit_log for the bucket-segregation beat) chained
+        after 089 — 090 is the current head.  This keeps asserting
+        "exactly one head" so a future bad down_revision still fails
+        loudly here.
         """
         heads = script_directory.get_heads()
-        current_head = "089_add_ix_verification_tasks_status"
+        current_head = "090_add_rag_audit_failure_reason"
         assert heads == [current_head], f"Expected single head {current_head!r}; got {heads}"
 
 
