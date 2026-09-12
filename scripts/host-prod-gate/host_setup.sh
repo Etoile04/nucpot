@@ -237,15 +237,15 @@ chown root:wheel /etc/sudoers.d/nfm-prod-deploy
 chmod 0440 /etc/sudoers.d/nfm-prod-deploy
 
 # =============================================================================
-# 6. LaunchDaemons: ro proxy, full proxy, watchdog
+# 6. LaunchDaemons: ro proxy, full proxy, watchdog, daily cleanup
 # =============================================================================
 log "installing + bootstrapping LaunchDaemons"
 mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily; do
   install -m 0644 -o root -g wheel "${SRC}/launchd/${PLIST}.plist" "${PLIST_DIR}/${PLIST}.plist"
   launchctl bootout "system/${PLIST}" 2>/dev/null || true
 done
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily; do
   launchctl bootstrap system "${PLIST_DIR}/${PLIST}.plist"
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done
@@ -313,4 +313,6 @@ log "  manifest: sudo -n -u ${DEPLOY_USER} ${G2}/run-record-manifest.sh --deploy
 log "            (G4a manifest + deploy lock land in /usr/local/var/nfm-g2/, the one path the G4b drift cron reads)"
 log "  backup:   sudo -n -u ${DEPLOY_USER} ${G2}/run-backup.sh [--keep N] [--dest PATH] [--volumes ...]"
 log "            (NFM-4750 Plan B: full-gate pg_dump + 4 prod volume tars; ro gate denies these)"
+log "  cleanup:  sudo -n -u ${DEPLOY_USER} ${G2}/run-cleanup.sh [--keep-candidates N] [--keep-shas N] [--until HOURS]"
+log "            (NFM-4802: also runs daily 04:20 via the com.nfm.g2.cleanup-daily LaunchDaemon)"
 log "audit log: ${LOG_DIR}/gate-ro.log (+ gate-full.log, watchdog.log)"

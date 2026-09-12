@@ -730,7 +730,12 @@ def test_host_setup_installs_every_entry_and_plist():
     text = (GATE_DIR / "host_setup.sh").read_text(encoding="utf-8")
     for name in SANCTIONED:
         assert name.removesuffix(".sh") in text, f"host_setup.sh does not install {name}"
-    for plist in ("com.nfm.g2.docker-ro", "com.nfm.g2.docker-full", "com.nfm.g2.socket-watchdog"):
+    for plist in (
+        "com.nfm.g2.docker-ro",
+        "com.nfm.g2.docker-full",
+        "com.nfm.g2.socket-watchdog",
+        "com.nfm.g2.cleanup-daily",
+    ):
         assert plist in text
     # the wall itself
     assert "chmod 060" in text and "chgrp" in text
@@ -1010,3 +1015,188 @@ def test_run_backup_success_writes_manifest_and_flips_current(entry, tmp_path):
     )
 
 
+
+
+# ---- NFM-4802: cleanup-daily plist + run-cleanup --until / staging ----------------
+
+
+def test_cleanup_daily_plist_shape():
+    """The NFM-4802 daily daemon is a calendar-triggered one-shot: sudo -n
+    drop to nfmdeploy, 04:20 quiet hours, and critically NOT RunAtLoad /
+    KeepAlive (installing must never prune)."""
+    data = (GATE_DIR / "launchd" / "com.nfm.g2.cleanup-daily.plist").read_bytes()
+    doc = plistlib.loads(data)
+    assert doc["Label"] == "com.nfm.g2.cleanup-daily"
+    assert doc["ProgramArguments"] == [
+        "/usr/bin/sudo",
+        "-n",
+        "-u",
+        "nfmdeploy",
+        "/usr/local/lib/nfm-g2/run-cleanup.sh",
+    ]
+    cal = doc["StartCalendarInterval"]
+    assert cal["Hour"] == 4 and cal["Minute"] == 20
+    assert not doc.get("RunAtLoad", False)
+    assert not doc.get("KeepAlive", False)
+
+
+def _install_inventory_docker(entry):
+    """Fake docker with a fixed image inventory covering the NFM-4802
+    scenarios: an old unused prod SHA tag (prune), an old staging SHA tag
+    (prune — the 94h/155h case), protected tag classes old+unused (keep),
+    a fresh SHA (keep), and an old SHA tag whose image is in use (keep)."""
+    from datetime import datetime, timedelta
+
+    old_ts = "2026-08-01 00:00:00 +0800 CST"
+    fresh_ts = (datetime.now() - timedelta(hours=1)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    ) + " +0800 CST"
+    old_sha, fresh_sha = "a" * 40, "b" * 40
+    st_old_sha, st_fresh_sha = "c" * 40, "d" * 40
+    inuse64 = "e" * 64
+    rows_no_trunc = "\n".join(
+        [
+            "nucpot-prod-api|%s|sha256:%s|%s" % (old_sha, "f" * 64, old_ts),  # prune
+            "nucpot-prod-api|%s|sha256:%s|%s" % (fresh_sha, "1" * 64, fresh_ts),
+            "nucpot-prod-api|latest|sha256:%s|%s" % (inuse64, old_ts),  # protected + in use
+            "nucpot-prod-api|restore-deadbeef|sha256:%s|%s" % ("2" * 64, old_ts),
+            "nucpot-staging-api|%s|sha256:%s|%s" % (st_old_sha, "3" * 64, old_ts),  # prune
+            "nucpot-staging-api|%s|sha256:%s|%s" % (st_fresh_sha, "4" * 64, fresh_ts),
+            "nucpot-staging-api|preview-1|sha256:%s|%s" % ("5" * 64, old_ts),
+            "nucpot-prod-web|%s|sha256:%s|%s" % ("9" * 40, inuse64, old_ts),  # in use
+            "nucpot-prod-web|test-9|sha256:%s|%s" % ("6" * 64, old_ts),
+            "nucpot-staging-web|frozen-2|sha256:%s|%s" % ("7" * 64, old_ts),
+        ]
+    )
+    # Truncated-ID form (retention loop): same rows, 12-char ids. Per-repo
+    # SHA-tag counts stay <= 10 so the count-based retention is a no-op and
+    # the tests isolate the age-gated pass.
+    rows_4f = "\n".join(
+        "|".join(
+            [
+                parts[0],
+                parts[1],
+                parts[2].replace("sha256:", "")[:12],
+                parts[3],
+            ]
+        )
+        for parts in (line.split("|") for line in rows_no_trunc.split("\n"))
+    )
+    body = (
+        "#!/bin/bash\n"
+        'printf \'%s\\n\' "$*" >> ' + str(entry.docker_calls) + "\n"
+        'case " $* " in\n'
+        '  *"system df"*) echo "10.0GB"; exit 0 ;;\n'
+        '  *"volume ls"*) exit 0 ;;\n'
+        '  *"image prune"*|*"builder prune"*) exit 0 ;;\n'
+        '  *"ps -a"*) echo "$D_PS_IMAGES"; exit 0 ;;\n'
+        '  *"image inspect"*)\n'
+        '    case "$*" in\n'
+        '      *"$D_INUSE_REF"*) echo "sha256:$D_INUSE_ID64"; exit 0 ;;\n'
+        "      *) exit 0 ;;\n"
+        "    esac ;;\n"
+        '  *"images --no-trunc"*) printf \'%s\\n\' "$D_ROWS_NOTRUNC"; exit 0 ;;\n'
+        '  *"{{.Repository}}:{{.Tag}} {{.ID}}"*) exit 0 ;;\n'
+        '  *"{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}"*) printf \'%s\\n\' "$D_ROWS_4F"; exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    entry._write_executable("docker", body)
+    # Portable stand-in for macOS date(1) — CI's unit jobs run on
+    # ubuntu-latest where `date -j -f`/`date -r EPOCH` do not exist (the
+    # real entry runs only on the macOS prod host, but the selection
+    # matrix must be exercised on every runner). Covers the three shapes
+    # run-cleanup.sh uses; everything else passes through to /bin/date.
+    entry._write_executable(
+        "date",
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        '  *"-j -f"*)\n'
+        '    python3 - "$4" <<\'PYDATE\'\n'
+        "import sys, datetime\n"
+        "s = sys.argv[1][:19].replace('T', ' ')\n"
+        "dt = datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')\n"
+        "print(int(dt.timestamp()))\n"
+        "PYDATE\n"
+        "    ;;\n"
+        '  *" -r "*)\n'
+        '    python3 - "$2" <<\'PYDATE\'\n'
+        "import sys, datetime\n"
+        "print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime('%Y-%m-%d %H:%M:%S %z'))\n"
+        "PYDATE\n"
+        "    ;;\n"
+        '  *) exec /bin/date "$@" ;;\n'
+        "esac\n",
+    )
+    return {
+        "D_ROWS_NOTRUNC": rows_no_trunc,
+        "D_ROWS_4F": rows_4f,
+        "D_PS_IMAGES": "nucpot-prod-api:latest",
+        "D_INUSE_REF": "nucpot-prod-api:latest",
+        "D_INUSE_ID64": inuse64,
+    }
+
+
+def _rmi_targets(entry):
+    return [" ".join(argv[1:]) for argv in entry.docker_argv() if argv and argv[0] == "rmi"]
+
+
+def test_run_cleanup_until_rejects_bad_values(entry):
+    assert entry.run("run-cleanup.sh", "--until", "abc").returncode == 64
+    assert entry.run("run-cleanup.sh", "--until", "0").returncode == 64
+    assert entry.run("run-cleanup.sh", "--until").returncode == 64
+
+
+def test_run_cleanup_until_age_prunes_only_old_unused_tags(entry):
+    """Option-2 semantics (NFM-4224/NFM-4802): with --until 72 only old
+    UNUSED tags on covered repos go - protected classes, the in-use image
+    (even under an old SHA tag), and fresh tags stay."""
+    env = _install_inventory_docker(entry)
+    result = entry.run("run-cleanup.sh", "--until", "72", env_extra=env)
+    assert result.returncode == 0, result.stderr
+    targets = _rmi_targets(entry)
+    assert targets == [
+        "nucpot-prod-api:" + "a" * 40,
+        "nucpot-staging-api:" + "c" * 40,
+    ], "unexpected rmi set: %s" % targets
+    assert "until 72" in result.stdout
+    assert "age-pruned 2" in result.stdout
+
+
+def test_run_cleanup_default_run_has_no_age_pass(entry):
+    """Without --until the age-gated pass is skipped entirely - the daily
+    daemon (no flags) can never prune by age."""
+    env = _install_inventory_docker(entry)
+    result = entry.run("run-cleanup.sh", env_extra=env)
+    assert result.returncode == 0, result.stderr
+    assert _rmi_targets(entry) == []
+    assert "until=off" in result.stdout
+
+
+def test_run_cleanup_candidate_loop_covers_staging(entry):
+    """NFM-4802: the candidate-* retention loop (prune.sh) now runs for
+    the three staging repos too, not just prod."""
+    env = _install_inventory_docker(entry)
+    prune_stub = entry.repo / "tools" / "prod-tag-retention" / "prune.sh"
+    prune_stub.parent.mkdir(parents=True, exist_ok=True)
+    prune_stub.write_text(
+        "#!/bin/bash\nprintf 'prune %s\\n' \"$*\" >> "
+        + str(entry.docker_calls)
+        + "\nexit 0\n"
+    )
+    prune_stub.chmod(0o755)
+    result = entry.run("run-cleanup.sh", env_extra=env)
+    assert result.returncode == 0, result.stderr
+    pruned_repos = [
+        " ".join(argv).split("--repo ")[1].split(" ")[0]
+        for argv in entry.docker_argv()
+        if argv and argv[0] == "prune" and "--repo" in argv
+    ]
+    assert sorted(pruned_repos) == [
+        "nucpot-prod-api",
+        "nucpot-prod-lightrag",
+        "nucpot-prod-web",
+        "nucpot-staging-api",
+        "nucpot-staging-lightrag",
+        "nucpot-staging-web",
+    ], "candidate loop repo set wrong: %s" % pruned_repos

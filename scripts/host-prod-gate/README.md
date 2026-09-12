@@ -60,7 +60,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
 | `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
-| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health) |
+| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |
 | `probe_g2.sh` | AC verification probe (run as the desktop user) |
 | `config.json` | prod scope prefixes (names, not files) |
