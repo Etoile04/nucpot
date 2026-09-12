@@ -471,6 +471,12 @@ async def ontofuel_extract(
     schemas.extraction.ExtractedProperty fields.
     """
     # --- source_type='datasource': load content_md from DB (NFM-1487) ---
+    # NFM-4789: ``marker_ref`` keeps the DataSource UUID for the
+    # best-effort failure/skip markers. The reassignment to the display
+    # title below previously fed those markers a title string, whose
+    # UUID parse fails — silently disabling NFM-3358's failure marker
+    # for every titled datasource.
+    marker_ref = source_reference
     if source_type == "datasource":
         if db is None:
             raise ValueError("ontofuel_extract(source_type='datasource') requires a db session")
@@ -499,6 +505,7 @@ async def ontofuel_extract(
             )
         # Pre-load content; fall through to LLM extraction below.
         content = ds.content_md
+        marker_ref = str(ds.id)
         source_reference = ds.title or source_reference
 
     # Stub mode + DOI: cannot resolve DOI content in stub (NFM-636)
@@ -594,6 +601,9 @@ async def ontofuel_extract(
             )
 
         all_raw_properties: list[dict[str, Any]] = []
+        # NFM-4789: record what each chunk's LLM response looked like so an
+        # empty outcome can be attributed to a chunk (vs the whole source).
+        chunk_outcomes: list[str] = []
         for idx, chunk in enumerate(chunks):
             chunk_message = (
                 f"Extract all nuclear material properties from the following file"
@@ -623,19 +633,45 @@ async def ontofuel_extract(
             # Parse response — expect a list of dicts
             if isinstance(raw_result, list):
                 chunk_properties = raw_result
+                outcome = f"list:{len(raw_result)}"
             elif isinstance(raw_result, dict) and "properties" in raw_result:
                 chunk_properties = raw_result["properties"]
+                outcome = f"dict.properties:{len(chunk_properties)}"
             elif isinstance(raw_result, dict) and "data" in raw_result:
                 chunk_properties = raw_result["data"]
+                outcome = f"dict.data:{len(chunk_properties)}"
             else:
                 chunk_properties = [raw_result] if raw_result else []
+                outcome = f"other:{len(chunk_properties)}"
+            chunk_outcomes.append(outcome)
 
             all_raw_properties.extend(chunk_properties)
 
         raw_properties = all_raw_properties
 
         # Post-process with PhaseMapper and PropertyCategory
-        return _post_process_extracted(raw_properties, source_reference)
+        processed = _post_process_extracted(raw_properties, source_reference)
+
+        # NFM-4789: silent zero is the defect. A successful LLM round with
+        # zero parseable properties used to return [] with no log line and
+        # no marker — indistinguishable from "nothing to extract" (prod:
+        # lit 7b41e85a, single 967-char segment, 0.2-1.5s tasks,
+        # extracted=0). Emit an explicit, greppable skip reason and a
+        # best-effort ``no_properties`` DataSource marker instead.
+        if not processed:
+            skip_reason = (
+                f"no_parseable_properties: chunks={len(chunks)} "
+                f"content_len={len(content)} "
+                f"raw_count={len(raw_properties)} "
+                f"outcomes={chunk_outcomes}"
+            )
+            logger.warning(
+                "LLM extraction skip for %s: %s",
+                source_reference,
+                skip_reason,
+            )
+            _mark_extraction_no_properties(marker_ref, skip_reason)
+        return processed
 
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         # Carry the original exception class + args (use !r — NFM-3358) so
@@ -649,7 +685,9 @@ async def ontofuel_extract(
         # NFM-3358: also surface a parse_error marker so downstream consumers
         # can distinguish "completed with zero candidates" (genuinely empty
         # PDF) from "LLM was unavailable" (infrastructure failure).
-        _mark_extraction_failure(source_reference, exc)
+        # NFM-4789: key the marker on ``marker_ref`` (the DataSource UUID),
+        # not the retitled display name.
+        _mark_extraction_failure(marker_ref, exc)
         return []
 
 
@@ -663,6 +701,40 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
     skipped. The function is best-effort: any DB/import error is swallowed
     so it never breaks the caller's exception flow.
     """
+    _annotate_datasource(
+        source_reference,
+        parse_status="llm_failed",
+        detail=f"LLM extraction failed: {exc!r}",
+    )
+
+
+def _mark_extraction_no_properties(source_reference: str, reason: str) -> None:
+    """Best-effort write of a ``no_properties`` skip marker (NFM-4789).
+
+    Companion to :func:`_mark_extraction_failure` for the *successful LLM
+    round, zero parseable properties* case: ``parse_status='no_properties'``
+    plus the skip ``reason`` in ``parse_error``, so a silent zero is visible
+    on the DataSource record without polluting the failure status vocabulary.
+    Same best-effort contract: non-UUID refs are skipped and any DB/import
+    error is swallowed. Note ``process_literature`` overwrites
+    ``parse_status='completed'`` at its Step-6 boundary — for that flow the
+    worker-log warning is the authoritative skip-reason record.
+    """
+    _annotate_datasource(
+        source_reference,
+        parse_status="no_properties",
+        detail=f"Extraction skip: {reason}",
+    )
+
+
+def _annotate_datasource(source_reference: str, *, parse_status: str, detail: str) -> None:
+    """Shared best-effort DataSource annotation behind the NFM-3358 / NFM-4789 markers.
+
+    Writes ``parse_status`` + truncated ``detail`` to the DataSource row
+    whose id equals ``source_reference`` (UUID-shaped refs only), on the
+    default session factory, off the caller's critical path. Every error
+    path is swallowed — markers must never break extraction.
+    """
     import asyncio
     import uuid as _uuid
 
@@ -670,8 +742,6 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
         ds_id = _uuid.UUID(str(source_reference))
     except (ValueError, AttributeError, TypeError):
         return
-
-    parse_status_llm_failed = "llm_failed"
 
     async def _update() -> None:
         try:
@@ -681,26 +751,26 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
             from nfm_db.models.source import DataSource
         except Exception:  # pragma: no cover — defensive
             logger.debug(
-                "_mark_extraction_failure: import failure (non-fatal)",
+                "_annotate_datasource: import failure (non-fatal)",
                 exc_info=True,
             )
             return
 
         try:
-            error_text = f"LLM extraction failed: {exc!r}"[:500]
+            error_text = detail[:500]
             async with get_session_factory()() as session:
                 await session.execute(
                     update(DataSource)
                     .where(DataSource.id == ds_id)
                     .values(
-                        parse_status=parse_status_llm_failed,
+                        parse_status=parse_status,
                         parse_error=error_text,
                     )
                 )
                 await session.commit()
         except Exception:  # pragma: no cover — defensive
             logger.debug(
-                "_mark_extraction_failure: DB write failure for %s (non-fatal)",
+                "_annotate_datasource: DB write failure for %s (non-fatal)",
                 ds_id,
                 exc_info=True,
             )
@@ -711,7 +781,7 @@ def _mark_extraction_failure(source_reference: str, exc: BaseException) -> None:
         try:
             asyncio.run(_update())
         except Exception:  # pragma: no cover — defensive
-            logger.debug("_mark_extraction_failure: sync fallback failed", exc_info=True)
+            logger.debug("_annotate_datasource: sync fallback failed", exc_info=True)
     else:
         # ``create_task`` may log unhandled exceptions.  Attach a no-op
         # done callback so the task is referenced and the runtime never
