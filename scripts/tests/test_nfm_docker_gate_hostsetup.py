@@ -1102,6 +1102,32 @@ def _install_inventory_docker(entry):
         "exit 0\n"
     )
     entry._write_executable("docker", body)
+    # Portable stand-in for macOS date(1) — CI's unit jobs run on
+    # ubuntu-latest where `date -j -f`/`date -r EPOCH` do not exist (the
+    # real entry runs only on the macOS prod host, but the selection
+    # matrix must be exercised on every runner). Covers the three shapes
+    # run-cleanup.sh uses; everything else passes through to /bin/date.
+    entry._write_executable(
+        "date",
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        '  *"-j -f"*)\n'
+        '    python3 - "$4" <<\'PYDATE\'\n'
+        "import sys, datetime\n"
+        "s = sys.argv[1][:19].replace('T', ' ')\n"
+        "dt = datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')\n"
+        "print(int(dt.timestamp()))\n"
+        "PYDATE\n"
+        "    ;;\n"
+        '  *" -r "*)\n'
+        '    python3 - "$2" <<\'PYDATE\'\n'
+        "import sys, datetime\n"
+        "print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime('%Y-%m-%d %H:%M:%S %z'))\n"
+        "PYDATE\n"
+        "    ;;\n"
+        '  *) exec /bin/date "$@" ;;\n'
+        "esac\n",
+    )
     return {
         "D_ROWS_NOTRUNC": rows_no_trunc,
         "D_ROWS_4F": rows_4f,
