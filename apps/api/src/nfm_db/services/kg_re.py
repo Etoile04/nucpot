@@ -96,6 +96,13 @@ class BuildResult:
     review_queue_items: int = 0
     ingest_nodes: tuple[KGNode, ...] = ()
     ingest_edges: tuple[KGEdge, ...] = ()
+    # NFM-4736: id → label for EVERY node the build resolved (new AND
+    # matched). ``ingest_nodes`` only carries new nodes, so a label map
+    # built from it alone renders edges that touch a matched node with a
+    # bare UUID endpoint — LightRAG's extraction LLM then mints junk
+    # entities named after those UUIDs (33 such rows in the prod entity
+    # vdb).  Ingest consumers must prefer this map.
+    node_labels: dict[uuid.UUID, str] = field(default_factory=dict)
 
     @property
     def total_nodes_processed(self) -> int:
@@ -125,7 +132,14 @@ def dispatch_build_result(build_result: BuildResult | None) -> int:
     try:
         from nfm_db.services.kg_lightrag_sync import fire_ingest_to_lightrag
 
-        node_labels = {n.id: n.label for n in build_result.ingest_nodes}
+        # NFM-4736: prefer the full id → label map (new + matched nodes).
+        # Falling back to an ingest_nodes-only map makes edges that touch
+        # a matched node serialize a bare UUID endpoint.
+        node_labels: dict[uuid.UUID, str] = (
+            dict(build_result.node_labels)
+            if build_result.node_labels
+            else {n.id: n.label for n in build_result.ingest_nodes}
+        )
         fire_ingest_to_lightrag(
             nodes=list(build_result.ingest_nodes),
             edges=list(build_result.ingest_edges),
@@ -474,6 +488,7 @@ class GraphBuilder:
         node_map: dict[str, KGNode] = {}
         new_nodes: list[KGNode] = []
         new_edges: list[KGEdge] = []
+        all_labels: dict[uuid.UUID, str] = {}
         nodes_created = 0
         nodes_matched = 0
         review_count = 0
@@ -497,11 +512,15 @@ class GraphBuilder:
             if existing is not None:
                 node_map[entity.label] = existing
                 nodes_matched += 1
+                if existing.id is not None and existing.label:
+                    all_labels[existing.id] = existing.label
             else:
                 new_node = await self._create_node(entity)
                 node_map[entity.label] = new_node
                 new_nodes.append(new_node)
                 nodes_created += 1
+                if new_node.id is not None and new_node.label:
+                    all_labels[new_node.id] = new_node.label
 
                 if entity.confidence < REVIEW_CONFIDENCE_THRESHOLD:
                     # Phase 3 unified review model (ADR-NFM-796):
@@ -569,6 +588,7 @@ class GraphBuilder:
             review_queue_items=review_count,
             ingest_nodes=tuple(new_nodes),
             ingest_edges=tuple(new_edges),
+            node_labels=all_labels,
         )
 
         logger.info(

@@ -18,6 +18,7 @@ enforcement enabled) and patches only EntityLinker, AGE sync, and LightRAG.
 from __future__ import annotations
 
 import ast
+import re
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -676,6 +677,115 @@ def _build_calls_in_function(
 
     _Visitor().visit(func)
     return called, build_lines
+
+
+class TestBuildResultNodeLabels:
+    """NFM-4736: BuildResult.node_labels must cover MATCHED nodes too.
+
+    The LightRAG ingest serializes edges as ``[rel] <source> -> <target>``
+    using a ``node_id -> label`` map.  Pre-fix, both call sites
+    (dispatch_build_result and the literature inline ingest) built that
+    map from ``ingest_nodes`` (new nodes only).  Edges touching a
+    MATCHED pre-existing node — the common case on re-extract, where
+    UO2 already exists and only new properties are created — rendered
+    the endpoint as a bare UUID.  LightRAG's extraction LLM then minted
+    entities named after those UUIDs (33 junk rows in the prod entity
+    vdb, all created post-#1330), degrading hybrid recall.
+    """
+
+    @pytest.mark.asyncio
+    async def test_node_labels_cover_matched_nodes_not_just_new(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Extraction matching an existing UO2 node and creating a new
+        Property must label BOTH endpoints in BuildResult.node_labels."""
+        existing_uo2 = KGNode(
+            id=uuid.uuid4(),
+            label="UO2",
+            node_type="Material",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(existing_uo2)
+        await db_session.flush()
+
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "property": "thermal_conductivity",
+                "confidence": 0.95,
+            },
+        ]
+
+        result = await builder.build_from_extraction(extracted)
+
+        assert existing_uo2.id in result.node_labels, (
+            "matched node id missing from node_labels — edge serialization "
+            "would render it as a bare UUID and pollute the LightRAG entity "
+            "graph with UUID-named junk entities"
+        )
+        assert result.node_labels[existing_uo2.id] == "UO2"
+        new_ids = {n.id for n in result.ingest_nodes}
+        assert new_ids, "expected at least one new node (the Property)"
+        for node_id in new_ids:
+            assert node_id in result.node_labels
+
+    @pytest.mark.asyncio
+    async def test_edge_serialization_renders_labels_not_uuids(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """End-to-end guard: serializing the build result with
+        BuildResult.node_labels must never emit a UUID endpoint."""
+        from nfm_db.services.kg_lightrag_sync import serialize_build_result
+
+        existing_uo2 = KGNode(
+            id=uuid.uuid4(),
+            label="UO2",
+            node_type="Material",
+            corpus_id="test-corpus",
+            review_status="approved",
+        )
+        db_session.add(existing_uo2)
+        await db_session.flush()
+
+        builder = GraphBuilder(
+            session=db_session,
+            corpus_id="test-corpus",
+            sync_to_age=False,
+        )
+
+        extracted = [
+            {
+                "material_name": "UO2",
+                "property": "thermal_conductivity",
+                "confidence": 0.95,
+            },
+        ]
+
+        result = await builder.build_from_extraction(extracted)
+
+        text = serialize_build_result(
+            nodes=list(result.ingest_nodes),
+            edges=list(result.ingest_edges),
+            node_labels=result.node_labels,
+        )
+
+        edge_lines = [line for line in text.splitlines() if "->" in line and line.startswith("[")]
+        assert edge_lines, "expected at least one serialized edge line"
+        uuid_re = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+        for line in edge_lines:
+            assert not uuid_re.search(line), f"edge line rendered a UUID endpoint: {line!r}"
+        assert any("UO2" in line for line in edge_lines), (
+            "matched UO2 endpoint must render by label"
+        )
 
 
 class TestEntityLinkerDuplicateLabels:
