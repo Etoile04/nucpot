@@ -165,8 +165,31 @@ def serialize_build_result(
         sections.append(serialize_kg_node(node))
 
     for edge in edges:
-        source_label = node_labels.get(edge.source_node_id, str(edge.source_node_id))
-        target_label = node_labels.get(edge.target_node_id, str(edge.target_node_id))
+        # NFM-4804: NEVER render a bare UUID endpoint. The old
+        # ``node_labels.get(id, str(id))`` fallback put literal UUID
+        # tokens into the ingested text, and LightRAG's extraction LLM
+        # minted junk entities named after them (33 rows pre-#1335 plus
+        # 17 residual rows on 2026-09-12 from an ingest that raced the
+        # #1335 deploy). An endpoint whose label is missing (or empty)
+        # carries no retrievable semantics, so the edge is dropped from
+        # the document instead — the GraphBuilder's node_labels map plus
+        # the _create_edge dedup back-fill are responsible for keeping
+        # the map complete so legitimate edges still serialize.
+        source_label = node_labels.get(edge.source_node_id)
+        target_label = node_labels.get(edge.target_node_id)
+        if not source_label or not target_label:
+            logger.warning(
+                "Skipping LightRAG serialization of edge %s (%s): endpoint "
+                "label missing from node_labels (source=%s -> %s, "
+                "target=%s -> %s)",
+                edge.id,
+                edge.relation_type,
+                edge.source_node_id,
+                source_label,
+                edge.target_node_id,
+                target_label,
+            )
+            continue
         sections.append(serialize_kg_edge(edge, source_label, target_label))
 
     return "\n\n".join(sections)

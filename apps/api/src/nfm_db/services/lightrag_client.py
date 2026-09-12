@@ -633,6 +633,63 @@ class LightRAGClient:
         except httpx.HTTPError as exc:
             raise LightRAGClientError(f"LightRAG query failed: {exc}") from exc
 
+    async def query_data(
+        self,
+        *,
+        query: str,
+        mode: str = "mix",
+    ) -> dict[str, Any]:
+        """Query the LightRAG index for structured retrieval data only.
+
+        NFM-4804 item 2: hits the sidecar's ``POST /query/data`` endpoint
+        (LightRAG 1.5.4 ``aquery_data`` — ``only_need_context=True``, no LLM
+        generation) which ALWAYS includes a ``data.references`` array.  This
+        is the refill vehicle for the cache-hit degradation where
+        ``POST /query`` replays the cached answer text with an empty
+        reference list: the answer stays cached-fast while citations are
+        rebuilt from fresh retrieval at a fraction of the LLM cost.
+
+        Args:
+            query: Natural language query.
+            mode: Query mode (local, global, hybrid, mix, naive).
+
+        Returns:
+            Parsed JSON envelope, e.g.::
+
+                {
+                    "status": "success",
+                    "message": "...",
+                    "data": {
+                        "entities": [...],
+                        "relationships": [...],
+                        "chunks": [...],
+                        "references": [{"reference_id": "1", "file_path": "..."}],
+                    },
+                }
+
+        Raises:
+            LightRAGClientError: On server errors or connection failures.
+        """
+        payload: dict[str, Any] = {
+            "query": query,
+            "mode": mode,
+        }
+
+        try:
+            response = await self._http_client.post(
+                "/query/data",
+                json=payload,
+                timeout=self.query_timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /query/data failed: HTTP {exc.response.status_code} - {exc.response.text}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(f"LightRAG /query/data failed: {exc}") from exc
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

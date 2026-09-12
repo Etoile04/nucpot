@@ -153,9 +153,43 @@ class LightRAGProvider(RAGProvider):
         # not coerce JSON null, hence the ``or`` chain).  The fallback
         # provider never returns cache hits so its default stays False.
         was_cached = bool(result.get("cached") or result.get("cache_hit"))
+        response_text = result.get("response") or ""
+        references = result.get("references") or []
+        # NFM-4804 item 2: an LLM-response-cache hit can replay the answer
+        # text with an empty reference list (prod 2026-09-12: the canonical
+        # 「UO2 热导率」 query served 10 refs on first execution, 0 on the
+        # second).  The stock 1.5.4 sidecar cannot be patched, so on exactly
+        # that degraded path — cached answer + references requested +
+        # non-empty answer + empty references — rebuild the citations via
+        # the retrieval-only ``/query/data`` endpoint (no LLM call).  The
+        # refill is best-effort: a failure keeps the cached answer serving
+        # with honestly-empty references rather than failing the query.
+        if (
+            was_cached
+            and client_kwargs.get("include_references")
+            and references == []
+            and response_text.strip()
+        ):
+            try:
+                data_result = await self._client.query_data(
+                    query=query,
+                    mode=client_kwargs.get("mode") or "mix",
+                )
+            except LightRAGClientError:
+                logger.warning(
+                    "LightRAG cache-hit reference refill via /query/data "
+                    "failed; serving cached answer without references",
+                    exc_info=True,
+                )
+                data_result = {}
+            data_payload = data_result.get("data")
+            if isinstance(data_payload, dict):
+                refilled = data_payload.get("references") or []
+                if refilled:
+                    references = refilled
         return RAGQueryResult(
-            response=result.get("response", ""),
-            references=result.get("references", []),
+            response=response_text,
+            references=references,
             entities=result.get("entities", []),
             relationships=result.get("relationships", []),
             provider=self.name,

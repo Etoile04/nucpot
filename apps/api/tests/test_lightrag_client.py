@@ -476,6 +476,130 @@ class TestQuery:
 
 
 # ---------------------------------------------------------------------------
+# Query data (retrieval-only, NFM-4804 item 2)
+# ---------------------------------------------------------------------------
+
+
+class TestQueryData:
+    """Tests for the retrieval-only /query/data endpoint wrapper.
+
+    NFM-4804 item 2: the sidecar's llm_response_cache replays the answer
+    text on a hit without a reference list our API layer can reuse. The
+    refill vehicle is LightRAG 1.5.4's ``POST /query/data`` — the
+    ``aquery_data`` path runs with ``only_need_context=True`` (no LLM
+    call) and always includes a references array.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_data_posts_query_and_mode(self) -> None:
+        """query_data should POST {query, mode} to /query/data."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "entities": [],
+                    "relationships": [],
+                    "chunks": [],
+                    "references": [
+                        {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+                    ],
+                },
+            },
+            request=httpx.Request("POST", "http://localhost:9621/query/data"),
+        )
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_post:
+            result = await client.query_data(query="UO2 热导率", mode="mix")
+
+        assert result["status"] == "success"
+        assert result["data"]["references"] == [
+            {"reference_id": "1", "file_path": "Terricbras2025.pdf"}
+        ]
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["json"] == {"query": "UO2 热导率", "mode": "mix"}
+
+    @pytest.mark.asyncio
+    async def test_query_data_defaults_to_mix_mode(self) -> None:
+        """query_data without an explicit mode should default to mix."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            200,
+            json={"status": "success", "data": {"references": []}},
+            request=httpx.Request("POST", "http://localhost:9621/query/data"),
+        )
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_post:
+            await client.query_data(query="test query")
+
+        assert mock_post.call_args[1]["json"]["mode"] == "mix"
+
+    @pytest.mark.asyncio
+    async def test_query_data_server_error_raises(self) -> None:
+        """query_data should raise LightRAGClientError on server errors."""
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            LightRAGClient,
+            LightRAGClientError,
+        )
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = httpx.Response(
+            500,
+            json={"detail": "retrieval failed"},
+            request=httpx.Request("POST", "http://localhost:9621/query/data"),
+        )
+
+        with (
+            patch.object(
+                client._http_client,  # type: ignore[attr-defined]
+                "post",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(LightRAGClientError),
+        ):
+            await client.query_data(query="test query")
+
+    @pytest.mark.asyncio
+    async def test_query_data_uses_query_timeout(self) -> None:
+        """The /query/data POST must carry the query budget, not the ingest one."""
+        from nfm_db.services.lightrag_client import LightRAGClient  # type: ignore[import-untyped]
+
+        client = LightRAGClient(host="localhost", port=9621)
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = lambda: {"status": "success", "data": {}}
+        mock_response.raise_for_status = lambda: None
+
+        with patch.object(
+            client._http_client,  # type: ignore[attr-defined]
+            "post",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_post:
+            await client.query_data(query="what is UO2?")
+
+        assert mock_post.call_args.kwargs["timeout"] == client.query_timeout
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle (close, context manager)
 # ---------------------------------------------------------------------------
 

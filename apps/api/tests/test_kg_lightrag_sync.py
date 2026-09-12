@@ -196,17 +196,20 @@ class TestSerializeBuildResult:
 
     def test_nodes_and_edges(self) -> None:
         node = _make_node(label="UO2")
+        target_id = uuid.uuid4()
         edge = _make_edge(
             source_node_id=node.id,
-            target_node_id=uuid.uuid4(),
+            target_node_id=target_id,
             relation_type="relatedTo",
         )
-        node_labels = {node.id: "UO2"}
+        # NFM-4804: both endpoints must carry labels — an unmapped endpoint
+        # now causes the edge to be SKIPPED (never UUID-rendered).
+        node_labels = {node.id: "UO2", target_id: "ZrO2"}
 
         text = serialize_build_result([node], [edge], node_labels)
 
         assert "[Material] UO2" in text
-        assert "[relatedTo] UO2 ->" in text
+        assert "[relatedTo] UO2 -> ZrO2" in text
 
     def test_empty_result(self) -> None:
         text = serialize_build_result([], [], {})
@@ -222,7 +225,18 @@ class TestSerializeBuildResult:
         # Blank line between sections
         assert "\n\n" in text
 
-    def test_uuid_fallback_for_missing_labels(self) -> None:
+    def test_unmapped_endpoint_skips_edge_instead_of_uuid_rendering(self) -> None:
+        """NFM-4804: an edge whose endpoint label is missing from the map
+        must be SKIPPED, never rendered with a bare UUID endpoint.
+
+        The old ``node_labels.get(id, str(id))`` fallback was the minting
+        surface for junk UUID-named entities in the LightRAG entity vdb
+        (33 rows pre-#1335, 17 residual rows on 2026-09-12 via a
+        deploy-raced ingest): LightRAG's extraction LLM reads the literal
+        UUID token and creates an entity named after it. An unlabeled
+        endpoint carries no retrievable semantics, so dropping the edge
+        loses nothing and removes the pollution vector.
+        """
         node = _make_node(label="UO2")
         unknown_id = uuid.uuid4()
         edge = _make_edge(
@@ -232,7 +246,35 @@ class TestSerializeBuildResult:
         node_labels = {node.id: "UO2"}
 
         text = serialize_build_result([node], [edge], node_labels)
-        assert str(unknown_id) in text
+        assert str(unknown_id) not in text, (
+            "edge endpoint rendered as a bare UUID — this is the junk-entity "
+            "minting surface (NFM-4736 / NFM-4804)"
+        )
+        # The edge line is dropped entirely; the node section survives.
+        assert not any(
+            line.startswith("[") and "->" in line for line in text.splitlines()
+        ), "edge with an unmapped endpoint must not be serialized"
+        assert "UO2" in text
+
+    def test_both_endpoints_mapped_still_serializes(self) -> None:
+        node = _make_node(label="UO2")
+        other = _make_node(label="ZrO2")
+        edge = _make_edge(source_node_id=node.id, target_node_id=other.id)
+        node_labels = {node.id: "UO2", other.id: "ZrO2"}
+
+        text = serialize_build_result([node], [edge], node_labels)
+        assert "[relatedTo] UO2 -> ZrO2" in text
+
+    def test_empty_string_label_also_skips_edge(self) -> None:
+        """An empty-string label renders ``[rel]  -> X`` — junk text that
+        invites the extraction LLM to hallucinate an entity name."""
+        node = _make_node(label="UO2")
+        other = _make_node(label="ZrO2")
+        edge = _make_edge(source_node_id=node.id, target_node_id=other.id)
+        node_labels = {node.id: "UO2", other.id: ""}
+
+        text = serialize_build_result([node], [edge], node_labels)
+        assert "->" not in text
 
 
 # ---------------------------------------------------------------------------

@@ -271,6 +271,10 @@ services:
       # operator ever needs the JSON backends back, they must edit this
       # file — that friction is the point; the file-backed stores are
       # the structural root cause of both corpus wipes.
+      # NFM-4804: the two stale lines were deleted from docker/.env.prod
+      # on the prod host (2026-09-13). The file is gitignored — that
+      # cleanup is operational and cannot ride a PR; if a fresh host
+      # provisioning ever regenerates them, this pin is still the wall.
       LIGHTRAG_KV_STORAGE: PGKVStorage
       LIGHTRAG_DOC_STATUS_STORAGE: PGDocStatusStorage
       # NFM-4492 follow-up (rerank): local Qwen3-Reranker-0.6B (Q8_0) served by

@@ -59,8 +59,9 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
 | `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
+| `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; restarts `lightrag` through `run-recovery.sh` with a 30-min cooldown) |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
-| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup) |
+| `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup; lightrag-watchdog — NFM-4804, the only one whose launchd `UserName` is nfmdeploy rather than root) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |
 | `probe_g2.sh` | AC verification probe (run as the desktop user) |
 | `config.json` | prod scope prefixes (names, not files) |

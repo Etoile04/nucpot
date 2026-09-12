@@ -62,3 +62,7 @@ docker/.deploy-events.jsonl.quarantine/
 
 # NFM-3794: Lighthouse a11y raw reports (regenerate via pnpm a11y:lighthouse)
 apps/web/qa-artifacts/lighthouse/
+
+# NFM-4804: mimosa agent-tooling hook-state dirs (session data written by
+# automation operating on this checkout — never repo content)
+.mimosa/
