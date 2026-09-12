@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from shared_docker_config import snapshot_shared_config as _shared_docker_config_snapshot
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = SCRIPT_DIR / "check_prod_image_tag.py"
@@ -291,6 +292,15 @@ def run_deploy_prod(
             "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
             "DEPLOY_SHA": deploy_sha,
             "DOCKER_STUB_LOG": str(docker_log),
+            # NFM-4807: sandbox the DOCKER_CONFIG wiring — executing the
+            # deploy body under a fake HOME must never write the shared
+            # production /tmp literal (the run 34705930216 race). The
+            # G2 var dir must be pinned too: on the prod Mac the real
+            # /usr/local/var/nfm-g2 exists and the lock write dies with
+            # EACCES before the test's abort point (NFM_G2_VAR_DIR is
+            # the deploy script's documented test hook).
+            "NFMD_DOCKER_CONFIG": str(home.parent / "dc-config"),
+            "NFM_G2_VAR_DIR": str(home.parent / "gate-var"),
         }
     )
     script = home / "Projects" / "nucpot" / "scripts" / "deploy_prod.sh"
@@ -308,6 +318,7 @@ def test_deploy_prod_sh_aborts_before_build_when_env_prod_pins_sha(tmp_path):
         tmp_path, f"PROD_IMAGE_TAG={OLD_SHA}"
     )
     skip_if_host_docker_lacks_compose(bin_dir)
+    shared_dc_before = _shared_docker_config_snapshot()
     proc = run_deploy_prod(home, bin_dir, docker_log, NEW_SHA)
     assert proc.returncode == 1
     combined = proc.stdout + proc.stderr
@@ -315,6 +326,12 @@ def test_deploy_prod_sh_aborts_before_build_when_env_prod_pins_sha(tmp_path):
     assert "Building nucpot-prod-api" not in proc.stdout
     if docker_log.exists():
         assert "build" not in docker_log.read_text()
+    # NFM-4807: the abort fires AFTER the DOCKER_CONFIG wiring, so this is
+    # exactly the window where the old code poisoned the shared literal.
+    assert (tmp_path / "dc-config").is_dir(), "sandbox must absorb the wiring"
+    assert _shared_docker_config_snapshot() == shared_dc_before, (
+        "deploy under test sandbox must not touch /tmp/nfm848-no-cred-docker-config"
+    )
 
 
 def test_env_example_never_pins_sha():

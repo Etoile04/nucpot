@@ -470,9 +470,16 @@ jobs:
             # HOME set, which made the earlier \${USER} form expand to an
             # empty string and `mkdir -p ""` fail. Use literal paths so the
             # heredoc never depends on env inheritance.
-            export DOCKER_CONFIG=/tmp/nfm848-no-cred-docker-config
-            mkdir -p /tmp/nfm848-no-cred-docker-config
-            printf '{}' > /tmp/nfm848-no-cred-docker-config/config.json
+            # NFM-4807: per-run PRIVATE DOCKER_CONFIG (mktemp). The old
+            # shared /tmp/nfm848-no-cred-docker-config literal was a race magnet — concurrent
+            # deploy/pytest sessions re-pointed its compose-plugin
+            # symlink at garbage-collected tmpdir targets and killed run
+            # 34705930216 mid-migrate (exit 125). This step never
+            # invokes `docker compose`, so no plugin link is needed;
+            # the trap keeps the scratch dir from piling up.
+            export DOCKER_CONFIG="\$(mktemp -d "\${TMPDIR:-/tmp}/nfm-ci-no-cred-docker-config.XXXXXXXX")"
+            trap 'rm -rf "\$DOCKER_CONFIG"' EXIT
+            printf '{}' > "\$DOCKER_CONFIG/config.json"
             # NFM-4333: ADR-013 G2 wall — the socket watchdog forces the
             # desktop docker socket 060 group-only (owner has no access),
             # and this scratch DOCKER_CONFIG drops the nfm-ro context the
