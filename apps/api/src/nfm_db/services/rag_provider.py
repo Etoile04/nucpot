@@ -152,21 +152,30 @@ class LightRAGProvider(RAGProvider):
         # own ``cached`` / ``cache_hit`` hint (NFM-4522: ``dict.get`` does
         # not coerce JSON null, hence the ``or`` chain).  The fallback
         # provider never returns cache hits so its default stays False.
+        # NOTE (NFM-4804 rev 2): the pinned lightrag-hku==1.5.4 ``/query``
+        # response model is ``{response, references?}`` only — it NEVER
+        # carries a cache hint, so against the real sidecar this stays
+        # False even on 0.08s cache-hit replays (verified prod
+        # rag_access_log 2026-09-12T21:14Z).  It must not gate behavior.
         was_cached = bool(result.get("cached") or result.get("cache_hit"))
         response_text = result.get("response") or ""
         references = result.get("references") or []
         # NFM-4804 item 2: an LLM-response-cache hit can replay the answer
         # text with an empty reference list (prod 2026-09-12: the canonical
         # 「UO2 热导率」 query served 10 refs on first execution, 0 on the
-        # second).  The stock 1.5.4 sidecar cannot be patched, so on exactly
-        # that degraded path — cached answer + references requested +
-        # non-empty answer + empty references — rebuild the citations via
-        # the retrieval-only ``/query/data`` endpoint (no LLM call).  The
-        # refill is best-effort: a failure keeps the cached answer serving
-        # with honestly-empty references rather than failing the query.
+        # second).  The stock 1.5.4 sidecar cannot be patched, so rebuild
+        # the citations via the retrieval-only ``/query/data`` endpoint
+        # (no LLM call) whenever the caller asked for references, got a
+        # non-empty answer, and the response carries none.  Gating on
+        # ``was_cached`` (rev 1) made the refill unreachable in production
+        # because the sidecar never emits that hint; the observable
+        # degradation is the gate.  On a fresh no-match query the extra
+        # retrieval-only pass is bounded and non-fatal, and an honest
+        # empty stays empty (``/query/data`` always includes references).
+        # A refill failure keeps the answer serving with the references it
+        # had rather than failing the query.
         if (
-            was_cached
-            and client_kwargs.get("include_references")
+            client_kwargs.get("include_references")
             and references == []
             and response_text.strip()
         ):
