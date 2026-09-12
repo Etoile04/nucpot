@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NFM-4804 (ADR-013 G2) — LightRAG pipeline-stall watchdog.
+
+  Installed by scripts/host-prod-gate/host_setup.sh to
+  /Library/LaunchDaemons/com.nfm.g2.lightrag-watchdog.plist.
+  Fires start-lightrag-watchdog.sh every 5 minutes; the script itself is
+  false-positive averse (wedge signature = "Failed to extract document"
+  immediately before "Enqueued document processing pipeline stopped",
+  within the current container boot) and cooldown-gated, so an
+  install/load does not imply an immediate restart.
+
+  Convention (see com.nfm.g2.cleanup-daily.plist): NO RunAtLoad and NO
+  KeepAlive — the first fire happens one interval after load, avoiding
+  boot-time races with docker daemon startup.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.g2.lightrag-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/lib/nfm-g2/start-lightrag-watchdog.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>UserName</key>
+    <string>nfmdeploy</string>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/lightrag-watchdog-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/lightrag-watchdog-launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

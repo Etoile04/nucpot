@@ -204,7 +204,7 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog mirror_health; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health start-lightrag-watchdog; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place
@@ -241,16 +241,25 @@ chmod 0440 /etc/sudoers.d/nfm-prod-deploy
 # =============================================================================
 log "installing + bootstrapping LaunchDaemons"
 mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
+# NFM-4804: the lightrag-watchdog daemon runs as ${DEPLOY_USER} but
+# ${LOG_DIR} is root-owned — its decision log, cooldown state, and launchd
+# stdio file must be pre-created deploy-writable or the first probe tick
+# EACCES-aborts under set -e before any recovery can fire.
+for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log; do
+  touch "${LOG_DIR}/${WD_FILE}"
+  chown "${DEPLOY_USER}:wheel" "${LOG_DIR}/${WD_FILE}"
+  chmod 0644 "${LOG_DIR}/${WD_FILE}"
+done
 # NFM-4805: capture the restart instant so the verdict wait below only
 # accepts records written by the NEW mirror-health process (a verdict from
 # the pre-restart process is fleet-accurate but lets section 9's G2.7 race
 # ahead of the first post-restart tick).
 BOOT_ISO="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily com.nfm.g2.lightrag-watchdog; do
   install -m 0644 -o root -g wheel "${SRC}/launchd/${PLIST}.plist" "${PLIST_DIR}/${PLIST}.plist"
   launchctl bootout "system/${PLIST}" 2>/dev/null || true
 done
-for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily; do
+for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily com.nfm.g2.lightrag-watchdog; do
   launchctl bootstrap system "${PLIST_DIR}/${PLIST}.plist"
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done
