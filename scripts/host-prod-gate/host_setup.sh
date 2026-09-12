@@ -241,6 +241,11 @@ chmod 0440 /etc/sudoers.d/nfm-prod-deploy
 # =============================================================================
 log "installing + bootstrapping LaunchDaemons"
 mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
+# NFM-4805: capture the restart instant so the verdict wait below only
+# accepts records written by the NEW mirror-health process (a verdict from
+# the pre-restart process is fleet-accurate but lets section 9's G2.7 race
+# ahead of the first post-restart tick).
+BOOT_ISO="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watchdog com.nfm.g2.mirror-health com.nfm.g2.cleanup-daily; do
   install -m 0644 -o root -g wheel "${SRC}/launchd/${PLIST}.plist" "${PLIST_DIR}/${PLIST}.plist"
   launchctl bootout "system/${PLIST}" 2>/dev/null || true
@@ -249,6 +254,46 @@ for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watch
   launchctl bootstrap system "${PLIST_DIR}/${PLIST}.plist"
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done
+
+# NFM-4805: the mirror-health watchdog's first tick lands up to ~10s after
+# bootstrap (sequential per-mirror probes, 5s timeout each). probe_g2.sh's
+# G2.7 reads the LATEST verdict record (alarm|recovery) — without this wait,
+# a rerun's probe races the first tick and judges the PRE-restart latch.
+# Bounded at 30s; on timeout warn and continue (if the watchdog is truly
+# dead, the section-9 probe fails with its own diagnostics).
+log "waiting for first post-restart mirror-health verdict"
+VERDICT_SEEN=0
+for _ in $(seq 1 30); do
+  if python3 -B - "${LOG_DIR}/mirror-health.log" "${BOOT_ISO}" <<'PY'
+import datetime
+import json
+import sys
+
+path, boot_iso = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+except FileNotFoundError:
+    sys.exit(1)
+boot = datetime.datetime.fromisoformat(boot_iso)
+for line in reversed(lines):
+    try:
+        record = json.loads(line)
+    except ValueError:
+        continue
+    if record.get("event") not in ("alarm", "recovery"):
+        continue
+    try:
+        when = datetime.datetime.fromisoformat(record.get("ts", ""))
+    except ValueError:
+        continue
+    sys.exit(0 if when >= boot else 1)
+sys.exit(1)
+PY
+  then VERDICT_SEEN=1; break; fi
+  sleep 1
+done
+[ "${VERDICT_SEEN}" -eq 1 ] || log "WARNING: no mirror-health verdict within 30s of bootstrap — G2.7 may judge a pre-restart record; inspect ${LOG_DIR}/mirror-health.log"
 
 log "waiting for gate sockets"
 for _ in $(seq 1 30); do

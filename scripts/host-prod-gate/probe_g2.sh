@@ -156,44 +156,39 @@ else
 fi
 
 # ---- AC-G2.7: NFM-4587 mirror health (≥2 mirrors returning 200/401) ----------
-# probe_g2.sh reads the LATEST alarm record from /var/log/nfm-g2/mirror-health.log.
-# The mirror-health watchdog (launchd com.nfm.g2.mirror-health) writes one
-# alarm record per tick when below threshold OR when the prod allowlist mirror
-# is dark. Heartbeat verdict is the freshest record; older alarms are noise
-# (a recovered alarm appears as a missing record after the watchdog suppresses
-# the next alarm — verified via latest_alarm returning None).
+# probe_g2.sh reads the LATEST VERDICT record from /var/log/nfm-g2/mirror-health.log.
+# The mirror-health watchdog (launchd com.nfm.g2.mirror-health) writes an
+# "alarm" record per tick while below threshold OR while the prod allowlist
+# mirror is dark, and a "recovery" record when the alarm clears or on its
+# first healthy tick after startup (NFM-4805: reading only the latest ALARM
+# latched G2.7 red forever — healthy ticks write nothing, so the
+# 2026-09-12T15:03Z alarm kept failing the probe hours after both prod
+# mirrors were back). Heartbeat verdict = newest record across BOTH events,
+# read via the module's latest_verdict() (single implementation, unit-tested
+# in scripts/tests/test_nfm_docker_gate_mirror_health.py). -B: never write
+# bytecode into the root-owned /usr/local/lib/nfm-g2 tree.
 if [ -r "${MIRROR_LOG}" ]; then
-  if python3 - "${MIRROR_LOG}" <<'PY' >/dev/null 2>&1
-import json, sys
-path = sys.argv[1]
-try:
-    with open(path, encoding="utf-8") as handle:
-        lines = handle.readlines()
-except FileNotFoundError:
-    # No alarm records yet — the watchdog has run healthy every tick since
-    # startup. Accept this as the heartbeat verdict.
-    sys.exit(0)
-record = None
-for line in reversed(lines):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        candidate = json.loads(line)
-    except ValueError:
-        continue
-    if candidate.get("event") == "alarm":
-        record = candidate
-        break
+  if PYTHONPATH="${G2}" python3 -B - "${MIRROR_LOG}" <<'PY' >/dev/null 2>&1
+import sys
+
+from nfm_docker_gate.mirror_health import latest_verdict
+
+record = latest_verdict(sys.argv[1])
 if record is None:
-    # No alarm records across the entire log: the watchdog has been healthy
-    # on every tick since startup. That IS the heartbeat verdict.
+    # No verdict records at all: the watchdog has been healthy on every
+    # tick since install. That IS the heartbeat verdict.
     sys.exit(0)
+assert record.get("event") != "alarm", (
+    f"latest verdict is an alarm: healthy_count={record.get('healthy_count')} "
+    f"threshold={record.get('threshold')} unhealthy={record.get('unhealthy')}"
+)
+# Defense in depth — a recovery record carries the same summary fields;
+# assert them so a malformed record cannot pass silently.
 assert record.get("healthy_count", 0) >= 2, (
-    f"latest alarm: healthy_count={record.get('healthy_count')} < 2"
+    f"latest verdict: healthy_count={record.get('healthy_count')} < 2"
 )
 assert record.get("prod_mirror_healthy") is True, (
-    "latest alarm: prod allowlist mirror is dark (nucpot-prod-* pulls will deadlock)"
+    "latest verdict: prod allowlist mirror is dark (nucpot-prod-* pulls will deadlock)"
 )
 PY
   then ok "G2.7 mirror-health heartbeat: ≥2 mirrors returning 200/401"
