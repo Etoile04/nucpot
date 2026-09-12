@@ -801,9 +801,13 @@ async def map_and_persist(
             # the API surfaces a real literature label.  Only fall back to the
             # source filename (informative) and finally to the explicit
             # placeholder when the extraction genuinely supplied nothing.
+            # NFM-4794: a UUID-shaped source_file is a datasource id leaked
+            # in by an upstream back-fill — excluded from the chain so it
+            # can never be promoted to title (the NFM-4088 guard below
+            # would refuse it and drop the whole batch).
             title = (
                 item.reference
-                or item.source_file
+                or _title_label_from_source_file(item.source_file)
                 or f"Unattributed source ({item.source_doi or 'no DOI'})"
             )
 
@@ -1303,4 +1307,5 @@ from nfm_db.services.extraction_to_db_mapper_lookups import (  # noqa: E402, F40
     _parse_float,
     _reject_uuid_title,
     _resolve_existing_material,
+    _title_label_from_source_file,
 )

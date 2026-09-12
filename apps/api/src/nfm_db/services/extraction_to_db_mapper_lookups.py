@@ -54,6 +54,23 @@ _UUID_TITLE_PATTERN: re.Pattern[str] = re.compile(
 )
 
 
+def _title_label_from_source_file(source_file: str | None) -> str | None:
+    """Return *source_file* when it is a usable title label, else ``None``.
+
+    NFM-4794 — a UUID-shaped ``source_file`` is a datasource primary key
+    stamped in by an upstream back-fill (id-driven extraction passes
+    ``str(ds.id)`` as the post-process reference), not a filename or
+    citation. Promoting it would create a ``DataSource`` whose ``title``
+    is a UUID — exactly what the NFM-4088 guard refuses. Return ``None``
+    so callers' fallback chains proceed to the placeholder / sentinel.
+    """
+    if not source_file:
+        return None
+    if _UUID_TITLE_PATTERN.match(source_file):
+        return None
+    return source_file
+
+
 #: NFM-4088 — placeholder titles that the DOI-empty branch emits when
 #: neither ``reference`` nor ``source_file`` is supplied.  These were
 #: reused across distinct literature sources in production; the
@@ -300,11 +317,17 @@ def _has_any_provenance(item: ExtractedProperty) -> bool:
     Used to route the DOI-empty branch to one of two paths:
       * has provenance  → existing title / file_hash / content_md dedup
       * no provenance   → sentinel-row reuse (single canonical row)
+
+    NFM-4794: a UUID-shaped ``source_file`` is a datasource id, not
+    provenance — an upstream back-fill made it always non-empty for
+    id-driven extraction, which kept this classifier (and therefore the
+    sentinel path) permanently False. Exclude it so genuinely
+    unattributed items converge on the sentinel row.
     """
     return bool(
         item.source_doi
         or item.reference
-        or item.source_file
+        or _title_label_from_source_file(item.source_file)
     )
 
 

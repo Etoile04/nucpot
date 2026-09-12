@@ -39,6 +39,7 @@ from nfm_db.services.extraction_skill import (
     extract_skill_prompt,
     is_skill_enabled,
 )
+from nfm_db.services.extraction_to_db_mapper_lookups import _UUID_TITLE_PATTERN
 from nfm_db.services.llm_client import call_llm, is_llm_configured
 
 # ---------------------------------------------------------------------------
@@ -392,8 +393,19 @@ def _post_process_extracted(
     for prop in raw_properties:
         item = dict(prop)  # immutable: create new dict
 
-        # Ensure source_file is populated
-        if not item.get("source_file"):
+        # Ensure source_file is populated — EXCEPT when the reference is
+        # itself a UUID-shaped datasource id (NFM-4794). Id-driven
+        # extraction re-runs the merged LLM+heuristic batch through this
+        # function with ``source_reference=str(ds.id)`` (see
+        # literature_service Step 3b); stamping that UUID into
+        # ``source_file`` masqueraded as provenance, the mapper promoted
+        # it to ``DataSource.title``, and the NFM-4088 guard (correctly)
+        # refused the whole batch. A datasource id is NOT a literature
+        # label — leave ``source_file`` empty so the mapper routes the
+        # item to the NFM-4105 unattributed sentinel instead.
+        if not item.get("source_file") and not _UUID_TITLE_PATTERN.match(
+            str(source_reference or "")
+        ):
             item["source_file"] = source_reference
 
         # Phase normalization via PhaseMapper
