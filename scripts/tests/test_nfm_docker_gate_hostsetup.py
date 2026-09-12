@@ -1015,6 +1015,78 @@ def test_run_backup_success_writes_manifest_and_flips_current(entry, tmp_path):
     )
 
 
+# ---- NFM-4755: default DEST must not inherit the invoker's HOME ----------------
+#
+# macOS sudo env_reset KEEPS HOME (env_keep+="HOME MAIL"), so
+# `sudo -n -u nfmdeploy run-backup.sh` from any operator shell runs with
+# the invoker's HOME. The pre-fix script computed
+# DEST="${BACKUP_ROOT:-${HOME:-${DEPLOY_HOME}}/nucpot-backups}" BEFORE the
+# `export HOME="${DEPLOY_HOME}"` near the docker calls — so the default
+# silently misdirected to <operator-home>/nucpot-backups (2026-09-12
+# stamps 20260912-0831 and 20260912-1103 both landed under
+# /Users/<operator>). The NFM-4754 nightly cron passes --dest explicitly
+# (workaround); this section pins the default so any future manual
+# invocation without --dest lands under DEPLOY_HOME regardless of HOME.
+# DEPLOY_HOME is redirected hermetically via NFM_G2_DEPLOY_HOME
+# (env_reset kills NFM_G2_* in production).
+
+
+def test_run_backup_default_dest_ignores_inherited_home(entry, tmp_path):
+    """NFM-4755 regression: invoked with a foreign (sudo-inherited) HOME
+    and no --dest, the stamp must land under DEPLOY_HOME/nucpot-backups —
+    not under the invoker's HOME."""
+    operator_home = tmp_path / "operator-home"
+    operator_home.mkdir()
+    deploy_home = tmp_path / "deploy-home"
+    deploy_home.mkdir()
+    result = entry.run(
+        "run-backup.sh",
+        "--skip-pg-dump",
+        "--volumes",
+        "nucpot-prod_prod-uploads",
+        env_extra={
+            "HOME": str(operator_home),  # the sudo-inherited invoker HOME
+            "NFM_G2_DEPLOY_HOME": str(deploy_home),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    backup_root = deploy_home / "nucpot-backups"
+    assert backup_root.is_dir(), (
+        f"default DEST did not resolve under DEPLOY_HOME (no {backup_root}); "
+        f"stdout: {result.stdout}"
+    )
+    assert not (operator_home / "nucpot-backups").exists(), (
+        "backup misdirected into the invoker HOME (NFM-4755 regression)"
+    )
+    stamps = [p for p in backup_root.iterdir() if p.is_dir() and not p.is_symlink()]
+    assert len(stamps) == 1, f"expected one stamp dir, got: {[p.name for p in stamps]}"
+    # `current` flips to the new stamp under DEPLOY_HOME (absolute symlink)
+    assert os.path.realpath(backup_root / "current") == str(stamps[0])
+
+
+def test_run_backup_default_dest_backup_root_env_still_wins(entry, tmp_path):
+    """Precedence guard (behavior unchanged by NFM-4755): BACKUP_ROOT env
+    stays the top default override, beating both HOME and DEPLOY_HOME."""
+    env_root = tmp_path / "env-root"
+    env_root.mkdir()
+    operator_home = tmp_path / "operator-home"
+    operator_home.mkdir()
+    result = entry.run(
+        "run-backup.sh",
+        "--skip-pg-dump",
+        "--volumes",
+        "nucpot-prod_prod-uploads",
+        env_extra={
+            "HOME": str(operator_home),
+            "BACKUP_ROOT": str(env_root),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    stamps = [p for p in env_root.iterdir() if p.is_dir() and not p.is_symlink()]
+    assert len(stamps) == 1, f"BACKUP_ROOT no longer wins: {[p.name for p in env_root.iterdir()]}"
+    assert not (operator_home / "nucpot-backups").exists()
+
+
 
 
 # ---- NFM-4802: cleanup-daily plist + run-cleanup --until / staging ----------------

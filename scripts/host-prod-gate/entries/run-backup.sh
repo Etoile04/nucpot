@@ -73,9 +73,17 @@
 set -euo pipefail
 
 DEPLOY_USER=nfmdeploy
-DEPLOY_HOME=/var/lib/nfmdeploy
+DEPLOY_HOME="${NFM_G2_DEPLOY_HOME:-/var/lib/nfmdeploy}"
+# NFM-4755: normalize HOME BEFORE argument parsing computes the DEST
+# default. macOS sudo env_reset KEEPS the invoker's HOME
+# (env_keep+="HOME MAIL"), so `sudo -u nfmdeploy` from an operator shell
+# used to inherit e.g. HOME=/Users/<operator> and silently misdirect the
+# default DEST to <operator>/nucpot-backups (2026-09-12 stamps 0831 and
+# 1103 both landed wrong). Exporting here makes the ${HOME:-${DEPLOY_HOME}}
+# default resolve under DEPLOY_HOME regardless of the invoker.
 # NFM_G2_* are hermetic-test hooks; sudo env_reset never passes them in
 # production.
+export HOME="${DEPLOY_HOME}"
 
 # Allowlist of prod volumes under backup. Hard-coded on purpose: an
 # attacker-controlled caller passing `--volumes <foreign-vol>` could otherwise
@@ -96,7 +104,7 @@ usage (NFM-4750 Plan B backup, NFM-4270 sanctioned):
 
     --keep N            retain newest N stamps (default 7)
     --dest PATH         backup root (absolute path; default: BACKUP_ROOT
-                        env, else \$HOME/nucpot-backups)
+                        env, else \$DEPLOY_HOME/nucpot-backups)
     --volumes LIST      comma-separated subset of allowed volumes
                         (default: all four)
     --skip-pg-dump      skip the pg_dump step (volume backups only)
@@ -168,7 +176,8 @@ for V in "${SELECTED_VOLUMES[@]}"; do
   fi
 done
 
-export HOME="${DEPLOY_HOME}"
+# HOME was normalized to DEPLOY_HOME up top, BEFORE the DEST default was
+# computed (NFM-4755) — do not re-export here.
 export DOCKER_HOST="unix:///var/run/nfm-g2/docker-full.sock"
 export DOCKER_CONFIG="${DEPLOY_HOME}/.docker"
 
