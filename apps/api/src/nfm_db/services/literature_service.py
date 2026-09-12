@@ -840,29 +840,18 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 # ExtractedProperty's canonical key is ``property``
                 # (schemas/extraction.py); heuristic items use
                 # ``property_name``. Accept both, plus ``name``.
-                _prop = str(
-                    _r.get("property")
-                    or _r.get("property_name")
-                    or _r.get("name")
-                    or ""
-                )
+                _prop = str(_r.get("property") or _r.get("property_name") or _r.get("name") or "")
                 if not _prop:
                     continue
                 db.add(
                     ExtractionResultModel(
                         source_id=ds.id,
                         property_name=_prop[:500],
-                        item_type=str(
-                            _r.get("item_type") or "property"
-                        ),
+                        item_type=str(_r.get("item_type") or "property"),
                         item_data=_r,
                         value=_r.get("value"),
-                        confidence=_coerce_confidence(
-                            _r.get("confidence")
-                        ),
-                        extraction_method=str(
-                            _r.get("extraction_method") or "llm"
-                        ),
+                        confidence=_coerce_confidence(_r.get("confidence")),
+                        extraction_method=str(_r.get("extraction_method") or "llm"),
                     )
                 )
             if raw_properties:
@@ -1095,9 +1084,16 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         ingest_kg_to_lightrag,
                     )
 
-                    node_labels = {
-                        n.id: n.label for n in build_result.ingest_nodes
-                    }
+                    # NFM-4736: use the full id → label map (new +
+                    # matched nodes). An ingest_nodes-only map renders
+                    # edges touching matched nodes with bare UUID
+                    # endpoints, which LightRAG's extraction LLM turns
+                    # into junk UUID-named entities.
+                    node_labels = (
+                        dict(build_result.node_labels)
+                        if build_result.node_labels
+                        else {n.id: n.label for n in build_result.ingest_nodes}
+                    )
                     # NFM-4636: stamp the doc with the data-source identity
                     # so the daily rag_audit_index_coverage reconciliation
                     # (NFM-4539 RAG-D §4.2) can match it back to this row.
@@ -1328,9 +1324,7 @@ def process_literature_sync(
             return future.result()
     except Exception as exc:
         try:
-            asyncio.run(
-                mark_parse_failed(datasource_id, exc, session_factory=session_factory)
-            )
+            asyncio.run(mark_parse_failed(datasource_id, exc, session_factory=session_factory))
         except Exception:
             # Best-effort: swallow everything — must never mask the raise.
             logger.exception(
