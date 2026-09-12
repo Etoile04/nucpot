@@ -498,7 +498,7 @@ class LightRAGClient:
                 }
         return {}
 
-    async def delete_document(self, *, doc_id: str) -> None:
+    async def delete_document_by_id(self, *, doc_id: str) -> None:
         """Delete a single LightRAG document by id.
 
         Used by the F-3 processing reaper (NFM-4742 §3) to evict

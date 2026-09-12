@@ -378,7 +378,7 @@ def _extract_doc_id(row: dict[str, Any]) -> str | None:
         {"id": "data_source:<uuid>", "data_source": "<uuid>", ...}
 
     Older builds only carry ``file_path`` / ``file_source``.  We
-    prefer ``id`` because :meth:`LightRAGClient.delete_document`
+    prefer ``id`` because :meth:`LightRAGClient.delete_document_by_id`
     keys on it; fall back to ``file_source`` (which the F-3 evidence
     proves is populated even when ``id`` is missing on failed rows).
     """
@@ -501,7 +501,7 @@ async def _delete_lightrag_doc(
     from nfm_db.services.lightrag_client import LightRAGClient
 
     client = LightRAGClient(host=lightrag_host, port=lightrag_port)
-    await client.delete_document(doc_id=doc_id)
+    await client.delete_document_by_id(doc_id=doc_id)
 
 
 async def run_rag_audit_document_buckets(

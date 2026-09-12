@@ -3,7 +3,7 @@
 Covers:
 
 * ``list_document_buckets`` projecting all three ``/documents`` shapes
-* ``delete_document`` accepting 200/202/204/404 and rejecting unsafe ids
+* ``delete_document_by_id`` accepting 200/202/204/404 and rejecting unsafe ids
 * the legacy 1.5.4 ``statuses`` envelope round-trips without loss
 """
 
@@ -113,7 +113,7 @@ class TestDeleteDocument:
             response.status_code = status
             client = _make_client()
             client._http_client.delete = AsyncMock(return_value=response)  # type: ignore[attr-defined]
-            await client.delete_document(doc_id="data_source:abc")
+            await client.delete_document_by_id(doc_id="data_source:abc")
 
     @pytest.mark.asyncio
     async def test_404_is_idempotent_success(self) -> None:
@@ -121,7 +121,7 @@ class TestDeleteDocument:
         response.status_code = 404
         client = _make_client()
         client._http_client.delete = AsyncMock(return_value=response)  # type: ignore[attr-defined]
-        await client.delete_document(doc_id="data_source:abc")
+        await client.delete_document_by_id(doc_id="data_source:abc")
 
     @pytest.mark.asyncio
     async def test_5xx_raises(self) -> None:
@@ -131,14 +131,14 @@ class TestDeleteDocument:
         client = _make_client()
         client._http_client.delete = AsyncMock(return_value=response)  # type: ignore[attr-defined]
         with pytest.raises(LightRAGClientError, match="HTTP 500"):
-            await client.delete_document(doc_id="data_source:abc")
+            await client.delete_document_by_id(doc_id="data_source:abc")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("doc_id", ["", "../etc/passwd", "foo/bar", "foo..bar"])
     async def test_unsafe_doc_ids_rejected(self, doc_id: str) -> None:
         client = _make_client()
         with pytest.raises(ValueError):
-            await client.delete_document(doc_id=doc_id)
+            await client.delete_document_by_id(doc_id=doc_id)
 
     @pytest.mark.asyncio
     async def test_http_error_wraps_lightrag_error(self) -> None:
@@ -149,4 +149,4 @@ class TestDeleteDocument:
             side_effect=httpx.ConnectError("nope")
         )
         with pytest.raises(LightRAGClientError, match="DELETE /documents/"):
-            await client.delete_document(doc_id="data_source:abc")
+            await client.delete_document_by_id(doc_id="data_source:abc")

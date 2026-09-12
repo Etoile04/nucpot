@@ -10,7 +10,7 @@ Covers:
 * beat schedule + task route registration for the new buckets task
 
 The tests deliberately mock the LightRAG HTTP client and the
-``delete_document`` call so they don't depend on a running sidecar
+``delete_document_by_id`` call so they don't depend on a running sidecar
 or the literature-processing queue, matching the pattern established
 in ``test_rag_audit.py`` (NFM-4539 RAG-D).
 """
@@ -247,7 +247,7 @@ def _patch_delete(
         calls.append(doc_id)
 
     monkeypatch.setattr(
-        "nfm_db.services.lightrag_client.LightRAGClient.delete_document",
+        "nfm_db.services.lightrag_client.LightRAGClient.delete_document_by_id",
         _fake,
     )
     return MagicMock()
