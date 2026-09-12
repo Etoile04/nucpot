@@ -160,11 +160,22 @@ class ExtractionOrchestrator:
             self._context.get("raw_extractions") or [],
         )
         qg_result = self._context.get("quality_gate_result") or {}
-        self._job.staged_count = int(qg_result.get("staged") or 0)
-        self._job.rejected_count = int(
-            (qg_result.get("rejected") or 0)
-            + (qg_result.get("duplicates") or 0)
-        )
+        qg_staged = int(qg_result.get("staged") or 0)
+        qg_rejected = int(qg_result.get("rejected") or 0)
+        qg_duplicates = int(qg_result.get("duplicates") or 0)
+        self._job.staged_count = qg_staged
+        self._job.rejected_count = qg_rejected + qg_duplicates
+        # NFM-4788: the quality gate's ``process_bulk`` partitions its
+        # inputs losslessly into staged / rejected / duplicates, so their
+        # sum is exactly the record count the pipeline received for gate
+        # processing. Promote it to ``total_received`` here — the column's
+        # only other writer is the external ingest API (request-envelope
+        # semantic), which left pipeline-driven jobs (re-extract queue
+        # worker waves) reporting ``total_received=0`` even while items
+        # staged into ``ref_gap_fill_staging``. The skip-restore path
+        # rehydrates ``quality_gate_result`` from persisted step metadata,
+        # so reruns re-promote the same sum instead of resetting to 0.
+        self._job.total_received = qg_staged + qg_rejected + qg_duplicates
         # Mirror V1's ``_update_job(..., fill_batch_id=str(uuid.uuid4()))``
         # — the ORM column defaults to NULL otherwise, which the
         # staging-row-fill-batch-id parity check (and downstream

@@ -2009,3 +2009,224 @@ class TestQualityGatePassesPropertiesToGapScan:
         assert statuses == {"completed", "skipped"} or statuses == {"completed"}, (
             f"Expected gap_scan to be skipped or already completed, got: {statuses}"
         )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4788: total_received promotion on the run-level completion block
+# ---------------------------------------------------------------------------
+
+class TestRunTotalReceived:
+    """NFM-4788: ``run()`` must populate ``extraction_jobs.total_received``.
+
+    Pre-fix behaviour: the completion block promotes ``extracted_count`` /
+    ``staged_count`` / ``rejected_count`` from step contexts but leaves
+    ``total_received`` at its column default 0 forever — the only writer is
+    the external ingest API (``ingest_service``, request-envelope semantic).
+    Jobs driven by the re-extraction queue worker (the 6-lit reextract
+    waves) therefore report ``total_received=0`` even while items stage
+    into ``ref_gap_fill_staging``.
+
+    Contract under test: on completion, ``total_received`` equals the
+    quality gate's lossless disposition sum
+    ``staged + rejected + duplicates`` — i.e. exactly the records the
+    pipeline received for gate processing. Each input lands in exactly
+    one ``process_bulk`` bucket, so the sum cannot double count.
+    """
+
+    @pytest.mark.asyncio
+    async def test_completion_block_promotes_gate_disposition_sum(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """Unit: the completion block writes staged+rejected+duplicates."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        async def _fake_execute(self, step_type, **kw):
+            self._context["raw_extractions"] = [object()] * 6
+            self._context["quality_gate_result"] = {
+                "staged": 2, "rejected": 1, "duplicates": 3,
+            }
+
+        monkeypatch.setattr(
+            ExtractionOrchestrator, "_execute_step", _fake_execute,
+        )
+
+        result = await orchestrator.run()
+
+        assert result.status == "completed"
+        assert result.total_received == 6
+        assert result.staged_count == 2
+        assert result.rejected_count == 4  # rejected + duplicates
+
+    @pytest.mark.asyncio
+    async def test_run_writes_total_received_through_real_gate_path(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """Integration: staged items imply total_received > 0 (AC2 path).
+
+        Lets the REAL ``QualityGateService`` run (same pattern as
+        ``test_step_quality_gate_persists_accepted_records``): with no
+        range data loaded, all 3 mapped properties stage as accepted,
+        so the staged-item → counter mapping is real code under test.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        mapped = _mapped_properties()
+
+        async def _fake_map(self, step, **kw):
+            self._context["mapped_properties"] = mapped
+
+        monkeypatch.setattr(ExtractionOrchestrator, "_step_map", _fake_map)
+
+        with patch(
+            "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
+            new=AsyncMock(return_value=_make_scan_result()),
+        ):
+            result = await orchestrator.run()
+
+        assert result.status == "completed"
+        # Staged rows really landed for this job.
+        staged_rows = (
+            await db_session.execute(
+                select(RefGapFillStaging).where(
+                    RefGapFillStaging.fill_batch_id == job.id,
+                ),
+            )
+        ).scalars().all()
+        assert len(staged_rows) == 3
+        # Counter reflects the lossless disposition of all 3 gate inputs.
+        assert result.total_received == 3
+        assert result.staged_count == 3
+        assert result.rejected_count == 0
+        # No double counting: sum decomposition is consistent and the
+        # counter matches the staged-row count exactly.
+        assert result.total_received == result.staged_count + result.rejected_count
+        assert result.total_received == len(staged_rows)
+
+    @pytest.mark.asyncio
+    async def test_total_received_survives_skip_restore_rerun(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """Rerun with all steps skipped must not zero total_received.
+
+        The 6-lit reextract waves re-run the orchestrator over the same
+        job when the first attempt died mid-pipeline (NFM-4758 fixA's
+        409 self-heal path). On skip-restore, ``quality_gate_result`` is
+        rehydrated from the persisted step metadata — the completion
+        block must re-promote the same sum, not reset to 0.
+
+        Only the step BODIES (``_step_map`` / ``_step_quality_gate``)
+        are stubbed for the first run — ``_execute_step`` stays real so
+        genuine step rows with restore-able ``metadata_`` are persisted.
+        The second run is entirely unstubbed (except a sentinel gate
+        that fails the test if ``process_bulk`` re-executes), so the
+        only route to a non-zero ``total_received`` is the real
+        ``_find_completed_step`` → ``_restore_context_from_existing``
+        chain rehydrating ``quality_gate_result`` from the persisted
+        step metadata.
+        """
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+        mapped = _mapped_properties()
+
+        async def _fake_map(self, step, **kw):
+            self._context["mapped_properties"] = mapped
+            step.metadata_ = {
+                "input_count": 0,
+                "mapped_count": len(mapped),
+                "cache_level": None,
+                "mapped_properties": list(mapped),
+            }
+
+        async def _fake_gate(self, step, **kw):
+            self._context["quality_gate_result"] = {
+                "staged": 3, "rejected": 1, "duplicates": 0,
+            }
+            self._context["passed_properties"] = []
+            step.metadata_ = {
+                "staged": 3, "rejected": 1, "duplicates": 0,
+                "passed_properties": [],
+            }
+
+        with patch.object(ExtractionOrchestrator, "_step_map", _fake_map), \
+             patch.object(
+                 ExtractionOrchestrator, "_step_quality_gate", _fake_gate,
+             ), \
+             patch(
+                 "nfm_db.services.gap_scan_service.GapScanService.scan_gaps",
+                 new=AsyncMock(return_value=_make_scan_result()),
+             ):
+            first = await orchestrator.run()
+        assert first.total_received == 4
+
+        # Sentinel gate: proves quality_gate is skipped, not re-executed,
+        # on the rerun (same pattern as
+        # ``test_step_quality_gate_skipped_on_run_when_map_skip_restores_context``).
+        class _SentinelGate:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def process_bulk(self, values):
+                raise AssertionError(
+                    "quality_gate re-executed on the rerun instead of "
+                    "being skipped — skip-restore path broken",
+                )
+
+            async def stage_record(self, *a, **kw) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "nfm_db.services.extraction_orchestrator.QualityGateService",
+            _SentinelGate,
+        )
+
+        # Second run: every step's input_hash matches the persisted
+        # completion, so steps are skipped and context is restored from
+        # step metadata_ instead of re-executing.
+        second = await ExtractionOrchestrator(db_session, first).run()
+        assert second.status == "completed"
+        assert second.total_received == 4, (
+            "skip-restore rerun lost the gate disposition: "
+            "total_received regressed to 0 — reextract waves would "
+            "report zero despite staged items (the NFM-4788 symptom)"
+        )
+        assert second.staged_count == 3
+        assert second.rejected_count == 1
+
+        # The quality_gate step must have a skipped row alongside the
+        # first run's completed one — proof the restore path ran.
+        qg_rows = (
+            await db_session.execute(
+                select(ExtractionStep).where(
+                    ExtractionStep.job_id == job.id,
+                    ExtractionStep.step_type == "quality_gate",
+                ),
+            )
+        ).scalars().all()
+        statuses = sorted(r.status for r in qg_rows)
+        assert statuses == ["completed", "skipped"], (
+            f"Expected one completed + one skipped quality_gate row; "
+            f"got: {statuses}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_total_received_zero_when_gate_has_no_inputs(
+        self, db_session, monkeypatch,
+    ) -> None:
+        """Empty pipeline output stays 0 — never negative, never None."""
+        job = await _create_job(session=db_session)
+        orchestrator = ExtractionOrchestrator(db_session, job)
+
+        async def _fake_execute(self, step_type, **kw):
+            self._context["raw_extractions"] = []
+            self._context["quality_gate_result"] = {
+                "staged": 0, "rejected": 0, "duplicates": 0,
+            }
+
+        monkeypatch.setattr(
+            ExtractionOrchestrator, "_execute_step", _fake_execute,
+        )
+
+        result = await orchestrator.run()
+        assert result.total_received == 0
