@@ -403,6 +403,21 @@ async def _find_completed_by_hash(
 # ---------------------------------------------------------------------------
 
 
+def _to_count(value: Any) -> int:
+    """Coerce a mapper/bridge stat to int for job-counter promotion.
+
+    Stats arrive duck-typed from :func:`map_and_persist` /
+    :func:`bridge_kg_to_staging`; anything non-numeric (``None``, an
+    unset field, a loosely-stubbed double) promotes as 0 rather than
+    poisoning the anchor-row flush — counter promotion is best-effort
+    and must never gate extraction (NFM-4803).
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str, Any]:
     """Run the full PDF/DOI pipeline for *datasource_id*.
 
@@ -633,6 +648,10 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # with the ontology version that produced the extraction, then
         # run the per-literature gap scan so missed expected-properties
         # become visible ExtractionGap rows.
+        # NFM-4803: keep a handle on the anchor row so Step 5a-2 can
+        # promote the operative path's counters onto it — born-completed
+        # rows with zero counters are the NFM-4788 AC2 defect.
+        _anchor_job: Any | None = None
         try:
             from nfm_db.models.extraction_chunk import ExtractionChunk as _Chunk
             from nfm_db.models.extraction_job import ExtractionJob as _Job
@@ -655,6 +674,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 )
                 db.add(_job)
                 await db.flush()
+                _anchor_job = _job
 
                 for _i, _seg in enumerate(_chunk_split(ds.content_md)):
                     db.add(
@@ -914,6 +934,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
         # AFTER db.commit() below — never before, otherwise we ship ghost
         # entities on rollback. NFM-2928 wires the second caller.
         build_result: Any | None = None
+        bridged_count = 0
         if raw_properties:
             from nfm_db.services.extraction_to_db_mapper import map_and_persist
 
@@ -974,7 +995,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 if not corpus_id and ds.doi:
                     corpus_id = _slugify(ds.doi)
                 if corpus_id:
-                    bridged = await bridge_kg_to_staging(
+                    bridged_count = await bridge_kg_to_staging(
                         db,
                         source_id=ds.id,
                         corpus_id=corpus_id,
@@ -984,7 +1005,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                         "process_literature: datasource_id=%s bridged %d "
                         "rows to _ref_gap_fill_staging (corpus=%s)",
                         ds.id,
-                        bridged,
+                        bridged_count,
                         corpus_id,
                     )
                 else:
@@ -1004,6 +1025,67 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
                 "process_literature: datasource_id=%s — nothing to extract",
                 ds.id,
             )
+
+        # --- Step 5a-2: promote counters onto the anchor job row -------
+        # (NFM-4803 / NFM-4788 AC2 re-target). RE verdict 2026-09-12: the
+        # ExtractionOrchestrator.run() promotion (PR #1331) is unreachable
+        # from any reextract vehicle — this path is the operative one, and
+        # its Step-3a anchor row was born-completed with every counter 0.
+        # Promote from the stats this path actually computes:
+        #   total_received / extracted_count = len(raw_properties) —
+        #       exactly the records the extraction pipeline received (the
+        #       receive-semantic PR #1331 gave the gate path; an input
+        #       count, so it cannot double count),
+        #   staged_count  = bridge staging rows,
+        #   rejected_count + audit columns = mapper disposition buckets.
+        # Best-effort like the rest of the wiring: never gates extraction.
+        if _anchor_job is not None:
+            try:
+                _received = len(raw_properties)
+                _rejected = 0
+                if mapping is not None:
+                    _rejected = (
+                        _to_count(mapping.skipped_unknown_properties)
+                        + _to_count(mapping.validation_errors)
+                        + _to_count(mapping.skipped_duplicate_measurements)
+                    )
+                    _anchor_job.created_measurements = _to_count(mapping.created_measurements)
+                    _anchor_job.reused_entities = _to_count(mapping.reused_entities)
+                    _anchor_job.skipped_duplicate_measurements = _to_count(
+                        mapping.skipped_duplicate_measurements
+                    )
+                    _anchor_job.skipped_unknown_properties = _to_count(
+                        mapping.skipped_unknown_properties
+                    )
+                    _anchor_job.validation_errors = _to_count(mapping.validation_errors)
+                    # Backward-compat alias per the column comment:
+                    # reused + skipped_dup + skipped_unknown.
+                    _anchor_job.skipped_duplicates = (
+                        _to_count(mapping.reused_entities)
+                        + _to_count(mapping.skipped_duplicate_measurements)
+                        + _to_count(mapping.skipped_unknown_properties)
+                    )
+                _anchor_job.extracted_count = _received
+                _anchor_job.total_received = _received
+                _anchor_job.staged_count = _to_count(bridged_count)
+                _anchor_job.rejected_count = _rejected
+                await db.flush()
+                logger.info(
+                    "process_literature: datasource_id=%s anchor job "
+                    "counters promoted: total_received=%d staged=%d "
+                    "rejected=%d",
+                    ds.id,
+                    _received,
+                    bridged_count,
+                    _rejected,
+                )
+            except Exception:  # counter promotion is best-effort
+                logger.warning(
+                    "process_literature: datasource_id=%s — anchor job "
+                    "counter promotion failed (non-fatal)",
+                    ds.id,
+                    exc_info=True,
+                )
 
         # --- Step 5b: MinerU + VLM extraction (figures + tables) -
         # NFM-1366 (follow-up): replaces PageSplitter-based multimodal

@@ -294,6 +294,268 @@ class TestOntologyProvenanceStamping:
 
 
 # ---------------------------------------------------------------------------
+# 1c. Anchor-job counter promotion (NFM-4803 / NFM-4788 AC2 re-target)
+# ---------------------------------------------------------------------------
+
+
+def _make_mapping_stub() -> MagicMock:
+    """Mapper-result stub with known disposition counts.
+
+    Mirrors :class:`MappingResult`'s counter surface as consumed by
+    ``process_literature`` (log line + return dict + counter promotion).
+    """
+    stub = MagicMock()
+    stub.created_measurements = 2
+    stub.reused_entities = 1
+    stub.skipped_duplicate_measurements = 1
+    stub.skipped_unknown_properties = 1
+    stub.validation_errors = 1
+    stub.skipped_unknown_details = [{"property_name": "x"}]
+    return stub
+
+
+class TestAnchorJobCounters:
+    """NFM-4803 (NFM-4788 AC2 re-target): the Step-3a anchor job row must
+    carry the operative path's counters.
+
+    RE verdict 2026-09-12: the fixed ``ExtractionOrchestrator.run()``
+    promotion (PR #1331) is unreachable from any reextract vehicle — the
+    operative path is ``process_literature``, whose Step-3a anchor
+    ``_Job`` row is born-completed with every counter at 0. Pre-fix,
+    every reextract wave therefore reported ``total_received=0`` forever
+    even while the KG→staging bridge staged items.
+
+    Contract under test: after ``process_literature`` completes, the
+    anchor row's ``total_received`` equals ``len(raw_properties)`` —
+    exactly the records the extraction pipeline received (same
+    receive-semantic PR #1331 gave the gate path) — with
+    ``staged_count`` from the bridge and ``rejected_count`` / audit
+    columns from the mapper's disposition buckets. ``total_received``
+    is an input count, not a sum of output buckets, so it cannot double
+    count.
+    """
+
+    async def test_anchor_row_promotes_operative_path_counters(
+        self, db_session: AsyncSession, admin_user
+    ) -> None:
+        """Staged items imply total_received > 0 (AC2), mirrored from
+        the mapper/bridge stats the operative path actually computes."""
+        from nfm_db.models.extraction_job import ExtractionJob
+        from nfm_db.models.ontology_version import OntologyVersion
+
+        ov = OntologyVersion(
+            version="9.9.9",
+            status="published",
+            created_by=admin_user.id,
+            ontology_data={"entity_types": {}},
+        )
+        db_session.add(ov)
+        await db_session.flush()
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nExisting markdown body\nUO2 lattice 5.47 Å",
+            file_path=None,
+        )
+        # The bridge only runs when a corpus id resolves (metadata or DOI).
+        ds.doi = "10.9999/nfm-4803"
+        await db_session.commit()
+
+        demo = _make_demo_extraction()
+        demo.append(
+            {
+                **demo[0],
+                "property_name": "thermal_conductivity",
+                "property": "thermal_conductivity",
+                "value": 8.4,
+                "unit": "W/mK",
+            },
+        )
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=demo),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=_make_mapping_stub()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=2),
+            ) as mock_bridge,
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        mock_bridge.assert_awaited_once()
+
+        jobs = (
+            (
+                await db_session.execute(
+                    select(ExtractionJob).where(
+                        ExtractionJob.source_reference == str(ds.id),
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(jobs) == 1
+        job = jobs[0]
+        # total_received == the records the pipeline received (2 props),
+        # consistent with the run's own extracted count.
+        assert job.total_received == 2
+        assert job.extracted_count == 2
+        assert result["extracted"] == 2
+        # staged_count mirrors the bridge's staging rows.
+        assert job.staged_count == 2
+        # rejected_count = mapper's not-accepted buckets
+        # (unknown + validation errors + duplicate measurements).
+        assert job.rejected_count == 3
+        # Mapper audit columns mirrored onto the job row.
+        assert job.created_measurements == 2
+        assert job.reused_entities == 1
+        assert job.skipped_duplicate_measurements == 1
+        assert job.skipped_unknown_properties == 1
+        assert job.validation_errors == 1
+        # Backward-compat alias per the model comment:
+        # reused + skipped_dup + skipped_unknown.
+        assert job.skipped_duplicates == 3
+
+    async def test_total_received_is_input_count_not_bucket_sum(
+        self, db_session: AsyncSession, admin_user
+    ) -> None:
+        """No double counting (AC3): when the bridge dedupes everything
+        away (0 staged) the anchor row still records the LLM output the
+        pipeline received — the counter is an input count, never derived
+        from the staged-row count."""
+        from nfm_db.models.extraction_job import ExtractionJob
+        from nfm_db.models.ontology_version import OntologyVersion
+
+        ov = OntologyVersion(
+            version="9.9.9",
+            status="published",
+            created_by=admin_user.id,
+            ontology_data={"entity_types": {}},
+        )
+        db_session.add(ov)
+        await db_session.flush()
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nExisting markdown body\nUO2 lattice 5.47 Å",
+            file_path=None,
+        )
+        ds.doi = "10.9999/nfm-4803-dedupe"
+        await db_session.commit()
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=_make_mapping_stub()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=0),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        jobs = (
+            (
+                await db_session.execute(
+                    select(ExtractionJob).where(
+                        ExtractionJob.source_reference == str(ds.id),
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.staged_count == 0
+        assert job.total_received == 1
+        assert job.extracted_count == 1
+
+    async def test_no_published_ontology_means_no_anchor_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Unchanged guard: without a published ontology there is no
+        anchor row, so nothing is promoted (no phantom job rows)."""
+        from nfm_db.models.extraction_job import ExtractionJob
+
+        ds = await _add_datasource(
+            db_session,
+            content_md="# Title\n\nExisting markdown body\nUO2 lattice 5.47 Å",
+            file_path=None,
+        )
+        ds.doi = "10.9999/nfm-4803-no-ov"
+        await db_session.commit()
+
+        empty_build_result = MagicMock()
+        empty_build_result.ingest_nodes = ()
+        empty_build_result.ingest_edges = ()
+
+        with (
+            patch(
+                "nfm_db.services.extraction_pipeline.ontofuel_extract",
+                new=AsyncMock(return_value=_make_demo_extraction()),
+            ),
+            patch(
+                "nfm_db.services.extraction_to_db_mapper.map_and_persist",
+                new=AsyncMock(return_value=_make_mapping_stub()),
+            ),
+            patch(
+                "nfm_db.services.kg_re.GraphBuilder.build_from_extraction",
+                new=AsyncMock(return_value=empty_build_result),
+            ),
+            patch(
+                "nfm_db.services.kg_to_staging_bridge.bridge_kg_to_staging",
+                new=AsyncMock(return_value=1),
+            ),
+        ):
+            result = await lit_svc.process_literature(db_session, ds.id)
+
+        assert result["status"] == "completed"
+        jobs = (
+            (
+                await db_session.execute(
+                    select(ExtractionJob).where(
+                        ExtractionJob.source_reference == str(ds.id),
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert jobs == []
+
+
+# ---------------------------------------------------------------------------
 # 2. Happy path — PDF parse then extract
 # ---------------------------------------------------------------------------
 
@@ -871,9 +1133,7 @@ class TestSyncWrapper:
         await db_session.refresh(ds)
         assert ds.parse_status == "completed"
 
-    async def test_sync_bridge_runs_without_any_monkeypatch(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_sync_bridge_runs_without_any_monkeypatch(self, db_session: AsyncSession) -> None:
         """验收不变式 a(ADR-NFM-4076 D6):注入工厂即可跑通,零 monkeypatch。
 
         与上一条的区别是刻意不做任何 ``patch``:如果实现仍从模块属性读
