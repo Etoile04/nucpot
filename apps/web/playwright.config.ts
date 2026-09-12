@@ -29,9 +29,16 @@ const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
  * with the flag off until the NFM-4177 rollout. Like the other mock-based
  * specs above, it is a permanent local-only resident of this list, not a
  * temporary hotfix.
+ *
+ * The four NFM-4553/4554 specs were added by NFM-4786 (2026-09-12) after
+ * E2E Post-Deploy (Live) failed on every firing from 2026-09-11T00:13Z:
+ * each hardcodes a localhost BASE (:3456 / :5553) and fulfils routes with
+ * mock fixtures, so on the ubuntu-Live runner they died with
+ * ERR_CONNECTION_REFUSED before asserting anything. Same mock-based class
+ * as `data-loss-notice` — permanent local/CI-only residents, not hotfixes.
  */
-const NFMD_SPEC_PATTERN =
-/(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review|data-loss-notice)\.spec\.ts$/
+export const NFMD_SPEC_PATTERN =
+  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review|data-loss-notice|nfm-?455[34]-(?:five-actions-contract|skip-ux-failure|layout-b-visual-qa|review-queue-visual-qa))\.spec\.ts$/
 
 // Local webServer port. Configurable so concurrent worktrees (each with
 // their own `next dev`) don't collide on the default — a squatting dev
