@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +27,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models.kg import KGEdge, KGNode
-from nfm_db.services.kg_re import ExtractedEntity, ExtractedRelation, GraphBuilder
+from nfm_db.services.kg_re import (
+    EntityLinker,
+    ExtractedEntity,
+    ExtractedRelation,
+    GraphBuilder,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -670,6 +676,55 @@ def _build_calls_in_function(
 
     _Visitor().visit(func)
     return called, build_lines
+
+
+class TestEntityLinkerDuplicateLabels:
+    """NFM-4736 regression: kg_nodes (label, node_type) is NOT unique.
+
+    Prod carried nine duplicate active Property nodes labelled
+    'thermal_conductivity' (recovery-era extractions, 2026-09-01). The
+    exact-label matcher's ``scalar_one_or_none`` raised
+    MultipleResultsFound inside ``GraphBuilder.build_from_extraction`` and
+    failed ``process_literature`` for every UO2-bearing source re-extract
+    (9320cb50 Owen, 1a0f45d9 FRAPCON/MATPRO). The matcher must tolerate
+    duplicate labels and pick deterministically.
+    """
+
+    @pytest.mark.asyncio
+    async def test_exact_label_match_returns_oldest_when_duplicates(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Two active Property nodes sharing a label: linking returns the
+        oldest one instead of raising MultipleResultsFound."""
+        linker = EntityLinker()
+
+        older = KGNode(
+            id=uuid.uuid4(),
+            label="thermal_conductivity",
+            node_type="Property",
+            corpus_id="test-corpus",
+            review_status="approved",
+            created_at=datetime(2026, 9, 1, 8, 4, 12, tzinfo=UTC),
+        )
+        newer = KGNode(
+            id=uuid.uuid4(),
+            label="thermal_conductivity",
+            node_type="Property",
+            corpus_id="test-corpus",
+            review_status="approved",
+            created_at=datetime(2026, 9, 1, 8, 6, 8, tzinfo=UTC),
+        )
+        db_session.add(older)
+        db_session.add(newer)
+        await db_session.flush()
+
+        entity = ExtractedEntity(label="thermal_conductivity", entity_type="Property")
+
+        match = await linker.find_matching_node(db_session, entity, corpus_id="test-corpus")
+
+        assert match is not None, "duplicate labels must not break the matcher"
+        assert match.id == older.id, "oldest node wins deterministically"
 
 
 def test_all_build_from_extraction_callers_dispatch() -> None:

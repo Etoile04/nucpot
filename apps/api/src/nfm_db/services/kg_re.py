@@ -378,8 +378,17 @@ class EntityLinker:
             if corpus_id is not None:
                 query = query.where(KGNode.corpus_id == corpus_id)
 
+            # NFM-4736: ``kg_nodes`` has no unique constraint on
+            # (label, node_type) — recovery-era extractions left duplicate
+            # active nodes behind (e.g. 9x Property 'thermal_conductivity'
+            # from 2026-09-01). ``scalar_one_or_none()`` raised
+            # MultipleResultsFound and killed process_literature for every
+            # document whose entities touch a duplicated label. Pick the
+            # oldest node deterministically instead: the original node keeps
+            # accumulating edges.
+            query = query.order_by(KGNode.created_at, KGNode.id)
             result = await session.execute(query)
-            return result.scalar_one_or_none()
+            return result.scalars().first()
 
     async def _fuzzy_alias_match(
         self,
@@ -762,15 +771,25 @@ class GraphBuilder:
         # non-None by the fail-fast guard in build_from_extraction.
 
         # Dedup: skip if an identical edge already exists.
+        # NFM-4736: legacy re-processing runs created duplicate rows for the
+        # same (source, target, relation_type) triple; ``scalar_one_or_none``
+        # would raise MultipleResultsFound on them. Any single existing row
+        # is enough to skip, so take the first deterministically.
         existing = (
-            await self._session.execute(
-                select(KGEdge).where(
-                    KGEdge.source_node_id == source_node_id,
-                    KGEdge.target_node_id == target_node_id,
-                    KGEdge.relation_type == relation.relation_type,
+            (
+                await self._session.execute(
+                    select(KGEdge)
+                    .where(
+                        KGEdge.source_node_id == source_node_id,
+                        KGEdge.target_node_id == target_node_id,
+                        KGEdge.relation_type == relation.relation_type,
+                    )
+                    .order_by(KGEdge.created_at, KGEdge.id)
                 )
             )
-        ).scalar_one_or_none()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             logger.debug(
                 "Skipping duplicate edge %s -[%s]-> %s",
