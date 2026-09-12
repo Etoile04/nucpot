@@ -24,6 +24,7 @@ from nfm_db.services.kg_lightrag_sync import (
     serialize_kg_edge,
     serialize_kg_node,
 )
+from nfm_db.services.lightrag_client import LightRAGConflictError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -355,6 +356,195 @@ class TestIngestKGToLightRAG:
                     edges=[],
                     node_labels={node.id: "UO2"},
                 )
+
+
+# ---------------------------------------------------------------------------
+# NFM-4758 / NFM-4730-FixA: reextract idempotency on 409
+# ---------------------------------------------------------------------------
+#
+# The reextract path (process_literature_task → ingest_kg_to_lightrag)
+# raises on 409 "Document storage already contains '<doc_id>'" and the
+# caller treats it as non-fatal, but no VDB rows are written when the
+# marker ``data_source:<uuid>`` (or ``kg_pipeline``) already exists in
+# ``lightrag_doc_status`` from a prior run.  NFM-4680 recovery data
+# left these markers as ``processed``, so every subsequent reextract is
+# silently blocked.
+#
+# Fix: ``ingest_kg_to_lightrag`` detects the 409, calls
+# ``DELETE /documents?doc_id=<source>`` first, then retries the insert
+# exactly once.  The marker ends up in ``processed`` state with the
+# new VDB rows.
+
+
+class TestIngestReextractIdempotency:
+    """NFM-4758: ``ingest_kg_to_lightrag`` must self-heal on 409."""
+
+    @staticmethod
+    def _make_conflict(
+        *, doc_id: str, status_code: int = 409
+    ) -> LightRAGConflictError:
+        """Build a ``LightRAGConflictError`` that mirrors the prod payload."""
+        body = (
+            f"Document storage already contains '{doc_id}'. "
+            "Please use a different id or delete the existing document."
+        )
+        return LightRAGConflictError(
+            f"LightRAG ingest failed: HTTP {status_code} - {body}",
+            status_code=status_code,
+            response_body=body,
+            doc_id=doc_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_then_retry_on_409_conflict(self) -> None:
+        """409 ``Document storage already contains '<doc_id>'`` triggers
+        DELETE /documents?doc_id=<source> then a single retry.
+
+        Pre-fix: the 409 propagated up and the caller's ``except
+        Exception`` logged "process_literature: … inline LightRAG
+        ingest failed (non-fatal)" without any VDB rows landing.
+        Post-fix: the function detects the conflict, deletes the
+        stale marker, and the retry inserts the new VDB rows.
+        """
+        source = "data_source:abc"
+        mock_provider = AsyncMock()
+        # First ingest → 409 (mimics the prod already-processed state).
+        # Second ingest → success.
+        mock_provider.ingest = AsyncMock(
+            side_effect=[
+                self._make_conflict(doc_id=source),
+                "track-after-retry",
+            ]
+        )
+
+        shared_client = MagicMock()
+        shared_client.delete_document = AsyncMock(
+            return_value={"status": "deleted"}
+        )
+
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.lightrag_lifecycle.get_shared_lightrag_client",
+                return_value=shared_client,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
+        ):
+            await ingest_kg_to_lightrag(
+                nodes=[node],
+                edges=[],
+                node_labels={node.id: "UO2"},
+                source=source,
+            )
+
+        # DELETE was issued with the source marker (the doc_id the
+        # sidecar already had indexed).
+        shared_client.delete_document.assert_awaited_once_with(source)
+        # Ingest was attempted twice — first 409, second success.
+        assert mock_provider.ingest.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_propagates_non_conflict_provider_error(self) -> None:
+        """A non-409 provider error MUST still propagate (NFM-4719).
+
+        ``Event loop is closed`` and other transport errors are not
+        idempotency issues — they should bubble up so the caller's
+        ``except Exception`` can log them as before.  Only the 409
+        with the specific conflict body triggers the delete-retry path.
+        """
+        mock_provider = AsyncMock()
+        mock_provider.ingest = AsyncMock(
+            side_effect=RuntimeError("Event loop is closed")
+        )
+        shared_client = MagicMock()
+        shared_client.delete_document = AsyncMock(
+            return_value={"status": "deleted"}
+        )
+
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.lightrag_lifecycle.get_shared_lightrag_client",
+                return_value=shared_client,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Event loop is closed"):
+                await ingest_kg_to_lightrag(
+                    nodes=[node],
+                    edges=[],
+                    node_labels={node.id: "UO2"},
+                    source="data_source:abc",
+                )
+
+        shared_client.delete_document.assert_not_called()
+        assert mock_provider.ingest.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_failure_propagates(self) -> None:
+        """If the retry also fails, the second exception propagates.
+
+        The delete-then-retry is best-effort: at most one retry, and
+        the caller still gets a real failure signal if the retry
+        cannot land the insert either (e.g. the sidecar is unhealthy
+        or the new content is itself rejected).  This guards against
+        a silent "swallow on retry" regression like NFM-4717.
+        """
+        source = "data_source:abc"
+        mock_provider = AsyncMock()
+        mock_provider.ingest = AsyncMock(
+            side_effect=[
+                self._make_conflict(doc_id=source),
+                RuntimeError("sidecar still unhappy"),
+            ]
+        )
+        shared_client = MagicMock()
+        shared_client.delete_document = AsyncMock(
+            return_value={"status": "deleted"}
+        )
+
+        node = _make_node(label="UO2")
+
+        with (
+            patch(
+                "nfm_db.services.kg_lightrag_sync.is_lightrag_configured",
+                return_value=True,
+            ),
+            patch(
+                "nfm_db.services.lightrag_lifecycle.get_shared_lightrag_client",
+                return_value=shared_client,
+            ),
+            patch(
+                "nfm_db.services.rag_provider.LightRAGProvider",
+                return_value=mock_provider,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="sidecar still unhappy"):
+                await ingest_kg_to_lightrag(
+                    nodes=[node],
+                    edges=[],
+                    node_labels={node.id: "UO2"},
+                    source=source,
+                )
+
+        shared_client.delete_document.assert_awaited_once_with(source)
+        assert mock_provider.ingest.await_count == 2
 
 
 # ---------------------------------------------------------------------------
