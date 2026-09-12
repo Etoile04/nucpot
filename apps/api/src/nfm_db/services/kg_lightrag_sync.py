@@ -45,7 +45,11 @@ import uuid
 
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.services.kg_utils import parse_aliases
-from nfm_db.services.lightrag_client import is_lightrag_configured
+from nfm_db.services.lightrag_client import (
+    LightRAGClient,
+    LightRAGConflictError,
+    is_lightrag_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,9 +238,69 @@ async def ingest_kg_to_lightrag(
     from nfm_db.services.rag_provider import LightRAGProvider
 
     text = serialize_build_result(nodes, edges, node_labels)
-    shared_client = get_shared_lightrag_client()
+    shared_client: LightRAGClient | None = get_shared_lightrag_client()
+    # ``is_lightrag_configured()`` is the gate above; in production
+    # the shared client exists.  Tests exercise this path with
+    # ``shared_client=None`` and rely on ``LightRAGProvider.ingest``
+    # to be a no-op when the sidecar isn't reachable.  Build the
+    # provider unconditionally; for the 409-recovery branch (which
+    # calls ``shared_client.delete_document`` directly) we narrow to
+    # non-None at the call site, since ``delete_document`` requires
+    # a live HTTP client.
     provider = LightRAGProvider(client=shared_client)
-    track_id = await provider.ingest(text=text, source=source)
+
+    # NFM-4758 / NFM-4730-FixA: the reextract path can hit a 409
+    # ``Document storage already contains '<doc_id>'`` when the
+    # ``data_source:<uuid>`` (or ``kg_pipeline``) marker is already in
+    # ``lightrag_doc_status`` from a prior run — typically the
+    # NFM-4680 recovery data, where the rebuild left the marker as
+    # ``processed`` but never re-wrote the VDB rows.  Pre-fix, the
+    # 409 propagated to the caller, the inline-ingest branch logged
+    # "process_literature: … inline LightRAG ingest failed (non-fatal)",
+    # and VDB growth silently dropped to zero.  Post-fix, we evict the
+    # stale marker via ``DELETE /documents?doc_id=<source>`` and retry
+    # the ingest exactly once.  Any subsequent failure propagates so
+    # the caller's existing error handling still fires.
+    track_id: str | None
+    try:
+        track_id = await provider.ingest(text=text, source=source)
+    except LightRAGConflictError as exc:
+        logger.info(
+            "LightRAG ingest returned 409 for source=%r (already "
+            "indexed) — deleting the stale marker and retrying once",
+            source,
+        )
+        try:
+            if shared_client is None:
+                # Lifecycle invariant: ``is_lightrag_configured()``
+                # returned True but no shared client exists.  We can't
+                # DELETE the marker — propagate the original conflict
+                # so the caller's error path still fires.
+                logger.warning(
+                    "LightRAG 409 received but shared_client is None; "
+                    "cannot DELETE marker source=%r",
+                    source,
+                )
+                raise exc
+            await shared_client.delete_document(source)
+        except Exception:
+            # ``delete_document`` already raises a structured
+            # ``LightRAGClientError``; any other failure here means the
+            # DELETE call could not even reach the sidecar.  Log and
+            # re-raise the original conflict so the caller's
+            # ``except Exception`` branch fires with the 409 context
+            # (not a silent swallow).
+            logger.warning(
+                "LightRAG DELETE /documents?doc_id=%r failed; propagating original 409 to caller",
+                source,
+                exc_info=True,
+            )
+            raise exc from None
+        logger.info(
+            "LightRAG stale marker source=%r deleted; retrying ingest",
+            source,
+        )
+        track_id = await provider.ingest(text=text, source=source)
 
     # Persist track_id to the ExtractionJob row (NFM-2881 AC-2).
     if extraction_job_id is not None and track_id is not None:

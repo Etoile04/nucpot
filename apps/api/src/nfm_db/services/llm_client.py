@@ -340,14 +340,42 @@ async def call_llm(
     system_prompt: str,
     user_message: str,
     temperature: float = 0.1,
-    max_tokens: int = 16384,
+    max_tokens: int = 8192,
+    num_predict: int | None = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
     config: dict[str, str] | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Send a chat completion request and parse the JSON response (legacy API)."""
+    """Send a chat completion request and parse the JSON response (legacy API).
+
+    NFM-4730-FixB: ``max_tokens`` default lowered from 16384 → 8192 so the
+    qwen3.5:4b-nvfp4 dispatcher cannot burn the entire output budget on
+    thinking-mode reasoning (which returned ``finish_reason=length`` with
+    empty content). Callers that want to override may pass ``max_tokens``;
+    callers targeting Ollama's native ``/api/chat`` binding (where the
+    ``num_predict`` parameter is honored, unlike the OpenAI-compat layer)
+    may pass ``num_predict`` explicitly — the field is sent alongside
+    ``max_tokens`` and the Ollama daemon picks the one it understands.
+
+    ``chat_template_kwargs`` defaults to ``{"enable_thinking": False}`` so
+    that when this client is invoked against a future native-Ollama binding
+    (NFM-4525-aligned), the thinking mode is suppressed automatically. The
+    flag is a no-op against the current openai-compat layer; see NFM-4525
+    for the binding-migration path.
+    """
     cfg = config or _get_config()
 
     if not cfg["api_key"]:
         raise ValueError("LLM_API_KEY environment variable is not set")
+
+    # Resolve effective cap: explicit num_predict wins when provided, else
+    # the openai-compat ``max_tokens`` field. Both fields are sent so the
+    # native Ollama binding can honor the value if it is wired in.
+    effective_max_tokens = num_predict if num_predict is not None else max_tokens
+    effective_chat_template_kwargs = (
+        chat_template_kwargs
+        if chat_template_kwargs is not None
+        else {"enable_thinking": False}
+    )
 
     url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
     headers = {
@@ -357,11 +385,12 @@ async def call_llm(
     payload: dict[str, Any] = {
         "model": cfg["model"],
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": effective_max_tokens,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
+        "chat_template_kwargs": effective_chat_template_kwargs,
     }
 
     logger.info(
@@ -490,17 +519,24 @@ async def call_llm(
     content = choices[0].get("message", {}).get("content", "")
 
     # Qwen3 thinking models: when finish_reason='length', thinking consumed
-    # all max_tokens and content is empty.  Log diagnostic and raise.
+    # all num_predict and content is empty.  Log diagnostic and raise.
+    # NFM-4730-FixB: the diagnostic cites ``num_predict`` (the Ollama-native
+    # knob) rather than ``max_tokens`` because the openai-compat
+    # ``max_tokens`` field is a *cap* and cannot exceed the model's
+    # context window — bumping it on the server side is the correct lever.
     finish_reason = choices[0].get("finish_reason", "")
     if not content and finish_reason == "length":
         logger.error(
             "LLM returned empty content with finish_reason=length "
-            "(thinking consumed all %d tokens). Increase max_tokens.",
-            max_tokens,
+            "(thinking consumed all %d tokens). Increase num_predict on the "
+            "Ollama server (NUM_PREDICT) or pass num_predict=... to call_llm.",
+            effective_max_tokens,
         )
         raise RuntimeError(
-            f"LLM thinking consumed all {max_tokens} tokens "
-            "(finish_reason=length). Content is empty."
+            f"LLM thinking consumed all {effective_max_tokens} tokens "
+            "(finish_reason=length). Content is empty. Increase num_predict "
+            "on the Ollama server (NUM_PREDICT) or pass num_predict=... to "
+            "call_llm."
         )
 
     if not content:

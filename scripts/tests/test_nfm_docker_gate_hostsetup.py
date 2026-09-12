@@ -37,6 +37,7 @@ SANCTIONED = [
     "run-sql.sh",
     "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
     "run-cleanup.sh",  # NFM-4357: sanctioned image retention cleanup
+    "run-backup.sh",  # NFM-4750: Plan B full-gate pg_dump + 4-volume tar
 ]
 
 # Hermetic sha satisfying HEAD==DEPLOY_SHA in entry tests.
@@ -749,3 +750,263 @@ def test_config_json_matches_default_scope():
 def test_entry_scripts_are_executable_in_repo():
     for script in ENTRIES:
         assert script.stat().st_mode & stat.S_IXUSR, f"{script.name} lost its exec bit"
+
+
+# ---- NFM-4750 Plan B: run-backup.sh (full-gate pg_dump + 4-volume tar) --------
+
+
+_BACKUP_VOLUMES = (
+    "nucpot-prod_prod-db-data",
+    "nucpot-prod_prod-uploads",
+    "nucpot-prod_lightrag-data",
+    "nucpot-prod_migration-audit",
+)
+
+
+def _backup_dest(tmp_path: Path) -> Path:
+    """Hermetic backup root — tmp_path/backup, parent exists."""
+    dest = tmp_path / "backup"
+    dest.mkdir()
+    return dest
+
+
+def _backup_harness(tmp_path: Path) -> "EntryHarness":
+    h = EntryHarness(tmp_path)
+    h._write_executable(
+        "id",
+        'printf "nfmdeploy\\n"',  # match EntryHarness default; explicit for clarity
+    )
+    return h
+
+
+def test_run_backup_rejects_disallowed_volume(entry, tmp_path):
+    """The volume allowlist is the data-exfiltration guard — refusing
+    `--volumes <attacker-controlled-name>` is the AC."""
+    dest = _backup_dest(tmp_path)
+    assert (
+        entry.run(
+            "run-backup.sh",
+            "--dest",
+            str(dest),
+            "--volumes",
+            "nucpot-prod_anything-else",
+            "--skip-pg-dump",
+        ).returncode
+        == 64
+    )
+
+
+def test_run_backup_rejects_relative_dest(entry, tmp_path):
+    assert entry.run("run-backup.sh", "--dest", "relative/path").returncode == 64
+
+
+def test_run_backup_rejects_dotdot_dest(entry, tmp_path):
+    assert entry.run("run-backup.sh", "--dest", "/tmp/a/../b").returncode == 64
+
+
+def test_run_backup_rejects_missing_parent_dest(entry):
+    """--dest parent must exist (mkdir is not the entry's job — refuse and
+    let the operator create the dir explicitly)."""
+    assert entry.run("run-backup.sh", "--dest", "/no/such/dir/x").returncode == 64
+
+
+def test_run_backup_rejects_bad_keep(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--keep", "abc").returncode == 64
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--keep", "0").returncode == 64
+
+
+def test_run_backup_rejects_unknown_flag(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    assert entry.run("run-backup.sh", "--dest", str(dest), "--evil").returncode == 64
+
+
+def test_run_backup_invokes_pg_dump_and_all_volume_tars(entry, tmp_path):
+    """Success path: docker exec pg_dump + docker run --rm -v <vol>:/src:ro
+    alpine tar cf - for every allowlisted volume, all under the full gate."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    # pg_dump via the full gate (peer auth inside the container, no password)
+    assert "exec nucpot-prod-db pg_dump -Fc -U nfm -d nfm_db" in argv_blob
+    for v in _BACKUP_VOLUMES:
+        assert f"run --rm -v {v}:/src:ro alpine tar cf - -C /src ." in argv_blob, (
+            f"missing tar invocation for {v}; saw: {argv_blob}"
+        )
+
+
+def test_run_backup_volume_subset_invokes_only_selected(entry, tmp_path):
+    """--volumes narrows the tar list; pg_dump still runs."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run(
+        "run-backup.sh",
+        "--dest",
+        str(dest),
+        "--volumes",
+        "nucpot-prod_prod-uploads,nucpot-prod_lightrag-data",
+    )
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    assert "exec nucpot-prod-db pg_dump" in argv_blob
+    assert "nucpot-prod_prod-uploads:/src:ro" in argv_blob
+    assert "nucpot-prod_lightrag-data:/src:ro" in argv_blob
+    assert "nucpot-prod_prod-db-data:/src:ro" not in argv_blob
+    assert "nucpot-prod_migration-audit:/src:ro" not in argv_blob
+
+
+def test_run_backup_skip_pg_dump_skips_exec(entry, tmp_path):
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest), "--skip-pg-dump")
+    assert result.returncode == 0, result.stderr
+    argv_blob = " ".join(" ".join(argv) for argv in entry.docker_argv())
+    assert "exec nucpot-prod-db" not in argv_blob
+    # volume tars still run
+    assert "nucpot-prod_prod-db-data:/src:ro" in argv_blob
+
+
+def test_run_backup_uses_full_gate_socket(entry, tmp_path):
+    """AC: the entry must reach the full gate (docker-full.sock), the ro
+    socket would deny every docker run --rm -v <prod-vol>: line. The fake
+    docker records argv; we don't query a real socket, but we can confirm
+    the entry exported the expected DOCKER_HOST in its first docker call
+    by inspecting its env via the env-keep Defaults. Simpler: ensure no
+    docker call lands on a host: tcp:// — the gate path is the only one
+    the entry can use."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    argv_flat = [" ".join(a) for a in entry.docker_argv()]
+    assert all("-H tcp://" not in a for a in argv_flat), argv_flat
+
+
+# ---- NFM-4750 R2 fix: NFM-4749 AC #3 + AC #4 fail-closed contract ----------
+#
+# AC #4: pg_dump failure must NOT update `current` symlink.
+# AC #3: failed backup must be LOUD (cron alert) and must NOT publish a
+#         MANIFEST (no false-green evidence).
+#
+# 2026-09-06 03:30 incident: pg_dump + all 4 volume tars produced empty
+# shells (0-byte dump, 20-byte empty gzips) but MANIFEST.sha256 was
+# written and `current` was flipped — cron reported green. These tests
+# pin the fail-closed contract: any non-zero fail leaves BOTH the
+# MANIFEST and the `current` symlink pointing at the previous good
+# stamp, the new stamp dir is left on disk for forensics but is NOT
+# promoted to "latest good".
+
+
+def _install_failing_docker(entry, fail_substr: str) -> None:
+    """Replace the default fake docker with one that exits 1 when the
+    argv contains `fail_substr` (e.g. "pg_dump" or a specific volume
+    name) and exits 0 otherwise. All calls are still recorded to the
+    harness's docker_calls file so the test can assert what was tried."""
+    body = (
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {entry.docker_calls}\n"
+        f"case \" $* \" in\n"
+        f'  *"{fail_substr}"*) echo "fake-docker: forced fail on {fail_substr}" >&2; exit 1 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    entry.bin_dir.joinpath("docker").write_text(body)
+
+
+def _new_stamp_dir(dest: Path, exclude: str) -> Path:
+    """Return the one stamp dir under dest that isn't `exclude`."""
+    # Stamp dirs are real directories; the `current` symlink resolves to a
+    # directory but pathlib follows it for is_dir(), so we must also
+    # exclude symlinks explicitly.
+    candidates = [
+        p for p in dest.iterdir() if p.is_dir() and not p.is_symlink() and p.name != exclude
+    ]
+    assert len(candidates) == 1, (
+        f"expected exactly one new stamp dir, got: {[p.name for p in candidates]}"
+    )
+    return candidates[0]
+
+
+def test_run_backup_pg_dump_failure_skips_manifest_and_current(entry, tmp_path):
+    """AC #4 + AC #3 — pg_dump fails: exit 1, NO MANIFEST, `current`
+    stays at the prior good stamp. The 2026-09-06 03:30 incident is
+    exactly this case; the new behavior is fail-closed."""
+    dest = _backup_dest(tmp_path)
+    prior = "20990101-0000"
+    (dest / prior).mkdir()
+    (dest / prior / "marker.txt").write_text("good")
+    (dest / "current").symlink_to(f"./{prior}")
+
+    _install_failing_docker(entry, "pg_dump")
+
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 1, (
+        f"pg_dump failure must exit 1; stderr: {result.stderr}"
+    )
+    # Fail-closed message reaches stderr (operator can read it in cron alert)
+    assert "fail=1" in result.stderr or "manifest/current SKIPPED" in result.stderr, (
+        f"expected fail-closed marker in stderr; got: {result.stderr}"
+    )
+
+    new_stamp = _new_stamp_dir(dest, prior)
+    # AC #3: no MANIFEST on the failed stamp
+    assert not (new_stamp / "MANIFEST.sha256").exists(), (
+        f"MANIFEST.sha256 was written despite pg_dump failure: {new_stamp}"
+    )
+    # AC #4: `current` still points at the prior good stamp
+    current_target = os.readlink(dest / "current")
+    assert current_target == f"./{prior}", (
+        f"current symlink was flipped despite pg_dump failure: "
+        f"current -> {current_target}, expected ./{prior}"
+    )
+
+
+def test_run_backup_volume_failure_skips_manifest_and_current(entry, tmp_path):
+    """AC #3 — a volume-tar failure is the same fail-closed contract:
+    no MANIFEST (no false green), `current` not flipped."""
+    dest = _backup_dest(tmp_path)
+    prior = "20990101-0000"
+    (dest / prior).mkdir()
+    (dest / "current").symlink_to(f"./{prior}")
+
+    # Make a SPECIFIC volume fail; pg_dump and other volumes succeed.
+    _install_failing_docker(entry, "nucpot-prod_migration-audit")
+
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 1, result.stderr
+    new_stamp = _new_stamp_dir(dest, prior)
+    assert not (new_stamp / "MANIFEST.sha256").exists()
+    current_target = os.readlink(dest / "current")
+    assert current_target == f"./{prior}", (
+        f"current was flipped despite volume failure: -> {current_target}"
+    )
+
+
+def test_run_backup_success_writes_manifest_and_flips_current(entry, tmp_path):
+    """Positive control: on the success path the entry DOES write
+    MANIFEST.sha256 and DOES flip `current` to the new stamp. Guards
+    against a future refactor that over-gates the manifest/current
+    block on something other than `fail=0`."""
+    dest = _backup_dest(tmp_path)
+    result = entry.run("run-backup.sh", "--dest", str(dest))
+    assert result.returncode == 0, result.stderr
+    # Exactly one stamp dir under dest (the `current` symlink points at
+    # a dir but is not itself a stamp)
+    stamps = [p for p in dest.iterdir() if p.is_dir() and not p.is_symlink()]
+    assert len(stamps) == 1, f"expected one stamp dir, got: {[p.name for p in stamps]}"
+    new_stamp = stamps[0]
+    assert (new_stamp / "MANIFEST.sha256").exists(), (
+        f"MANIFEST.sha256 missing on success path: {new_stamp}"
+    )
+    # The MANIFEST must checksum the dump + the 4 volume tars + dump.err = 6
+    manifest_lines = (new_stamp / "MANIFEST.sha256").read_text().strip().splitlines()
+    assert len(manifest_lines) == 6, (
+        f"expected 6 manifest entries (1 dump + 1 dump.err + 4 volume tars), "
+        f"got {len(manifest_lines)}: {manifest_lines}"
+    )
+    # `current` resolves to the new stamp (the script stores an absolute
+    # path; the prior-good tests use a relative symlink for clarity).
+    current_resolved = os.path.realpath(dest / "current")
+    assert current_resolved == str(new_stamp), (
+        f"current -> {current_resolved}, expected {new_stamp}"
+    )
+
+

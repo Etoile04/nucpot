@@ -11,8 +11,8 @@
 #   * group prod-deploy + user nfmdeploy (dedicated deploy identity)
 #   * /usr/local/lib/nfm-g2/  — gate proxy package, config, root-owned
 #     sanctioned entry scripts (run-deploy / run-pre-deploy-assert /
-#     run-recovery / run-worker-inspect / run-record-manifest) + launchd
-#     start scripts
+#     run-recovery / run-worker-inspect / run-record-manifest /
+#     run-backup) + launchd start scripts
 #   * /usr/local/var/nfm-g2/  — NFM-4273 canonical shared G4 state dir
 #     (deploy manifest + deploy lock): deploy-identity-writable,
 #     world-readable so the desktop-user drift cron (G4b) reads the same
@@ -204,7 +204,7 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog mirror_health; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup start-proxy start-watchdog start-mirror-health; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place
@@ -311,4 +311,6 @@ log "  recovery: sudo -n -u ${DEPLOY_USER} ${G2}/run-recovery.sh restart <api|we
 log "            sudo -n -u ${DEPLOY_USER} ${G2}/run-recovery.sh rollback --tag <last-good-sha>"
 log "  manifest: sudo -n -u ${DEPLOY_USER} ${G2}/run-record-manifest.sh --deploy-sha <sha> --actor gh-runner:<actor>"
 log "            (G4a manifest + deploy lock land in /usr/local/var/nfm-g2/, the one path the G4b drift cron reads)"
+log "  backup:   sudo -n -u ${DEPLOY_USER} ${G2}/run-backup.sh [--keep N] [--dest PATH] [--volumes ...]"
+log "            (NFM-4750 Plan B: full-gate pg_dump + 4 prod volume tars; ro gate denies these)"
 log "audit log: ${LOG_DIR}/gate-ro.log (+ gate-full.log, watchdog.log)"

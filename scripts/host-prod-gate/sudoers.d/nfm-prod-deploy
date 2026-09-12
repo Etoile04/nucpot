@@ -16,6 +16,11 @@
 #   run-record-manifest.sh    — NFM-4273 G4a manifest record as the deploy
 #                               identity at the canonical G4 state dir (all
 #                               args are flags — nothing rides env_reset)
+#   run-cleanup.sh            — NFM-4357 sanctioned image retention cleanup
+#   run-backup.sh             — NFM-4750 Plan B full-gate pg_dump + volume
+#                               tars (Plan A in NFM-4749 only covered
+#                               logical dump; the ro gate denies volume
+#                               mount + docker exec into prod-db)
 
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-deploy.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-pre-deploy-assert.sh
@@ -24,6 +29,7 @@
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-sql.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-record-manifest.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-cleanup.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-backup.sh
 
 # sudo env_reset strips the caller environment; the deploy entry needs
 # exactly these three (DEPLOY_ACTOR is NFM-4273: GH-runner provenance for

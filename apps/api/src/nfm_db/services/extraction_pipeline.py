@@ -588,6 +588,15 @@ async def ontofuel_extract(
             raw_result = await (llm_call or call_llm)(
                 system_prompt=system_prompt,
                 user_message=chunk_message,
+                # NFM-4730-FixB: cap the per-chunk response budget at 8192
+                # so qwen3.5:4b-nvfp4 cannot burn the entire output budget
+                # on thinking-mode reasoning (was 16384 → finish_reason=length
+                # with empty content). Pair with enable_thinking=False so
+                # future native-Ollama bindings suppress thinking mode
+                # automatically; the flag is a no-op against the current
+                # openai-compat layer (see NFM-4525).
+                num_predict=8192,
+                chat_template_kwargs={"enable_thinking": False},
             )
 
             # Parse response — expect a list of dicts

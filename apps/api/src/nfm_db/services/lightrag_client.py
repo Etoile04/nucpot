@@ -117,6 +117,33 @@ class LightRAGClientError(Exception):
     """Raised when a LightRAG API call fails."""
 
 
+class LightRAGConflictError(LightRAGClientError):
+    """Raised when a LightRAG API call returns HTTP 409.
+
+    NFM-4758 / NFM-4730-FixA: the sidecar returns ``409 Document storage
+    already contains '<doc_id>'`` when an ingest tries to register a
+    ``file_source`` marker that is already in ``lightrag_doc_status``.
+    Callers that want idempotency on reextract can detect this specific
+    status, delete the stale marker via :meth:`LightRAGClient.delete_document`,
+    and retry the ingest.  Structured fields (``status_code``,
+    ``response_body``, ``doc_id``) are preserved so the caller can
+    dispatch on them without re-parsing the message text.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        response_body: str = "",
+        doc_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+        self.doc_id = doc_id
+
+
 # ---------------------------------------------------------------------------
 # Module-level config helper
 # ---------------------------------------------------------------------------
@@ -348,6 +375,59 @@ class LightRAGClient:
                 return rows
         return []
 
+    async def delete_document(self, doc_id: str) -> dict[str, Any]:
+        """Delete a single document from the LightRAG sidecar.
+
+        NFM-4758 / NFM-4730-FixA: used by the reextract idempotency path
+        to evict a stale ``data_source:<uuid>`` (or ``kg_pipeline``)
+        marker from ``lightrag_doc_status`` after the ingest returns 409
+        ``Document storage already contains '<doc_id>'``.  Hits the
+        upstream ``DELETE /documents?doc_id=<doc_id>`` endpoint.
+
+        Args:
+            doc_id: The document identifier — for KG auto-ingest this is
+                the ``source`` marker stamped on the document
+                (``data_source:<uuid>`` or ``kg_pipeline``).
+
+        Returns:
+            Parsed JSON response from the sidecar (typically
+            ``{"status": "deleted", ...}``).
+
+        Raises:
+            LightRAGClientError: On transport failure or non-2xx response.
+                A 404 (already absent) is treated as success — the caller's
+                invariant ``the marker is gone`` still holds, and the
+                sidecar's deletion of an unknown id is a no-op in practice.
+        """
+        try:
+            response = await self._http_client.delete(
+                "/documents",
+                params={"doc_id": doc_id},
+                timeout=self.query_timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise LightRAGClientError(
+                f"LightRAG /documents DELETE failed: {exc}"
+            ) from exc
+
+        # Treat 404 as already-deleted so the caller's invariant
+        # ``the marker is gone before the retry`` still holds without
+        # surfacing a spurious error from a doc the sidecar has never
+        # seen (e.g. the marker was wiped out-of-band).
+        if response.status_code == 404:
+            return {"status": "deleted", "doc_id": doc_id, "already_absent": True}
+
+        if response.status_code >= 400:
+            raise LightRAGClientError(
+                f"LightRAG /documents DELETE failed: HTTP {response.status_code} - {response.text}"
+            )
+
+        # The sidecar may return an empty body for 204 No Content.
+        try:
+            return response.json()
+        except ValueError:
+            return {"status": "deleted", "doc_id": doc_id}
+
     # ------------------------------------------------------------------
     # NFM-4742 F-3 §3 — bucket enumeration + delete for replay
     # ------------------------------------------------------------------
@@ -489,6 +569,19 @@ class LightRAGClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
+            # NFM-4758 / NFM-4730-FixA: 409 carries the structured
+            # ``Document storage already contains '<doc_id>'`` body and
+            # signals an idempotent re-extract, NOT a transport failure.
+            # Raise a typed subclass so callers can detect the conflict
+            # and retry-after-DELETE without parsing the message text.
+            if exc.response.status_code == 409:
+                response_text = exc.response.text
+                raise LightRAGConflictError(
+                    f"LightRAG ingest failed: HTTP 409 - {response_text}",
+                    status_code=409,
+                    response_body=response_text,
+                    doc_id=file_source,
+                ) from exc
             raise LightRAGClientError(
                 f"LightRAG ingest failed: HTTP {exc.response.status_code} - {exc.response.text}"
             ) from exc
