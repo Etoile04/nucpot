@@ -137,7 +137,7 @@ def test_get_config_resolves_ollama_provider(monkeypatch: pytest.MonkeyPatch) ->
 
 
 # ---------------------------------------------------------------------------
-# NFM-4730-FixB — per-chunk dispatcher passes num_predict + enable_thinking=False
+# NFM-4730-FixB / NFM-4778 — per-chunk dispatcher passes num_predict + enable_thinking=False
 # ---------------------------------------------------------------------------
 
 
@@ -146,13 +146,14 @@ async def test_ontofuel_extract_passes_num_predict_and_disable_thinking(
     tmp_path: Any,
     db_session: AsyncSession,
 ) -> None:
-    """NFM-4730-FixB: per-chunk call site must pass num_predict=8192 + chat_template_kwargs={'enable_thinking': False}.
+    """NFM-4778: per-chunk call site must pass num_predict=32768 + chat_template_kwargs={'enable_thinking': False}.
 
-    Without these overrides the qwen3.5:4b-nvfp4 dispatcher burns the
-    entire 16K output budget on thinking-mode reasoning and returns
-    finish_reason=length with empty content. See NFM-4525 for why the
-    chat_template_kwargs flag is a no-op against the openai-compat layer
-    but is included for forward-compat with a future native-Ollama binding.
+    FixB capped the budget at 8192 to stop thinking-mode burn. With thinking
+    now suppressed natively (NFM-4779 /api/chat binding), the cap bounds
+    content only — and 8192 truncated property-dense JSON mid-array on prod
+    (char 27501/24892 cuts → invalid JSON → empty extraction). The budget
+    is a ceiling, not an allocation: generation still stops at the JSON's
+    natural end.
     """
     await _seed_published_ontology(db_session)
     source = _write_markdown(
@@ -175,8 +176,8 @@ async def test_ontofuel_extract_passes_num_predict_and_disable_thinking(
 
     assert calls, "injected llm_call must be invoked at least once"
     kwargs = calls[0]
-    assert kwargs.get("num_predict") == 8192, (
-        f"per-chunk num_predict must be 8192, got {kwargs.get('num_predict')!r}"
+    assert kwargs.get("num_predict") == 32768, (
+        f"per-chunk num_predict must be 32768, got {kwargs.get('num_predict')!r}"
     )
     assert kwargs.get("chat_template_kwargs") == {"enable_thinking": False}, (
         "per-chunk chat_template_kwargs must disable thinking mode"

@@ -597,6 +597,17 @@ async def call_llm(
         result: dict[str, Any] | list[dict[str, Any]] = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         logger.error("LLM response content is not valid JSON: %s", cleaned[:500])
+        # NFM-4778: when generation stopped at the output cap the JSON is
+        # truncated mid-structure — surface the cap explicitly so operators
+        # can distinguish num_predict truncation from model garbage without
+        # digging for char offsets in the parse error.
+        if finish_reason == "length":
+            raise RuntimeError(
+                f"LLM response truncated by output cap "
+                f"(finish_reason=length, num_predict={effective_max_tokens}): "
+                f"JSON parse failed at {exc}. Increase the num_predict "
+                "budget at the call site."
+            ) from exc
         raise RuntimeError(f"LLM response content is not valid JSON: {exc}") from exc
 
     logger.info("LLM response parsed successfully (type=%s)", type(result).__name__)
