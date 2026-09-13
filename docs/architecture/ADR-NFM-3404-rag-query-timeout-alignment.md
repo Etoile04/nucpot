@@ -374,9 +374,42 @@ Prod @ `d55a7e7c1`, CPO probes 2026-09-14 (mode=mix,
 
 Supporting: `/api/v1/lightrag/metrics` → `tier_2_p95 = 10 011 ms` vs
 `target_ms = 10 000` (breach; p95 dominated by 10 s read-timeout + ~1.4 s
-ILIKE rescue). Post-deploy cold/warm distribution probes (NFM-4825 AC2)
-land as comments on NFM-4825 during CPO acceptance and should be
-appended here when measured.
+ILIKE rescue).
+
+### 9.3.1 Measured evidence (post-change, NFM-4825 AC2 probes)
+
+Prod @ `b8718723f` (read 22 s / abort 25 000 ms deployed), RE probes
+2026-09-13 21:44–21:47 UTC — 3 fresh-unique Chinese flagship-topic
+variants, mode=mix, cold call → generation wait → warm repeat each:
+
+| # | cold wall | cold server `time_total` | cold outcome | warm wall | warm server `time_total` |
+| --- | --- | --- | --- | --- | --- |
+| q1 | 23.34 s | **21.9991 s** | semantic (`fallback.used=false`) | 5.50 s | 4.15 s |
+| q2 | 23.34 s | 22.0219 s | ILIKE fallback (`semantic_timeout`) | 6.11 s | 4.78 s |
+| q3 | 23.37 s | 22.0175 s | ILIKE fallback (`semantic_timeout`) | 5.88 s | 4.76 s |
+
+`rag_access_log` rows for the window (sanctioned `run-sql.sh`):
+`semantic/f/21.9991`, `semantic/f/4.15`, `ilike/t/22.0219`,
+`semantic/f/4.78`, `ilike/t/22.0175`, `semantic/f/4.76`.
+
+Reading:
+
+- **Warm tier contract holds** — 3/3 warm repeats semantic at 4.15–4.78 s
+  server-side (≤ 10 s target; consistent with §9.3's 6.08 s observation).
+- **Cold generation distribution is centered exactly on the 22 s read
+  budget** — three independent fresh variants landed at 21.999 / 22.022 /
+  22.018 s server-side (deterministic qwen3.5:4b generation for ~1.2–1.5 k
+  char answers after capped retrieval+rerank). The 22 s read converts the
+  fastest slice of cold queries (1/3 here, by 0.9 ms); the rest take the
+  preserved ILIKE fallback at ~23.3 s wall.
+- Cache-fill mechanism confirmed: q2/q3 generation completed server-side
+  past the API timeout and their warm repeats returned semantic ≤ 6.11 s.
+- Post-deploy metrics: `tier_2_p95 = 10 010.75 ms` (n=166) vs
+  `target_ms = 20 000` → `meets_sla: true`, `tier_2_breach: false`.
+- NFM-4825 AC2's ≥2/3-cold-within-22 s expectation was **not met** (1/3,
+  by margins of 18–22 ms); measured distribution handed to CPO acceptance
+  on NFM-4823 (accept / raise read inside the 25 s abort / accelerate
+  §9.4).
 
 ### 9.4 Future work (explicitly out of scope here)
 
