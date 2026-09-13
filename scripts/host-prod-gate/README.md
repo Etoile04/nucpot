@@ -55,11 +55,11 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
 | `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion |
 | `entries/run-record-manifest.sh` | G4a deploy-manifest record as the deploy identity at the canonical G4 state dir (NFM-4273) |
-| `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` |
+| `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` / `lightrag-reprocess` (NFM-4816: re-enqueue FAILED/PENDING docs via the sidecar's `/documents/reprocess_failed`) |
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
 | `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
-| `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; restarts `lightrag` through `run-recovery.sh` with a 30-min cooldown) |
+| `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; on wedge: restarts `lightrag` through `run-recovery.sh`, then re-enqueues stranded docs via `lightrag-reprocess` — NFM-4816 — with a 30-min cooldown over the action pair) |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
 | `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup; lightrag-watchdog — NFM-4804, the only one whose launchd `UserName` is nfmdeploy rather than root) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |

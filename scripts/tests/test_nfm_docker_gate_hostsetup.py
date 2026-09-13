@@ -245,6 +245,22 @@ def test_run_recovery_restart_api_invokes_docker_restart(entry):
     assert entry.docker_argv()[-1][-2:] == ["restart", "nucpot-prod-api"]
 
 
+def test_run_recovery_lightrag_reprocess_invokes_docker_exec_curl(entry):
+    """NFM-4816: third enumerated shape — re-enqueue lightrag FAILED/PENDING
+    docs via the sidecar's own reprocess endpoint through the full gate (the
+    only sanctioned reach: prod lightrag 9621 is not host-published)."""
+    result = entry.run("run-recovery.sh", "lightrag-reprocess")
+    assert result.returncode == 0, result.stderr
+    recorded = entry.docker_calls.read_text()
+    assert "exec nucpot-prod-lightrag curl" in recorded
+    assert "-X POST http://localhost:9621/documents/reprocess_failed" in recorded
+
+
+def test_run_recovery_lightrag_reprocess_takes_no_arguments(entry):
+    """The shape is fully enumerated — like `restart`, it rejects extras."""
+    assert entry.run("run-recovery.sh", "lightrag-reprocess", "extra").returncode == 64
+
+
 def test_run_sql_success_path_reads_repo_file(entry):
     (entry.repo / "apps" / "api" / "sql").mkdir(parents=True)
     sql = entry.repo / "apps" / "api" / "sql" / "001_x.sql"

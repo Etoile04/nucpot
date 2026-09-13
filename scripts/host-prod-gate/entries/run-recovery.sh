@@ -7,7 +7,7 @@
 #   %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-recovery.sh
 #
 # The NFM-1664 deterministic recovery playbook, command-enumerated to
-# exactly two shapes:
+# exactly three shapes:
 #
 #   run-recovery.sh restart <api|web|worker|lightrag|db>
 #       docker restart nucpot-prod-<svc> through the full gate.
@@ -18,6 +18,16 @@
 #       then re-record the G4a deploy manifest (NFM-4273: a rollback changes
 #       live digests; without a re-record the next drift-cron interval would
 #       false-alarm the sanctioned rollback).
+#
+#   run-recovery.sh lightrag-reprocess
+#       NFM-4815 remediation gap (NFM-4816): LightRAG FAILED/PENDING docs
+#       self-heal only at the next daily rag_audit_index_coverage (03:30Z) —
+#       up to 24h of retrieval degradation. This shape re-enqueues them NOW
+#       via the sidecar's own endpoint (lightrag-hku 1.5.4
+#       POST /documents/reprocess_failed picks up FAILED + PENDING +
+#       abnormally-terminated PROCESSING docs; no LIGHTRAG_API_KEY on the
+#       sidecar). Prod lightrag 9621 is not host-published (NFM-4481), so
+#       docker exec through the full gate is the only sanctioned reach.
 #
 # Anything else exits 64 (EX_USAGE) before touching docker. This is the
 # ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
@@ -35,6 +45,7 @@ usage() {
 usage (NFM-1664 recovery, NFM-4270 sanctioned):
   run-recovery.sh restart <api|web|worker|lightrag|db>
   run-recovery.sh rollback --tag <sha-of-last-good-deploy>
+  run-recovery.sh lightrag-reprocess
 EOF
 }
 
@@ -63,6 +74,19 @@ case "${1:-}" in
     # last deploy's manifest remains the correct drift baseline.
     echo "[nfm-g2] sanctioned recovery: restart nucpot-prod-$2 identity=$(id -un)"
     exec docker restart "nucpot-prod-$2"
+    ;;
+  lightrag-reprocess)
+    [ $# -eq 1 ] || { usage; exit 64; }
+    # curl flags (see header): --retry-connrefused covers the window right
+    # after `restart lightrag` (watchdog action pair, NFM-4804) when uvicorn
+    # is still booting; --max-time bounds each attempt so a hung sidecar
+    # cannot wedge the watchdog tick past its 5-min launchd interval; -f
+    # makes an HTTP 5xx a visible nonzero exit instead of a silent
+    # "success" body.
+    echo "[nfm-g2] sanctioned recovery: lightrag-reprocess identity=$(id -un)"
+    exec docker exec nucpot-prod-lightrag \
+      curl -fsS --retry 8 --retry-delay 5 --retry-connrefused --max-time 30 \
+      -X POST http://localhost:9621/documents/reprocess_failed
     ;;
   rollback)
     [ $# -eq 3 ] && [ "$2" = "--tag" ] || { usage; exit 64; }

@@ -11,6 +11,8 @@
 #   run-deploy.sh             — deploy_prod.sh via GH Actions / operator
 #   run-pre-deploy-assert.sh  — GH Actions pre-deploy DB<->code assertion
 #   run-recovery.sh           — NFM-1664 deterministic recovery playbook
+#                               (restart / rollback / lightrag-reprocess —
+#                               NFM-4816 FAILED/PENDING doc re-enqueue)
 #   run-worker-inspect.sh     — GH Actions post-deploy celery verification
 #   run-sql.sh                — run-migration.yml standalone DB migration
 #   run-record-manifest.sh    — NFM-4273 G4a manifest record as the deploy

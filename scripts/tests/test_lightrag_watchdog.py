@@ -21,6 +21,12 @@ the inspect/logs call shapes, plus a fake recovery script. They pin:
   - container down         → exit 0, compose policy owns it
   - cooldown               → second wedge probe within 30 min → suppressed
   - error beyond lookback  → exit 0 (5-line window pins the discriminator)
+
+NFM-4816: a wedge action is restart-then-reprocess — after the consumer
+revives, the watchdog invokes the run-recovery.sh `lightrag-reprocess`
+shape ONCE so FAILED/PENDING docs re-enqueue immediately instead of
+waiting for the next daily rag_audit_index_coverage (up to 24h retrieval
+degradation). The cooldown still gates the whole action pair.
 """
 
 from __future__ import annotations
@@ -95,6 +101,11 @@ exit 0
 FAKE_RECOVERY = """\
 #!/bin/bash
 echo "recovery-called: $*" >> "$FAKE_RECOVERY_CALLS"
+# NFM-4816: the action pair is restart-then-reprocess — tests need the two
+# legs to fail independently (reprocess runs only after a successful restart).
+case "$1" in
+  lightrag-reprocess) exit "${FAKE_RECOVERY_EXIT_REPROCESS:-${FAKE_RECOVERY_EXIT:-0}}" ;;
+esac
 exit "${FAKE_RECOVERY_EXIT:-0}"
 """
 
@@ -118,7 +129,7 @@ def harness(tmp_path: Path):
     rcalls = tmp_path / "recovery-calls"
 
     def run(log_text: str, *, running: str = "true", recovery_exit: str = "0",
-            extra_env: dict | None = None):
+            reprocess_exit: str | None = None, extra_env: dict | None = None):
         log_file.write_text(log_text)
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -134,6 +145,8 @@ def harness(tmp_path: Path):
             "FAKE_RECOVERY_CALLS": str(rcalls),
             "FAKE_RECOVERY_EXIT": recovery_exit,
         }
+        if reprocess_exit is not None:
+            env["FAKE_RECOVERY_EXIT_REPROCESS"] = reprocess_exit
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
@@ -157,6 +170,45 @@ def test_wedge_signature_triggers_sanctioned_restart(harness) -> None:
     assert "recovery-called: restart lightrag" in calls
     assert harness["state"].exists(), "cooldown state must be written on restart"
     assert "probe=WEDGE" in harness["watchdog_log"].read_text()
+
+
+def test_wedge_action_pair_is_restart_then_reprocess(harness) -> None:
+    """NFM-4816: a wedge action is restart FIRST (revive the dead enqueue
+    consumer), then the reprocess shape (re-enqueue FAILED/PENDING docs).
+    Reversing the order would enqueue into the dead consumer."""
+    proc = harness["run"](WEDGE_LOG)
+    assert proc.returncode == 2, proc.stderr
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
+    assert "action=lightrag-reprocess rc=0" in harness["watchdog_log"].read_text()
+
+
+def test_failed_restart_skips_reprocess(harness) -> None:
+    """NFM-4816: if the restart itself fails, the consumer is still dead —
+    reprocessing would enqueue docs into it. The wedge/exit contract is
+    unchanged (exit 2, state written); the skip must be visible in the log."""
+    proc = harness["run"](WEDGE_LOG, recovery_exit="3")
+    assert proc.returncode == 2, proc.stderr
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag"], calls
+    assert harness["state"].exists(), "cooldown state must be written even when restart fails"
+    assert "skipped reason=restart-failed" in harness["watchdog_log"].read_text()
+
+
+def test_failed_reprocess_keeps_wedge_disposition(harness) -> None:
+    """NFM-4816: a failing reprocess must not change the watchdog's exit
+    (the wedge was still addressed: consumer revived) nor skip the cooldown
+    state — the rc is recorded for the operator, the daily audit remains the
+    fallback reprocess path."""
+    proc = harness["run"](WEDGE_LOG, reprocess_exit="5")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["state"].exists()
+    assert "action=lightrag-reprocess rc=5" in harness["watchdog_log"].read_text()
+    # The recorded state throttles the next wedge probe regardless.
+    second = harness["run"](WEDGE_LOG, reprocess_exit="5")
+    assert second.returncode == 0, second.stderr
+    assert "reason=cooldown" in harness["watchdog_log"].read_text()
 
 
 def test_normal_drain_does_not_restart(harness) -> None:
@@ -201,14 +253,15 @@ def test_error_beyond_lookback_window_is_not_wedge(harness) -> None:
 
 def test_cooldown_suppresses_restart_loop(harness) -> None:
     """A second wedge probe within the cooldown window must NOT restart
-    again (persistently failing pipeline cannot restart-loop)."""
+    again (persistently failing pipeline cannot restart-loop). NFM-4816: the
+    cooldown gates the whole restart+reprocess action pair."""
     first = harness["run"](WEDGE_LOG)
     assert first.returncode == 2
     # State file now carries last_restart=now → second probe suppresses.
     second = harness["run"](WEDGE_LOG)
     assert second.returncode == 0, second.stderr
     calls = harness["recovery_calls"].read_text().splitlines()
-    assert len(calls) == 1, f"restart-loop: {calls}"
+    assert len(calls) == 2, f"restart-loop: {calls}"
     assert "reason=cooldown" in harness["watchdog_log"].read_text()
 
 
@@ -220,7 +273,7 @@ def test_cooldown_expires_and_restarts_again(harness) -> None:
     second = harness["run"](WEDGE_LOG, extra_env={"NFM_LIGHTRAG_WATCHDOG_COOLDOWN_MIN": "0"})
     assert second.returncode == 2, second.stderr
     calls = harness["recovery_calls"].read_text().splitlines()
-    assert len(calls) == 2
+    assert len(calls) == 4
 
 
 def test_probe_passes_boot_anchor_to_docker_logs(harness) -> None:
@@ -246,7 +299,9 @@ def test_docker_cli_targets_the_full_gate_socket(harness) -> None:
 def test_failing_recovery_still_records_state_and_rc(harness) -> None:
     """A recovery that exits nonzero must not kill the probe before the
     cooldown state and rc record are written — otherwise a persistently
-    failing recovery restart-attempts every 5 minutes with no cooldown."""
+    failing recovery restart-attempts every 5 minutes with no cooldown.
+    (NFM-4816: with the restart failing, reprocess is skipped, so exactly
+    one recovery call lands.)"""
     proc = harness["run"](WEDGE_LOG, recovery_exit="3")
     assert proc.returncode == 2, proc.stderr
     assert harness["state"].exists(), "cooldown state must be written even when recovery fails"
