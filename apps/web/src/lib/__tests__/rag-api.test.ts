@@ -98,18 +98,18 @@ afterEach(() => {
 // ─── AC-1: AbortController timeout ─────────────────────────────────
 
 describe("AC-1 — AbortController timeout", () => {
-  it("defaults to 15 000 ms (NFM-4539 RAG-F: tightened post NFM-4525)", () => {
-    expect(DEFAULT_RAG_QUERY_TIMEOUT_MS).toBe(15_000)
-    expect(resolveRagQueryTimeoutMs()).toBe(15_000)
+  it("defaults to 25 000 ms (NFM-4823 tiered cold-query contract, ADR-NFM-3404 §9)", () => {
+    expect(DEFAULT_RAG_QUERY_TIMEOUT_MS).toBe(25_000)
+    expect(resolveRagQueryTimeoutMs()).toBe(25_000)
   })
 
-  it("aborts a hung query at the 15s default and stays pending before it", async () => {
+  it("aborts a hung query at the 25s default and stays pending before it", async () => {
     vi.useFakeTimers()
     vi.stubGlobal("fetch", hangingFetch())
 
     const { state, done } = trackQuery()
 
-    await vi.advanceTimersByTimeAsync(14_999)
+    await vi.advanceTimersByTimeAsync(24_999)
     expect(state.settled).toBeNull()
 
     await vi.advanceTimersByTimeAsync(1)

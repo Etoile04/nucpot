@@ -76,35 +76,36 @@ def test_tier_p95_floor_is_exact_threshold() -> None:
     assert not_enough.p95_ms is None
 
 
-def test_tier_2_target_ms_is_ten_seconds_post_nfm_4525() -> None:
-    """NFM-4525 tightened Tier-2 P95 from < 30s to < 10s.  The constant
+def test_tier_2_target_ms_is_twenty_seconds_post_nfm_4823() -> None:
+    """NFM-4823 / NFM-4825 re-tiered Tier-2 P95 from < 10s to < 20s
+    (tiered cold-query contract, ADR-NFM-3404 §9).  The constant
     must agree — otherwise the dashboard reports ``meets_sla=true`` for
     queries that actually exceed the spec (NFM-4617-B3 regression)."""
-    assert TIER_2_TARGET_MS == 10_000.0
+    assert TIER_2_TARGET_MS == 20_000.0
 
 
-def test_tier_2_target_ms_flips_meets_sla_at_10s_threshold() -> None:
-    """When ``target_ms=TIER_2_TARGET_MS`` (post-NFM-4525 = 10s):
+def test_tier_2_target_ms_flips_meets_sla_at_20s_threshold() -> None:
+    """When ``target_ms=TIER_2_TARGET_MS`` (post-NFM-4823 = 20s):
 
-      * p95 == 9_999.99 ms → ``meets_sla=true`` (within budget)
-      * p95 == 10_000.01 ms → ``meets_sla=false`` (over budget)
+      * p95 == 19_999.99 ms → ``meets_sla=true`` (within budget)
+      * p95 == 20_000.01 ms → ``meets_sla=false`` (over budget)
 
-    This pins the boundary semantics against the post-NFM-4525 constant
+    This pins the boundary semantics against the post-NFM-4823 constant
     so a future drift can not silently re-introduce the NFM-4617-B3 bug.
     """
-    # 5 samples * 9.99999 s = P95 = 9999.99 ms → under 10s budget.
-    inside = tier_p95([9.99999] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
-    assert inside.p95_ms == pytest.approx(9999.99)
+    # 5 samples * 19.99999 s = P95 = 19999.99 ms → under 20s budget.
+    inside = tier_p95([19.99999] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert inside.p95_ms == pytest.approx(19999.99)
     assert inside.meets_sla is True
 
-    # 5 samples * 10.00001 s = P95 = 10000.01 ms → over 10s budget.
-    outside = tier_p95([10.00001] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
-    assert outside.p95_ms == pytest.approx(10000.01)
+    # 5 samples * 20.00001 s = P95 = 20000.01 ms → over 20s budget.
+    outside = tier_p95([20.00001] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert outside.p95_ms == pytest.approx(20000.01)
     assert outside.meets_sla is False
 
     # Exact target is inclusive (p95_ms <= target_ms is the rule).
-    exact = tier_p95([10.0] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
-    assert exact.p95_ms == pytest.approx(10_000.0)
+    exact = tier_p95([20.0] * SAMPLE_FLOOR, target_ms=TIER_2_TARGET_MS)
+    assert exact.p95_ms == pytest.approx(20_000.0)
     assert exact.meets_sla is True
 
 
@@ -152,9 +153,9 @@ class TestTier2SlaBreachSignal:
         assert resp.tier_2_breach is False
 
     def test_breach_signal_flips_when_p95_exceeds_target(self) -> None:
-        """A single Tier-2 sample over the 10s target flips the signal True."""
-        # 5 samples, one is 12s (clearly over), p95 lands above 10s.
-        out = tier_p95([9.0, 9.5, 10.0, 10.5, 12.0], target_ms=TIER_2_TARGET_MS)
+        """A single Tier-2 sample over the 20s target flips the signal True."""
+        # 5 samples, one is 24s (clearly over), p95 lands above 20s.
+        out = tier_p95([15.0, 19.0, 20.0, 21.0, 24.0], target_ms=TIER_2_TARGET_MS)
         assert out.p95_ms is not None
         assert out.p95_ms > TIER_2_TARGET_MS
         # The boolean is a pure projection of ``meets_sla``:
@@ -163,7 +164,7 @@ class TestTier2SlaBreachSignal:
         assert breach is True
 
     def test_breach_signal_stays_false_when_under_target(self) -> None:
-        """All samples under 10s → ``tier_2_breach=False``."""
+        """All samples under 20s → ``tier_2_breach=False``."""
         out = tier_p95([0.5, 0.7, 0.9, 1.1, 1.3], target_ms=TIER_2_TARGET_MS)
         assert out.meets_sla is True
         breach = out.p95_ms is not None and not out.meets_sla
@@ -409,8 +410,8 @@ async def test_metrics_window_floor_is_respected(
 async def test_metrics_tier2_target_is_configurable(
     db_session: AsyncSession,
 ) -> None:
-    """``tier_2_target_ms`` lets operators pre-set the post-NFM-4525 10s
-    target without redeploying."""
+    """``tier_2_target_ms`` lets operators pre-set the tier-2 target
+    (post-NFM-4823 = 20s, ADR-NFM-3404 §9) without redeploying."""
     await _seed_completed(db_session, n=2)
     for _ in range(6):
         await _seed_access(db_session, time_total=11.0, was_cached=False, was_fallback=False)

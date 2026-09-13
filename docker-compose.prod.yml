@@ -113,14 +113,18 @@ services:
       # NFM-4502 / NFM-4492: raise the LightRAG query ceiling from the
       # 8.0s hardcoded default in apps/api/src/nfm_db/services/lightrag_client.py
       # so we can measure real post-fix cold/warm latency (research found 63.7s
-      # cold query with the broken embed; expected post-fix cold ≤ 30s with
-      # NFM-4539 RAG-F: tightened from 60s → 10s after NFM-4525 fixed the
-      # qwen3.5 thinking-mode token-eat bug. Cold mix/hybrid queries now
-      # complete inside 10s end-to-end; anything past this is a stalled
-      # sidecar and the ILIKE fallback path (RAG-B / §3.2) carries the
-      # user-visible degradation. The companion client-side abort budget
-      # is ``NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS=15_000`` in apps/web.
-      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "10.0"
+      # cold query with the broken embed). NFM-4539 RAG-F tightened 60s → 10s
+      # after NFM-4525; NFM-4823 / NFM-4825 re-tiered 10s → 22s for the
+      # cold tier (ADR-NFM-3404 §9): a first-seen (uncached) mode=mix query
+      # needs 12–20s of LLM generation, so the 10s budget degraded every
+      # cold query to ILIKE while the real semantic answer finished
+      # server-side and was discarded. Warm (LLM-cache hit) queries are
+      # unaffected (observed 4.5–6.1s, ≤ 10s target unchanged). Past the
+      # 22s read budget the ILIKE fallback path (RAG-B / §3.2) still
+      # carries the user-visible degradation. The companion client-side
+      # abort budget is ``NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS=25_000`` in
+      # apps/web.
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: "22.0"
       # HPC SSH key (mount as secret in production)
       NFM_HPC_PRIMARY_HOST: ${NFM_HPC_PRIMARY_HOST:-}
       NFM_HPC_PRIMARY_USER: ${NFM_HPC_PRIMARY_USER:-}

@@ -1,6 +1,6 @@
 # ADR-NFM-3404: RAG Query Timeout Alignment + Fast-Fail User Feedback
 
-**Status:** Proposed (CTO-authored, awaiting CPO/LE implementation)
+**Status:** Accepted (as amended — §8 NFM-4525/4527 per-mode budget; §9 NFM-4823 tiered cold-query contract)
 **Date:** 2026-08-21
 **Parent:** NFM-3357 (RAG service errors & truncated error messages)
 **Depends on:** NFM-3403 (T1 — error-message contract; `done` 2026-08-21)
@@ -12,6 +12,10 @@
 > success-path ceiling is now **8 s wall-clock** for cached or fresh
 > queries on the post-fix stack, vs the 30 s ceiling NFM-4492 raised the
 > read budget to while Path A was being validated.
+>
+> **2026-09-14 update — NFM-4823 / NFM-4825:** §9 below supersedes §2.1's
+> ≤15 s algebra **for the query path** with a tiered warm/cold contract
+> (read 22 s, frontend abort 25 000 ms, cold-tier hard bound 25 s).
 
 ---
 
@@ -315,3 +319,68 @@ If (1) or (2) fails, revert `docker/.env.prod` (LE rollback path
 Dockerfile candidate as a no-deploy until the regression test in
 `docker/lightrag/tests/test_dockerfile_binding_package.py` passes
 locally with the updated `BINDING_PACKAGE_MAP`.
+
+---
+
+## 9. Tiered cold-query contract (NFM-4823 / NFM-4825, 2026-09-14)
+
+> **CPO decision** (NFM-4823, 2026-09-14): consciously re-decide the SLA
+> instead of further squeezing the success path. The §8 budget table's
+> "mix uncached = 2–6 s" row was a projection never validated against
+> full LLM generation — after NFM-4822's rerank-pool cap (#1352/#1353)
+> bounded retrieval+rerank, an uncached semantic `mix` query still needs
+> 12–20 s of qwen3.5:4b generation, i.e. it never fit the 10 s read
+> budget. The old single ≤ 15 s wall-clock algebra
+> (`LLM 8 + connect 3 + 1 ≤ read ≤ abort/1000 ≤ 15`, §2.1) is
+> **superseded for the query path** — it conflated warm and cold paths.
+> (It also supersedes the unmerged ADR-019 draft's 12 s-read variant on
+> branch `NFM-4823-first-seen-mix-latency-budget`; that branch must not
+> be landed as-is.)
+
+### 9.1 The two tiers
+
+| Tier | Path | Contract | Backing knob |
+| --- | --- | --- | --- |
+| **Warm** | LLM-cache hit (repeat / variant-of-seen) | target p95 ≤ 10 s — **unchanged** (observed 4.5–6.1 s) | n/a |
+| **Cold** | first-seen, uncached generation | expected 12–20 s, **hard bound 25 s** (read 22 s + ILIKE rescue) | read 10→**22 s**, abort 15 000→**25 000 ms** |
+| **Beyond bound** | generation unfinished at 22 s | ILIKE fallback preserved **verbatim**: `fallback.used=true, reason=semantic_timeout`, RagFallbackBadge — user waits ~23 s, gets the degraded-but-honest answer | fallback contract (NFM-4734) unchanged |
+
+Rationale: at the 10 s budget a cold query already cost the user ~11.4 s
+and returned the *degraded* ILIKE answer while the full semantic answer
+completed server-side moments later and was discarded for that request.
+Raising the read budget to 22 s converts roughly the same wait into the
+full semantic answer; every subsequent ask of that question lands in the
+4.5–6 s warm tier. Tier-2 metrics target moves 10 000 → 20 000 ms
+(`rag_metrics.py`, AC3 of NFM-4825).
+
+### 9.2 Sidecar upstream ceiling is load-bearing — do NOT align it down
+
+The sidecar's internal upstream `LIGHTRAG_TIMEOUT=60.0` is kept
+intentionally **above** the 22 s read budget. Generation continuing
+server-side past a client/API read timeout is what populates the LLM
+cache — without it there would be no warm tier at all. "Aligning" it
+down to 22 s would silently delete the cache-fill mechanism.
+
+### 9.3 Measured evidence (pre-change baseline)
+
+Prod @ `d55a7e7c1`, CPO probes 2026-09-14 (mode=mix,
+「UO2芯块热导率随燃耗增加的变化趋势如何」):
+
+| Probe | Wall-clock | Outcome |
+| --- | --- | --- |
+| 1st request (uncached) | **11.42 s** | `fallback.used=true, kind=ilike, reason=semantic_timeout` — degraded answer |
+| immediate repeat (server still generating) | 11.36 s | same fallback — LLM cache not yet populated |
+| repeat after server-side generation (~25 s later) | **6.08 s** | `fallback.used=false` — full semantic answer |
+
+Supporting: `/api/v1/lightrag/metrics` → `tier_2_p95 = 10 011 ms` vs
+`target_ms = 10 000` (breach; p95 dominated by 10 s read-timeout + ~1.4 s
+ILIKE rescue). Post-deploy cold/warm distribution probes (NFM-4825 AC2)
+land as comments on NFM-4825 during CPO acceptance and should be
+appended here when measured.
+
+### 9.4 Future work (explicitly out of scope here)
+
+- Async/streaming first-seen UX (proper structural fix; feature epic).
+- Warm/cold split in tier-2 metrics (today one p95 covers both tiers).
+- Cache seeding of canonical flagship queries post-deploy (P2, cheap
+  operational complement — converts the common cold paths to warm).

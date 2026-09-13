@@ -14,7 +14,7 @@
 1. **开放策略**:匿名 + 登录一致体验,端点级限次(~5/min/IP,可配)。
 2. **覆盖保障**:100% completed 文献入库即索引;Celery beat 每日对账兜底 hook 静默失败。
 3. **超时降级**:超时 → 自动 ILIKE 文本检索 + 透明标注,不静默。
-4. **分层 SLA**:已索引秒级 / fresh <10s(NFM-4525 修后自 <30s 收紧)/ 空结果诚实文案。
+4. **分层 SLA**:已索引秒级 / fresh <20s(NFM-4823 分层冷查询契约,ADR-NFM-3404 §9;原 <30s,NFM-4525 曾收紧至 <10s)/ 空结果诚实文案。
 
 ## 2. 不在本 spec 范围
 
@@ -75,17 +75,19 @@
 
 | 档位 | env | 现值(已部署) | 收紧触发 |
 |---|---|---|---|
-| API client 预算 | `NFM_LIGHTRAG_QUERY_TIMEOUT_S` | 10.0(prod/staging compose;代码回退默认 8.0) | 已收紧(NFM-4525 修后;原 30.0 为 NFM-4492 天花板) |
-| Sidecar 内部 | upstream `LIGHTRAG_TIMEOUT` | 60.0 | 维持 |
-| Frontend abort | `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS` | 15000 | 已收紧(NFM-4525 修后;原 45000) |
+| API client 预算 | `NFM_LIGHTRAG_QUERY_TIMEOUT_S` | 22.0(prod/staging compose;代码回退默认 8.0) | 上调(NFM-4823 分层冷查询契约:冷档首次未见 12-20s,ADR-NFM-3404 §9;原 10.0 为 NFM-4525 收紧值) |
+| Sidecar 内部 | upstream `LIGHTRAG_TIMEOUT` | 60.0 | 维持(刻意高于读预算:客户端超时后服务端续算填 LLM 缓存,是暖档的前提,NFM-4823) |
+| Frontend abort | `NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS` | 25000 | 上调(NFM-4823;原 15000,保持 abort > read 22s) |
 
 降级链路:
 
 ```
 query 发起
   ├─ < 1s + 缓存命中 → 直接返回(秒级,验收 P95<1s)
-  ├─ < 10s(API 预算)+ 成功 → 返回(验收 P95<10s,NFM-4525 修后自 <30s 收紧)
-  ├─ ≥ 10s 超时 → 触发 ILIKE 文本检索回退 + 透明标注
+  ├─ ≤ 22s(API 预算)+ 成功 → 返回语义答案
+  │    ├─ 暖档(缓存命中/复问)预期 4.5-6s,目标 ≤10s 不变
+  │    └─ 冷档(首次未见、无缓存生成)预期 12-20s,硬上界 25s(NFM-4823 / ADR-NFM-3404 §9;Tier-2 混合 P95 验收线 20s)
+  ├─ ≥ 22s 超时 → 触发 ILIKE 文本检索回退 + 透明标注(回退契约不变)
   └─ ILIKE 也无结果 → "知识库暂未覆盖" 诚实文案
 ```
 
@@ -100,13 +102,13 @@ query 发起
 | 档 | 触发条件 | 承诺 | 实测基线(NFM-4492 闭环) | 验收 |
 |---|---|---|---|---|
 | **Tier-1 秒级** | 缓存命中 / 已索引 + 简单查询 | **P95 < 1s** | 0.1s 冷 / 0.1s 暖(NFM-4503 实测 02:55Z) | `access_log.time_total` P95 over 7d < 1s |
-| **Tier-2 fresh** | 新文献 / 罕见实体 / 长尾问题 | **P95 < 10s**(NFM-4525 修后自 < 30s 收紧) | 8s 预算时代 63.7s 失败;30s 后 0.2-1.5s | `access_log.time_total` P95 over 7d < 10s |
+| **Tier-2 fresh** | 新文献 / 罕见实体 / 长尾问题 | **P95 < 20s**(NFM-4823 分层契约:冷档 12-20s;原 < 10s 为 NFM-4525 收紧值,实测冷查询必超) | 10s 预算时代冷查询 11.4s 即降级;暖档实测 4.5-6.1s | `access_log.time_total` P95 over 7d < 20s |
 | **Tier-3 透明回退** | 任意超时 | **ILIKE 兜底 + 徽标** | 8s API 必超时即回退(NFM-3404 经验) | `fallback.used=true` 计数 + 周报 |
 | **空结果** | 索引未覆盖 | **诚实文案 + 引用数**(0 时明示) | 已实现(NFM-4307) | UAT-6 验收 |
 
 承诺兑现节奏:
 
-- **当前(Tier-1/2)**:已闭环 NFM-4492(PR #1272 + PR #1276 + PR #1277);NFM-4525 已修,Tier-2 验收线已收紧到 **10s**(`TIER_2_TARGET_MS = 10_000.0`,NFM-4617-B3)。前端 loading 文案相应缩短预期。
+- **当前(Tier-1/2)**:已闭环 NFM-4492(PR #1272 + PR #1276 + PR #1277);NFM-4823 / NFM-4825 分层冷查询契约(ADR-NFM-3404 §9)生效后,Tier-2 验收线为 **20s**(`TIER_2_TARGET_MS = 20_000.0`;NFM-4525 曾收紧至 10s,后因冷档必超而上调)。前端 loading 文案相应调整预期。
 
 ## 7. 集成点
 
@@ -162,8 +164,8 @@ query 发起
 - **AC-1**:`/api/v1/lightrag/query` 移除 `require_editor`;匿名 + 已登录响应一致。
 - **AC-2**:端点限流 5/min/IP 生效;超限 429 + `Retry-After`。
 - **AC-3**:Celery beat 每日 03:30 UTC 跑 `rag_audit_index_coverage`;diff 行写入 `audit_log`。
-- **AC-4**:超时(≥10s)→ ILIKE 兜底 + 响应 `fallback.used=true` + UI 徽标。
-- **AC-5**:Tier-1 P95 < 1s over 7d;Tier-2 P95 < 10s over 7d(NFM-4525 修后自 < 30s 收紧)。
+- **AC-4**:超时(≥22s,ADR-NFM-3404 §9)→ ILIKE 兜底 + 响应 `fallback.used=true` + UI 徽标。
+- **AC-5**:Tier-1 P95 < 1s over 7d;Tier-2 P95 < 20s over 7d(NFM-4823 分层契约;原 < 30s,NFM-4525 曾收紧至 < 10s 后因冷档必超而上调)。
 - **AC-6**:空结果响应带诚实文案 + `references=[]`(UAT-6)。
 - **AC-7**:`access_log` 新字段:`mode`, `was_fallback`, `was_cached`, `query_kind`, `result_count`, `time_total`。
 - **AC-8**:本周看板(可选)暴露 `lit_completed_total` / `lit_indexed_total` / `lit_diff_count`。
@@ -177,7 +179,7 @@ query 发起
 | RAG-C 前端去墙 | `/search` 移除登录拦截 + 徽标组件 | RAG-A,B |
 | RAG-D 每日对账 | `rag_audit_index_coverage` task + Celery beat 注册 |  |
 | RAG-E 看板指标 | Tier P95 / lit_diff 计数暴露 | RAG-B |
-| RAG-F NFM-4525 触发线 | 已收紧并部署:`NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0`(prod/staging compose)+ 前端 abort 15_000 | NFM-4525 done |
+| RAG-F NFM-4525 触发线 | 已部署;现值见 §5 档位表(NFM-4823 分层契约:read 22s / abort 25_000) | NFM-4525 done |
 
 ## 14. 依据链
 

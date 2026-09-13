@@ -61,12 +61,15 @@ services:
       # Service-discovery vars only (compose service names, not host env).
       NFM_LIGHTRAG_HOST: nucpot-staging-lightrag
       NFM_LIGHTRAG_PORT: "9621"
-      # NFM-4539 RAG-F: tightened default to 10.0s after NFM-4525 fixed
-      # the qwen3.5 thinking-mode token-eat bug. The env-var override
+      # NFM-4823 / NFM-4825 tiered cold-query contract (ADR-NFM-3404 §9):
+      # raised default 10.0s → 22.0s so first-seen (uncached) mode=mix
+      # queries finish semantic generation in-budget instead of degrading
+      # to ILIKE at ~10s while the real answer completes server-side.
+      # Warm (LLM-cache hit) queries are unaffected. The env-var override
       # stays so SRE can dial it locally without a compose edit; the
       # client-side abort budget is ``NEXT_PUBLIC_RAG_QUERY_TIMEOUT_MS
-      # =15_000`` in apps/web (RAG-F contract).
-      NFM_LIGHTRAG_QUERY_TIMEOUT_S: ${STAGING_LIGHTRAG_QUERY_TIMEOUT_S:-10.0}
+      # =25_000`` in apps/web.
+      NFM_LIGHTRAG_QUERY_TIMEOUT_S: ${STAGING_LIGHTRAG_QUERY_TIMEOUT_S:-22.0}
     depends_on:
       db: { condition: service_healthy }
     healthcheck:

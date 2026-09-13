@@ -153,16 +153,19 @@ function mapFallback(backend: RagContractFallback | undefined): RagFallbackInfo 
 /**
  * Fallback query budget in milliseconds.
  *
- * NFM-4539 RAG-F: tightened from 45_000 → 15_000 after the NFM-4525
- * thinking-mode fix (qwen3.5:4b-nvfp4 no longer eats the token budget on
- * internal reasoning).  Cold mix/hybrid queries now complete inside the
- * 10s API budget, so 15s gives the abort budget a comfortable margin
- * without leaving the user staring at a spinner when the sidecar stalls.
- * Backend fast-fails at ``NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0``, so the
- * client budget only fires when the abort signal itself never reaches
- * the server (e.g. NAT timeout).
+ * NFM-4823 / NFM-4825 tiered cold-query contract (ADR-NFM-3404 §9):
+ * raised from 15_000 → 25_000 to stay above the backend read budget
+ * (``NFM_LIGHTRAG_QUERY_TIMEOUT_S`` 10.0 → 22.0).  A first-seen
+ * (uncached) mode=mix query needs 12–20s of LLM generation; under the
+ * old 10s read budget every cold query degraded to ILIKE while the real
+ * semantic answer finished server-side and was discarded.  Warm
+ * (LLM-cache hit) queries stay ≤ 10s, so the visible change is bounded
+ * to cold queries.  The abort budget keeps a ~3s margin over the 22s
+ * backend read so the client only fires when the abort signal itself
+ * never reaches the server (e.g. NAT timeout); beyond 22s the backend's
+ * own ILIKE fallback carries the degradation transparently.
  */
-export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 15_000
+export const DEFAULT_RAG_QUERY_TIMEOUT_MS = 25_000
 
 /** Shown when the client-side AbortController fires. */
 export const RAG_TIMEOUT_MESSAGE = "查询超时，请稍后重试，或请尝试使用关键词搜索。"
