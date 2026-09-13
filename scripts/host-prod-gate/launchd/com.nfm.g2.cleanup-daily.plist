@@ -10,7 +10,18 @@
      escalations. RunAtLoad/KeepAlive stay off: install must not prune.
      If the host is asleep at 04:20, launchd fires the missed calendar job
      once on wake. Output lands in /var/log/nfm-g2/launchd-cleanup-daily.log
-     (the entry's own before/after `docker system df` summary line). -->
+     (the entry's own before/after `docker system df` summary line).
+
+     Retention tightened to keep-shas 5 / keep-candidates 2 (entry defaults
+     are keep-10/keep-3). Measured 2026-09-13: the deploy treadmill was
+     producing ~10 prod generations/day, i.e. ~26-37 GiB of prod images in
+     flight, and keep-10 therefore represented only a ~24h window while the
+     host data volume sat at 91% (39 GiB free). keep-5 still satisfies the
+     entry's rollback floor (>=2 generations, enforced by run-cleanup.sh)
+     and holds steady state near ~18 GiB. Revert to the entry defaults by
+     dropping the two option pairs below if a deeper rollback window is
+     needed — the values must stay identical to the installed copy on the
+     host, otherwise a later host_setup.sh run silently drifts it back. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -22,6 +33,10 @@
         <string>-u</string>
         <string>nfmdeploy</string>
         <string>/usr/local/lib/nfm-g2/run-cleanup.sh</string>
+        <string>--keep-shas</string>
+        <string>5</string>
+        <string>--keep-candidates</string>
+        <string>2</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
