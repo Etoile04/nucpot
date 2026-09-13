@@ -62,8 +62,28 @@ def _surface_matcher(table: str, column: str) -> re.Pattern[str]:
     columns, via ``jsonb_array_elements_text`` unwrapping for the
     graph-unit array columns.  ``[^;]*`` keeps the pairing inside a
     single statement.
+
+    ``relation_pairs`` gets its own branch because it stores
+    ``[src, tgt]`` PAIRS — an array of arrays (code-review NFM-4818
+    R1).  A single-level ``jsonb_array_elements_text(relation_pairs)``
+    yields the *serialized sub-array text* (``'["src","tgt"]'``),
+    which an anchored ``^…$`` pattern can never match: the surface
+    would be silently inert.  The matcher therefore demands the
+    two-level unnest — ``jsonb_array_elements`` over the pairs outer,
+    ``jsonb_array_elements_text`` over each pair's endpoint names
+    inner — and, because ``jsonb_array_elements\\(`` cannot match the
+    longer ``jsonb_array_elements_text(`` token, it structurally
+    rejects the flat-array shape for this column.
     """
-    if column in ("entity_names", "relation_pairs"):
+    if column == "relation_pairs":
+        return re.compile(
+            rf"FROM\s+{table}\b[^;]*"
+            rf"jsonb_array_elements\(\s*{column}\s*\)[^;]*"
+            rf"jsonb_array_elements_text\(\s*\w+\.\w+\s*\)[^;]*"
+            rf"WHERE\s+\w+\.\w+\s*~",
+            re.IGNORECASE,
+        )
+    if column == "entity_names":
         return re.compile(
             rf"FROM\s+{table}\b[^;]*"
             rf"jsonb_array_elements_text\(\s*{column}\s*\)[^;]*"
@@ -220,6 +240,40 @@ class TestGuardShape:
             f"assertion does not test {missing} against the UUID "
             "pattern — a UUID name re-entering through that surface "
             "would go undetected"
+        )
+
+    def test_relation_pairs_requires_two_level_unnest(self) -> None:
+        """relation_pairs is an array of [src, tgt] arrays (NFM-4818 R1).
+
+        A single-level ``jsonb_array_elements_text(relation_pairs)``
+        yields the serialized sub-array text (``'["src","tgt"]'``), so
+        an anchored ``^…$`` UUID pattern can never match — surface 5
+        would be silently inert (CR R1 HIGH defect).  The matcher must
+        accept the shipped two-level unnest AND reject the flat-array
+        shape that passed review-blind at 344f7ea7c.
+        """
+        code = "\n".join(_sql_code_lines())
+        matcher = _surface_matcher("lightrag_full_relations", "relation_pairs")
+        assert matcher.search(code), (
+            "full_relations surface must unnest two levels: "
+            "jsonb_array_elements(relation_pairs) outer, then "
+            "jsonb_array_elements_text(pair) over each pair's endpoint "
+            "names, inner name reaching the ~ regex"
+        )
+        # The exact inert shape shipped at 344f7ea7c: flat
+        # elements_text over an array-of-arrays.  Must NOT satisfy the
+        # relation_pairs matcher.
+        flat_shape = (
+            "SELECT count(*) INTO v FROM lightrag_full_relations "
+            "WHERE EXISTS (SELECT 1 FROM "
+            "jsonb_array_elements_text(relation_pairs) AS p(pair) "
+            "WHERE p.pair ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
+            "[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');"
+        )
+        assert not matcher.search(flat_shape), (
+            "relation_pairs matcher accepts the single-level "
+            "elements_text shape — that shape is semantically inert "
+            "for an array of arrays and must be rejected"
         )
 
     def test_reports_stability_metrics(self) -> None:

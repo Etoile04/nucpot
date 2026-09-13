@@ -57,6 +57,16 @@ BEGIN
        OR target_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
 
     -- Graph-unit JSONB mirrors of the two surfaces above.
+    -- full_entities.entity_names is a FLAT name array — one
+    -- jsonb_array_elements_text level reaches the names.  But
+    -- full_relations.relation_pairs stores [src, tgt] PAIRS (an array
+    -- of arrays): endpoints are only visible after a TWO-level unnest
+    -- — jsonb_array_elements unwraps the pairs,
+    -- jsonb_array_elements_text the names inside each pair.  A
+    -- single-level elements_text over pairs yields the serialized
+    -- sub-array text ('["src","tgt"]'), which an anchored ^…$ pattern
+    -- can never match — the surface would be silently inert
+    -- (NFM-4818 code-review R1).
     SELECT count(*) INTO v_uuid_full_ent
     FROM lightrag_full_entities
     WHERE EXISTS (
@@ -67,8 +77,10 @@ BEGIN
     SELECT count(*) INTO v_uuid_full_rel
     FROM lightrag_full_relations
     WHERE EXISTS (
-        SELECT 1 FROM jsonb_array_elements_text(relation_pairs) AS p(pair)
-        WHERE p.pair ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        SELECT 1
+        FROM jsonb_array_elements(relation_pairs) AS p(pair),
+             jsonb_array_elements_text(p.pair) AS e(name)
+        WHERE e.name ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
     );
 
     IF v_uuid_entity + v_uuid_chunks + v_uuid_rel + v_uuid_full_ent + v_uuid_full_rel > 0 THEN
