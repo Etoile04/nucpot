@@ -383,6 +383,105 @@ class TestNFM4804CacheHitReferenceRefill:
 
 
 # ---------------------------------------------------------------------------
+# NFM-4817: back-to-back canonical query (first fresh, second cache-hit)
+# ---------------------------------------------------------------------------
+
+
+class TestNFM4817BackToBackCanonicalQuery:
+    """AC-1/AC-2 shape: repeating the canonical query must never degrade.
+
+    Prod evidence (NFM-4736 close / NFM-4804 item 2): 「UO2 热导率」 mix
+    served 10 references on the first execution and 0 on the second because
+    the sidecar's prompt-keyed llm_response_cache replays answer text only.
+    The existing ``TestNFM4804CacheHitReferenceRefill`` cases test the
+    refill in isolation; this class encodes the acceptance-criteria shape
+    verbatim — a stateful client whose FIRST ``/query`` is fresh (answer +
+    refs) and whose SECOND is a cache hit (answer, no refs) must yield
+    non-empty references on BOTH consecutive calls through one provider.
+    """
+
+    def _stateful_client(self) -> AsyncMock:
+        """Client whose /query flips fresh → cached across two calls.
+
+        ``side_effect`` on an ``AsyncMock`` consumes one entry per call, so
+        the first ``query()`` returns the fresh envelope and the second the
+        cached one — mirroring the sidecar's llm_response_cache transition.
+        """
+        client = _make_mock_lightrag_client(
+            query_result={
+                "response": "fresh answer about UO2 thermal conductivity",
+                "references": [
+                    {"file_path": "Terricbras2025.pdf"},
+                    {"file_path": "Banks2021.pdf"},
+                ],
+                "entities": [],
+                "relationships": [],
+            }
+        )
+        client.query = AsyncMock(
+            side_effect=[
+                # Call 1 — fresh generation carries its citations.
+                {
+                    "response": "fresh answer about UO2 thermal conductivity",
+                    "references": [
+                        {"file_path": "Terricbras2025.pdf"},
+                        {"file_path": "Banks2021.pdf"},
+                    ],
+                    "entities": [],
+                    "relationships": [],
+                },
+                # Call 2 — cache hit replays the answer text only.
+                {
+                    "response": "fresh answer about UO2 thermal conductivity",
+                    "references": [],
+                    "entities": [],
+                    "relationships": [],
+                    "cached": True,
+                },
+            ]
+        )
+        client.query_data = AsyncMock(
+            return_value={
+                "status": "success",
+                "data": {
+                    "references": [
+                        {"file_path": "Terricbras2025.pdf"},
+                        {"file_path": "Banks2021.pdf"},
+                    ]
+                },
+            }
+        )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_repeated_canonical_query_keeps_refs_on_both_calls(self) -> None:
+        client = self._stateful_client()
+        provider = LightRAGProvider(client=client)  # type: ignore[arg-type]
+
+        first = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+        second = await provider.query(
+            query="UO2 热导率", mode="mix", include_references=True
+        )
+
+        # AC-1: >=1 ref on BOTH consecutive calls.
+        assert len(first.references) >= 1
+        assert len(second.references) >= 1
+        # The second call is the cache-hit path: answer replayed verbatim,
+        # citations rebuilt via the retrieval-only /query/data pass.
+        assert second.response == first.response
+        assert second.was_cached is True
+        assert second.references == [
+            {"file_path": "Terricbras2025.pdf"},
+            {"file_path": "Banks2021.pdf"},
+        ]
+        client.query_data.assert_called_once_with(query="UO2 热导率", mode="mix")
+        # Fresh call must not burn a refill pass — it arrived with refs.
+        assert client.query.await_count == 2
+
+
+# ---------------------------------------------------------------------------
 # RuleBasedFallbackProvider
 # ---------------------------------------------------------------------------
 
