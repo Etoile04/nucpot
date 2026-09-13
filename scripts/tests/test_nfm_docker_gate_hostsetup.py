@@ -1105,6 +1105,18 @@ def test_cleanup_daily_plist_shape():
         "-u",
         "nfmdeploy",
         "/usr/local/lib/nfm-g2/run-cleanup.sh",
+        # Retention override (2026-09-13): the entry's own defaults are
+        # keep-10/keep-3, which at ~10 prod generations/day is only a ~24h
+        # rollback window and held ~26-37 GiB of prod images while the data
+        # volume sat at 91%. The daily pass is pinned to keep-5/keep-2 —
+        # still above the entry's >=2 rollback floor. Keep this list in
+        # lockstep with the installed copy under /Library/LaunchDaemons:
+        # a mismatch is silent retention drift (or a silent revert to the
+        # defaults on the next host_setup.sh run).
+        "--keep-shas",
+        "5",
+        "--keep-candidates",
+        "2",
     ]
     cal = doc["StartCalendarInterval"]
     assert cal["Hour"] == 4 and cal["Minute"] == 20
