@@ -309,6 +309,24 @@ services:
       # default 30s wrapper (Worker 60s) guaranteeing the 8s client timeout
       # fires first and the query falls all the way back to ILIKE.
       RERANK_TIMEOUT: ${PROD_LIGHTRAG_RERANK_TIMEOUT:-6}
+      # NFM-4822 follow-up (post-deploy finding 2026-09-13T18:40Z): the 6/16
+      # knobs above did NOT bound the rerank pool. LightRAG 1.5.4 reranks the
+      # FULL merged chunk pool BEFORE chunk_top_k truncation
+      # (process_chunks_unified: apply_rerank_if_enabled -> min-score filter
+      # -> chunk_top_k), and the mix-path pool is entity-driven: 36 entities
+      # -> 83 entity-related chunks -> 85 after round-robin merge. top_n (=
+      # chunk_top_k) only caps what the reranker RETURNS, never what it
+      # SCORES — 85 chunks x ~76-92ms = 8-12s per pass against the serial
+      # llama-server. Also priority_limit_async_func_call arms the worker
+      # cap at llm_timeout*2 (= 12s for RERANK_TIMEOUT=6), so the containment
+      # comment above cannot fire inside the 8s budget either; both premises
+      # of the first fix were wrong. docker/lightrag/sitecustomize.py (NFM-4525
+      # precedent) now pre-truncates the pool to RERANK_POOL_CAP chunks in
+      # retrieval order before scoring. 24 keeps each pass ~2.0-2.2s
+      # (measured on 8109: 24x600c ~2.0s, 30x600c = 2.51s, 16x600c = 1.22s,
+      # 6x600c = 0.55s); unset/0 disables the cap (stock LightRAG behavior —
+      # staging must stay uncapped).
+      RERANK_POOL_CAP: ${PROD_LIGHTRAG_RERANK_POOL_CAP:-24}
       # NFM-1763: LightRAG uses WORKING_DIR (default ./rag_storage) for the
       # absolute storage path; WORKSPACE only supplies a sub-namespace name.
       # Without this, LightRAG writes to /app/rag_storage (image-baked,
