@@ -245,15 +245,20 @@ def test_run_recovery_restart_api_invokes_docker_restart(entry):
     assert entry.docker_argv()[-1][-2:] == ["restart", "nucpot-prod-api"]
 
 
-def test_run_recovery_lightrag_reprocess_invokes_docker_exec_curl(entry):
+def test_run_recovery_lightrag_reprocess_invokes_docker_exec_post(entry):
     """NFM-4816: third enumerated shape — re-enqueue lightrag FAILED/PENDING
     docs via the sidecar's own reprocess endpoint through the full gate (the
-    only sanctioned reach: prod lightrag 9621 is not host-published)."""
+    only sanctioned reach: prod lightrag 9621 is not host-published). The
+    POST runs on the container's python3 stdlib (urllib): the RUNNING prod
+    image ships no curl — the Dockerfile's curl postdates it — and python3
+    is guaranteed in every lightrag image revision."""
     result = entry.run("run-recovery.sh", "lightrag-reprocess")
     assert result.returncode == 0, result.stderr
     recorded = entry.docker_calls.read_text()
-    assert "exec nucpot-prod-lightrag curl" in recorded
-    assert "-X POST http://localhost:9621/documents/reprocess_failed" in recorded
+    assert "exec nucpot-prod-lightrag python3" in recorded
+    assert "http://localhost:9621/documents/reprocess_failed" in recorded
+    # the POST verb is explicit — not an accidental GET
+    assert "method=\"POST\"" in recorded or "method='POST'" in recorded
 
 
 def test_run_recovery_lightrag_reprocess_takes_no_arguments(entry):

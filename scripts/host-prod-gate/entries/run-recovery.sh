@@ -77,16 +77,41 @@ case "${1:-}" in
     ;;
   lightrag-reprocess)
     [ $# -eq 1 ] || { usage; exit 64; }
-    # curl flags (see header): --retry-connrefused covers the window right
-    # after `restart lightrag` (watchdog action pair, NFM-4804) when uvicorn
-    # is still booting; --max-time bounds each attempt so a hung sidecar
-    # cannot wedge the watchdog tick past its 5-min launchd interval; -f
-    # makes an HTTP 5xx a visible nonzero exit instead of a silent
-    # "success" body.
+    # The POST runs on the container's python3 stdlib (urllib): the RUNNING
+    # prod image ships no curl — the Dockerfile's curl postdates it — while
+    # python3 is guaranteed in every lightrag image revision (it runs the
+    # server). Retry semantics (covers the boot window right after
+    # `restart lightrag`, the NFM-4804 watchdog action pair): connection
+    # failures retried 8× at 5s; each attempt timeout-bounded at 30s so a
+    # hung sidecar cannot wedge the watchdog tick past its 5-min launchd
+    # interval; HTTP 5xx retried then exit 22 (curl's HTTP-error rc), a
+    # terminal connection failure exits 7 (curl's rc) — both visible, never
+    # a silent "success".
     echo "[nfm-g2] sanctioned recovery: lightrag-reprocess identity=$(id -un)"
-    exec docker exec nucpot-prod-lightrag \
-      curl -fsS --retry 8 --retry-delay 5 --retry-connrefused --max-time 30 \
-      -X POST http://localhost:9621/documents/reprocess_failed
+    exec docker exec nucpot-prod-lightrag python3 -c '
+import sys, time, urllib.request, urllib.error
+URL = "http://localhost:9621/documents/reprocess_failed"
+RETRIES, DELAY, TIMEOUT = 8, 5, 30
+for attempt in range(1, RETRIES + 1):
+    try:
+        req = urllib.request.Request(URL, method="POST", data=b"")
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            print(resp.read().decode(errors="replace"))
+        sys.exit(0)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        if 500 <= exc.code < 600 and attempt < RETRIES:
+            time.sleep(DELAY)
+            continue
+        print("HTTP %s: %s" % (exc.code, body), file=sys.stderr)
+        sys.exit(22)
+    except Exception as exc:
+        if attempt < RETRIES:
+            time.sleep(DELAY)
+            continue
+        print(str(exc), file=sys.stderr)
+        sys.exit(7)
+'
     ;;
   rollback)
     [ $# -eq 3 ] && [ "$2" = "--tag" ] || { usage; exit 64; }
