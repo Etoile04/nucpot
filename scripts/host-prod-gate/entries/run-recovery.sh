@@ -80,18 +80,20 @@ case "${1:-}" in
     # The POST runs on the container's python3 stdlib (urllib): the RUNNING
     # prod image ships no curl — the Dockerfile's curl postdates it — while
     # python3 is guaranteed in every lightrag image revision (it runs the
-    # server). Retry semantics (covers the boot window right after
-    # `restart lightrag`, the NFM-4804 watchdog action pair): connection
-    # failures retried 8× at 5s; each attempt timeout-bounded at 30s so a
-    # hung sidecar cannot wedge the watchdog tick past its 5-min launchd
-    # interval; HTTP 5xx retried then exit 22 (curl's HTTP-error rc), a
-    # terminal connection failure exits 7 (curl's rc) — both visible, never
-    # a silent "success".
+    # server). Retry semantics (cover the boot window right after
+    # `restart lightrag`, the NFM-4804 watchdog action pair — the sidecar's
+    # own healthcheck grants start_period=60s, and connection-refused fails
+    # instantly): connection failures retried 8× at 10s (~70s of boot
+    # coverage); each attempt timeout-bounded at 20s so a hung sidecar
+    # cannot wedge the watchdog tick past its 5-min launchd interval
+    # (worst case 8×20s + 7×10s = 230s < 300s); HTTP 5xx retried then
+    # exit 22 (curl's HTTP-error rc), a terminal connection failure
+    # exits 7 (curl's rc) — both visible, never a silent "success".
     echo "[nfm-g2] sanctioned recovery: lightrag-reprocess identity=$(id -un)"
     exec docker exec nucpot-prod-lightrag python3 -c '
 import sys, time, urllib.request, urllib.error
 URL = "http://localhost:9621/documents/reprocess_failed"
-RETRIES, DELAY, TIMEOUT = 8, 5, 30
+RETRIES, DELAY, TIMEOUT = 8, 10, 20
 for attempt in range(1, RETRIES + 1):
     try:
         req = urllib.request.Request(URL, method="POST", data=b"")

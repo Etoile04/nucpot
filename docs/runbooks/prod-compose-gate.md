@@ -60,8 +60,9 @@ gate to `/usr/local/lib/nfm-g2/` (root-owned), the sudoers fragment to
 `/etc/sudoers.d/nfm-prod-deploy` (visudo-validated), six LaunchDaemons
 (incl. `com.nfm.g2.cleanup-daily`, the NFM-4802 daily 04:20 run of
 `run-cleanup.sh`, and `com.nfm.g2.lightrag-watchdog`, the NFM-4804
-5-min LightRAG pipeline-stall watchdog that restarts `lightrag` through
-`run-recovery.sh`),
+5-min LightRAG pipeline-stall watchdog that restarts `lightrag` then
+re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
+(NFM-4816)),
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.
 
