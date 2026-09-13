@@ -277,17 +277,6 @@ this docs-only landing.
 > `NFM_LIGHTRAG_QUERY_TIMEOUT_S=10.0` (frontend abort 15 000 ms), per the
 > timeout contract in `docs/specs/RAG-anonymous-open-and-quality.md` §5.
 
-> **2026-09-14 update — ADR-019 (NFM-4823):** the §8 `mix` no-cache row
-> ("2–6 s") was never observed cold — every observed semantic success was
-> an LLM-cache hit, and post-NFM-4822 closeout measurement shows uncached
-> mix generation alone exceeds the whole budget (first-seen queries fall
-> to ILIKE at ~10 s while the semantic answer completes server-side).
-> The first-seen budget is re-tiered per
-> [ADR-019 — first-seen mix latency budget](../adr/ADR-019-NFM-4823-first-seen-mix-latency-budget.md):
-> ≤15 s user ceiling reaffirmed, backend read budget 12 s,
-> measurement-gated landing, streaming as the P1 structural fix if
-> generation cannot fit.
-
 ### 8.1 Addendum — actual post-fix wall-clock (NFM-4527)
 
 > **2026-09-09 update — NFM-4527 shipped:** NFM-4525's image
