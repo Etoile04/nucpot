@@ -14,7 +14,7 @@ wipes (2026-09-05 and 2026-09-11, window 03:24–08:29Z, VDB
 
 ## What changed
 
-`docker-compose.prod.yml` lightrag service env defaults:
+`docker-compose.prod.yml` lightrag service env values (pinned as **literals** — no `${VAR:-…}` env-file override; see Rollback):
 
 | Var | Old default | New default |
 |---|---|---|
@@ -63,8 +63,17 @@ columns, `workspace='_app_data'`.
 
 ## Rollback
 
-Revert the compose default (or set `PROD_LIGHTRAG_KV_STORAGE=JsonKVStorage`
-+ `PROD_LIGHTRAG_DOC_STATUS_STORAGE=JsonDocStatusStorage` in
-`docker/.env.prod`) and redeploy. The pre-wipe JSON files on the
-`nucpot-prod-lightrag-data` volume are stale (last written 2026-09-11) —
-after rollback, re-run the corpus rebuild to repopulate them.
+> **NFM-4819 (2026-09-13):** the `docker/.env.prod` override keys for KV /
+> doc-status storage are **dead** — nothing in `docker-compose.prod.yml`
+> interpolates them since the NFM-4736 literal pin, and the stale lines were
+> deleted from the prod host's `docker/.env.prod` (2026-09-13, NFM-4804).
+> Do NOT re-add them: they silently no-op and re-arm the corpus-wipe root
+> cause for the next host provisioning.
+
+The only lever is `docker-compose.prod.yml`: the `lightrag` service pins
+`LIGHTRAG_KV_STORAGE: PGKVStorage` and `LIGHTRAG_DOC_STATUS_STORAGE:
+PGDocStatusStorage` as **literals** (no `${VAR:-default}` indirection — the
+pin is deliberate; see the comment block above those lines for the wipe
+history). Edit the pinned values there and redeploy. The pre-wipe JSON files
+on the `nucpot-prod-lightrag-data` volume are stale (last written
+2026-09-11) — after rollback, re-run the corpus rebuild to repopulate them.
