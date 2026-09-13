@@ -60,8 +60,9 @@ gate to `/usr/local/lib/nfm-g2/` (root-owned), the sudoers fragment to
 `/etc/sudoers.d/nfm-prod-deploy` (visudo-validated), six LaunchDaemons
 (incl. `com.nfm.g2.cleanup-daily`, the NFM-4802 daily 04:20 run of
 `run-cleanup.sh`, and `com.nfm.g2.lightrag-watchdog`, the NFM-4804
-5-min LightRAG pipeline-stall watchdog that restarts `lightrag` through
-`run-recovery.sh`),
+5-min LightRAG pipeline-stall watchdog that restarts `lightrag` then
+re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
+(NFM-4816)),
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.
 
@@ -84,6 +85,7 @@ behavior in `scripts/tests/test_nfm_docker_gate_*`.
 | Deploy (CI does this) | repo owner: `cd ~/Projects/nucpot && git fetch origin && git reset --hard <sha>`, then `DEPLOY_SHA=<sha> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh` (ADR-018 / NFM-4762: PROXY_PORT no longer required — direct egress by default; set `PROXY_PORT=<port>` to override for legacy/manual runs) |
 | Restart a sick service | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh restart api\|web\|worker\|lightrag\|db` |
 | Rollback (NFM-2148 SHA-tagged) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <last-good-sha>` |
+| Reprocess lightrag FAILED/PENDING docs (NFM-4816) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh lightrag-reprocess` (sidecar `/documents/reprocess_failed` via docker exec through the full gate; the NFM-4804 watchdog also runs this after every wedge restart) |
 | Standalone SQL (run-migration.yml) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh <repo-relative.sql>` (or `-` for stdin) |
 | Celery inspect | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-worker-inspect.sh` |
 

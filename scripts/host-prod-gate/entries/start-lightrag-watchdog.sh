@@ -31,9 +31,13 @@
 #        boot, so a restart — manual, docker, or a previous watchdog
 #        action — already started a fresh boot whose logs do not contain
 #        the pre-boot wedge.
-# Action: the ONLY sanctioned prod route — run-recovery.sh restart lightrag —
-# with a cooldown (default 30 min) so a persistently failing pipeline cannot
-# restart-loop. Every decision appends one record to
+# Action: the ONLY sanctioned prod routes — run-recovery.sh restart lightrag,
+# then (NFM-4816) run-recovery.sh lightrag-reprocess once the consumer is
+# revived, so the docs the dead consumer stranded (FAILED/PENDING — they
+# would otherwise wait for the next daily rag_audit_index_coverage, up to
+# 24h of retrieval degradation) re-enqueue immediately — with a cooldown
+# (default 30 min) so a persistently failing pipeline cannot restart-loop.
+# Every decision appends one record to
 # /var/log/nfm-g2/lightrag-watchdog.log; restart timestamps live in
 # /var/log/nfm-g2/lightrag-watchdog.state for the cooldown check.
 #
@@ -158,12 +162,27 @@ log_record "probe=WEDGE container=${CONTAINER} boot=${boot_at} action=restart-li
 # to the same identity is only needed when an operator runs the probe by
 # hand from another account. The prefix is env-overridable so tests can
 # exercise the recovery route without sudo.
+invoke_recovery() {
+  if [ "$(id -un)" = "nfmdeploy" ]; then
+    bash "${RECOVERY}" "$@"
+  else
+    ${NFM_LIGHTRAG_WATCHDOG_SUDO-sudo -n -u nfmdeploy} bash "${RECOVERY}" "$@"
+  fi
+}
 rc=0
-if [ "$(id -un)" = "nfmdeploy" ]; then
-  bash "${RECOVERY}" restart lightrag || rc=$?
-else
-  ${NFM_LIGHTRAG_WATCHDOG_SUDO-sudo -n -u nfmdeploy} bash "${RECOVERY}" restart lightrag || rc=$?
-fi
+invoke_recovery restart lightrag || rc=$?
 printf 'last_restart=%s\n' "$(now_epoch)" >"${STATE}"
 log_record "action=restart-lightrag rc=${rc}"
+# NFM-4816: consumer revived → re-enqueue the FAILED/PENDING docs the dead
+# consumer stranded, now instead of at the next daily audit. Only after a
+# successful restart: reprocessing into a still-dead consumer would strand
+# the docs again. A failing reprocess does not change the disposition (the
+# wedge was addressed; the daily audit remains the fallback path).
+if [ "${rc}" -eq 0 ]; then
+  rrc=0
+  invoke_recovery lightrag-reprocess || rrc=$?
+  log_record "action=lightrag-reprocess rc=${rrc}"
+else
+  log_record "action=lightrag-reprocess skipped reason=restart-failed rc=${rc}"
+fi
 exit 2

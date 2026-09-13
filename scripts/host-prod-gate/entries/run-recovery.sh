@@ -7,7 +7,7 @@
 #   %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-recovery.sh
 #
 # The NFM-1664 deterministic recovery playbook, command-enumerated to
-# exactly two shapes:
+# exactly three shapes:
 #
 #   run-recovery.sh restart <api|web|worker|lightrag|db>
 #       docker restart nucpot-prod-<svc> through the full gate.
@@ -18,6 +18,16 @@
 #       then re-record the G4a deploy manifest (NFM-4273: a rollback changes
 #       live digests; without a re-record the next drift-cron interval would
 #       false-alarm the sanctioned rollback).
+#
+#   run-recovery.sh lightrag-reprocess
+#       NFM-4815 remediation gap (NFM-4816): LightRAG FAILED/PENDING docs
+#       self-heal only at the next daily rag_audit_index_coverage (03:30Z) —
+#       up to 24h of retrieval degradation. This shape re-enqueues them NOW
+#       via the sidecar's own endpoint (lightrag-hku 1.5.4
+#       POST /documents/reprocess_failed picks up FAILED + PENDING +
+#       abnormally-terminated PROCESSING docs; no LIGHTRAG_API_KEY on the
+#       sidecar). Prod lightrag 9621 is not host-published (NFM-4481), so
+#       docker exec through the full gate is the only sanctioned reach.
 #
 # Anything else exits 64 (EX_USAGE) before touching docker. This is the
 # ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
@@ -35,6 +45,7 @@ usage() {
 usage (NFM-1664 recovery, NFM-4270 sanctioned):
   run-recovery.sh restart <api|web|worker|lightrag|db>
   run-recovery.sh rollback --tag <sha-of-last-good-deploy>
+  run-recovery.sh lightrag-reprocess
 EOF
 }
 
@@ -63,6 +74,46 @@ case "${1:-}" in
     # last deploy's manifest remains the correct drift baseline.
     echo "[nfm-g2] sanctioned recovery: restart nucpot-prod-$2 identity=$(id -un)"
     exec docker restart "nucpot-prod-$2"
+    ;;
+  lightrag-reprocess)
+    [ $# -eq 1 ] || { usage; exit 64; }
+    # The POST runs on the container's python3 stdlib (urllib): the RUNNING
+    # prod image ships no curl — the Dockerfile's curl postdates it — while
+    # python3 is guaranteed in every lightrag image revision (it runs the
+    # server). Retry semantics (cover the boot window right after
+    # `restart lightrag`, the NFM-4804 watchdog action pair — the sidecar's
+    # own healthcheck grants start_period=60s, and connection-refused fails
+    # instantly): connection failures retried 8× at 10s (~70s of boot
+    # coverage); each attempt timeout-bounded at 20s so a hung sidecar
+    # cannot wedge the watchdog tick past its 5-min launchd interval
+    # (worst case 8×20s + 7×10s = 230s < 300s); HTTP 5xx retried then
+    # exit 22 (curl's HTTP-error rc), a terminal connection failure
+    # exits 7 (curl's rc) — both visible, never a silent "success".
+    echo "[nfm-g2] sanctioned recovery: lightrag-reprocess identity=$(id -un)"
+    exec docker exec nucpot-prod-lightrag python3 -c '
+import sys, time, urllib.request, urllib.error
+URL = "http://localhost:9621/documents/reprocess_failed"
+RETRIES, DELAY, TIMEOUT = 8, 10, 20
+for attempt in range(1, RETRIES + 1):
+    try:
+        req = urllib.request.Request(URL, method="POST", data=b"")
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            print(resp.read().decode(errors="replace"))
+        sys.exit(0)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        if 500 <= exc.code < 600 and attempt < RETRIES:
+            time.sleep(DELAY)
+            continue
+        print("HTTP %s: %s" % (exc.code, body), file=sys.stderr)
+        sys.exit(22)
+    except Exception as exc:
+        if attempt < RETRIES:
+            time.sleep(DELAY)
+            continue
+        print(str(exc), file=sys.stderr)
+        sys.exit(7)
+'
     ;;
   rollback)
     [ $# -eq 3 ] && [ "$2" = "--tag" ] || { usage; exit 64; }
