@@ -26,12 +26,7 @@
 // ---------------------------------------------------------------------------
 
 /** Mirrors nfm_db.schemas.lightrag.QueryMode */
-export type RagQueryMode =
-  | "naive"
-  | "local"
-  | "global"
-  | "hybrid"
-  | "mix"
+export type RagQueryMode = "naive" | "local" | "global" | "hybrid" | "mix"
 
 /** Mirrors nfm_db.schemas.lightrag.QueryRequest */
 export interface RagContractQueryRequest {
@@ -75,7 +70,7 @@ export interface RagContractQueryResponse {
  *
  * NFM-4734 reason-code contract:
  *   - "none"            — steady state, no fallback fired
- *   - "semantic_timeout" — LightRAG sidecar exceeded its 10s budget
+ *   - "semantic_timeout" — LightRAG sidecar exceeded its 22s budget
  *   - "semantic_empty"   — LightRAG answered with zero references
  *   - "provider_error"   — defensive safety-net path
  *   - legacy: "iliKE" / "ilike" / unknown string — render as timeout-ish

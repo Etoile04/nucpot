@@ -162,7 +162,7 @@ class FallbackInfo(BaseModel):
 
     ``reason`` is the first-class machine-readable code that lets the
     UI distinguish a *semantic timeout* (LightRAG sidecar exceeded its
-    10s budget) from a *semantic empty* (LightRAG answered with zero
+    22s budget) from a *semantic empty* (LightRAG answered with zero
     references — KG coverage gap) from a clean response (``none``).
 
     NFM-4734 §3 / AC-2: the previous "silent fallback" surface masked
@@ -251,7 +251,11 @@ class TierP95(BaseModel):
         description="Number of access-log rows in the window that fed this tier.",
     )
     target_ms: float = Field(
-        description="SLA target in milliseconds (Tier-1 < 1s; Tier-2 < 30s pre-NFM-4525, < 10s after).",
+        description=(
+            "SLA target in milliseconds "
+            "(Tier-1 < 1s; Tier-2 < 30s pre-NFM-4525, < 10s after NFM-4525, "
+            "< 20s after NFM-4823 tiered cold-query contract, ADR-NFM-3404 §9)."
+        ),
     )
     meets_sla: bool = Field(
         False,
