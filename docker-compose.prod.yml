@@ -291,6 +291,24 @@ services:
       RERANK_BINDING_API_KEY: ${PROD_LIGHTRAG_RERANK_API_KEY:-local-rerank}
       # drop low-value chunks from LLM context; 0.3 keeps the clear-gradient band
       MIN_RERANK_SCORE: ${PROD_LIGHTRAG_MIN_RERANK_SCORE:-0.3}
+      # NFM-4822: rerank passes run BEFORE chunk_top_k truncation and a mix
+      # query pays TWO of them (merged local+global pool, then the naive
+      # vector pool — _get_vector_context uses chunk_top_k as its search k).
+      # At the measured 8109 throughput (~180ms per ~1.3k-token chunk across
+      # 4 slots) the lib defaults (CHUNK_TOP_K=20, TOP_K=40) put rerank alone
+      # at 12-26s, so every uncached mode=mix query blew the 8s
+      # NFM_LIGHTRAG_QUERY_TIMEOUT_S budget and degraded to rule-based ILIKE
+      # (100% was_fallback=t on 2026-09-13; only LLM-cache-hit queries, which
+      # skip rerank, ever answered semantic). 6/16 caps each pass to ~1-2s so
+      # retrieval+rerank+LLM fit the budget with margin.
+      CHUNK_TOP_K: ${PROD_LIGHTRAG_CHUNK_TOP_K:-6}
+      TOP_K: ${PROD_LIGHTRAG_TOP_K:-16}
+      # NFM-4822: containment — with the pool bounded, a stalled/hung rerank
+      # service now fails the func timeout quickly and LightRAG degrades to
+      # UNRANKED semantic context inside the API budget, instead of the lib
+      # default 30s wrapper (Worker 60s) guaranteeing the 8s client timeout
+      # fires first and the query falls all the way back to ILIKE.
+      RERANK_TIMEOUT: ${PROD_LIGHTRAG_RERANK_TIMEOUT:-6}
       # NFM-1763: LightRAG uses WORKING_DIR (default ./rag_storage) for the
       # absolute storage path; WORKSPACE only supplies a sub-namespace name.
       # Without this, LightRAG writes to /app/rag_storage (image-baked,

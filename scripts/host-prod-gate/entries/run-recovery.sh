@@ -32,6 +32,15 @@
 # Anything else exits 64 (EX_USAGE) before touching docker. This is the
 # ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
 # issue for anything not covered here.
+#
+# NFM-4822 out-of-scope note (rerank side-service): the rerank backend at
+# 127.0.0.1:8109 is NOT a compose service — it is the per-user launchd agent
+# ai.nfm.rerank-server (~/Library/LaunchAgents/ai.nfm.rerank-server.plist,
+# owner lwj04, KeepAlive). This script runs as nfmdeploy and cannot act on
+# another user's GUI launchd domain, so it deliberately has NO rerank shape.
+# Sanctioned restart is the service owner's own command (no sudo needed):
+#   launchctl kickstart -k gui/$(id -u)/ai.nfm.rerank-server
+# (verified 2026-09-13: clears RSS bloat / stalls; service back in ~4s).
 # ============================================================================
 set -euo pipefail
 
@@ -46,6 +55,8 @@ usage (NFM-1664 recovery, NFM-4270 sanctioned):
   run-recovery.sh restart <api|web|worker|lightrag|db>
   run-recovery.sh rollback --tag <sha-of-last-good-deploy>
   run-recovery.sh lightrag-reprocess
+(rerank 8109 is the owner's user launchd agent, not a compose service —
+ restart it as the agent owner: launchctl kickstart -k gui/$UID/ai.nfm.rerank-server)
 EOF
 }
 
