@@ -41,7 +41,7 @@ from nfm_db.schemas.lightrag import MetricsResponse, TierP95
 
 DEFAULT_WINDOW_DAYS = 7
 TIER_1_TARGET_MS = 1_000.0  # < 1s
-TIER_2_TARGET_MS = 10_000.0  # < 10s (NFM-4525 spec; pre-NFM-4525 was < 30s)
+TIER_2_TARGET_MS = 20_000.0  # tiered cold-query contract (NFM-4823, ADR-NFM-3404 §9): cold tier 12-20s; NFM-4525 had 10s
 SAMPLE_FLOOR = 5  # below this, P95 is reported as None
 
 

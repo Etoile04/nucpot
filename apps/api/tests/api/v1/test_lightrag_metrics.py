@@ -51,6 +51,11 @@ async def test_metrics_endpoint_anonymous_accessible(
         assert isinstance(tier["sample_size"], int)
         assert isinstance(tier["target_ms"], (int, float))
 
+    # Tier-2 target follows the tiered cold-query contract (NFM-4823 /
+    # NFM-4825, ADR-NFM-3404 §9): warm tier keeps ≤ 10s UX, cold tier
+    # (first-seen, uncached) is budgeted at 20s p95 / 22s read / 25s abort.
+    assert payload["tier_2_p95"]["target_ms"] == 20_000
+
     # Window
     assert payload["window_days"] == 7
     assert "generated_at" in payload
