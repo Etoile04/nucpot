@@ -37,7 +37,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SQL_PATH = REPO_ROOT / "scripts" / "nfm-4818-assert-no-uuid-entities.sql"
 MAPPER_PATH = (
-    REPO_ROOT / "apps" / "api" / "src" / "nfm_db" / "services"
+    REPO_ROOT
+    / "apps"
+    / "api"
+    / "src"
+    / "nfm_db"
+    / "services"
     / "extraction_to_db_mapper_lookups.py"
 )
 
@@ -155,9 +160,7 @@ def _canonical_pattern() -> str:
 
 
 def _sql_text() -> str:
-    assert SQL_PATH.exists(), (
-        f"missing {SQL_PATH} — NFM-4818 AC4 requires the SQL assertion"
-    )
+    assert SQL_PATH.exists(), f"missing {SQL_PATH} — NFM-4818 AC4 requires the SQL assertion"
     return SQL_PATH.read_text(encoding="utf-8")
 
 
@@ -279,7 +282,8 @@ class TestGuardShape:
     def test_reports_stability_metrics(self) -> None:
         code = "\n".join(_sql_code_lines())
         missing = [
-            m for m in EXPECTED_METRICS
+            m
+            for m in EXPECTED_METRICS
             if not re.search(
                 rf"'{m}'(?:\s+AS\s+\w+)?\s*,\s*count\(\*\)"
                 rf"(?:\s+AS\s+\w+)?\s+FROM\s+lightrag_\w+",
@@ -319,9 +323,7 @@ class TestGuardSum:
         # silent blind spot.
         declared = re.findall(r"(v_[a-z_]+)\s+bigint", code)
         assert declared, "DO block declares no counters"
-        if_block = re.search(
-            r"IF (.+?) THEN\s*\n\s*RAISE EXCEPTION", code, re.S
-        )
+        if_block = re.search(r"IF (.+?) THEN\s*\n\s*RAISE EXCEPTION", code, re.S)
         assert if_block is not None, "no IF … THEN RAISE EXCEPTION verdict"
         missing = [v for v in declared if v not in if_block.group(1)]
         assert not missing, (
