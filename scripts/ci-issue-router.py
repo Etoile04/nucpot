@@ -35,8 +35,16 @@ DB_CONFIG = {
 }
 
 
-def gh_issue_list(label: str, state: str, limit: int = 20) -> list[dict]:
-    """Query GitHub issues via gh CLI."""
+def gh_issue_list(label: str, state: str, limit: int = 20) -> tuple[list[dict], int]:
+    """Query GitHub issues via gh CLI.
+
+    Returns (issues, failure_count). Failures are never silent: each one
+    prints a stderr WARNING and increments the count so main() can exit
+    non-zero. Before this, a gh failure (EOF/TLS/proxy rot) returned []
+    indistinguishable from "no issues", so the 10-min cron reported
+    SILENT forever while actually blind.
+    """
+    failures = 0
     try:
         result = subprocess.run(
             [
@@ -65,10 +73,30 @@ def gh_issue_list(label: str, state: str, limit: int = 20) -> list[dict]:
                 f"{(result.stderr or result.stdout or '').strip()[:200]}",
                 file=sys.stderr,
             )
-            return []
-        return json.loads(result.stdout) if result.stdout.strip() else []
-    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
-        return []
+            failures += 1
+            return [], failures
+        return (json.loads(result.stdout) if result.stdout.strip() else []), failures
+    except json.JSONDecodeError as exc:
+        print(
+            f"CI Issue Router: WARNING: gh issue list returned invalid JSON "
+            f"(label={label}, state={state}): {exc}",
+            file=sys.stderr,
+        )
+        return [], failures + 1
+    except subprocess.TimeoutExpired:
+        print(
+            f"CI Issue Router: WARNING: gh issue list timed out "
+            f"(label={label}, state={state})",
+            file=sys.stderr,
+        )
+        return [], failures + 1
+    except FileNotFoundError:
+        print(
+            "CI Issue Router: WARNING: gh CLI not found on PATH — "
+            "router cannot see GitHub at all",
+            file=sys.stderr,
+        )
+        return [], failures + 1
 
 
 def merge_dedup(lists: list[list[dict]]) -> list[dict]:
@@ -106,9 +134,31 @@ def gh_ref_pattern(gh_number: int) -> str:
 
 
 def main() -> int:
-    # Gather GitHub issues
-    open_issues = merge_dedup([gh_issue_list(label, "open") for label in LABELS])
-    closed_issues = merge_dedup([gh_issue_list(label, "closed", limit=5) for label in LABELS])
+    # Gather GitHub issues (never silently: each gh failure prints a stderr
+    # WARNING from gh_issue_list)
+    gh_failures = 0
+    open_lists: list[list[dict]] = []
+    closed_lists: list[list[dict]] = []
+    for label in LABELS:
+        issues, failures = gh_issue_list(label, "open")
+        open_lists.append(issues)
+        gh_failures += failures
+        issues, failures = gh_issue_list(label, "closed", limit=5)
+        closed_lists.append(issues)
+        gh_failures += failures
+    open_issues = merge_dedup(open_lists)
+    closed_issues = merge_dedup(closed_lists)
+
+    if gh_failures and gh_failures == 2 * len(LABELS):
+        # Every gh call failed — the router is fully blind this tick. Exit
+        # non-zero so the cron layer records the failure instead of a
+        # look-alike SILENT success.
+        print(
+            f"CI Issue Router: ERROR: all {gh_failures} gh issue list calls "
+            f"failed — routing skipped this tick (GitHub blind)",
+            file=sys.stderr,
+        )
+        return 1
 
     if not open_issues and not closed_issues:
         # Silent: nothing to report
