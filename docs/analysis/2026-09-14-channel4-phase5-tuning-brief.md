@@ -118,7 +118,7 @@ Every metric quoted in this brief, with its `origin/main` source file and JSON k
 | v3.1 bucket FAIL, do_not_ship | `apps/api/models/energy_predictor_v3.1_metrics.json` | `rd3_verdict.bucket_landed`, `.ship_decision` |
 | Temp n=61, LOO MAE 6.01 °C, RMSE 10.47, R² 0.9506, max 37.28, target 35.0 | `apps/api/models/temp_predictor_v1.1_metrics.json` | `n_samples`, `cv_method`, `mean_mae`, `rmse`, `r2`, `max_abs_error`, `target_mae` |
 | Phase v1.0.0 cv accuracy 0.9995 (n=3811) | `apps/api/models/phase_classifier_v1.0.0_metrics.json` | `cv_mean_accuracy` (0.999475…), `n_samples` |
-| Phase v2.0 macro-F1 0.677 / M-recall 0.3151; Dummy 0.4424 / 0.0 | `models/phase_classifier_v2.0_metrics.json` | `acceptance_criteria.sprint_bars[0].model_macro_f1/.model_M_recall`; `dummy_baselines.DummyClassifier_most_frequent.macro_f1/.M_recall` |
+| Phase v2.0 macro-F1 0.677 / M-recall 0.3151; Dummy 0.4424 / 0.0 | `models/phase_classifier_v2.0_metrics.json` | `acceptance_criteria.sprint_bars[0].model_macro_f1/.model_M_recall`; `acceptance_criteria.dummy_baselines.DummyClassifier_most_frequent.macro_f1/.M_recall` |
 | v1.1 baseline R² 0.8333 (n=1512) | `apps/api/models/energy_predictor_v1.1_metrics.json` | `r2`, `n_samples` |
 | Pairwise importances 0.3635 / 0.1798 (54%) | `apps/api/models/energy_predictor_v3.0_metrics.json` | `feature_importance[name=dg_en_radius_distance].importance`, `[name=max_pair_en_diff].importance`; 54% per root-cause doc §2.2 |
 | 68 groups, sizes 2–237, median 17.5 | `apps/api/models/energy_predictor_v3.0_groupedcv_metrics.json` | `group_heterogeneity` |
