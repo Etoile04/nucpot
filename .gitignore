@@ -36,7 +36,8 @@ docker/.env.*
 *~
 docker/postgres-data/
 .worktrees/
-.claude/
+.claude/*
+!.claude/settings.json
 CLAUDE.md
 AGENTS.md
 !/AGENTS.md
