@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@ant-design/cssinjs": "^1.21.1",
-    "@ant-design/icons": "^6.2.5",
+    "@ant-design/icons": "^6.3.4",
     "@ant-design/nextjs-registry": "^1.0.0",
     "@supabase/supabase-js": "^2.112.3",
     "@tailwindcss/postcss": "^4",
