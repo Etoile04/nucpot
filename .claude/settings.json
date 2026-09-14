@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "TaskUpdate|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-.}/scripts/hooks/pre_completion_merge.py\"",
+            "timeout": 45
+          }
+        ]
+      }
+    ]
+  }
+}
