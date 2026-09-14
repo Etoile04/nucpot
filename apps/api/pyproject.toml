@@ -212,6 +212,14 @@ module = "sklearn.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "shap.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "joblib.*"
 ignore_missing_imports = true
 

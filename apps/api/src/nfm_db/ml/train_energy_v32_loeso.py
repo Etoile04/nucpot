@@ -199,12 +199,26 @@ def build_arm_b_matrix(kept: list[dict[str, float]]) -> np.ndarray:
     filter, so iterating it reproduces the exact row order of arm A's X, y.
     """
     feats = [compute_energy_features_v31(comp) for comp in kept]
-    return pd.DataFrame(feats, columns=ENERGY_V31_FEATURE_NAMES).to_numpy(dtype=float)
+    matrix: np.ndarray = pd.DataFrame(
+        feats, columns=ENERGY_V31_FEATURE_NAMES
+    ).to_numpy(dtype=float)
+    return matrix
 
 
 # ---------------------------------------------------------------------------
 # LOESO core
 # ---------------------------------------------------------------------------
+
+
+def _score_float(value: float | list[float]) -> float:
+    """xgboost ``get_score`` types importance values as ``float | list[float]``.
+
+    Regressor boosters report plain per-feature floats; the list arm exists
+    only for multi-output models, where the first output is used.
+    """
+    if isinstance(value, list):
+        return float(value[0]) if value else 0.0
+    return float(value)
 
 
 def _gain_shares(
@@ -213,11 +227,11 @@ def _gain_shares(
 ) -> tuple[float, float]:
     """Gain-importance shares of the pairwise stratum for one fold model."""
     gain = model.get_booster().get_score(importance_type="gain")
-    total = sum(gain.values())
+    total = sum(_score_float(v) for v in gain.values())
     if total <= 0.0:
         return 0.0, 0.0
     gain_by_name = {
-        feature_names[int(k.lstrip("f"))]: float(v) for k, v in gain.items()
+        feature_names[int(k.lstrip("f"))]: _score_float(v) for k, v in gain.items()
     }
     top2 = sum(gain_by_name.get(n, 0.0) for n in PAIRWISE_TOP2)
     stratum8 = sum(gain_by_name.get(n, 0.0) for n in PAIRWISE_STRATUM_8)
@@ -434,7 +448,7 @@ def validate_sidecar_payload(payload: dict[str, object]) -> list[str]:
         "B": list(ENERGY_V31_FEATURE_NAMES),
     }
     for arm_id, expect_len in (("A", 20), ("B", 12)):
-        arm = arms[arm_id]  # type: ignore[index]
+        arm = arms[arm_id]
         for key in (
             "pooled_r2",
             "pooled_mae",
@@ -464,7 +478,7 @@ def validate_sidecar_payload(payload: dict[str, object]) -> list[str]:
                     break
 
     band = payload.get("decision_band_arm_a")
-    pooled = arms["A"].get("pooled_r2") if isinstance(arms["A"], dict) else None  # type: ignore[index]
+    pooled = arms["A"].get("pooled_r2") if isinstance(arms["A"], dict) else None
     if isinstance(pooled, (int, float)) and band in (
         "pass_dispatch_candidate",
         "mid_band_route_to_nde",
