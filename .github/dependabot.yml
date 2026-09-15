@@ -20,6 +20,18 @@ updates:
       - "javascript"
     commit-message:
       prefix: "chore(deps) [no-issue]"
+    # react and react-dom must keep EXACT version parity (enforced at
+    # render/test time), and @types/react* follow them. Without grouping,
+    # Dependabot raises partial bumps that fail every React test file with
+    # "Incompatible React versions" (see PR #1358). Group them so they move
+    # in one PR.
+    groups:
+      react-family:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
     # Packages pinned by pnpm.overrides in the root package.json (NFM-781
     # security pinning) cannot be bumped by Dependabot alone — the root
     # override must be updated in the same commit or pnpm's frozen install
