@@ -46,6 +46,17 @@ updates:
       - dependency-name: "sharp"
       # @types packages of pinned runtimes follow the runtime pins
       - dependency-name: "@types/node"
+      # NFM-4881 (CTO disposition A, 2026-09-15): MAJOR-only suppression —
+      # minors/patches keep flowing. eslint 10 breaks the transitive
+      # eslint-plugin-react under eslint-config-next@16.3.x; revisit when
+      # eslint-config-next ships an eslint-10-compatible plugin set.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # NFM-4881: antd 6 is a UX-visible major (Drawer placement narrowing,
+      # StepProps export removal); revisit when the product roadmap pulls
+      # antd 6 → scoped migration epic with CPO/UX visual QA.
+      - dependency-name: "antd"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
