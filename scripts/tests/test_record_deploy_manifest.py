@@ -305,6 +305,52 @@ def test_actor_recorded_verbatim_gh_runner_shape(fake_docker, tmp_path):
     assert read_manifest(manifest)["actor"] == "gh-runner:lwj04"
 
 
+def test_actor_github_app_bot_login_accepted(fake_docker, tmp_path):
+    """NFM-4884: GitHub App bot logins legitimately contain brackets —
+    ``<app-slug>[bot]``. Agent-merged PRs make that the github.actor for
+    every deploy; the recorder (and the gate entry, same charset contract)
+    must accept it so bot-triggered deploys stop red-running post-cutover."""
+    fake_docker(prod_containers())
+    manifest = tmp_path / "m" / "prod-deploy-manifest.json"
+
+    proc = run_recorder(manifest=manifest, actor="gh-runner:nucpot-agent[bot]")
+
+    assert proc.returncode == 0, proc.stderr
+    assert read_manifest(manifest)["actor"] == "gh-runner:nucpot-agent[bot]"
+
+
+@pytest.mark.parametrize(
+    "bad_actor",
+    [
+        "path:user; rm -rf /",
+        "gh-runner:$(id)",
+        "a b",
+        "line1\nline2",
+        "quote'actor",
+        'dq"actor',
+        "pipe|actor",
+        "amp&actor",
+        "back`tick`",
+        "has\nnewline",
+    ],
+    ids=lambda v: repr(v)[:40],
+)
+def test_actor_rejects_shell_metacharacters(fake_docker, tmp_path, bad_actor):
+    """NFM-4884: the recorder enforces the SAME strict actor charset the
+    gate entry (run-record-manifest.sh) enforces — the two writers'
+    validation had diverged (entry strict, recorder anything-goes), which
+    is exactly how a bracketed bot actor could land in the canonical
+    manifest while the outside-script re-record refused the identical
+    string."""
+    fake_docker(prod_containers())
+    manifest = tmp_path / "m" / "prod-deploy-manifest.json"
+
+    proc = run_recorder(manifest=manifest, actor=bad_actor)
+
+    assert proc.returncode != 0, f"actor {bad_actor!r} must be refused"
+    assert not manifest.exists(), "a refused actor must never write a manifest"
+
+
 def test_workflow_wires_recorder_outside_script():
     """production-deployment.yml must pass a gh-runner actor into the deploy
     AND record the manifest from the job context (NFM-3777 lesson: defenses

@@ -461,6 +461,75 @@ def test_run_record_manifest_accepts_short_sha(entry):
     assert result.returncode == 0, result.stderr
 
 
+def test_run_record_manifest_accepts_github_app_bot_actor(entry):
+    """NFM-4884: GitHub App bot logins are ``<app-slug>[bot]`` — square
+    brackets are legitimate github.actor content once agent-merged PRs
+    became the norm. The entry must pass them through: refusing here is
+    what red-ran every bot-triggered deploy AFTER cutover and skipped the
+    @smoke gate (verification gap, not just noise)."""
+    RecorderSpy(entry)
+    result = entry.run(
+        "run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", "gh-runner:nucpot-agent[bot]"
+    )
+    assert result.returncode == 0, result.stderr
+    log = (entry.repo / "recorder-calls.log").read_text()
+    assert "--actor gh-runner:nucpot-agent[bot]" in log, "actor forwarded verbatim"
+
+
+# One charset contract, TWO enforcers (NFM-4884): the sudoers-reachable
+# gate entry (bash, before anything runs as nfmdeploy) and the recorder
+# (python argparse, authoritative for the in-script deploy_prod.sh path).
+# This corpus is shared with test_record_deploy_manifest.py's per-sample
+# rejection tests; the parity assertion below is the real guard — the
+# writers' verdicts must never diverge again.
+_ACTOR_CORPUS = [
+    ("gh-runner:lwj04", True),
+    ("deploy_prod.sh:nfmdeploy", True),
+    ("gh-runner:nucpot-agent[bot]", True),  # NFM-4884: GitHub App bot login
+    ("gh-runner:app-slug[bot]", True),
+    ("", False),
+    ("gh-runner:$(id)", False),
+    ("path:user; rm -rf /", False),
+    ("a b", False),
+    ("q'q", False),
+    ('q"q', False),
+    ("p|p", False),
+    ("a&b", False),
+    ("t`t", False),
+    ("n\nn", False),
+    ("s;s", False),
+]
+
+
+def test_run_record_manifest_actor_charset_matches_recorder_contract(entry):
+    """NFM-4884 parity: for every sample actor the bash gate entry and the
+    python recorder must return the SAME verdict. The incident was exactly
+    a divergence — the recorder wrote ``gh-runner:nucpot-agent[bot]`` to
+    the canonical manifest while the gate entry refused the identical
+    string on charset."""
+    sys.path.insert(0, str(GATE_DIR.parent))
+    try:
+        import record_deploy_manifest as recorder
+    finally:
+        sys.path.pop(0)
+    RecorderSpy(entry)
+    for actor, expected_ok in _ACTOR_CORPUS:
+        gate = entry.run("run-record-manifest.sh", "--deploy-sha", _SHA, "--actor", actor)
+        gate_ok = gate.returncode == 0
+        assert gate_ok == expected_ok, (
+            f"gate entry verdict for {actor!r}: expected {expected_ok}, got rc={gate.returncode}"
+            f" ({gate.stderr.strip().splitlines()[-1] if gate.stderr.strip() else ''})"
+        )
+        try:
+            recorder.parse_args(["--deploy-sha", "a" * 40, "--actor", actor])
+            recorder_ok = True
+        except SystemExit:
+            recorder_ok = False
+        assert recorder_ok == expected_ok, (
+            f"recorder verdict for {actor!r}: expected {expected_ok}, got {recorder_ok}"
+        )
+
+
 # ---- NFM-4297 (CR F7 hardening): lock, SHA binding, pinned interpreters --------
 
 

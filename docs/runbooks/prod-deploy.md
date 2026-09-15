@@ -581,6 +581,15 @@ NFM-4264: 6h of attribution with zero audit trail).
   digests). The workflow injects `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
   on-host runs default to `deploy_prod.sh:<user>`; rollback records
   `run-recovery.sh:<sudo-user>`.
+- **Actor charset (NFM-4884, one contract):** `A-Za-z0-9 : . _ [ ] -`,
+  enforced identically by the gate entry (`run-record-manifest.sh`, before
+  anything runs as `nfmdeploy`) and the recorder's argparse check. The
+  brackets admit GitHub App bot logins (`<app-slug>[bot]`) — the
+  `github.actor` for agent-merged PRs; until NFM-4884 the two writers'
+  validation had diverged (entry strict, recorder anything-goes) and every
+  bot-triggered deploy red-ran the outside-script record step, skipping
+  the `@smoke` gate. Parity is pinned by
+  `test_run_record_manifest_actor_charset_matches_recorder_contract`.
 - **Host path (NFM-4273 canonical layout):** with the host gate installed,
   `/usr/local/var/nfm-g2/prod-deploy-manifest.json` — ONE canonical copy the
   desktop-user drift cron reads. Under the gate the deploy body runs as
