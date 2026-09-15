@@ -68,6 +68,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,20 @@ from pathlib import Path
 DEFAULT_COMPOSE_PROJECT = "nucpot-prod"
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
+
+# NFM-4884: ONE actor charset contract, TWO enforcers. The gate entry
+# (scripts/host-prod-gate/entries/run-record-manifest.sh) validates the
+# sudoers-reachable argv before anything runs as nfmdeploy; this argparse
+# check is authoritative for the OTHER sanctioned writer (deploy_prod.sh
+# in-script). Until NFM-4884 they had diverged — the entry was strict
+# while this side accepted anything non-empty — so a GitHub App bot actor
+# (gh-runner:nucpot-agent[bot], the github.actor for agent-merged PRs)
+# landed in the canonical manifest while the outside-script re-record
+# refused the identical string and red-ran the deploy. Brackets are
+# deliberately in the set: GitHub App bot logins are <app-slug>[bot].
+# Parity is pinned by
+# test_run_record_manifest_actor_charset_matches_recorder_contract.
+ACTOR_CHARSET = re.compile(r"[A-Za-z0-9:._\[\]-]+")
 
 
 class CollectError(RuntimeError):
@@ -260,7 +275,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--actor",
         required=True,
         help=(
-            "deploy path + execution identity, e.g. 'deploy_prod.sh:lwj04' or 'gh-runner:lwj04'."
+            "deploy path + execution identity, e.g. 'deploy_prod.sh:lwj04', "
+            "'gh-runner:lwj04' or 'gh-runner:<app-slug>[bot]'; charset "
+            "A-Za-z0-9:._[]- (NFM-4884, shared with the gate entry)."
         ),
     )
     parser.add_argument(
@@ -287,6 +304,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         parser.error("--deploy-sha must not be empty")
     if not args.actor.strip():
         parser.error("--actor must not be empty")
+    # NFM-4884: same charset the gate entry enforces — one contract for both
+    # sanctioned writers (see ACTOR_CHARSET above).
+    if not ACTOR_CHARSET.fullmatch(args.actor):
+        parser.error(
+            f"--actor {args.actor!r} may only contain A-Za-z0-9 : . _ [ ] -"
+            " (shared charset with run-record-manifest.sh, NFM-4884)"
+        )
     return args
 
 

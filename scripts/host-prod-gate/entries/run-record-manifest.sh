@@ -31,7 +31,13 @@
 # Arguments are the attack surface of a sudoers-reachable script, so they are
 # validated against strict shapes before anything runs:
 #   --deploy-sha  7..40 hex chars (github.sha or short sha)
-#   --actor       deploy path + identity, charset [A-Za-z0-9:._-]
+#   --actor       deploy path + identity, charset [A-Za-z0-9:._[]-] — the
+#                 brackets admit GitHub App bot logins (<app-slug>[bot]),
+#                 the github.actor for agent-merged PRs (NFM-4884). This
+#                 charset is ONE contract shared with the recorder's
+#                 argparse check (scripts/record_deploy_manifest.py);
+#                 test_run_record_manifest_actor_charset_matches_recorder_contract
+#                 pins the two verdicts together.
 # ============================================================================
 set -euo pipefail
 
@@ -94,9 +100,13 @@ esac
 if [ "${#DEPLOY_SHA_ARG}" -lt 7 ] || [ "${#DEPLOY_SHA_ARG}" -gt 40 ]; then
   echo "refusing --deploy-sha '${DEPLOY_SHA_ARG}' (7..40 hex chars)" >&2; exit 64
 fi
+# NFM-4884: '[' and ']' stay ALLOWED — GitHub App bot logins are
+# <app-slug>[bot] and agent-merged PRs make that github.actor for every
+# deploy. The negated class is written POSIX-safely: ']' first, '-' last,
+# '[' a literal member (bash 3.2 and modern bash agree).
 case "${ACTOR}" in
-  *[!A-Za-z0-9:._-]*)
-    echo "refusing --actor '${ACTOR}' (charset [A-Za-z0-9:._-])" >&2; exit 64 ;;
+  *[!]A-Za-z0-9:._[-]*)
+    echo "refusing --actor '${ACTOR}' (allowed: A-Za-z0-9 : . _ [ ] -)" >&2; exit 64 ;;
 esac
 
 # --- NFM-4297 CR F7: entry mutual exclusion --------------------------------
