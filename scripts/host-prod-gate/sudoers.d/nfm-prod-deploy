@@ -23,6 +23,15 @@
 #                               tars (Plan A in NFM-4749 only covered
 #                               logical dump; the ro gate denies volume
 #                               mount + docker exec into prod-db)
+#   ollama-runner-term.sh     — NFM-4887 SIGTERM chokepoint for a wedged
+#                               host ollama MLX runner; the ONLY root-runas
+#                               grant (the runner belongs to the desktop
+#                               user, so nfmdeploy cannot signal it). The
+#                               helper validates the pid is an `ollama
+#                               runner` serving the requested --model
+#                               before signaling, and never escalates to
+#                               SIGKILL — test-pinned in
+#                               scripts/tests/test_ollama_runner_term.py.
 
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-deploy.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-pre-deploy-assert.sh
@@ -32,6 +41,13 @@
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-record-manifest.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-cleanup.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-backup.sh
+
+# NFM-4887: the lightrag watchdog LaunchDaemon (UserName=nfmdeploy)
+# unwedges the host ollama MLX runner through this validating root
+# chokepoint — see start-lightrag-watchdog.sh section 5. Grant is to
+# nfmdeploy (the daemon identity), not %admin: an operator at a terminal
+# already has interactive root.
+nfmdeploy ALL=(root) NOPASSWD: /usr/local/lib/nfm-g2/ollama-runner-term.sh
 
 # sudo env_reset strips the caller environment; the deploy entry needs
 # exactly these three (DEPLOY_ACTOR is NFM-4273: GH-runner provenance for

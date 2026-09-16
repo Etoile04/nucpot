@@ -4,7 +4,10 @@ Status: **applied on the production host** — 2026-09-05 UTC, Release
 Engineer under NFM-4295 from reviewed kit `17edebfbe1` (origin/main tip;
 G2 core from PR #1145 squash-merged as `6e222e2040` + py3.9 gate fixes
 #1158/#1159/#1161/#1164/#1166/#1167 + nfm4333 #1174). THE WALL, ro/full
-gate proxies, six NOPASSWD sudoers entries under `/usr/local/lib/nfm-g2/`,
+gate proxies, the command-enumerated NOPASSWD sudoers grants under
+`/usr/local/lib/nfm-g2/` (`%admin`→nfmdeploy entries, plus the
+NFM-4887 nfmdeploy→root `ollama-runner-term.sh` grant; the fragment
+in the repo is authoritative),
 LaunchDaemons, and the canonical `/usr/local/var/nfm-g2/` state dir are
 live. On-host AC-G2 probe 29/30 PASS (the single FAIL is the probe's
 own assumption that a desktop user can reach `nfm-full`, which is the
@@ -60,8 +63,11 @@ gate to `/usr/local/lib/nfm-g2/` (root-owned), the sudoers fragment to
 `/etc/sudoers.d/nfm-prod-deploy` (visudo-validated), six LaunchDaemons
 (incl. `com.nfm.g2.cleanup-daily`, the NFM-4802 daily 04:20 run of
 `run-cleanup.sh`, and `com.nfm.g2.lightrag-watchdog`, the NFM-4804
-5-min LightRAG pipeline-stall watchdog that restarts `lightrag` then
-re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
+5-min LightRAG pipeline-stall watchdog that first unwedges the host
+ollama MLX runner — generate probe, `ollama stop`, SIGTERM via the
+root-owned validating `ollama-runner-term.sh` chokepoint, verify
+(NFM-4887; every host failure fails open) — then restarts `lightrag`
+and re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
 (NFM-4816)),
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.

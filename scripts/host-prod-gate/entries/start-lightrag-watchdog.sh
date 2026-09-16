@@ -41,6 +41,15 @@
 # /var/log/nfm-g2/lightrag-watchdog.log; restart timestamps live in
 # /var/log/nfm-g2/lightrag-watchdog.state for the cooldown check.
 #
+# NFM-4887 (root cause of the 03:30Z wedges, NFM-4815 + NFM-4886): the
+# reingest burst wedges the HOST ollama MLX runner (qwen3.5:4b-nvfp4) —
+# a container restart cannot fix it; only a runner SIGTERM after a
+# failed `ollama stop` recovers the host. On WEDGE the watchdog first
+# runs a host-remediation stage (see section 5) so the re-enqueued docs
+# do not hang against a still-wedged runner; every host failure fails
+# OPEN (logs and proceeds) — the proven container recovery is never
+# blocked by host-probe infrastructure.
+#
 # Exit codes:
 #   0  clean (no wedge, or cooldown suppressed)
 #   2  wedge detected AND sanctioned restart issued
@@ -54,6 +63,20 @@ LOG="${NFM_LIGHTRAG_WATCHDOG_LOG:-/var/log/nfm-g2/lightrag-watchdog.log}"
 COOLDOWN_MIN="${NFM_LIGHTRAG_WATCHDOG_COOLDOWN_MIN:-30}"
 RECOVERY="${NFM_LIGHTRAG_WATCHDOG_RECOVERY:-/usr/local/lib/nfm-g2/run-recovery.sh}"
 LOOKBACK_LINES=5
+
+# NFM-4887 host-runner remediation knobs (all env-overridable so tests
+# stay hermetic — a bare pytest run must never touch the real ollama).
+OLLAMA_MODEL="${NFM_LIGHTRAG_WATCHDOG_OLLAMA_MODEL:-qwen3.5:4b-nvfp4}"
+OLLAMA_URL="${NFM_LIGHTRAG_WATCHDOG_OLLAMA_URL:-http://127.0.0.1:11434}"
+GEN_TIMEOUT_SEC="${NFM_LIGHTRAG_WATCHDOG_GEN_TIMEOUT_SEC:-45}"
+VERIFY_TIMEOUT_SEC="${NFM_LIGHTRAG_WATCHDOG_VERIFY_TIMEOUT_SEC:-90}"
+STOP_WAIT_SEC="${NFM_LIGHTRAG_WATCHDOG_STOP_WAIT_SEC:-15}"
+CURL_BIN="${NFM_LIGHTRAG_WATCHDOG_CURL:-/usr/bin/curl}"
+OLLAMA_BIN="${NFM_LIGHTRAG_WATCHDOG_OLLAMA:-ollama}"
+# Word-split by design (default carries sudo + path); the runner belongs
+# to the desktop user, so the daemon (nfmdeploy) signals it only through
+# this root-owned validating chokepoint.
+TERM_CMD="${NFM_LIGHTRAG_WATCHDOG_TERM:-sudo -n /usr/local/lib/nfm-g2/ollama-runner-term.sh}"
 
 # Under launchd (UserName=nfmdeploy) PATH is the secure path and no docker
 # context/DOCKER_HOST is set, so the CLI would target the walled default
@@ -155,9 +178,100 @@ if [ $(( now - last_restart )) -lt "${cooldown_sec}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Sanctioned recovery only
+# 5. Host runner remediation (NFM-4887) — runs BEFORE the container
+#    recovery so the re-enqueued docs do not hang against a still-wedged
+#    host runner. Twice-validated manual playbook, automated:
+#    tiny generate probe → `ollama stop` → SIGTERM iff the runner PID
+#    survives the stop → verify generate. Every failure path fails OPEN:
+#    log and continue — the container-level recovery below is proven and
+#    must never be blocked by host-probe infrastructure.
 # ---------------------------------------------------------------------------
-log_record "probe=WEDGE container=${CONTAINER} boot=${boot_at} action=restart-lightrag"
+gen_probe() {
+  # $1 = curl --max-time budget. Success = HTTP 200 + a completed
+  # generation ("done":true). A healthy multi-tenant host serves this in
+  # ~20-30s (queued behind tenant traffic — NFM-4886 baseline); the
+  # wedged runner returns nothing at all.
+  local t="$1" body http payload
+  body="$(mktemp "${TMPDIR:-/tmp}/nfm-lrw-gen.XXXXXX")" || return 1
+  payload="$(printf '{"model":"%s","prompt":"ping","stream":false,"options":{"num_predict":1}}' "${OLLAMA_MODEL}")"
+  http="$("${CURL_BIN}" -sS --max-time "${t}" -o "${body}" -w '%{http_code}' \
+    "${OLLAMA_URL}/api/generate" -d "${payload}" 2>/dev/null || true)"
+  if [ "${http}" = "200" ] && grep -q '"done": *[Tt]rue' "${body}" 2>/dev/null; then
+    rm -f "${body}"
+    return 0
+  fi
+  rm -f "${body}"
+  return 1
+}
+
+runner_cmd_for_pid() { ps -o command= -p "$1" 2>/dev/null || true; }
+
+find_runner() {
+  # The runner serving the RAG model: `ollama runner ... --model <m>`.
+  # A co-loaded tenant runner (different --model) is invisible here.
+  local pid cmd
+  for pid in $(pgrep -f 'ollama runner' 2>/dev/null || true); do
+    cmd="$(runner_cmd_for_pid "${pid}")"
+    case "${cmd}" in
+      *"--model ${OLLAMA_MODEL} "*|*"--model ${OLLAMA_MODEL}")
+        RUNNER_PID="${pid}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+stop_runner_graceful() {
+  # 0 = runner pid gone after the bounded window; 1 = PID survived
+  # (the twice-observed wedge signature: stop hangs in "Stopping…").
+  # The CLI child is reaped/killed either way — a wedged server hangs it.
+  "${OLLAMA_BIN}" stop "${OLLAMA_MODEL}" >/dev/null 2>&1 &
+  local cli_pid=$!
+  local waited=0
+  while [ "${waited}" -lt "${STOP_WAIT_SEC}" ]; do
+    if [ -z "$(runner_cmd_for_pid "${RUNNER_PID}")" ]; then
+      break
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  kill "${cli_pid}" 2>/dev/null || true
+  wait "${cli_pid}" 2>/dev/null || true
+  [ -z "$(runner_cmd_for_pid "${RUNNER_PID}")" ]
+}
+
+host_remediate() {
+  if gen_probe "${GEN_TIMEOUT_SEC}"; then
+    log_record "host=healthy model=${OLLAMA_MODEL} probe=generate"
+    return 0
+  fi
+  if ! find_runner; then
+    log_record "host=runner-absent model=${OLLAMA_MODEL} (server down or model unloaded; nothing to signal)"
+    return 0
+  fi
+  cpu="$(ps -o %cpu= -p "${RUNNER_PID}" 2>/dev/null || true)"
+  log_record "host=wedge-suspect model=${OLLAMA_MODEL} pid=${RUNNER_PID} cpu=${cpu:-unknown}"
+  if stop_runner_graceful; then
+    log_record "host=stop-recovered model=${OLLAMA_MODEL} pid=${RUNNER_PID}"
+  else
+    log_record "host=stop-failed model=${OLLAMA_MODEL} pid=${RUNNER_PID} (pid alive after ollama stop — wedge signature)"
+    rc=0
+    ${TERM_CMD} "${RUNNER_PID}" --model "${OLLAMA_MODEL}" || rc=$?
+    log_record "host=term pid=${RUNNER_PID} rc=${rc}"
+  fi
+  if gen_probe "${VERIFY_TIMEOUT_SEC}"; then
+    log_record "host=verified model=${OLLAMA_MODEL} probe=generate"
+  else
+    log_record "host=verify-failed model=${OLLAMA_MODEL} probe=generate (operator attention)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 6. Sanctioned recovery only
+# ---------------------------------------------------------------------------
+log_record "probe=WEDGE container=${CONTAINER} boot=${boot_at} action=host-unwedge+restart-lightrag"
+host_remediate || log_record "host=probe-error (host stage failed open; container recovery proceeds)"
 # The LaunchDaemon already runs as nfmdeploy (see the plist UserName); sudo
 # to the same identity is only needed when an operator runs the probe by
 # hand from another account. The prefix is env-overridable so tests can
