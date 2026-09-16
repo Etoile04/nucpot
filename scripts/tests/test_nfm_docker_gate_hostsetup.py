@@ -40,6 +40,16 @@ SANCTIONED = [
     "run-backup.sh",  # NFM-4750: Plan B full-gate pg_dump + 4-volume tar
 ]
 
+# NFM-4887: the ONE sanctioned root-runas chokepoint. The wedged host
+# ollama MLX runner belongs to the desktop user, so the lightrag
+# watchdog daemon (nfmdeploy) can only SIGTERM it through this
+# root-owned VALIDATING helper (refuses non-runner pids / --model
+# mismatches, never escalates to SIGKILL — pinned in
+# test_ollama_runner_term.py). This list exists so the sudoers tests
+# below can assert the root runas grant is exactly this single entry
+# and nothing else ever creeps in.
+ROOT_RUNAS_SANCTIONED = ["ollama-runner-term.sh"]
+
 # Hermetic sha satisfying HEAD==DEPLOY_SHA in entry tests.
 _SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
 
@@ -57,6 +67,9 @@ def test_all_sanctioned_entries_exist():
     names = {p.name for p in ENTRIES}
     for entry in SANCTIONED:
         assert entry in names
+    # NFM-4887: the root-runas chokepoint ships as an entry too.
+    for entry in ROOT_RUNAS_SANCTIONED:
+        assert entry in names
     # the launchd start wrappers ship too
     assert {"start-proxy.sh", "start-watchdog.sh", "start-mirror-health.sh"} <= names
 
@@ -73,8 +86,20 @@ def _sudoers_lines():
 
 def test_sudoers_every_grant_is_an_enumerated_g2_entry():
     grants = [line for line in _sudoers_lines() if "NOPASSWD" in line]
-    assert len(grants) == len(SANCTIONED)
+    assert len(grants) == len(SANCTIONED) + len(ROOT_RUNAS_SANCTIONED)
+    root_runas = [
+        line for line in grants
+        if line.startswith("nfmdeploy ALL=(root) NOPASSWD: /usr/local/lib/nfm-g2/")
+    ]
+    # NFM-4887: exactly ONE root-runas grant — the validating runner-term
+    # chokepoint. A second root grant must fail this test on purpose.
+    assert len(root_runas) == len(ROOT_RUNAS_SANCTIONED), root_runas
+    for line in root_runas:
+        command = line.rsplit(":", 1)[1].strip()
+        assert command in {f"/usr/local/lib/nfm-g2/{n}" for n in ROOT_RUNAS_SANCTIONED}
     for line in grants:
+        if line in root_runas:
+            continue
         assert line.startswith("%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/")
         command = line.rsplit(":", 1)[1].strip()
         assert command in {f"/usr/local/lib/nfm-g2/{name}" for name in SANCTIONED}
@@ -85,16 +110,22 @@ def test_sudoers_no_wildcards_or_blanket_all():
     assert grants, "expected enumerated sudo grants"
     for line in _sudoers_lines():
         assert "*" not in line
+    root_runas = [line for line in grants if "(root)" in line]
     for line in grants:
         # CR F10: the old `endswith(" ALL") or startswith("%admin")` check
         # was vacuous (every grant line starts with %admin). Pin the real
-        # properties: run-as exactly the deploy identity, never (ALL);
-        # command field is one absolute entry-script path.
+        # properties: run-as is the deploy identity, or (NFM-4887) the
+        # single desktop-user-owned-runner chokepoint as root — never
+        # (ALL); command field is one absolute entry-script path.
         assert "NOPASSWD: ALL" not in line, line
-        assert "(nfmdeploy)" in line, line
+        assert "(nfmdeploy)" in line or "(root)" in line, line
         assert "(ALL)" not in line, line
         assert not line.rstrip().endswith(" ALL"), line
         assert line.rstrip().split()[-1].startswith("/usr/local/lib/nfm-g2/"), line
+    # The (root) runas is reserved for the nfmdeploy daemon identity —
+    # %admin must never get a passwordless root grant from this fragment.
+    for line in root_runas:
+        assert line.startswith("nfmdeploy ALL=(root) NOPASSWD:"), line
 
 
 def test_sudoers_defaults_are_command_scoped():

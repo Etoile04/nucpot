@@ -59,7 +59,8 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
 | `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
-| `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; on wedge: restarts `lightrag` through `run-recovery.sh`, then re-enqueues stranded docs via `lightrag-reprocess` — NFM-4816 — with a 30-min cooldown over the action pair) |
+| `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; on wedge: unwedges the host ollama MLX runner first — tiny-generate probe, `ollama stop`, SIGTERM via `ollama-runner-term.sh`, verify — NFM-4887, then restarts `lightrag` through `run-recovery.sh` and re-enqueues stranded docs via `lightrag-reprocess` — NFM-4816 — with a 30-min cooldown over the whole action set) |
+| `entries/ollama-runner-term.sh` | NFM-4887 root-owned validating chokepoint: SIGTERMs a wedged host ollama runner pid (refuses non-runner pids and `--model` mismatches; no SIGKILL escalation) — invoked by the lightrag watchdog via its nfmdeploy→root sudoers grant |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
 | `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup; lightrag-watchdog — NFM-4804, the only one whose launchd `UserName` is nfmdeploy rather than root) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |

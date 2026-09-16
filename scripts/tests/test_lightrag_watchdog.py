@@ -27,6 +27,26 @@ revives, the watchdog invokes the run-recovery.sh `lightrag-reprocess`
 shape ONCE so FAILED/PENDING docs re-enqueue immediately instead of
 waiting for the next daily rag_audit_index_coverage (up to 24h retrieval
 degradation). The cooldown still gates the whole action pair.
+
+NFM-4887: the container restart cannot fix the actual root cause — the
+daily 03:30Z reingest burst wedges the HOST ollama MLX runner
+(qwen3.5:4b-nvfp4), and only a runner SIGTERM after a failed `ollama
+stop` recovers it (playbook validated 2026-09-13 and 2026-09-16). On
+WEDGE the watchdog now runs a host-remediation stage FIRST (so the
+re-enqueued docs do not hang against a still-wedged runner):
+
+  1. tiny generate probe (bounded) — healthy host → no host action
+  2. probe hung → find the runner serving the RAG model (pgrep + ps)
+  3. `ollama stop <model>` (graceful, bounded) — runner gone → done
+  4. runner PID alive after stop (the wedge signature) → SIGTERM via
+     the root-owned ollama-runner-term.sh chokepoint (the daemon runs
+     as nfmdeploy and cannot signal the desktop user's runner)
+  5. verify recovery with a second tiny generate probe
+
+Every host-stage command is env-overridable so these tests stay
+hermetic — a bare `pytest` run on the dev host must never stop a real
+runner. A host-stage infrastructure failure must NEVER block the
+proven container-level recovery (restart + reprocess still fire).
 """
 
 from __future__ import annotations
@@ -101,6 +121,7 @@ exit 0
 FAKE_RECOVERY = """\
 #!/bin/bash
 echo "recovery-called: $*" >> "$FAKE_RECOVERY_CALLS"
+echo "recovery: $*" >> "$FAKE_ORDER_FILE" 2>/dev/null || true
 # NFM-4816: the action pair is restart-then-reprocess — tests need the two
 # legs to fail independently (reprocess runs only after a successful restart).
 case "$1" in
@@ -109,28 +130,163 @@ esac
 exit "${FAKE_RECOVERY_EXIT:-0}"
 """
 
+# NFM-4887 host-stage shims. Each mirrors ONLY the call shapes the script
+# uses and appends to a shared order file so tests can pin cross-actor
+# sequencing (probe → stop → term → restart → reprocess) in one place.
+#
+# curl: call 1 = wedge-detection probe (FAKE_CURL_MODE), call 2+ =
+# post-remediation verify probe (FAKE_CURL_VERIFY_MODE). Modes:
+#   ok        → HTTP 200 + `{"done":true}` body (tiny generate landed)
+#   timeout   → exit 28 (curl --max-time semantics: wedged runner hangs)
+#   connfail  → exit 7 (server down / probe infra unreachable)
+FAKE_CURL = """\
+#!/bin/bash
+out=""; body=""
+maxt=""; url=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    --max-time) maxt="$a" ;;
+    -o) out="$a" ;;
+  esac
+  prev="$a"
+  case "$a" in
+    http://*|https://*) url="$a" ;;
+  esac
+done
+n=$(cat "$FAKE_CURL_N" 2>/dev/null || echo 0)
+n=$(( n + 1 )); echo "$n" > "$FAKE_CURL_N"
+mode="${FAKE_CURL_MODE:-timeout}"
+[ "$n" -ge 2 ] && mode="${FAKE_CURL_VERIFY_MODE:-ok}"
+echo "curl[$n/$mode]: $url max_time=$maxt" >> "$FAKE_ORDER_FILE" 2>/dev/null || true
+if [ "$mode" = "ok" ]; then
+  [ -n "$out" ] && printf '{"model":"x","done":true}' > "$out"
+  echo 200
+  exit 0
+elif [ "$mode" = "connfail" ]; then
+  exit 7
+fi
+exit 28
+"""
+
+# pgrep: `pgrep -f <pattern>` → the canned pids iff the pattern targets
+# the ollama runner (pgrep exits 1 on no match — the script guards).
+FAKE_PGRP = """\
+#!/bin/bash
+case "$*" in
+  *"ollama runner"*) cat "$FAKE_PGRP_PIDS" 2>/dev/null ;;
+esac
+exit 0
+"""
+
+# ps: `ps -o command= -p N` (full command) and `ps -o %cpu= -p N` (cpu)
+# from separate canned tables — both empty = process gone.
+FAKE_PS = """\
+#!/bin/bash
+pid="$4"
+if [ "$2" = "command=" ]; then
+  grep "^$pid|" "$FAKE_PS_PROCS" 2>/dev/null | cut -d'|' -f2-
+elif [ "$2" = "%cpu=" ]; then
+  grep "^$pid|" "$FAKE_PS_CPU" 2>/dev/null | cut -d'|' -f2-
+fi
+exit 0
+"""
+
+# ollama: `ollama stop <model>` — FAKE_OLLAMA_STOP_EFFECT:
+#   recover   → the runner pid exits (healthy runner honors the stop)
+#   leave-hung → PID stays alive: the twice-observed wedge signature
+FAKE_OLLAMA = """\
+#!/bin/bash
+echo "ollama: $*" >> "$FAKE_ORDER_FILE" 2>/dev/null || true
+echo "ollama-called: $*" >> "$FAKE_OLLAMA_CALLS"
+if [ "$1" = "stop" ] && [ "${FAKE_OLLAMA_STOP_EFFECT:-recover}" = "recover" ]; then
+  pid="${FAKE_RUNNER_PID:-}"
+  if [ -n "$pid" ]; then
+    # grep -v exits 1 when it selects zero lines — do not let that skip
+    # the commit (removing the ONLY runner line must stick).
+    grep -v "^$pid|" "$FAKE_PS_PROCS" > "$FAKE_PS_PROCS.tmp" || true
+    mv -f "$FAKE_PS_PROCS.tmp" "$FAKE_PS_PROCS"
+  fi
+fi
+exit "${FAKE_OLLAMA_STOP_RC:-0}"
+"""
+
+# The root-owned term chokepoint stand-in: invoked as `<pid> --model <m>`.
+# FAKE_TERM_EFFECT=recover removes the pid (SIGTERM worked); persist
+# leaves it and exits 1 (runner ignored SIGTERM).
+FAKE_TERM = """\
+#!/bin/bash
+echo "term: $*" >> "$FAKE_ORDER_FILE" 2>/dev/null || true
+echo "term-called: $*" >> "$FAKE_TERM_CALLS"
+if [ "${FAKE_TERM_EFFECT:-recover}" = "recover" ]; then
+  pid="$1"
+  grep -v "^$pid|" "$FAKE_PS_PROCS" > "$FAKE_PS_PROCS.tmp" || true
+  mv -f "$FAKE_PS_PROCS.tmp" "$FAKE_PS_PROCS"
+  exit 0
+fi
+exit 1
+"""
+
+# The prod runner as observed on the host (NFM-4886):
+HOST_RUNNER_CMD = ("/Applications/Ollama.app/Contents/Resources/ollama runner "
+                   "--mlx-engine --model qwen3.5:4b-nvfp4 --port 56840")
+OTHER_TENANT_RUNNER_CMD = ("/Applications/Ollama.app/Contents/Resources/ollama "
+                           "runner --mlx-engine --model qwen3.8:27b-mlx --port 56841")
+
 
 @pytest.fixture()
 def harness(tmp_path: Path):
     """Build a fake docker + fake recovery + env, return a run() helper."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    docker = bin_dir / "docker"
-    docker.write_text(FAKE_DOCKER)
-    docker.chmod(docker.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    shims = {
+        "docker": FAKE_DOCKER,
+        "fake-recovery.sh": FAKE_RECOVERY,
+        "curl": FAKE_CURL,
+        "pgrep": FAKE_PGRP,
+        "ps": FAKE_PS,
+        "ollama": FAKE_OLLAMA,
+        "fake-term.sh": FAKE_TERM,
+    }
+    for name, body in shims.items():
+        shim = bin_dir / name
+        shim.write_text(body)
+        shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     recovery = bin_dir / "fake-recovery.sh"
-    recovery.write_text(FAKE_RECOVERY)
-    recovery.chmod(recovery.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    curl = bin_dir / "curl"
+    ollama = bin_dir / "ollama"
+    term = bin_dir / "fake-term.sh"
 
     log_file = tmp_path / "container.log"
     state = tmp_path / "watchdog.state"
     wlog = tmp_path / "watchdog.log"
     calls = tmp_path / "docker-calls"
     rcalls = tmp_path / "recovery-calls"
+    order = tmp_path / "order"
+    pgrp_pids = tmp_path / "pgrp-pids"
+    ps_procs = tmp_path / "ps-procs"
+    ps_cpu = tmp_path / "ps-cpu"
+    curl_n = tmp_path / "curl-n"
+    ocalls = tmp_path / "ollama-calls"
+    tcalls = tmp_path / "term-calls"
 
     def run(log_text: str, *, running: str = "true", recovery_exit: str = "0",
-            reprocess_exit: str | None = None, extra_env: dict | None = None):
+            reprocess_exit: str | None = None, extra_env: dict | None = None,
+            curl_mode: str = "timeout", curl_verify_mode: str = "ok",
+            runner_pids: list[int] | None = None,
+            procs: dict[int, str] | None = None,
+            cpu: dict[int, str] | None = None,
+            ollama_stop_effect: str = "recover",
+            term_effect: str = "recover"):
         log_file.write_text(log_text)
+        if runner_pids:
+            pgrp_pids.write_text("\n".join(str(p) for p in runner_pids) + "\n")
+        if procs:
+            ps_procs.write_text(
+                "".join(f"{pid}|{cmd}\n" for pid, cmd in procs.items()))
+        if cpu:
+            ps_cpu.write_text(
+                "".join(f"{pid}|{val}\n" for pid, val in cpu.items()))
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "NFM_LIGHTRAG_WATCHDOG_STATE": str(state),
@@ -139,12 +295,33 @@ def harness(tmp_path: Path):
             # The probe runs as the test user, not nfmdeploy — neutralize
             # the sudo prefix so the fake recovery runs directly.
             "NFM_LIGHTRAG_WATCHDOG_SUDO": "",
+            # NFM-4887 host-stage knobs: every host command points at a
+            # shim so a test run can never reach the real ollama host,
+            # and the stop poll is 1s instead of 15s.
+            "NFM_LIGHTRAG_WATCHDOG_CURL": str(curl),
+            "NFM_LIGHTRAG_WATCHDOG_OLLAMA": str(ollama),
+            "NFM_LIGHTRAG_WATCHDOG_TERM": str(term),
+            "NFM_LIGHTRAG_WATCHDOG_STOP_WAIT_SEC": "1",
             "FAKE_DOCKER_CALLS": str(calls),
             "FAKE_DOCKER_LOG": str(log_file),
             "FAKE_DOCKER_RUNNING": running,
             "FAKE_RECOVERY_CALLS": str(rcalls),
             "FAKE_RECOVERY_EXIT": recovery_exit,
+            "FAKE_ORDER_FILE": str(order),
+            "FAKE_CURL_MODE": curl_mode,
+            "FAKE_CURL_VERIFY_MODE": curl_verify_mode,
+            "FAKE_CURL_N": str(curl_n),
+            "FAKE_PGRP_PIDS": str(pgrp_pids),
+            "FAKE_PS_PROCS": str(ps_procs),
+            "FAKE_PS_CPU": str(ps_cpu),
+            "FAKE_OLLAMA_CALLS": str(ocalls),
+            "FAKE_OLLAMA_STOP_EFFECT": ollama_stop_effect,
+            "FAKE_TERM_CALLS": str(tcalls),
+            "FAKE_TERM_EFFECT": term_effect,
         }
+        if runner_pids:
+            # The single-runner case lets `ollama stop` recover that pid.
+            env["FAKE_RUNNER_PID"] = str(runner_pids[-1])
         if reprocess_exit is not None:
             env["FAKE_RECOVERY_EXIT_REPROCESS"] = reprocess_exit
         if extra_env:
@@ -157,8 +334,21 @@ def harness(tmp_path: Path):
             check=False,
         )
 
+    def order_lines() -> list[str]:
+        return (order.read_text().splitlines()
+                if order.exists() else [])
+
+    def ollama_calls() -> list[str]:
+        return ([ln.split(": ", 1)[1] for ln in ocalls.read_text().splitlines()]
+                if ocalls.exists() else [])
+
+    def term_calls() -> list[str]:
+        return ([ln.split(": ", 1)[1] for ln in tcalls.read_text().splitlines()]
+                if tcalls.exists() else [])
+
     return {"run": run, "state": state, "watchdog_log": wlog, "recovery_calls": rcalls,
-            "docker_calls": calls}
+            "docker_calls": calls, "order": order_lines,
+            "ollama_calls": ollama_calls, "term_calls": term_calls}
 
 
 def test_wedge_signature_triggers_sanctioned_restart(harness) -> None:
@@ -311,4 +501,159 @@ def test_failing_recovery_still_records_state_and_rc(harness) -> None:
     assert second.returncode == 0, second.stderr
     calls = harness["recovery_calls"].read_text().splitlines()
     assert len(calls) == 1, f"restart-loop: {calls}"
+    assert "reason=cooldown" in harness["watchdog_log"].read_text()
+
+
+# ===========================================================================
+# NFM-4887 — host ollama MLX runner remediation
+# ===========================================================================
+
+def _norm_order(harness) -> list[str]:
+    """Cross-actor order file, with curl records collapsed to their
+    call-number/mode prefix (URL and timeouts are not the pin)."""
+    out = []
+    for ln in harness["order"]():
+        if ln.startswith("curl["):
+            out.append(ln.split(":", 1)[0])
+        elif ln[:1].isalpha():
+            out.append(ln)
+    return out
+
+
+def test_healthy_host_runner_is_untouched(harness) -> None:
+    """WEDGE fired but the tiny generate lands (host healthy — the wedge
+    marker may predate a self-recovered runner) → NO host action at all;
+    the container-level action pair is unchanged."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="ok")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["ollama_calls"]() == []
+    assert harness["term_calls"]() == []
+    assert "host=healthy" in harness["watchdog_log"].read_text()
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
+
+
+def test_wedged_runner_gets_sigterm_after_failed_stop(harness) -> None:
+    """The twice-validated playbook, automated: tiny generate hangs →
+    runner found (71% CPU) → `ollama stop` leaves the PID hung → SIGTERM
+    via the root chokepoint → verify generate lands → THEN the sanctioned
+    container restart+reprocess (host first, so re-enqueued docs do not
+    hang against a still-wedged runner)."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="ok",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "71.4"}, ollama_stop_effect="leave-hung",
+                          term_effect="recover")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["ollama_calls"]() == ["stop qwen3.5:4b-nvfp4"]
+    assert harness["term_calls"]() == ["77444 --model qwen3.5:4b-nvfp4"]
+    # Full cross-actor sequence in one pin: probe → stop → TERM → verify
+    # probe → restart → reprocess (the host stage completes fully —
+    # including its verification — before the container recovery starts).
+    assert _norm_order(harness) == [
+        "curl[1/timeout]",
+        "ollama: stop qwen3.5:4b-nvfp4",
+        "term: 77444 --model qwen3.5:4b-nvfp4",
+        "curl[2/ok]",
+        "recovery: restart lightrag",
+        "recovery: lightrag-reprocess",
+    ], harness["order"]()
+    wlog = harness["watchdog_log"].read_text()
+    assert "host=wedge-suspect" in wlog and "cpu=71.4" in wlog
+    assert "host=term" in wlog and "host=verified" in wlog
+
+
+def test_graceful_stop_recovers_without_sigterm(harness) -> None:
+    """A runner that honors `ollama stop` (healthy-but-stalled) must never
+    see a SIGTERM — the PID-alive-after-stop check is the wedge
+    discriminator, and only a surviving PID escalates."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "12.0"}, ollama_stop_effect="recover")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["ollama_calls"]() == ["stop qwen3.5:4b-nvfp4"]
+    assert harness["term_calls"]() == [], "SIGTERM after a successful stop"
+    wlog = harness["watchdog_log"].read_text()
+    assert "host=stop-recovered" in wlog
+    assert "host=verified" in wlog  # the verify probe still runs
+
+
+def test_runner_absent_skips_host_action(harness) -> None:
+    """Generate hangs but no runner process exists (server down or model
+    not loaded) — nothing to signal; the container recovery proceeds."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["ollama_calls"]() == []
+    assert harness["term_calls"]() == []
+    assert "host=runner-absent" in harness["watchdog_log"].read_text()
+    assert "restart lightrag" in harness["recovery_calls"].read_text()
+
+
+def test_verify_failure_keeps_exit_contract(harness) -> None:
+    """SIGTERM landed but the verify generate still hangs — recorded as
+    host=verify-failed for the operator; the watchdog's exit contract
+    (2 = wedge acted on) and the container action pair are unchanged."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="timeout",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          ollama_stop_effect="leave-hung", term_effect="recover")
+    assert proc.returncode == 2, proc.stderr
+    wlog = harness["watchdog_log"].read_text()
+    assert "host=verify-failed" in wlog
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
+
+
+def test_host_stage_infra_failure_still_recovers_container(harness) -> None:
+    """A broken host-probe binary must NEVER block the proven
+    container-level recovery — the worst case degrades to the exact
+    NFM-4804/4816 behavior that shipped before NFM-4887."""
+    proc = harness["run"](WEDGE_LOG, extra_env={
+        "NFM_LIGHTRAG_WATCHDOG_CURL": "/nonexistent/curl-bin"})
+    assert proc.returncode == 2, proc.stderr
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
+
+
+def test_term_persisted_is_recorded_not_escalated(harness) -> None:
+    """A runner that ignores SIGTERM: record it for the operator
+    (host=term rc=1) and still run the verify probe — the watchdog must
+    not invent a SIGKILL escalation beyond the sanctioned playbook."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="ok",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          ollama_stop_effect="leave-hung", term_effect="persist")
+    assert proc.returncode == 2, proc.stderr
+    wlog = harness["watchdog_log"].read_text()
+    assert "host=term" in wlog and "rc=1" in wlog
+    assert "host=verified" in wlog  # runner left, but generate served
+
+
+def test_model_selection_targets_only_the_rag_runner(harness) -> None:
+    """Multi-tenant host: the qwen3.8:27b co-loaded runner must be
+    invisible to a qwen3.5 wedge — discovery matches --model exactly,
+    and the term chokepoint gets the RAG runner's pid."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                          runner_pids=[111, 222],
+                          procs={111: OTHER_TENANT_RUNNER_CMD, 222: HOST_RUNNER_CMD},
+                          cpu={111: "99.0", 222: "71.4"},
+                          ollama_stop_effect="leave-hung")
+    assert proc.returncode == 2, proc.stderr
+    assert harness["term_calls"]() == ["222 --model qwen3.5:4b-nvfp4"]
+
+
+def test_cooldown_gates_the_host_stage_too(harness) -> None:
+    """The 30-min cooldown gates the WHOLE action triple (host remediation
+    + restart + reprocess) — a persistently wedged runner cannot be
+    SIGTERMed every 5 minutes."""
+    first = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                           runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                           ollama_stop_effect="leave-hung")
+    assert first.returncode == 2
+    second = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                            runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                            ollama_stop_effect="leave-hung")
+    assert second.returncode == 0, second.stderr
+    assert harness["ollama_calls"]() == ["stop qwen3.5:4b-nvfp4"]
+    assert harness["term_calls"]() == ["77444 --model qwen3.5:4b-nvfp4"]
     assert "reason=cooldown" in harness["watchdog_log"].read_text()
