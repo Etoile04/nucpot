@@ -60,7 +60,12 @@ services:
       LLM_BINDING_HOST: ${LIGHTRAG_LLM_HOST:-}
       LLM_BINDING_API_KEY: ${LIGHTRAG_LLM_API_KEY:-}
       LLM_TIMEOUT: ${LIGHTRAG_LLM_TIMEOUT_S:-8}
-      MAX_ASYNC_LLM: ${LIGHTRAG_MAX_ASYNC_LLM:-4}
+      # NFM-4926 (Option A): 4 -> 2.  The 03:30Z reingest burst's
+      # concurrent LLM fan-out saturated the single-slot host ollama MLX
+      # runner (RCA NFM-4922 layer 2).  Env-overridable — if the host
+      # .env pins LIGHTRAG_MAX_ASYNC_LLM, the pinned value wins and the
+      # deploy runbook must update it (see docs in this commit).
+      MAX_ASYNC_LLM: ${LIGHTRAG_MAX_ASYNC_LLM:-2}
 
       # --- Embedding Configuration ---
       EMBEDDING_BINDING: ${LIGHTRAG_EMBEDDING_BINDING:-openai}

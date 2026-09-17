@@ -17,6 +17,7 @@ running sidecar or the literature-processing queue.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -584,6 +585,7 @@ def test_celery_task_uses_task_scoped_engine(monkeypatch: pytest.MonkeyPatch) ->
 
     async def _fake_audit(session: object, **kwargs: object) -> AuditOutcome:
         captured["session"] = session
+        captured["kwargs"] = kwargs
         return AuditOutcome(
             run_date=date(2026, 9, 11),
             completed_total=0,
@@ -596,6 +598,9 @@ def test_celery_task_uses_task_scoped_engine(monkeypatch: pytest.MonkeyPatch) ->
     class _FakeSettings:
         lightrag_host = "localhost"
         lightrag_port = 9621
+        # NFM-4926: the wrapper must forward the burst-pacing knobs.
+        rag_audit_wave_size = 4
+        rag_audit_wave_drain_timeout_s = 240.0
 
     monkeypatch.setattr(
         "nfm_db.database.task_session_factory", _fake_task_factory
@@ -612,6 +617,9 @@ def test_celery_task_uses_task_scoped_engine(monkeypatch: pytest.MonkeyPatch) ->
     assert captured.get("task_scoped") is True
     assert isinstance(captured.get("session"), _FakeSession)
     assert result["indexed_total"] == 0
+    # NFM-4926: settings → service wiring for the wave-pacing knobs.
+    assert captured["kwargs"]["wave_size"] == 4
+    assert captured["kwargs"]["drain_timeout_s"] == 240.0
 
 
 # ---------------------------------------------------------------------------
@@ -848,3 +856,333 @@ def test_celery_buckets_task_uses_task_scoped_engine(
     assert result["counts"]["processed"] == 5
     assert result["counts"]["failed_error"] == 2
     assert result["failures_classified"] == 2
+
+
+# ---------------------------------------------------------------------------
+# NFM-4926 — reingest-burst wave pacing (Option A, CEO decision NFM-4923)
+# ---------------------------------------------------------------------------
+
+
+class _FakeAsyncResult:
+    """Minimal Celery ``AsyncResult`` stand-in with a controllable flag."""
+
+    def __init__(self, *, ready: bool = False) -> None:
+        self._ready = ready
+
+    def ready(self) -> bool:
+        return self._ready
+
+
+async def _seed_drift(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, count: int
+) -> list[uuid.UUID]:
+    """Seed ``count`` completed-but-unindexed rows; nothing indexed yet."""
+    ids = [uuid.uuid4() for _ in range(count)]
+    await _seed_data_sources(db_session, *ids)
+    _patch_lightrag_markers(monkeypatch, [])
+    return ids
+
+
+def _spy_drain(
+    monkeypatch: pytest.MonkeyPatch, drains: list[int]
+) -> None:
+    """Wrap ``_drain_wave`` so each call records its in-flight count."""
+    from nfm_db.services import rag_audit as rag_audit_module
+
+    real_drain = rag_audit_module._drain_wave
+
+    async def _spy(results: list[Any], **kwargs: object) -> bool:
+        drains.append(len(results))
+        return await real_drain(results, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(rag_audit_module, "_drain_wave", _spy)
+
+
+@pytest.mark.asyncio
+async def test_wave_pacing_chunks_drift_into_waves(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """10 drift docs / wave_size 4 → dispatch 4+4+2, drain between waves only."""
+    ids = await _seed_drift(db_session, monkeypatch, 10)
+
+    dispatches: list[uuid.UUID] = []
+    drains: list[int] = []
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _FakeAsyncResult:
+        dispatches.append(lit_id)
+        return _FakeAsyncResult(ready=True)
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+    _spy_drain(monkeypatch, drains)
+
+    outcome = await run_rag_audit_index_coverage(
+        db_session,
+        lightrag_host="localhost",
+        lightrag_port=9621,
+        run_date=date(2026, 9, 17),
+        wave_size=4,
+        drain_timeout_s=1.0,
+    )
+
+    assert outcome.drift_total == 10
+    assert outcome.reingested == 10
+    assert outcome.errors == 0
+    assert len(dispatches) == 10
+    assert set(dispatches) == set(ids)
+    # Deterministic dispatch order (drift set is sorted before slicing).
+    assert dispatches == sorted(ids)
+    # Exactly two inter-wave drains; the final partial wave (size 2) has
+    # no successor and therefore no drain.
+    assert drains == [4, 4]
+
+
+@pytest.mark.asyncio
+async def test_wave_pacing_blocks_next_wave_until_drain(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No wave-2 dispatch happens before wave-1 results report ready."""
+    ids = await _seed_drift(db_session, monkeypatch, 4)
+    ordered = sorted(ids)
+    events: list[str] = []
+    gate = {"open": False}
+
+    class _GatedResult:
+        def ready(self) -> bool:
+            events.append("check")
+            return gate["open"]
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _GatedResult:
+        events.append(f"dispatch:{lit_id}")
+        return _GatedResult()
+
+    async def open_gate_after_first_check() -> None:
+        while not any(event == "check" for event in events):
+            await asyncio.sleep(0.01)
+        gate["open"] = True
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+
+    opener = asyncio.get_running_loop().create_task(open_gate_after_first_check())
+    try:
+        outcome = await run_rag_audit_index_coverage(
+            db_session,
+            lightrag_host="localhost",
+            lightrag_port=9621,
+            run_date=date(2026, 9, 17),
+            wave_size=2,
+            drain_timeout_s=5.0,
+        )
+    finally:
+        await opener
+
+    assert outcome.reingested == 4
+    assert outcome.errors == 0
+    # Before the first drain-check only wave 1's two dispatches happened…
+    first_check = events.index("check")
+    assert events[:first_check] == [
+        f"dispatch:{ordered[0]}",
+        f"dispatch:{ordered[1]}",
+    ]
+    # …and the drain-check strictly precedes wave 2's first dispatch.
+    first_wave2_dispatch = events.index(f"dispatch:{ordered[2]}")
+    assert first_check < first_wave2_dispatch
+
+
+@pytest.mark.asyncio
+async def test_wave_pacing_dispatches_partial_final_wave(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """5 drift docs / wave_size 2 → waves 2+2+1; the lone doc still goes out."""
+    await _seed_drift(db_session, monkeypatch, 5)
+
+    dispatches: list[uuid.UUID] = []
+    drains: list[int] = []
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _FakeAsyncResult:
+        dispatches.append(lit_id)
+        return _FakeAsyncResult(ready=True)
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+    _spy_drain(monkeypatch, drains)
+
+    outcome = await run_rag_audit_index_coverage(
+        db_session,
+        lightrag_host="localhost",
+        lightrag_port=9621,
+        run_date=date(2026, 9, 17),
+        wave_size=2,
+        drain_timeout_s=1.0,
+    )
+
+    assert outcome.reingested == 5
+    assert len(dispatches) == 5
+    # Drains after wave 1 (2 in flight) and wave 2 (2 in flight) only.
+    assert drains == [2, 2]
+
+
+@pytest.mark.asyncio
+async def test_wave_pacing_isolates_per_doc_dispatch_failure(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing dispatch inside a wave records its error row and the
+    rest of the wave (and the next wave) still dispatch."""
+    ids = await _seed_drift(db_session, monkeypatch, 4)
+    ordered = sorted(ids)
+    failing_id = ordered[1]  # second doc of wave 1
+    drains: list[int] = []
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _FakeAsyncResult:
+        if lit_id == failing_id:
+            raise RuntimeError("broker down")
+        return _FakeAsyncResult(ready=True)
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+    _spy_drain(monkeypatch, drains)
+
+    outcome = await run_rag_audit_index_coverage(
+        db_session,
+        lightrag_host="localhost",
+        lightrag_port=9621,
+        run_date=date(2026, 9, 17),
+        wave_size=2,
+        drain_timeout_s=1.0,
+    )
+
+    assert outcome.reingested == 3
+    assert outcome.errors == 1
+
+    error_rows = (
+        await db_session.execute(
+            select(RagIndexAuditLog).where(RagIndexAuditLog.action == "error")
+        )
+    ).scalars().all()
+    assert len(error_rows) == 1
+    assert error_rows[0].literature_id == failing_id
+    assert "broker down" in (error_rows[0].error_message or "")
+
+    reingest_rows = (
+        await db_session.execute(
+            select(RagIndexAuditLog).where(RagIndexAuditLog.action == "reingest")
+        )
+    ).scalars().all()
+    assert {r.literature_id for r in reingest_rows} == set(ids) - {failing_id}
+
+    # Wave 1 drained with only its successful result in flight (the
+    # failed dispatch contributed none) and wave 2 still dispatched.
+    assert drains == [1]
+
+
+@pytest.mark.asyncio
+async def test_wave_pacing_single_wave_never_drains(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doc count <= wave_size → one wave, zero drains: pre-NFM-4926
+    fire-and-forget behaviour is unchanged."""
+    ids = await _seed_drift(db_session, monkeypatch, 3)
+
+    dispatches: list[uuid.UUID] = []
+    drains: list[int] = []
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _FakeAsyncResult:
+        dispatches.append(lit_id)
+        # Even a never-ready result must not stall a single-wave run.
+        return _FakeAsyncResult(ready=False)
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+    _spy_drain(monkeypatch, drains)
+
+    outcome = await run_rag_audit_index_coverage(
+        db_session,
+        lightrag_host="localhost",
+        lightrag_port=9621,
+        run_date=date(2026, 9, 17),
+        wave_size=4,
+        drain_timeout_s=0.5,
+    )
+
+    assert outcome.reingested == 3
+    assert outcome.errors == 0
+    assert dispatches == sorted(ids)
+    assert drains == []
+
+
+@pytest.mark.asyncio
+async def test_wave_drain_timeout_is_bounded_and_non_fatal(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A wave that never drains times out, logs, and the next wave
+    still dispatches — pacing must never hang the audit."""
+    await _seed_drift(db_session, monkeypatch, 4)
+    dispatches: list[uuid.UUID] = []
+
+    async def fake_reingest(lit_id: uuid.UUID) -> _FakeAsyncResult:
+        dispatches.append(lit_id)
+        return _FakeAsyncResult(ready=False)  # wedged forever
+
+    monkeypatch.setattr(
+        "nfm_db.services.rag_audit._reingest", fake_reingest
+    )
+
+    with caplog.at_level("WARNING", logger="nfm_db.services.rag_audit"):
+        outcome = await run_rag_audit_index_coverage(
+            db_session,
+            lightrag_host="localhost",
+            lightrag_port=9621,
+            run_date=date(2026, 9, 17),
+            wave_size=2,
+            drain_timeout_s=0.0,  # check once, never wait
+        )
+
+    assert outcome.reingested == 4
+    assert outcome.errors == 0
+    assert len(dispatches) == 4
+    assert any("wave drain timeout" in record.message for record in caplog.records)
+
+
+def test_wave_pacing_defaults_match_charter() -> None:
+    """Signature defaults pin the NFM-4923/4926 charter values (4 / 240s)."""
+    import inspect
+
+    from nfm_db.services.rag_audit import (
+        DEFAULT_WAVE_DRAIN_TIMEOUT_S,
+        DEFAULT_WAVE_SIZE,
+    )
+
+    signature = inspect.signature(run_rag_audit_index_coverage)
+    assert signature.parameters["wave_size"].default == DEFAULT_WAVE_SIZE == 4
+    assert (
+        signature.parameters["drain_timeout_s"].default
+        == DEFAULT_WAVE_DRAIN_TIMEOUT_S
+        == 240.0
+    )
+
+
+def test_settings_expose_wave_pacing_knobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings defaults 4 / 240.0; env overrides via
+    ``NFM_RAG_AUDIT_WAVE_SIZE`` / ``NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S``
+    (soak tuning needs no code edit)."""
+    from nfm_db.config import Settings
+
+    defaults = Settings(_env_file=None)
+    assert defaults.rag_audit_wave_size == 4
+    assert defaults.rag_audit_wave_drain_timeout_s == 240.0
+
+    monkeypatch.setenv("NFM_RAG_AUDIT_WAVE_SIZE", "2")
+    monkeypatch.setenv("NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S", "30")
+    overridden = Settings(_env_file=None)
+    assert overridden.rag_audit_wave_size == 2
+    assert overridden.rag_audit_wave_drain_timeout_s == 30.0
