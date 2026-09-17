@@ -372,10 +372,21 @@ def rag_audit_index_coverage_task(self) -> dict:
         # every other Celery task boundary.
         async with task_session_factory() as factory:
             async with factory() as session:
+                # NFM-4926: surface the effective burst pacing in the
+                # worker log so the post-deploy soak can correlate wave
+                # cadence with runner freeze windows without guessing
+                # which env overrides were live.
+                logger.info(
+                    "rag_audit: wave pacing wave_size=%d drain_timeout_s=%.0f",
+                    settings.rag_audit_wave_size,
+                    settings.rag_audit_wave_drain_timeout_s,
+                )
                 outcome = await run_rag_audit_index_coverage(
                     session,
                     lightrag_host=settings.lightrag_host,
                     lightrag_port=settings.lightrag_port,
+                    wave_size=settings.rag_audit_wave_size,
+                    drain_timeout_s=settings.rag_audit_wave_drain_timeout_s,
                 )
         return {
             "run_date": outcome.run_date.isoformat(),

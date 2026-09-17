@@ -19,13 +19,21 @@ stranded ``>=24h`` (F-3 §3.3).  The two tasks are independent —
 :func:`run_rag_audit_index_coverage` still runs at 03:30 UTC,
 :func:`run_rag_audit_document_buckets` at 03:31 UTC, both on the
 ``default`` queue.
+
+NFM-4926 (Option A, CEO decision on NFM-4923) paces the 03:30Z
+reingest burst: drift docs dispatch in bounded waves with a drain-check
+between consecutive waves, instead of a millisecond-scale full fan-out
+that saturated the single-slot host ollama MLX runner (RCA NFM-4922
+layers 1-2).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -52,6 +60,29 @@ _UUID_IN_MARKER_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     re.IGNORECASE,
 )
+
+# NFM-4926 (Option A — CEO decision on NFM-4923 / RCA NFM-4922): the
+# 03:30Z drift fan-out used to enqueue every drift doc within
+# milliseconds, which saturated the single-slot host ollama MLX runner
+# (qwen3.5:4b-nvfp4) and wedged it.  Pace the burst instead: dispatch
+# drift docs in waves of ``DEFAULT_WAVE_SIZE`` and drain-check each wave
+# before the next.  The pacing deliberately lives in this drift loop and
+# NOT as a Celery ``rate_limit`` on ``process_literature_task`` — that
+# task is the canonical ingest path for normal (non-burst) flows too, so
+# a task-level rate limit would throttle all ingest globally.  Both
+# knobs are env-tunable via Settings (``NFM_RAG_AUDIT_WAVE_SIZE`` /
+# ``NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S``) so soak tuning needs no code
+# edit.  The drain timeout is a pacing bound, not a correctness bound:
+# on timeout the next wave still dispatches (never turn pacing into an
+# audit hang), and per-doc failure accounting stays with the ingest
+# pipeline exactly as before.
+DEFAULT_WAVE_SIZE = 4
+DEFAULT_WAVE_DRAIN_TIMEOUT_S = 240.0
+
+# How often the drain loop polls ``AsyncResult.ready()``.  Sub-second so
+# tests stay fast; nowhere near the drain timeout so prod overhead is
+# one cheap Redis-ready check per interval.
+_WAVE_DRAIN_POLL_INTERVAL_S = 0.5
 
 
 @dataclass(frozen=True)
@@ -100,13 +131,49 @@ async def _list_indexed_markers(
     return set(markers)
 
 
-async def _reingest(literature_id: uuid.UUID) -> None:
-    """Trigger the existing ingest path.  Idempotent on DOI/content_hash."""
+async def _reingest(literature_id: uuid.UUID) -> Any:
+    """Trigger the existing ingest path.  Idempotent on DOI/content_hash.
+
+    Returns the Celery ``AsyncResult`` handle so the NFM-4926 wave loop
+    can drain-check the current wave before dispatching the next one.
+    The lazy import keeps celery out of the CI-light module surface.
+    """
     from nfm_db.services.literature_dispatcher import process_literature_task
 
     # Delegate to the canonical Celery task — process_literature_task
     # accepts ``datasource_id`` as the literature UUID.
-    process_literature_task.delay(str(literature_id))
+    return process_literature_task.delay(str(literature_id))
+
+
+async def _drain_wave(
+    results: list[Any],
+    *,
+    timeout_s: float,
+    poll_interval_s: float = _WAVE_DRAIN_POLL_INTERVAL_S,
+) -> bool:
+    """Bounded wait for every result in a wave to become ready.
+
+    Readiness only — a FAILED task result still counts as drained.
+    Per-doc failure accounting stays with the ingest pipeline (the
+    03:31Z bucket audit classifies failed rows), preserving the
+    fire-and-forget error semantics the coverage audit has always had.
+
+    Returns True when the wave drained within ``timeout_s``, False on
+    timeout.  Callers proceed to the next wave either way: pacing must
+    never turn into an audit hang (a hung drain is the wedge scenario
+    this code exists to prevent).  ``None`` entries (a patched or
+    eager-mode dispatch that returned no handle) are treated as ready.
+    """
+    pending = [result for result in results if result is not None]
+    if not pending:
+        return True
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        if all(result.ready() for result in pending):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll_interval_s)
 
 
 async def _record(
@@ -150,6 +217,8 @@ async def run_rag_audit_index_coverage(
     lightrag_port: int,
     run_date: date | None = None,
     reingest: bool = True,
+    wave_size: int = DEFAULT_WAVE_SIZE,
+    drain_timeout_s: float = DEFAULT_WAVE_DRAIN_TIMEOUT_S,
 ) -> AuditOutcome:
     """Daily reconciliation entry point (NFM-4539 RAG-D §4.2).
 
@@ -158,7 +227,11 @@ async def run_rag_audit_index_coverage(
       2. Pull the set of indexed markers from LightRAG.
       3. Diff = completed - indexed.
       4. For each diff row, trigger the canonical ingest path and
-         write an ``action='reingest'`` audit row.
+         write an ``action='reingest'`` audit row.  NFM-4926: drift
+         docs dispatch in waves of ``wave_size`` with a bounded
+         drain-check (``drain_timeout_s``) between consecutive waves;
+         the final (possibly partial) wave dispatches identically and
+         is not followed by a drain.
       5. Write ``action='noop'`` audit rows for the completed∩indexed
          set so the table always tells a complete story.
       6. If ``reingest`` is False (test mode) skip the dispatch but
@@ -216,33 +289,63 @@ async def run_rag_audit_index_coverage(
     reingested = 0
     errors = 0
 
-    # Reingest drift rows.
-    for lit_id in drift_ids:
-        if reingest:
-            try:
-                await _reingest(lit_id)
-                reingested += 1
-            except Exception as exc:
-                errors += 1
+    # Reingest drift rows — NFM-4926 wave pacing.  ``drift_ids`` is a
+    # set; sort it so wave membership (and therefore dispatch order) is
+    # deterministic across runs.  With ``doc count <= wave_size`` there
+    # is exactly one wave and no drain, i.e. behaviour identical to the
+    # pre-NFM-4926 fan-out.
+    drift_queue = sorted(drift_ids)
+    for wave_start in range(0, len(drift_queue), wave_size):
+        wave = drift_queue[wave_start : wave_start + wave_size]
+        in_flight: list[Any] = []
+        for lit_id in wave:
+            if reingest:
+                try:
+                    result = await _reingest(lit_id)
+                    if result is not None:
+                        in_flight.append(result)
+                    reingested += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "rag_audit: reingest failed for literature=%s: %s",
+                        lit_id,
+                        exc,
+                    )
+                    await _record(
+                        session,
+                        literature_id=lit_id,
+                        action="error",
+                        run_date=effective_date,
+                        error_message=str(exc),
+                    )
+                    continue
+            await _record(
+                session,
+                literature_id=lit_id,
+                action="reingest" if reingest else "noop",
+                run_date=effective_date,
+            )
+        # Drain-check only BETWEEN waves: the final wave has no
+        # successor, so waiting after it would stall the audit for no
+        # pacing benefit.
+        has_next_wave = wave_start + wave_size < len(drift_queue)
+        if reingest and has_next_wave:
+            drained = await _drain_wave(in_flight, timeout_s=drain_timeout_s)
+            if not drained:
+                ready_count = sum(
+                    1
+                    for result in in_flight
+                    if result is not None and result.ready()
+                )
                 logger.warning(
-                    "rag_audit: reingest failed for literature=%s: %s",
-                    lit_id,
-                    exc,
+                    "rag_audit: wave drain timeout after %.1fs (%d/%d "
+                    "results ready) — dispatching next wave anyway; "
+                    "check worker/runner health",
+                    drain_timeout_s,
+                    ready_count,
+                    len(in_flight),
                 )
-                await _record(
-                    session,
-                    literature_id=lit_id,
-                    action="error",
-                    run_date=effective_date,
-                    error_message=str(exc),
-                )
-                continue
-        await _record(
-            session,
-            literature_id=lit_id,
-            action="reingest" if reingest else "noop",
-            run_date=effective_date,
-        )
 
     # Spot-check noops: write one ``noop`` row per overlapping id, but
     # cap the volume so a runaway doesn't fill the table.
@@ -640,6 +743,8 @@ async def run_rag_audit_document_buckets(
 
 __all__ = [
     "DEFAULT_PROCESSING_TIMEOUT",
+    "DEFAULT_WAVE_DRAIN_TIMEOUT_S",
+    "DEFAULT_WAVE_SIZE",
     "FAILURE_REASON_DUPLICATE",
     "FAILURE_REASON_EMPTY",
     "FAILURE_REASON_ERROR",

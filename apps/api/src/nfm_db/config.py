@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     lightrag_host: str = "localhost"
     lightrag_port: int = 9621
     lightrag_version: str = LIGHTRAG_VERSION
+    # NFM-4926 (Option A, CEO decision on NFM-4923 / RCA NFM-4922):
+    # reingest-burst pacing knobs for the daily 03:30Z index-coverage
+    # audit.  The drift loop dispatches ``process_literature_task`` in
+    # waves of ``rag_audit_wave_size`` docs and drain-checks each wave
+    # before the next, so the burst no longer saturates the single-slot
+    # host ollama MLX runner (qwen3.5:4b-nvfp4).  Env-tunable so the
+    # post-deploy soak can adjust pacing with no code edit:
+    # ``NFM_RAG_AUDIT_WAVE_SIZE`` / ``NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S``.
+    rag_audit_wave_size: int = 4
+    rag_audit_wave_drain_timeout_s: float = 240.0
     # NFM-3575 / NFM-3548-A: feature gate for the Phase 5.3 priority
     # scoring refactor.  When False (default) callers fall back to the
     # pre-refactor scoring path; when True ``extraction_pipeline`` (see

@@ -232,6 +232,19 @@ services:
       LLM_MODEL: ${PROD_LIGHTRAG_LLM_MODEL:-gpt-4o-mini}
       LLM_BINDING_HOST: ${PROD_LIGHTRAG_LLM_HOST:-https://api.openai.com/v1}
       LLM_BINDING_API_KEY: ${PROD_LIGHTRAG_LLM_API_KEY:?Set PROD_LIGHTRAG_LLM_API_KEY}
+      # NFM-4926 (Option A, CEO decision on NFM-4923 / RCA NFM-4922):
+      # cap LightRAG's concurrent LLM calls so the 03:30Z reingest burst
+      # cannot saturate the single-slot host ollama MLX runner
+      # (qwen3.5:4b-nvfp4).  This service never set MAX_ASYNC_LLM before
+      # — it ran on the library internal default (4) — which is why the
+      # flip in docker-compose.lightrag.yml alone would be a prod no-op:
+      # prod launches from THIS file.  Pairs with the rag_audit wave
+      # pacing (apps/api/src/nfm_db/services/rag_audit.py).  Post-deploy
+      # runtime check (parent NFM-4924 deploy AC):
+      #   docker inspect nucpot-prod-lightrag --format \
+      #     '{{range .Config.Env}}{{println .}}{{end}}' | grep MAX_ASYNC_LLM
+      # must print MAX_ASYNC_LLM=2.
+      MAX_ASYNC_LLM: ${PROD_LIGHTRAG_MAX_ASYNC_LLM:-2}
       EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
       # NFM-1765: nomic-embed-text (768d, ~0.065s/query on Mac CPU). Was
       # qwen3-embedding:4b (2560d) per user decision 2026-07-24, but
