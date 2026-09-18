@@ -18,6 +18,13 @@ LABEL version="1.0.0"
 
 WORKDIR /app
 
+# NFM-4931: bound apt network I/O so a half-open mirror connection fails
+# fast and retries instead of hanging the build indefinitely (see
+# prod-api.Dockerfile for the incident record). Same snippet: 30s http/https
+# acquire timeouts + apt-level retry ladder, covering both apt-get legs below.
+RUN printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "5";\n' \
+      > /etc/apt/apt.conf.d/99-nfm-acquire-timeouts
+
 # Install build dependencies (with retry for flaky networks)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev curl && \
