@@ -11,8 +11,7 @@
  * truth) with ISR (60s revalidate) so publishes appear within a minute
  * without a rebuild. The markdown-file library stays for legacy seeds.
  */
-import { request } from '@/lib/api-client'
-import type { BlogPost, BlogPostMeta } from './types'
+import type { BlogPost, BlogPostMeta } from "./types"
 
 interface PublicPostDto {
   readonly slug: string
@@ -30,15 +29,15 @@ function toMeta(p: PublicPostDto): BlogPostMeta {
     slug: p.slug,
     title: p.title,
     date: (p.published_at ?? p.created_at).slice(0, 10),
-    summary: p.summary ?? '',
+    summary: p.summary ?? "",
     tags: p.tags ?? [],
-    author: p.author_name ?? 'NucPot',
-    status: 'published',
+    author: p.author_name ?? "NucPot",
+    status: "published",
   }
 }
 
 function toPost(p: PublicPostDto): BlogPost {
-  return { slug: p.slug, frontmatter: toMeta(p), content: p.content ?? '' }
+  return { slug: p.slug, frontmatter: toMeta(p), content: p.content ?? "" }
 }
 
 /**
@@ -48,47 +47,87 @@ function toPost(p: PublicPostDto): BlogPost {
  * up live DB content on the first runtime revalidation.
  */
 function isProductionBuild(): boolean {
-  return process.env.NEXT_PHASE === 'phase-production-build'
+  return process.env.NEXT_PHASE === "phase-production-build"
 }
 
 /** Upper bound for one public-blog API call (ISR revalidation included). */
 const FETCH_TIMEOUT_MS = 10_000
 
+/**
+ * NFM-4940: this module runs in server components (SSR), where a relative
+ * fetch path throws in Node (`Failed to parse URL from /api/v1/...`). The
+ * old silent catch then fell back to the FS seeds — empty in prod — so no
+ * admin-published post ever rendered publicly. Always resolve an absolute
+ * base, mirroring kg-graph-api.ts: API_SERVER_URL first, then the
+ * Docker-internal service DNS so SSR resolves inside any container.
+ */
+function apiBaseUrl(): string {
+  return process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
+}
+
+/** Shared fetch options for the public blog API (ISR + hard timeout). */
+function publicFetchOptions(): RequestInit {
+  return {
+    headers: { Accept: "application/json" },
+    next: { revalidate: 60 },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  } as RequestInit
+}
+
 /** Fetch published posts from the public API; fall back to FS seed posts. */
 export async function getPublishedPosts(): Promise<readonly BlogPostMeta[]> {
   if (!isProductionBuild()) {
     try {
-      const res = await request<{ success: boolean; data: PublicPostDto[] }>(
-        '/api/v1/blog/public',
-        { next: { revalidate: 60 }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) } as never,
-      )
-      const items = (res.data ?? []).map(toMeta)
-      if (items.length > 0) return items
-    } catch {
-      // API unavailable → fall through to the FS seed posts below.
+      const res = await fetch(`${apiBaseUrl()}/api/v1/blog/public`, publicFetchOptions())
+      if (!res.ok) {
+        console.error(
+          `[blog] public posts fetch failed: ${res.status} ${res.statusText} — falling back to seed posts`,
+        )
+      } else {
+        const body = (await res.json()) as {
+          success: boolean
+          data: PublicPostDto[]
+        }
+        const items = (body.data ?? []).map(toMeta)
+        if (items.length > 0) return items
+      }
+    } catch (err) {
+      // API unavailable → fall through to the FS seed posts below, but
+      // never silently (NFM-4940 AC-4): the old quiet catch hid the
+      // relative-URL failure for weeks.
+      console.error("[blog] public posts fetch failed — falling back to seed posts:", err)
     }
   }
   // Legacy fallback: build-time markdown seeds (no dynamic import cycle).
-  const { getAllPosts } = await import('./posts')
-  return getAllPosts().filter((p) => p.status === 'published')
+  const { getAllPosts } = await import("./posts")
+  return getAllPosts().filter((p) => p.status === "published")
 }
 
 /** Fetch one published post by slug (null when missing/unpublished). */
-export async function getPublishedPost(
-  slug: string,
-): Promise<BlogPost | null> {
+export async function getPublishedPost(slug: string): Promise<BlogPost | null> {
   if (!isProductionBuild()) {
     try {
-      const res = await request<{ success: boolean; data: PublicPostDto }>(
-        `/api/v1/blog/public/${encodeURIComponent(slug)}`,
-        { next: { revalidate: 60 }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) } as never,
+      const res = await fetch(
+        `${apiBaseUrl()}/api/v1/blog/public/${encodeURIComponent(slug)}`,
+        publicFetchOptions(),
       )
-      if (res.data?.slug) return toPost(res.data)
-    } catch {
-      // fall through to legacy seeds
+      if (!res.ok) {
+        console.error(
+          `[blog] post fetch failed for "${slug}": ${res.status} ${res.statusText} — falling back to seed posts`,
+        )
+      } else {
+        const body = (await res.json()) as {
+          success: boolean
+          data: PublicPostDto
+        }
+        if (body.data?.slug) return toPost(body.data)
+      }
+    } catch (err) {
+      // fall through to legacy seeds, logged (NFM-4940 AC-4)
+      console.error(`[blog] post fetch failed for "${slug}" — falling back to seed posts:`, err)
     }
   }
-  const { getPostBySlug } = await import('./posts')
+  const { getPostBySlug } = await import("./posts")
   const legacy = getPostBySlug(slug)
-  return legacy && legacy.frontmatter.status === 'published' ? legacy : null
+  return legacy && legacy.frontmatter.status === "published" ? legacy : null
 }
