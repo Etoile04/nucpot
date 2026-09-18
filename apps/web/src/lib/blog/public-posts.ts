@@ -50,6 +50,58 @@ function isProductionBuild(): boolean {
   return process.env.NEXT_PHASE === "phase-production-build"
 }
 
+/**
+ * NFM-4940 residual: the public API returns its payload bare — the list
+ * endpoint a JSON array, the detail endpoint a JSON object (FastAPI
+ * `response_model`, see apps/api/src/nfm_db/api/v1/blog.py) — NOT the
+ * `{ success, data }` envelope. The first fix read `body.data` off the
+ * bare array (`undefined` → silently empty list) and off the bare object
+ * (→ always-404 detail). Accept both shapes so neither contract can
+ * blank the blog silently again.
+ */
+function isEnvelope(body: unknown): body is { data?: unknown } {
+  return typeof body === "object" && body !== null && !Array.isArray(body) && "data" in body
+}
+
+function extractList(body: unknown): readonly PublicPostDto[] {
+  if (isEnvelope(body)) {
+    return Array.isArray(body.data) ? body.data : []
+  }
+  if (!Array.isArray(body)) {
+    return []
+  }
+  return body.filter((p): p is PublicPostDto => typeof p === "object" && p !== null)
+}
+
+function extractPost(body: unknown): PublicPostDto | null {
+  const payload = isEnvelope(body) ? body.data : body
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    typeof (payload as PublicPostDto).slug === "string"
+  ) {
+    return payload as PublicPostDto
+  }
+  return null
+}
+
+/**
+ * Next.js hands dynamic-route params over still URL-encoded: for
+ * `/blog/技术总结…` `params.slug` arrives as `%E6%8A%80…`. Callers pass
+ * that raw value through, so decode once before it reaches either the
+ * API path (encodeURIComponent on top would double-encode → guaranteed
+ * 404) or the FS seed lookup (which indexes decoded slugs). Malformed
+ * percent-sequences fall back to the raw value.
+ */
+function decodeSlug(slug: string): string {
+  try {
+    return decodeURIComponent(slug)
+  } catch {
+    return slug
+  }
+}
+
 /** Upper bound for one public-blog API call (ISR revalidation included). */
 const FETCH_TIMEOUT_MS = 10_000
 
@@ -84,11 +136,8 @@ export async function getPublishedPosts(): Promise<readonly BlogPostMeta[]> {
           `[blog] public posts fetch failed: ${res.status} ${res.statusText} — falling back to seed posts`,
         )
       } else {
-        const body = (await res.json()) as {
-          success: boolean
-          data: PublicPostDto[]
-        }
-        const items = (body.data ?? []).map(toMeta)
+        const body: unknown = await res.json()
+        const items = extractList(body).map(toMeta)
         if (items.length > 0) return items
       }
     } catch (err) {
@@ -104,7 +153,8 @@ export async function getPublishedPosts(): Promise<readonly BlogPostMeta[]> {
 }
 
 /** Fetch one published post by slug (null when missing/unpublished). */
-export async function getPublishedPost(slug: string): Promise<BlogPost | null> {
+export async function getPublishedPost(slugInput: string): Promise<BlogPost | null> {
+  const slug = decodeSlug(slugInput)
   if (!isProductionBuild()) {
     try {
       const res = await fetch(
@@ -116,11 +166,9 @@ export async function getPublishedPost(slug: string): Promise<BlogPost | null> {
           `[blog] post fetch failed for "${slug}": ${res.status} ${res.statusText} — falling back to seed posts`,
         )
       } else {
-        const body = (await res.json()) as {
-          success: boolean
-          data: PublicPostDto
-        }
-        if (body.data?.slug) return toPost(body.data)
+        const body: unknown = await res.json()
+        const post = extractPost(body)
+        if (post) return toPost(post)
       }
     } catch (err) {
       // fall through to legacy seeds, logged (NFM-4940 AC-4)

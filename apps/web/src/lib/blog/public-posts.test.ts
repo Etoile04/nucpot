@@ -66,6 +66,12 @@ function jsonResponse(body: unknown): Response {
  * Behaves like real Node fetch: relative URLs are unparseable and throw,
  * absolute URLs return the DB payload. This mirrors the server context the
  * defect was filed against — a mock that accepted any URL would hide it.
+ *
+ * NFM-4940 residual: the payload is BARE (array for the list endpoint,
+ * object for the detail endpoint), matching the FastAPI response_model in
+ * apps/api/src/nfm_db/api/v1/blog.py. The first round of tests mocked
+ * `{ success, data }` — a contract the real API never spoke — so the
+ * suite passed while prod rendered 暂无文章.
  */
 function nodeLikeFetch(): ReturnType<typeof vi.fn> {
   return vi.fn(async (input: string | URL | Request) => {
@@ -73,7 +79,7 @@ function nodeLikeFetch(): ReturnType<typeof vi.fn> {
     if (!/^https?:\/\//.test(url)) {
       throw new TypeError(`Failed to parse URL from ${url}`)
     }
-    return jsonResponse({ success: true, data: [DB_POST] })
+    return jsonResponse([DB_POST])
   })
 }
 
@@ -142,6 +148,15 @@ describe("getPublishedPosts (SSR absolute URL)", () => {
     expect(posts).toHaveLength(1)
     expect(posts[0]?.slug).toBe("seed-post")
   })
+
+  it("still parses a { data: [...] } envelope if the API ever wraps", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [DB_POST] }))
+
+    const posts = await getPublishedPosts()
+
+    expect(posts).toHaveLength(1)
+    expect(posts[0]?.slug).toBe("db-published-post")
+  })
 })
 
 describe("getPublishedPost (SSR absolute URL)", () => {
@@ -153,7 +168,7 @@ describe("getPublishedPost (SSR absolute URL)", () => {
       if (!/^https?:\/\//.test(url)) {
         throw new TypeError(`Failed to parse URL from ${url}`)
       }
-      return jsonResponse({ success: true, data: DB_POST })
+      return jsonResponse(DB_POST)
     })
     vi.stubGlobal("fetch", fetchMock)
     process.env.API_SERVER_URL = "http://test-api:8000"
@@ -165,7 +180,7 @@ describe("getPublishedPost (SSR absolute URL)", () => {
     vi.restoreAllMocks()
   })
 
-  it("fetches one post via the absolute base and maps the DTO", async () => {
+  it("fetches one post via the absolute base and maps the bare DTO", async () => {
     const post = await getPublishedPost("db-published-post")
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -174,6 +189,41 @@ describe("getPublishedPost (SSR absolute URL)", () => {
     expect(post).not.toBeNull()
     expect(post?.frontmatter.title).toBe("DB Published Post")
     expect(post?.content).toBe("Body from the database")
+  })
+
+  it("still parses a { data: {...} } envelope if the API ever wraps", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: DB_POST }))
+
+    const post = await getPublishedPost("db-published-post")
+
+    expect(post?.frontmatter.title).toBe("DB Published Post")
+  })
+
+  it("decodes the Next-encoded slug param exactly once (prod regression)", async () => {
+    // Next 16 hands /blog/<chinese> over with params.slug still
+    // percent-encoded. encodeURIComponent on top of that double-encodes
+    // (%25E6...) → the API decodes one layer → literal "%E6..." slug →
+    // 404 → prod detail pages died exactly here.
+    const canonical = "技术总结报告测试文章自动化验证-1788093545"
+    const encoded = encodeURIComponent(canonical)
+
+    const post = await getPublishedPost(encoded)
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `http://test-api:8000/api/v1/blog/public/${encoded}`,
+    )
+    expect(post?.frontmatter.title).toBe("DB Published Post")
+  })
+
+  it("falls back to the raw slug when decoding fails (malformed %)", async () => {
+    const post = await getPublishedPost("100%-raw-slug")
+
+    // "%-r" is not a valid escape: decodeSlug keeps the raw value, and
+    // encodeURIComponent still makes it path-safe ("100%25-raw-slug").
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://test-api:8000/api/v1/blog/public/100%25-raw-slug",
+    )
+    expect(post?.frontmatter.title).toBe("DB Published Post")
   })
 
   it("returns null (logged) when the fetch fails, instead of throwing", async () => {

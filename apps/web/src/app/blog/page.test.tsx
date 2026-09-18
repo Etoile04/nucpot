@@ -66,7 +66,11 @@ describe("BlogListPage SSR (NFM-4940)", () => {
           ok: true,
           status: 200,
           statusText: "OK",
-          json: async () => ({ success: true, data: [DB_POST] }),
+          // NFM-4940 residual: the real list endpoint returns a BARE array
+          // (FastAPI response_model) — mocking the { success, data }
+          // envelope here is why round 1 passed tests while prod showed
+          // 暂无文章.
+          json: async () => [DB_POST],
         } as unknown as Response
       }),
     )
