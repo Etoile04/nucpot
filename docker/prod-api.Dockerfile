@@ -9,6 +9,18 @@ ENV NFM_GIT_SHA=${GIT_SHA}
 
 WORKDIR /app
 
+# NFM-4931: bound apt network I/O so a half-open mirror connection fails
+# fast and climbs the retry ladder instead of hanging the build. During the
+# 2026-09-17 production deploy (run 35219971646), /usr/lib/apt/methods/http
+# hung ~22 min on a half-open connection while the mirrors answered <0.4s
+# from the host — apt's defaults never bound the stall. 30s timeouts are
+# ~75x the observed healthy mirror latency; Acquire::Retries re-fetches
+# each URI on timeout, composing with the shell-level mirror ladder below.
+# Dropped in as a conf snippet so every apt-get leg is covered (mirror
+# ladder AND the proxy-bypass fallback), including any future apt call.
+RUN printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "5";\n' \
+      > /etc/apt/apt.conf.d/99-nfm-acquire-timeouts
+
 # Install build dependencies with retry for flaky mirror proxies (NFM-2502).
 # The local HTTP proxy (Clash/mihomo) returns transient 502 for .deb
 # downloads.  Retries with backoff absorb transient failures; as a last
