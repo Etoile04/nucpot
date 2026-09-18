@@ -7,7 +7,7 @@
  * API_SERVER_URL base (same contract as kg-graph-api.ts).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { getPublishedPost, getPublishedPosts } from "./public-posts"
+import { findAdjacentPosts, getPublishedPost, getPublishedPosts } from "./public-posts"
 
 // The legacy FS seed loader reads `fs`/`path`, which vitest's jsdom sandbox
 // cannot import (ERR_UNKNOWN_BUILTIN_MODULE). Mock it with one seed post so
@@ -209,9 +209,7 @@ describe("getPublishedPost (SSR absolute URL)", () => {
 
     const post = await getPublishedPost(encoded)
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      `http://test-api:8000/api/v1/blog/public/${encoded}`,
-    )
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`http://test-api:8000/api/v1/blog/public/${encoded}`)
     expect(post?.frontmatter.title).toBe("DB Published Post")
   })
 
@@ -236,5 +234,89 @@ describe("getPublishedPost (SSR absolute URL)", () => {
 
     expect(errSpy).toHaveBeenCalled()
     expect(post).toBeNull()
+  })
+})
+
+describe("findAdjacentPosts (encoded param → decoded lookup, NFM-4942)", () => {
+  // The slug from the filed defect: non-ASCII, so Next 16 delivers
+  // params.slug percent-encoded while the published list carries decoded
+  // slugs. Comparing encoded-vs-decoded made findIndex return -1 and the
+  // prev/next nav silently render nothing.
+  const CANONICAL = "技术总结报告测试文章自动化验证-1788093545"
+  const LIST = [
+    {
+      slug: "first-post",
+      title: "First Post",
+      summary: null,
+      tags: ["a"],
+      author_name: "QA",
+      published_at: "2026-09-16T00:00:00Z",
+      created_at: "2026-09-16T00:00:00Z",
+      content: null,
+    },
+    {
+      slug: CANONICAL,
+      title: "中文 Slug 文章",
+      summary: null,
+      tags: ["zh"],
+      author_name: "QA",
+      published_at: "2026-09-17T00:00:00Z",
+      created_at: "2026-09-17T00:00:00Z",
+      content: null,
+    },
+    {
+      slug: "last-post",
+      title: "Last Post",
+      summary: null,
+      tags: ["z"],
+      author_name: "QA",
+      published_at: "2026-09-18T00:00:00Z",
+      created_at: "2026-09-18T00:00:00Z",
+      content: null,
+    },
+  ]
+
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : String(input)
+      if (!/^https?:\/\//.test(url)) {
+        throw new TypeError(`Failed to parse URL from ${url}`)
+      }
+      return jsonResponse(LIST)
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    process.env.API_SERVER_URL = "http://test-api:8000"
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete process.env.API_SERVER_URL
+    vi.restoreAllMocks()
+  })
+
+  it("resolves prev/next when handed the still-encoded params.slug (NFM-4942 AC-2)", async () => {
+    const { prev, next } = await findAdjacentPosts(encodeURIComponent(CANONICAL))
+
+    expect(prev).toMatchObject({ slug: "first-post", title: "First Post" })
+    expect(next).toMatchObject({ slug: "last-post", title: "Last Post" })
+  })
+
+  it("keeps boundaries for already-decoded slugs (decode is idempotent)", async () => {
+    const first = await findAdjacentPosts("first-post")
+    expect(first.prev).toBeNull()
+    expect(first.next).toMatchObject({ slug: CANONICAL })
+
+    const last = await findAdjacentPosts("last-post")
+    expect(last.prev).toMatchObject({ slug: CANONICAL })
+    expect(last.next).toBeNull()
+  })
+
+  it("returns a null pair for an unknown slug (no wrong neighbors)", async () => {
+    const { prev, next } = await findAdjacentPosts("missing-post")
+
+    expect(prev).toBeNull()
+    expect(next).toBeNull()
   })
 })

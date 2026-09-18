@@ -93,8 +93,12 @@ function extractPost(body: unknown): PublicPostDto | null {
  * API path (encodeURIComponent on top would double-encode → guaranteed
  * 404) or the FS seed lookup (which indexes decoded slugs). Malformed
  * percent-sequences fall back to the raw value.
+ *
+ * NFM-4942: exported so pages can decode `params.slug` once at the
+ * boundary — the prev/next lookup and the direct FS-seed fallback in
+ * the detail page also need the decoded form.
  */
-function decodeSlug(slug: string): string {
+export function decodeSlug(slug: string): string {
   try {
     return decodeURIComponent(slug)
   } catch {
@@ -178,4 +182,36 @@ export async function getPublishedPost(slugInput: string): Promise<BlogPost | nu
   const { getPostBySlug } = await import("./posts")
   const legacy = getPostBySlug(slug)
   return legacy && legacy.frontmatter.status === "published" ? legacy : null
+}
+
+/** Prev/next navigation neighbors for a blog detail page. */
+export interface AdjacentPosts {
+  readonly prev: Pick<BlogPostMeta, "slug" | "title"> | null
+  readonly next: Pick<BlogPostMeta, "slug" | "title"> | null
+}
+
+function toNavItem(p: BlogPostMeta | undefined): AdjacentPosts["prev"] {
+  return p ? { slug: p.slug, title: p.title } : null
+}
+
+/**
+ * NFM-4942: prev/next navigation lookup. The page used to pass the raw
+ * `params.slug` here — still percent-encoded for non-ASCII slugs — while
+ * the published list carries decoded slugs, so `findIndex` returned -1
+ * and the nav silently rendered nothing. Decode the input here so the
+ * lookup is safe regardless of which form a caller hands over.
+ */
+export async function findAdjacentPosts(currentSlugInput: string): Promise<AdjacentPosts> {
+  const currentSlug = decodeSlug(currentSlugInput)
+  const posts = await getPublishedPosts()
+  const currentIndex = posts.findIndex((p) => p.slug === currentSlug)
+
+  if (currentIndex === -1) {
+    return { prev: null, next: null }
+  }
+
+  return {
+    prev: currentIndex > 0 ? toNavItem(posts[currentIndex - 1]) : null,
+    next: currentIndex < posts.length - 1 ? toNavItem(posts[currentIndex + 1]) : null,
+  }
 }
