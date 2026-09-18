@@ -448,7 +448,13 @@ jobs:
           # by GitHub Actions) and pass it to the SSH heredoc. Writing to $GITHUB_ENV
           # inside the SSH heredoc fails with `set -u` because the variable is unset
           # in the remote shell.
-          SHORT_SHA="$(git rev-parse --short HEAD)"
+          # NFM-4948: `git rev-parse --short` picks prefix length adaptively
+          # per object DB, so this shallow checkout and the fetch-depth:0
+          # assertion checkout can disagree (7 vs 8 chars) whenever main's
+          # new commit has an ambiguous 7-char prefix — that broke deploy
+          # run 35361260794. GITHUB_SHA is one stable string in every job
+          # of the run; slice it to keep the historical 7-char tag format.
+          SHORT_SHA="${GITHUB_SHA:0:7}"
           CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
           echo "CANDIDATE_TAG=${CANDIDATE_TAG}" >> "$GITHUB_ENV"
 
@@ -626,8 +632,12 @@ jobs:
           # pre-deploy-assert job — GITHUB_ENV writes do NOT cross job
           # boundaries, so this job always saw it empty and the script
           # failed with "ERROR: --image is required". Recompute the tag
-          # here from the same deterministic formula (SHORT_SHA of HEAD).
-          SHORT_SHA="$(git rev-parse --short HEAD)"
+          # here from the same formula (7-char prefix of GITHUB_SHA).
+          # NFM-4948: never `git rev-parse --short HEAD` here — this job's
+          # fetch-depth:0 object DB can lengthen the prefix past what the
+          # build job's shallow checkout computed, and the tag lookup then
+          # falls through to a doomed registry pull (deploy 35361260794).
+          SHORT_SHA="${GITHUB_SHA:0:7}"
           CANDIDATE_TAG="nucpot-prod-api:candidate-${SHORT_SHA}"
           echo "CANDIDATE_TAG=${CANDIDATE_TAG}"
           bash tools/migration-on-main-assert/assert.sh \
