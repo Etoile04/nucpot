@@ -25,6 +25,15 @@ reingest burst: drift docs dispatch in bounded waves with a drain-check
 between consecutive waves, instead of a millisecond-scale full fan-out
 that saturated the single-slot host ollama MLX runner (RCA NFM-4922
 layers 1-2).
+
+NFM-4953 makes that wave drain gate fail-closed and observable: the
+default drain bound rose above the 300s client-timeout family (420s),
+and a drain timeout with ZERO ready results now aborts the remaining
+waves for the run — one ``action='error'`` /
+``failure_reason='timeout'`` audit row per undispatched doc, a held-gate
+log line, and a bounded normal exit (the next-day cadence retries).
+The 2026-09-19 03:30Z burst proved the old gate fail-open: 3/3 drains
+timed out 0/4 ready and the loop dispatched the next wave anyway.
 """
 
 from __future__ import annotations
@@ -72,12 +81,21 @@ _UUID_IN_MARKER_RE = re.compile(
 # a task-level rate limit would throttle all ingest globally.  Both
 # knobs are env-tunable via Settings (``NFM_RAG_AUDIT_WAVE_SIZE`` /
 # ``NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S``) so soak tuning needs no code
-# edit.  The drain timeout is a pacing bound, not a correctness bound:
-# on timeout the next wave still dispatches (never turn pacing into an
-# audit hang), and per-doc failure accounting stays with the ingest
-# pipeline exactly as before.
+# edit.
+#
+# NFM-4953 (fail-closed gate): the drain timeout must sit ABOVE the
+# 300s client-timeout family so wave tasks reach a terminal state
+# before the deadline — at the old 240s (deadline-exact with the
+# 240s/300s client timeouts) the 2026-09-19 03:30Z burst hit every
+# drain deadline with 0/4 ready by construction, so the gate never
+# gated.  On a drain timeout with ZERO ready results the loop now
+# aborts the remaining waves (fail closed: the runner is wedged and
+# piling on more waves is exactly the harm the gate exists to
+# prevent); >=1 ready keeps the proceed-with-warning behaviour (the
+# runner is slow, not wedged).  Per-doc failure accounting for docs
+# that DID dispatch stays with the ingest pipeline exactly as before.
 DEFAULT_WAVE_SIZE = 4
-DEFAULT_WAVE_DRAIN_TIMEOUT_S = 240.0
+DEFAULT_WAVE_DRAIN_TIMEOUT_S = 420.0
 
 # How often the drain loop polls ``AsyncResult.ready()``.  Sub-second so
 # tests stay fast; nowhere near the drain timeout so prod overhead is
@@ -159,10 +177,12 @@ async def _drain_wave(
     fire-and-forget error semantics the coverage audit has always had.
 
     Returns True when the wave drained within ``timeout_s``, False on
-    timeout.  Callers proceed to the next wave either way: pacing must
-    never turn into an audit hang (a hung drain is the wedge scenario
-    this code exists to prevent).  ``None`` entries (a patched or
-    eager-mode dispatch that returned no handle) are treated as ready.
+    timeout.  On False the CALLER distinguishes (NFM-4953): zero ready
+    results aborts the remaining waves (fail closed — the runner is
+    wedged), >=1 ready proceeds with a warning.  Either way the wait
+    itself is bounded, so pacing never turns into an audit hang.  ``None``
+    entries (a patched or eager-mode dispatch that returned no handle)
+    are treated as ready.
     """
     pending = [result for result in results if result is not None]
     if not pending:
@@ -174,6 +194,36 @@ async def _drain_wave(
         if time.monotonic() >= deadline:
             return False
         await asyncio.sleep(poll_interval_s)
+
+
+async def _abort_remaining_waves(
+    session: AsyncSession,
+    *,
+    remaining_docs: list[uuid.UUID],
+    run_date: date,
+) -> int:
+    """NFM-4953 fail-closed drain gate: record the undispatched tail.
+
+    One ``action='error'`` audit row per doc that would have shipped in
+    a later wave, with ``failure_reason='timeout'`` (NFM-4742
+    vocabulary) so operators and the F1 gates can see exactly what the
+    held gate chose not to dispatch into a wedged runner.  The
+    natural-key idempotency guard in :func:`_record` keeps next-day
+    cadence retries safe.  Returns the number of docs recorded.
+    """
+    for lit_id in remaining_docs:
+        await _record(
+            session,
+            literature_id=lit_id,
+            action="error",
+            run_date=run_date,
+            error_message=(
+                "wave drain held: 0 results ready at drain timeout — "
+                "runner unhealthy, doc not dispatched"
+            ),
+            failure_reason=FAILURE_REASON_TIMEOUT,
+        )
+    return len(remaining_docs)
 
 
 async def _record(
@@ -231,7 +281,10 @@ async def run_rag_audit_index_coverage(
          docs dispatch in waves of ``wave_size`` with a bounded
          drain-check (``drain_timeout_s``) between consecutive waves;
          the final (possibly partial) wave dispatches identically and
-         is not followed by a drain.
+         is not followed by a drain.  NFM-4953: a drain timeout with
+         ZERO ready results aborts the remaining waves — one
+         ``action='error'`` / ``failure_reason='timeout'`` row per
+         undispatched doc — and the audit exits normally.
       5. Write ``action='noop'`` audit rows for the completed∩indexed
          set so the table always tells a complete story.
       6. If ``reingest`` is False (test mode) skip the dispatch but
@@ -338,6 +391,37 @@ async def run_rag_audit_index_coverage(
                     for result in in_flight
                     if result is not None and result.ready()
                 )
+                if ready_count == 0:
+                    # NFM-4953 fail-closed: zero ready results at the
+                    # drain deadline is the strongest runner-sickness
+                    # signal available (the 2026-09-19 03:30Z burst hit
+                    # it 3/3 times and the fail-open loop piled on
+                    # anyway).  Abort the remaining waves, record the
+                    # undispatched docs, and exit the audit normally —
+                    # bounded, so the next-day cadence retries.
+                    remaining_docs = drift_queue[wave_start + wave_size :]
+                    remaining_waves = len(
+                        range(
+                            wave_start + wave_size,
+                            len(drift_queue),
+                            wave_size,
+                        )
+                    )
+                    logger.warning(
+                        "rag_audit: wave drain held — aborting remaining "
+                        "%d waves (%d docs), runner unhealthy (0/%d "
+                        "results ready after %.1fs)",
+                        remaining_waves,
+                        len(remaining_docs),
+                        len(in_flight),
+                        drain_timeout_s,
+                    )
+                    errors += await _abort_remaining_waves(
+                        session,
+                        remaining_docs=remaining_docs,
+                        run_date=effective_date,
+                    )
+                    break
                 logger.warning(
                     "rag_audit: wave drain timeout after %.1fs (%d/%d "
                     "results ready) — dispatching next wave anyway; "
