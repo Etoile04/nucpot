@@ -125,8 +125,13 @@ class Settings(BaseSettings):
     # host ollama MLX runner (qwen3.5:4b-nvfp4).  Env-tunable so the
     # post-deploy soak can adjust pacing with no code edit:
     # ``NFM_RAG_AUDIT_WAVE_SIZE`` / ``NFM_RAG_AUDIT_WAVE_DRAIN_TIMEOUT_S``.
+    # NFM-4953: the drain default sits at 420s — ABOVE the 300s
+    # client-timeout family — so wave tasks reach terminal state before
+    # the deadline; at 240s the gate timed out 0-ready by construction
+    # and never gated.  A 0-ready drain timeout now fails closed
+    # (remaining waves abort; see rag_audit.py).
     rag_audit_wave_size: int = 4
-    rag_audit_wave_drain_timeout_s: float = 240.0
+    rag_audit_wave_drain_timeout_s: float = 420.0
     # NFM-3575 / NFM-3548-A: feature gate for the Phase 5.3 priority
     # scoring refactor.  When False (default) callers fall back to the
     # pre-refactor scoring path; when True ``extraction_pipeline`` (see
