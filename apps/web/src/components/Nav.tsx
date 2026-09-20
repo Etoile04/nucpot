@@ -150,7 +150,9 @@ export default function Nav() {
             </button>
 
             {moreDropdownOpen && (
-              <div className="absolute left-0 mt-2 w-40 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
+              // NFM-5000: right-anchor so the panel opens inward — trigger sits
+              // next to 登录/注册, left-0 pushed it 6px past a 1440px viewport.
+              <div className="absolute right-0 mt-2 w-40 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
                 {MORE_LINKS.map(link => (
                   <Link
                     key={link.href}
