@@ -41,8 +41,15 @@ test.describe("Feedback", { tag: "@integration" }, () => {
     expect(filterRealErrors(consoleErrors)).toEqual([])
   })
 
+  // NFM-4990 IA refactor (PR #1384) moved feedback out of the first-level
+  // nav strip into the 「更多」 dropdown (apps/web/src/components/Nav.tsx —
+  // MORE_LINKS, gated by `moreDropdownOpen` state). The link is rendered
+  // only while the dropdown is open. The desktop `更多` trigger is a
+  // <button> with `aria-haspopup="true"` and accessible name "更多".
   test("feedback navigation link exists in header", async ({ page }) => {
     await page.goto("/")
+    // Open the 更多 dropdown so the 反馈 link is rendered into the DOM.
+    await page.getByRole("button", { name: "更多" }).click()
     const feedbackLink = page.locator('nav a[href="/feedback"]')
     await expect(feedbackLink).toContainText("反馈")
     await expect(feedbackLink).toBeVisible()
@@ -50,6 +57,7 @@ test.describe("Feedback", { tag: "@integration" }, () => {
 
   test("navigating to feedback from header", async ({ page }) => {
     await page.goto("/")
+    await page.getByRole("button", { name: "更多" }).click()
     await page.locator('nav a[href="/feedback"]').click()
     await expect(page).toHaveURL(/\/feedback/)
   })
