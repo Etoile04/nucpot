@@ -2,9 +2,9 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Alert, Descriptions, Spin, Tag } from "antd"
 import {
-  getDataset,
+  getDatasetServer,
   type DatasetDetail,
-} from "@/lib/datasets-api"
+} from "@/lib/datasets-server"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -21,9 +21,10 @@ export async function generateMetadata({
 }
 
 async function fetchDataset(id: string): Promise<DatasetDetail> {
-  // The BFF route already unwraps the envelope; throw on error so the
-  // page can render a friendly error boundary.
-  return await getDataset(id)
+  // Server component → Node fetch: the server module resolves an
+  // absolute API base (NFM-5020) and unwraps the envelope; throw on
+  // error so the page can render a friendly error boundary.
+  return await getDatasetServer(id)
 }
 
 export default async function DatasetDetailPage({ params }: PageProps) {
