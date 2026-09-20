@@ -119,6 +119,13 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
 
+    // Wait for hydration + data fetch before the missing-error probe —
+    // the error state only renders ~2000 ms after DOMContentLoaded on
+    // Next.js SSR pages, so probing at t=0 finds nothing and the test
+    // would then assert on a link that never appears on DETAIL_URL.
+    // Same wait pattern as kg-node-detail.spec.ts:67-76.
+    await page.waitForTimeout(2000)
+
     if (await isMaterialMissingError(page)) {
       expect(filterRealErrors(consoleErrors)).toEqual([])
       return
@@ -173,6 +180,15 @@ test.describe("Material Properties — interaction tests", { tag: "@integration"
   test("return link on properties page", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(PROPERTIES_URL, { waitUntil: "domcontentloaded" })
+
+    // Mirror the wait added in "return to browse link is present" so the
+    // missing-error probe sees the post-hydration DOM on PROPERTIES_URL
+    // too (the SSR chrome keeps this test green today, but only by
+    // accident — the link is found in chrome regardless of whether the
+    // material-detail page hydrated). Without the wait, the probe races
+    // against hydration and the gentle-skip path can silently mask
+    // regressions.
+    await page.waitForTimeout(2000)
 
     if (await isMaterialMissingError(page)) {
       expect(filterRealErrors(consoleErrors)).toEqual([])
