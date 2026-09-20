@@ -47,10 +47,17 @@ function filterRealErrors(errors: string[]): string[] {
  * apps/web/e2e/kg-node-detail.spec.ts:67-76.
  */
 async function isMaterialMissingError(page: import("@playwright/test").Page): Promise<boolean> {
+  // Use waitFor (not isVisible) so the helper blocks until the error UI
+  // renders. The page hydrates t≈0 → t≈3000-4000 ms after domcontentloaded
+  // when prior tests in the suite have loaded the same /materials/{id} URL
+  // family — a fixed-time waitForTimeout before the probe is racy; an
+  // explicit 5 s wait-for-visible here matches the production timing the
+  // live E2E suite observes (validated by QA 2026-09-21, 15/15 PASS).
   return page
     .getByText(/Material not found|加载失败/i)
     .first()
-    .isVisible()
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(() => true)
     .catch(() => false)
 }
 
@@ -86,8 +93,9 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
   }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
-    await page.waitForTimeout(3000)
 
+    // isMaterialMissingError() blocks on its own 5 s wait-for-visible —
+    // no caller-side fixed timeout needed.
     if (await isMaterialMissingError(page)) {
       // Test fixture rot — MATERIAL_ID is no longer in the live DB. The
       // page rendered the documented error state and didn't emit real
@@ -119,13 +127,10 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
 
-    // Wait for hydration + data fetch before the missing-error probe —
-    // the error state only renders ~2000 ms after DOMContentLoaded on
-    // Next.js SSR pages, so probing at t=0 finds nothing and the test
-    // would then assert on a link that never appears on DETAIL_URL.
-    // Same wait pattern as kg-node-detail.spec.ts:67-76.
-    await page.waitForTimeout(2000)
-
+    // isMaterialMissingError() blocks on its own 5 s wait-for-visible
+    // (Next.js hydration timing on DETAIL_URL is t≈0 → t≈3000-4000 ms
+    // after prior tests in the suite; see helper doc above). Replaces
+    // the older waitForTimeout(2000) pattern that was racy in sequence.
     if (await isMaterialMissingError(page)) {
       expect(filterRealErrors(consoleErrors)).toEqual([])
       return
@@ -181,15 +186,8 @@ test.describe("Material Properties — interaction tests", { tag: "@integration"
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(PROPERTIES_URL, { waitUntil: "domcontentloaded" })
 
-    // Mirror the wait added in "return to browse link is present" so the
-    // missing-error probe sees the post-hydration DOM on PROPERTIES_URL
-    // too (the SSR chrome keeps this test green today, but only by
-    // accident — the link is found in chrome regardless of whether the
-    // material-detail page hydrated). Without the wait, the probe races
-    // against hydration and the gentle-skip path can silently mask
-    // regressions.
-    await page.waitForTimeout(2000)
-
+    // isMaterialMissingError() blocks on its own 5 s wait-for-visible
+    // (same rationale as "return to browse link is present" above).
     if (await isMaterialMissingError(page)) {
       expect(filterRealErrors(consoleErrors)).toEqual([])
       return
