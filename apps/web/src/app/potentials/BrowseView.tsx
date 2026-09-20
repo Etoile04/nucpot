@@ -257,7 +257,11 @@ export function BrowseView() {
                 value={quickSearch}
                 onChange={(e) => setQuickSearch(e.target.value)}
                 placeholder="搜索势函数…"
-                className="w-44 sm:w-56 px-3 py-1.5 rounded-lg bg-[#111827] border border-[#374151] text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-[#3b82f6]"
+                className="w-44 sm:w-56 px-3 py-1.5 rounded-lg border text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-[var(--form-input-focus-border,#3b82f6)]"
+                style={{
+                  background: "var(--form-input-bg, #111827)",
+                  borderColor: "var(--form-input-border, #374151)",
+                }}
               />
               <button
                 type="submit"

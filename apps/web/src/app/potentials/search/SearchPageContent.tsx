@@ -26,7 +26,7 @@ export function SearchPageContent() {
     (newMode: SearchMode) => {
       const params = new URLSearchParams(searchParams.toString())
       params.set("mode", newMode)
-      router.push(`/search?${params.toString()}`)
+      router.push(`/potentials/search?${params.toString()}`)
     },
     [searchParams, router],
   )
