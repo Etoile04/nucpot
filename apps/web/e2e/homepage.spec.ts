@@ -36,6 +36,10 @@ test.describe("Homepage", { tag: "@smoke" }, () => {
   test("includes footer with site branding", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" })
     const footer = page.locator("footer")
-    await expect(footer).toContainText("NucPot")
+    // NFM-4989 integration: Footer.tsx (layout-level, unchanged by the IA
+    // refactor) has carried the 核燃料与材料物性数据库 branding since the
+    // NFM-1037 email switch — it never contained "NucPot". The old
+    // expectation was stale and failed on main; aligned to the real copy.
+    await expect(footer).toContainText("核燃料与材料物性数据库")
   })
 })
