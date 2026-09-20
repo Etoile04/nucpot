@@ -123,6 +123,30 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* NFM-5026 — restore body flex scroll chain across antd <App>.
+ *
+ * an `<App>` (rendered inside AntdProvider) injects a `<div class="ant-app">`
+ * as a direct child of <body>. By default that wrapper is `display:block`
+ * with `min-height:auto`, which breaks the body `h-screen flex flex-col
+ * overflow-hidden` chain: the wrapper grows to content height, the flex
+ * item refuses to shrink, and the root <main>'s `overflow-y-auto` never
+ * sees a bounded viewport — content past 900px gets clipped by body
+ * `overflow-hidden`, with no scrollbar, no pagination reach, no wheel
+ * response. Reproduced on /, /potentials, /materials after NFM-4990 (#1384).
+ *
+ * Promoting the wrapper to a flex column with `min-height:0` makes it a
+ * proper flex item that contracts to body height, so <main>'s flex-1 +
+ * overflow-y-auto can take over as the scroll container. `.ant-app` is an
+ * antd stable class name (independent of the cssinjs hash), so this rule
+ * stays correct across antd minor upgrades.
+ */
+body > .ant-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 /* Blog prose typography — dark theme */
 .blog-prose {
   line-height: 1.8;
