@@ -11,12 +11,18 @@ import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/com
 // 势函数列表 / 材料体系 / 文献库 / 关于. Everything that used to be a
 // first-level entry (检索, 对比, 本体, KG, 博客, 反馈) moves into the
 // 「更多」dropdown — functionality preserved, just no longer first-level.
-// Benchmark/数据集/API 文档 blocks are unbuilt in P1 and intentionally
-// NOT rendered (P2 will enable them).
+// NFM-4991 (IA-REFACTOR P2) enables 「API 文档」 as the 5th first-level
+// entry by reverse-proxying FastAPI's Swagger UI under /api-docs/swagger
+// (see apps/web/next.config.ts → apiDocsRewrites). The Benchmark 中心
+// (/benchmarks) and 数据集 (/datasets) first-level entries remain
+// deferred — see issue comment id 16c2c5fd for the spike report and the
+// T1/T2 unblock criteria. /benchmarks and /datasets are NOT in
+// PRIMARY_LINKS until the corresponding backend ticket lands.
 const PRIMARY_LINKS = [
   { href: '/potentials', label: '势函数列表' },
   { href: '/materials', label: '材料体系' },
   { href: '/publications', label: '文献库' },
+  { href: '/api-docs', label: 'API 文档' },
   { href: '/about', label: '关于' },
 ]
 

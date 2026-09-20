@@ -1,3 +1,48 @@
+import Link from "next/link"
+import type { Metadata } from "next"
+
+export const metadata: Metadata = {
+  title: "关于 - NucPot",
+  description:
+    "NucPot 核材料势函数开放平台:项目背景、数据来源、平台遵循的标准与规范、贡献指南与协作团队。",
+}
+
+// NFM-4991 (IA-REF P2): refactored /about to a landing page that matches
+// platform-design.md §1 站点地图 — the three first-level sub-entries below
+// (标准/规范, 贡献指南, 团队) are now real routes under /about/* rather
+// than inline sections. Sections previously inlined (项目背景, 数据来源,
+// 联系方式) stay on this landing so the P1 link graph doesn't change.
+//
+// The three child routes each have their own page.tsx in
+// apps/web/src/app/about/{standards,contribute,team}/page.tsx.
+
+interface SubCard {
+  readonly href: "/about/standards" | "/about/contribute" | "/about/team"
+  readonly title: string
+  readonly description: string
+}
+
+const SUB_CARDS: readonly SubCard[] = [
+  {
+    href: "/about/standards",
+    title: "标准 / 规范",
+    description:
+      "平台数据所遵循的元数据规范、势函数格式、引用与许可口径,以及与国际数据库的映射关系。",
+  },
+  {
+    href: "/about/contribute",
+    title: "贡献指南",
+    description:
+      "势函数与文献数据的提交、审核、版本与发布流程;数据完整性与署名归属要求。",
+  },
+  {
+    href: "/about/team",
+    title: "团队",
+    description:
+      "平台维护团队、协作单位、贡献者与对外联系方式。",
+  },
+]
+
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
@@ -11,11 +56,11 @@ export default function AboutPage() {
           <ul className="space-y-2 text-gray-400">
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              覆盖金属燃料（U-Zr、U-Mo）、氧化物燃料（UO₂）、包壳材料（Zr、Zr-Nb）、结构材料（Fe）
+              覆盖金属燃料(U-Zr、U-Mo)、氧化物燃料(UO₂)、包壳材料(Zr、Zr-Nb)、结构材料(Fe)
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              支持经典势（EAM、MEAM）和机器学习势（RANN）
+              支持经典势(EAM、MEAM)和机器学习势(RANN)
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
@@ -23,7 +68,7 @@ export default function AboutPage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              与主流模拟软件（LAMMPS、GULP）兼容
+              与主流模拟软件(LAMMPS、GULP)兼容
             </li>
           </ul>
         </section>
@@ -51,24 +96,35 @@ export default function AboutPage() {
 
         <hr className="border-gray-700" />
 
-        {/* Section 3: 协作团队 */}
-        <section>
-          <h2 className="text-2xl font-semibold mb-4">协作团队</h2>
-          <ul className="space-y-2 text-gray-400">
-            <li className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">•</span>
-              湖南大学邓辉球团队 — 势函数梳理与设计
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">•</span>
-              核动力院 — 核心协作方
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">•</span>
-              李文杰 — 项目开发与维护
-            </li>
-
-          </ul>
+        {/* NFM-4991: 3 sub-section cards — previously inline 协作团队 /
+            致谢 / 联系方式 sections now live at /about/team,
+            /about/contribute, /about/standards respectively. Each card
+            is a real route so deep links are shareable and the layout
+            scales beyond a single column. */}
+        <section aria-labelledby="about-subsections-heading">
+          <h2 id="about-subsections-heading" className="text-2xl font-semibold mb-4">
+            关于本平台
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {SUB_CARDS.map((card) => (
+              <Link
+                key={card.href}
+                href={card.href}
+                className="block p-5 rounded-lg transition-colors duration-150 hover:border-blue-400"
+                style={{
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                <div className="text-base font-semibold text-gray-100 mb-1">
+                  {card.title}
+                </div>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                  {card.description}
+                </p>
+              </Link>
+            ))}
+          </div>
         </section>
 
         <hr className="border-gray-700" />
