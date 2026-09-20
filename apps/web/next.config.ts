@@ -14,8 +14,7 @@ import path from "path"
 // and therefore bypasses the loop-detection below).
 const API_SERVER_URL = process.env.API_SERVER_URL
 const DISABLE_API_REWRITE =
-  process.env.DISABLE_API_REWRITE === "true" ||
-  process.env.DISABLE_API_REWRITE === "1"
+  process.env.DISABLE_API_REWRITE === "true" || process.env.DISABLE_API_REWRITE === "1"
 
 // Default to the Docker-internal service DNS (resolves inside any
 // `nucpot-*` network) so the rewrite is correct in prod and staging
@@ -35,8 +34,7 @@ const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 // to localhost:9621.  The rewrite is independent of DISABLE_API_REWRITE
 // (which only gates the /api/* catch-all) so the LightRAG WebUI remains
 // accessible even in production where nginx handles /api/* routing.
-const LIGHTRAG_WEBUI_URL =
-  process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
+const LIGHTRAG_WEBUI_URL = process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
 
 // NFM-4990 (IA-REFACTOR P1, supersedes NFM-4987): the potential-function
 // library is a first-level path family, literature lives at /publications,
@@ -137,11 +135,22 @@ const nextConfig: NextConfig = {
     // /openapi.json under /api-docs/swagger/* so the public-facing
     // /api-docs page can render an iframe without exposing port 8000 to
     // the internet. The Swagger HTML uses `url: '/openapi.json'` which
-    // resolves against the iframe origin (/api-docs/swagger/) — so the
-    // /openapi.json route below is required, not optional. Assets (CSS,
-    // JS) are loaded from the jsdelivr CDN by Swagger itself, so no
-    // /static/* proxy is needed.
+    // is an absolute path — the browser resolves it against the iframe
+    // document's origin (the parent page, NOT the iframe path), so the
+    // request actually goes to `<origin>/openapi.json`, NOT
+    // `<origin>/api-docs/swagger/openapi.json`. NFM-5006: the bare
+    // `/openapi.json` rewrite is required so the iframe spec fetch can
+    // resolve against the parent origin; without it the request would
+    // 404 against the API server (which exposes the spec at `/openapi.json`,
+    // not under `/api-docs/swagger/`). The `/api-docs/swagger/openapi.json`
+    // literal entry below stays for explicit deep-links from the page
+    // header (`OpenAPI JSON` button). Assets (CSS, JS) are loaded from
+    // the jsdelivr CDN by Swagger itself, so no /static/* proxy is needed.
     const apiDocsRewrites = [
+      {
+        source: "/openapi.json",
+        destination: `${API_SERVER_FALLBACK}/openapi.json`,
+      },
       {
         source: "/api-docs/swagger/openapi.json",
         destination: `${API_SERVER_FALLBACK}/openapi.json`,
@@ -167,8 +176,8 @@ const nextConfig: NextConfig = {
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
     // already handles /api/* routing in that case.
     const publicUrl = process.env.NEXT_PUBLIC_APP_URL
-    const wouldLoop = API_SERVER_URL && publicUrl &&
-      new URL(API_SERVER_URL).host === new URL(publicUrl).host
+    const wouldLoop =
+      API_SERVER_URL && publicUrl && new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
       return { ...corpusIndexRewrites, afterFiles: [...lightragRewrites, ...apiDocsRewrites] }

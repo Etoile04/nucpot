@@ -14,7 +14,16 @@
  * shadows the build-time static /ontology-viewer/data/corpus/index.json with
  * the dynamic aggregator so the vendored viewer's corpus dropdown reflects
  * corpora the backend actually has data for.
+ *
+ * NFM-5006: this file imports next.config.ts which uses Node's `path` module.
+ * Vitest's default jsdom environment has no Node built-ins, so we pin the
+ * environment to node per-file. Without this directive every assertion in
+ * the file fails with `ERR_UNKNOWN_BUILTIN_MODULE: node:` during setup,
+ * which masks real regressions (including the missing /openapi.json
+ * rewrite this file is meant to guard).
  */
+
+// @vitest-environment node
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 
@@ -51,13 +60,26 @@ function lightragRewrites(baseUrl = "http://localhost:9621") {
  * NFM-4991 (IA-REF P2): the /api-docs Swagger UI reverse-proxy rewrites
  * are also always appended (they don't depend on DISABLE_API_REWRITE either,
  * since they target the FastAPI container's /docs/* paths directly, not /api/*).
- * The Swagger HTML references `url: '/openapi.json'` relative to the iframe
- * origin (/api-docs/swagger/), so the bare `/openapi.json` rewrite MUST come
- * first in the array — Next.js rewrite matching is order-dependent and the
- * catch-all `:path*` would otherwise swallow the literal /openapi.json path.
+ *
+ * NFM-5006: the bare `/openapi.json` rewrite is REQUIRED and must be the
+ * FIRST entry. The Swagger HTML hardcodes `url: '/openapi.json'` as an
+ * absolute path — the browser resolves it against the iframe document's
+ * origin (the parent page), so the request goes to `<origin>/openapi.json`,
+ * NOT `<origin>/api-docs/swagger/openapi.json`. Without the bare entry the
+ * iframe renders "Failed to load API definition" and the docs page is
+ * unusable. Next.js rewrite matching is order-dependent, so the literal
+ * `/openapi.json` must come before the `/api-docs/swagger/:path*` catch-all
+ * (which would otherwise swallow it because `:path*` matches zero or more
+ * segments — but with the leading `/api-docs/swagger/` prefix it doesn't
+ * match `/openapi.json`; the bare entry exists to make `/openapi.json`
+ * resolve at all).
  */
 function apiDocsRewrites(baseUrl = "http://nucpot-prod-api:8000") {
   return [
+    {
+      source: "/openapi.json",
+      destination: `${baseUrl}/openapi.json`,
+    },
     {
       source: "/api-docs/swagger/openapi.json",
       destination: `${baseUrl}/openapi.json`,
@@ -230,7 +252,10 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: afterFilesWith("http://nucpot-staging-lightrag:9621", "http://nucpot-staging-api:8000"),
+      afterFiles: afterFilesWith(
+        "http://nucpot-staging-lightrag:9621",
+        "http://nucpot-staging-api:8000",
+      ),
       fallback: [
         {
           source: "/api/:path*",
@@ -246,7 +271,10 @@ describe("next.config.ts rewrites", () => {
   it("always mounts the corpus index rewrite in beforeFiles, in every env scenario", async () => {
     for (const env of [
       { DISABLE_API_REWRITE: "true" },
-      { API_SERVER_URL: "https://nucpot.dpdns.org", NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org" },
+      {
+        API_SERVER_URL: "https://nucpot.dpdns.org",
+        NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
+      },
       {},
     ]) {
       const config = await loadConfig(env)
@@ -290,6 +318,42 @@ describe("next.config.ts rewrites", () => {
         rewrites.fallback.some((r) => r.source === "/api/:path*"),
         `scenario ${JSON.stringify(env)}: /api/* must be in fallback`,
       ).toBe(true)
+    }
+  })
+
+  // NFM-5006 regression guard: the Swagger UI iframe fetches
+  // `url: '/openapi.json'` as an ABSOLUTE path — the browser resolves it
+  // against the parent page origin, so the request hits `<origin>/openapi.json`,
+  // NOT `<origin>/api-docs/swagger/openapi.json`. The bare `/openapi.json`
+  // rewrite MUST therefore be present in afterFiles, in every env scenario,
+  // and it MUST target the FastAPI `/openapi.json` endpoint (the upstream
+  // shape the OpenAPI 3.1 spec is generated from — not `/api/openapi.json`,
+  // which is a non-existent route that would 404 and re-break the iframe).
+  // Without this rewrite the /api-docs page renders "Failed to load API
+  // definition" and the docs entry is dead on arrival.
+  it("exposes the bare /openapi.json rewrite pointing at FastAPI (NFM-5006 iframe-fetch guard)", async () => {
+    for (const env of [
+      { DISABLE_API_REWRITE: "true" },
+      {
+        API_SERVER_URL: "https://nucpot.dpdns.org",
+        NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
+      },
+      { API_SERVER_URL: "http://localhost:8000" },
+      {},
+    ]) {
+      const config = await loadConfig(env)
+      const rewrites = (await config.rewrites!()) as {
+        afterFiles: Array<{ source: string; destination: string }>
+      }
+      const bareRewrite = rewrites.afterFiles.find((r) => r.source === "/openapi.json")
+      expect(
+        bareRewrite,
+        `scenario ${JSON.stringify(env)}: missing bare /openapi.json entry`,
+      ).toBeDefined()
+      expect(
+        bareRewrite?.destination,
+        `scenario ${JSON.stringify(env)}: bare /openapi.json must point at FastAPI /openapi.json`,
+      ).toMatch(/\/openapi\.json$/)
     }
   })
 })
