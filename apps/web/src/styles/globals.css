@@ -519,3 +519,18 @@ div.g1-row-invalid > div:first-child > span:first-child::before {
   font-family: var(--onto-font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+/* NFM-5026: antd <App> (AntdProvider) inserts a .ant-app wrapper between
+ * <body class="h-screen flex flex-col overflow-hidden"> and <main
+ * class="flex-1 overflow-y-auto">. The wrapper's default flex item
+ * min-height:auto lets content stretch it beyond the viewport, which
+ * (a) breaks the flex height chain and (b) makes main's flex-1 inert —
+ * main grows to full content height, overflow-y-auto never engages, and
+ * body's overflow-hidden clips everything below the fold (pages appear
+ * frozen above the fold; pagination unreachable). Restore the chain:
+ * make the wrapper a column flex container that actually shrinks. */
+body > .ant-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

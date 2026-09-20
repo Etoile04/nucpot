@@ -46,7 +46,7 @@ export default function RootLayout({
                   (mount + 60s re-check) instead of a build-time env var. */}
               <DataLossNoticeGate>
                 <Nav />
-                <main className="flex-1 overflow-y-auto">{children}</main>
+                <main className="flex-1 overflow-y-auto min-h-0">{children}</main>
                 <Footer />
                 <FeedbackFloatButton />
               </DataLossNoticeGate>
