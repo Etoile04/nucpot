@@ -16,6 +16,27 @@
  *   /api/potentials              → { potentials, total, page, limit, totalPages }
  *   /api/v1/materials[/search]   → { success, data: { items, total, page, per_page } }
  *
+ * Why this returns the FULL dataset on every page:
+ *
+ *   The list views (apps/web/src/app/potentials/BrowseView.tsx,
+ *   apps/web/src/app/materials/MaterialsListView.tsx) request only 12–20
+ *   items per page and the row heights are compact (~30–55px each). 12
+ *   potentials × ~55px = ~660px; 20 materials × ~36px = ~720px. After
+ *   the layout-shell fix bounds main.clientHeight to the flex chain
+ *   (≈725px on 1440×900, ≈630px on 375×812), the per-page slice fits
+ *   *exactly* inside the bounded viewport — scrollHeight == clientHeight,
+ *   no wheel response, and the "main scrolls" assertion dies even though
+ *   the fix itself is correct.
+ *
+ *   To force main.scrollHeight > main.clientHeight on every page, this
+ *   fixture ignores the `per_page` / `limit` request parameter and always
+ *   returns the full 60-item payload. The list views still display the
+ *   full 60 rows (antd Table / pagination component just renders every
+ *   item we send); pagination state still works because the response
+ *   envelope carries `total=60`, so clicking "page 2" still fires a
+ *   request with `page=2` and the assertion can observe it. Production
+ *   data shape is unchanged — only the per-page slice length differs.
+ *
  * The homepage (`/`) is server-rendered and its data fetch is not
  * reachable from Playwright's browser-level route interception. The
  * /-page assertions therefore intentionally avoid requiring
@@ -26,7 +47,12 @@
 
 import type { Page, Route } from "@playwright/test"
 
-/** 60 items × 20 per page = 3 pages. Comfortably overflows 900px. */
+/**
+ * 60 items × always-full-page slice = enough to overflow 1440×900 (~725px
+ * clientHeight) and 375×812 (~630px clientHeight). 60 rows × ~36px
+ * ≈ 2160px ≫ both viewports. Three pages of 20 keep the page-2 click
+ * assertion's pagination state coherent.
+ */
 const POTENTIALS_TOTAL = 60
 const POTENTIALS_PER_PAGE = 20
 
@@ -77,11 +103,11 @@ function parsePageAndPerPage(
 }
 
 function potentialsPayload(page: number, perPage: number) {
-  const start = (page - 1) * perPage
-  const slice = Array.from(
-    { length: Math.min(perPage, POTENTIALS_TOTAL - start) },
-    (_, k) => makePotential(start + k),
-  )
+  // Return the full dataset on every page so the list view overflows the
+  // bounded main viewport (see file header for the rationale). Pagination
+  // envelope (page, limit, totalPages) is still reported using the
+  // request's `perPage` so the page-2 click assertion's URL match works.
+  const slice = Array.from({ length: POTENTIALS_TOTAL }, (_, k) => makePotential(k))
   return {
     potentials: slice,
     total: POTENTIALS_TOTAL,
@@ -92,11 +118,10 @@ function potentialsPayload(page: number, perPage: number) {
 }
 
 function materialsPayload(page: number, perPage: number) {
-  const start = (page - 1) * perPage
-  const slice = Array.from(
-    { length: Math.min(perPage, MATERIALS_TOTAL - start) },
-    (_, k) => makeMaterial(start + k),
-  )
+  // See potentialsPayload() — same "always return the full dataset"
+  // rationale, applied to the materials list. Forces 60 rows × ~36px
+  // ≈ 2160px of content past the ~725px bounded clientHeight.
+  const slice = Array.from({ length: MATERIALS_TOTAL }, (_, k) => makeMaterial(k))
   return {
     success: true,
     data: {

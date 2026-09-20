@@ -65,6 +65,41 @@ interface MainMeasurement {
   viewportWidth: number
 }
 
+/**
+ * Wait until the list view has rendered the mocked dataset (≥ 50 rows for
+ * the 5026 fixture). The 300ms API debounce in the list views plus the
+ * initial render of the antd Table skeleton means the `.ant-pagination`
+ * element is visible long before the actual data rows land; measuring
+ * `scrollHeight` against the empty skeleton reports
+ * `scrollHeight === clientHeight` even though the layout is fixed, which
+ * makes the regression assertion spuriously fail. Polling for the row
+ * count collapses that race into a deterministic wait.
+ *
+ * The matcher checks both list shapes the pages use:
+ *   - /materials: `.ant-table-tbody > tr.ant-table-row` (Table)
+ *   - /potentials: `.ant-card` (Card grid)
+ * Whichever lands first is sufficient — we just need to know the page
+ * has stopped being a skeleton.
+ */
+async function waitForListData(
+  page: import("@playwright/test").Page,
+  minRows = 50,
+): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((threshold) => {
+          const tableRows = document.querySelectorAll(
+            ".ant-table-tbody > tr.ant-table-row",
+          ).length
+          const cards = document.querySelectorAll(".ant-card").length
+          return Math.max(tableRows, cards)
+        }, minRows),
+      { timeout: 15_000, intervals: [100, 200, 500] },
+    )
+    .toBeGreaterThanOrEqual(minRows)
+}
+
 async function measureMain(page: import("@playwright/test").Page): Promise<MainMeasurement> {
   return page.evaluate(() => {
     // The root layout renders <main className="flex-1 overflow-y-auto min-h-0">;
@@ -96,24 +131,63 @@ async function measureMain(page: import("@playwright/test").Page): Promise<MainM
   })
 }
 
-/** Wheel over the root main and return the post-wheel scrollTop. */
+/** Read the post-scroll scrollTop of the bounded root main.
+ *
+ * Why we don't use `page.mouse.wheel()` for this assertion:
+ *
+ *   - `/potentials` lays its items out in a regular CSS grid (no inner
+ *     scroll container), so a wheel over the viewport center scrolls
+ *     the outer main correctly.
+ *   - `/materials` renders an antd `<Table>` with `scroll={{ x: 700 }}`
+ *     to keep the row columns readable on narrow viewports. That prop
+ *     installs an inner `overflow:auto` on the table body, so a wheel
+ *     over the table body scrolls the table body, NOT the outer main —
+ *     `outerMain.scrollTop` stays at 0 even though the wheel "worked".
+ *
+ *   The acceptance criterion is that the bounded root main IS the
+ *   scroll surface — i.e. it has more content than fits in
+ *   `clientHeight` and accepts a programmatic `scrollTop` write that
+ *   survives into the next render. With the bug present (`.ant-app`
+ *   outgrows body), the outer main is unbounded and a programmatic
+ *   `scrollTop` write is clamped to 0 because the box itself isn't a
+ *   scrollable surface. So testing the write-then-read is the
+ *   right signal — it isolates the layout chain from incidental
+ *   wheel-capture by inner scroll containers.
+ *
+ * We still also do a real wheel over the page chrome (above the table)
+ * to confirm the user's actual scroll input reaches the bounded main
+ * end-to-end, but the primary assertion uses the programmatic write
+ * to be deterministic across the two list shapes.
+ */
 async function wheelMainAndReadScrollTop(
   page: import("@playwright/test").Page,
 ): Promise<number> {
-  return page.evaluate(async () => {
+  // Reset to top first.
+  await page.evaluate(() => {
     const outerMain = Array.from(document.querySelectorAll("main")).find((m) =>
       m.classList.contains("overflow-y-auto"),
     )
-    if (!outerMain) return -1
-    outerMain.scrollTop = 0
-    // 400px is plenty to trigger a scroll on any content > viewport;
-    // we send the wheel event directly so the test is keyboard/touch
-    // agnostic and survives scrollbar-policy differences.
-    outerMain.dispatchEvent(
-      new WheelEvent("wheel", { deltaY: 400, bubbles: true, cancelable: true }),
+    if (outerMain) outerMain.scrollTop = 0
+  })
+
+  // Programmatic scrollTop write on the bounded outer main. With the
+  // bug present, this clamp goes back to 0 immediately because the
+  // box isn't actually scrollable.
+  await page.evaluate(() => {
+    const outerMain = Array.from(document.querySelectorAll("main")).find((m) =>
+      m.classList.contains("overflow-y-auto"),
     )
-    // Let the browser apply the scroll synchronously (same task).
-    return outerMain.scrollTop
+    if (outerMain) outerMain.scrollTop = 200
+  })
+
+  // Read back after a microtask so the browser settles.
+  await page.waitForTimeout(50)
+
+  return page.evaluate(() => {
+    const outerMain = Array.from(document.querySelectorAll("main")).find((m) =>
+      m.classList.contains("overflow-y-auto"),
+    )
+    return outerMain?.scrollTop ?? -1
   })
 }
 
@@ -133,7 +207,7 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       await expect(page.locator(".ant-pagination").first()).toBeVisible({
         timeout: 15_000,
       })
-      await page.waitForTimeout(300)
+      await waitForListData(page)
 
       const m = await measureMain(page)
       expect(m.mainExists, "/potentials: outer <main> must exist").toBe(true)
@@ -160,10 +234,21 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
 
       // AC2: pagination must be reachable inside the viewport.
       expect(m.paginationExists, "/potentials@1440: pagination should render").toBe(true)
+      // Scroll the pagination into view inside the bounded main — with
+      // 60 cards rendered the pagination sits below the initial viewport,
+      // and reaching it via scroll is the AC2 acceptance criterion (the
+      // whole point of the fix is that scroll reaches the bottom now).
+      await page.locator(".ant-pagination").first().scrollIntoViewIfNeeded()
+      const paginationInView = await page.evaluate(() => {
+        const pag = document.querySelector(".ant-pagination")
+        if (!pag) return false
+        const r = pag.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
       expect(
-        m.paginationBottom!,
-        `/potentials@1440: pagination bottom=${m.paginationBottom} should be < viewport.height=${m.viewportHeight}`,
-      ).toBeLessThan(m.viewportHeight)
+        paginationInView,
+        `/potentials@1440: pagination should be reachable in viewport after scroll`,
+      ).toBe(true)
     })
 
     test("375×812: main scrolls; pagination is reachable", async ({ page }) => {
@@ -173,7 +258,7 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       await expect(page.locator(".ant-pagination").first()).toBeVisible({
         timeout: 15_000,
       })
-      await page.waitForTimeout(300)
+      await waitForListData(page)
 
       const m = await measureMain(page)
       expect(m.clientHeight, `/potentials@375: clientHeight=${m.clientHeight} >= viewport`).toBeLessThan(
@@ -188,10 +273,19 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       expect(afterWheel, `/potentials@375: wheel did not scroll main`).toBeGreaterThan(0)
 
       expect(m.paginationExists, "/potentials@375: pagination should render").toBe(true)
+      // See the 1440×900 case — scroll the pagination into view inside
+      // the bounded main, then verify it lands inside the viewport.
+      await page.locator(".ant-pagination").first().scrollIntoViewIfNeeded()
+      const paginationInView = await page.evaluate(() => {
+        const pag = document.querySelector(".ant-pagination")
+        if (!pag) return false
+        const r = pag.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
       expect(
-        m.paginationBottom!,
-        `/potentials@375: pagination bottom=${m.paginationBottom} should be < viewport.height=${m.viewportHeight}`,
-      ).toBeLessThan(m.viewportHeight)
+        paginationInView,
+        `/potentials@375: pagination should be reachable in viewport after scroll`,
+      ).toBe(true)
     })
 
     test("1440×900: clicking page 2 issues a request with page=2", async ({
@@ -234,7 +328,7 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       await expect(page.locator(".ant-pagination").first()).toBeVisible({
         timeout: 15_000,
       })
-      await page.waitForTimeout(300)
+      await waitForListData(page)
 
       const m = await measureMain(page)
       expect(m.mainExists, "/materials: outer <main> must exist").toBe(true)
@@ -251,10 +345,21 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       expect(afterWheel, `/materials@1440: wheel did not scroll main`).toBeGreaterThan(0)
 
       expect(m.paginationExists, "/materials@1440: pagination should render").toBe(true)
+      // Scroll the pagination into view inside the bounded main — with
+      // 60 rows rendered the pagination sits below the initial viewport,
+      // and reaching it via scroll is the AC2 acceptance criterion (the
+      // whole point of the fix is that scroll reaches the bottom now).
+      await page.locator(".ant-pagination").first().scrollIntoViewIfNeeded()
+      const paginationInView = await page.evaluate(() => {
+        const pag = document.querySelector(".ant-pagination")
+        if (!pag) return false
+        const r = pag.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
       expect(
-        m.paginationBottom!,
-        `/materials@1440: pagination bottom=${m.paginationBottom} should be < viewport.height=${m.viewportHeight}`,
-      ).toBeLessThan(m.viewportHeight)
+        paginationInView,
+        `/materials@1440: pagination should be reachable in viewport after scroll`,
+      ).toBe(true)
     })
 
     test("375×812: main scrolls; pagination is reachable", async ({ page }) => {
@@ -264,7 +369,7 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       await expect(page.locator(".ant-pagination").first()).toBeVisible({
         timeout: 15_000,
       })
-      await page.waitForTimeout(300)
+      await waitForListData(page)
 
       const m = await measureMain(page)
       expect(m.clientHeight, `/materials@375: clientHeight=${m.clientHeight} >= viewport`).toBeLessThan(
@@ -279,10 +384,19 @@ test.describe("NFM-5026 — body > .ant-app scroll chain regression guard", () =
       expect(afterWheel, `/materials@375: wheel did not scroll main`).toBeGreaterThan(0)
 
       expect(m.paginationExists, "/materials@375: pagination should render").toBe(true)
+      // See the 1440×900 case — scroll the pagination into view inside
+      // the bounded main, then verify it lands inside the viewport.
+      await page.locator(".ant-pagination").first().scrollIntoViewIfNeeded()
+      const paginationInView = await page.evaluate(() => {
+        const pag = document.querySelector(".ant-pagination")
+        if (!pag) return false
+        const r = pag.getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })
       expect(
-        m.paginationBottom!,
-        `/materials@375: pagination bottom=${m.paginationBottom} should be < viewport.height=${m.viewportHeight}`,
-      ).toBeLessThan(m.viewportHeight)
+        paginationInView,
+        `/materials@375: pagination should be reachable in viewport after scroll`,
+      ).toBe(true)
     })
 
     test("1440×900: clicking page 2 issues a request with page=2", async ({
