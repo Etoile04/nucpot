@@ -133,12 +133,35 @@ const nextConfig: NextConfig = {
       },
     ]
 
+    // NFM-4991 (IA-REF P2): reverse-proxy FastAPI's /docs (Swagger UI) and
+    // /openapi.json under /api-docs/swagger/* so the public-facing
+    // /api-docs page can render an iframe without exposing port 8000 to
+    // the internet. The Swagger HTML uses `url: '/openapi.json'` which
+    // resolves against the iframe origin (/api-docs/swagger/) — so the
+    // /openapi.json route below is required, not optional. Assets (CSS,
+    // JS) are loaded from the jsdelivr CDN by Swagger itself, so no
+    // /static/* proxy is needed.
+    const apiDocsRewrites = [
+      {
+        source: "/api-docs/swagger/openapi.json",
+        destination: `${API_SERVER_FALLBACK}/openapi.json`,
+      },
+      {
+        source: "/api-docs/swagger/oauth2-redirect",
+        destination: `${API_SERVER_FALLBACK}/docs/oauth2-redirect`,
+      },
+      {
+        source: "/api-docs/swagger/:path*",
+        destination: `${API_SERVER_FALLBACK}/docs/:path*`,
+      },
+    ]
+
     // Explicit disable: production deployments with nginx (or another
     // upstream proxy) handling /api/* must set DISABLE_API_REWRITE=true.
     // Without this, the rewrite below would proxy /api/* back through
     // Next.js and either hang or fail (NFM-1407).
     if (DISABLE_API_REWRITE) {
-      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
+      return { ...corpusIndexRewrites, afterFiles: [...lightragRewrites, ...apiDocsRewrites] }
     }
 
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
@@ -148,12 +171,12 @@ const nextConfig: NextConfig = {
       new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
-      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
+      return { ...corpusIndexRewrites, afterFiles: [...lightragRewrites, ...apiDocsRewrites] }
     }
 
     return {
       ...corpusIndexRewrites,
-      afterFiles: lightragRewrites,
+      afterFiles: [...lightragRewrites, ...apiDocsRewrites],
       // NFM-3317: the /api/* proxy must be a FALLBACK rewrite, not
       // afterFiles. afterFiles rewrites run BEFORE dynamic routes match, so
       // the catch-all hijacked every dynamic BFF route (/api/potentials/[id],

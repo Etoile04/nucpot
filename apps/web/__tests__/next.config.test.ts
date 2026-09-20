@@ -47,6 +47,37 @@ function lightragRewrites(baseUrl = "http://localhost:9621") {
   ]
 }
 
+/**
+ * NFM-4991 (IA-REF P2): the /api-docs Swagger UI reverse-proxy rewrites
+ * are also always appended (they don't depend on DISABLE_API_REWRITE either,
+ * since they target the FastAPI container's /docs/* paths directly, not /api/*).
+ * The Swagger HTML references `url: '/openapi.json'` relative to the iframe
+ * origin (/api-docs/swagger/), so the bare `/openapi.json` rewrite MUST come
+ * first in the array — Next.js rewrite matching is order-dependent and the
+ * catch-all `:path*` would otherwise swallow the literal /openapi.json path.
+ */
+function apiDocsRewrites(baseUrl = "http://nucpot-prod-api:8000") {
+  return [
+    {
+      source: "/api-docs/swagger/openapi.json",
+      destination: `${baseUrl}/openapi.json`,
+    },
+    {
+      source: "/api-docs/swagger/oauth2-redirect",
+      destination: `${baseUrl}/docs/oauth2-redirect`,
+    },
+    {
+      source: "/api-docs/swagger/:path*",
+      destination: `${baseUrl}/docs/:path*`,
+    },
+  ]
+}
+
+/** Convenience composer for the full afterFiles payload (LightRAG + /api-docs). */
+function afterFilesWith(lightragBase: string, apiBase = "http://nucpot-prod-api:8000") {
+  return [...lightragRewrites(lightragBase), ...apiDocsRewrites(apiBase)]
+}
+
 /** NFM-3303: the corpus index rewrite, always in beforeFiles. */
 const corpusIndexRewrite = {
   source: "/ontology-viewer/data/corpus/index.json",
@@ -85,7 +116,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites("http://nucpot-prod-lightrag:9621"),
+      afterFiles: afterFilesWith("http://nucpot-prod-lightrag:9621"),
     })
   })
 
@@ -97,7 +128,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites(),
+      afterFiles: afterFilesWith("http://localhost:9621"),
     })
   })
 
@@ -109,7 +140,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites(),
+      afterFiles: afterFilesWith("http://localhost:9621"),
       fallback: [
         {
           source: "/api/:path*",
@@ -128,7 +159,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites(),
+      afterFiles: afterFilesWith("http://localhost:9621"),
       fallback: [
         {
           source: "/api/:path*",
@@ -163,7 +194,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites(),
+      afterFiles: afterFilesWith("http://localhost:9621", "https://nucpot.dpdns.org"),
     })
   })
 
@@ -175,7 +206,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites(),
+      afterFiles: afterFilesWith("http://localhost:9621", "http://localhost:8000"),
       fallback: [
         {
           source: "/api/:path*",
@@ -199,7 +230,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: lightragRewrites("http://nucpot-staging-lightrag:9621"),
+      afterFiles: afterFilesWith("http://nucpot-staging-lightrag:9621", "http://nucpot-staging-api:8000"),
       fallback: [
         {
           source: "/api/:path*",
