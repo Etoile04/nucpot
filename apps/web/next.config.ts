@@ -137,11 +137,21 @@ const nextConfig: NextConfig = {
     // /openapi.json under /api-docs/swagger/* so the public-facing
     // /api-docs page can render an iframe without exposing port 8000 to
     // the internet. The Swagger HTML uses `url: '/openapi.json'` which
-    // resolves against the iframe origin (/api-docs/swagger/) — so the
-    // /openapi.json route below is required, not optional. Assets (CSS,
-    // JS) are loaded from the jsdelivr CDN by Swagger itself, so no
-    // /static/* proxy is needed.
+    // the browser resolves against the iframe PARENT origin (not the
+    // iframe's own /api-docs/swagger/ URL — Swagger UI calls
+    // `window.location.origin + url` for the spec fetch), so the bare
+    // `/openapi.json` rewrite below is REQUIRED, not optional. It must
+    // come first: the prefixed `/api-docs/swagger/openapi.json` route is
+    // still kept for clients that fetch against the iframe origin
+    // directly, but the literal `/openapi.json` matches before any
+    // `:path*` catch-all could swallow it. Assets (CSS, JS) are loaded
+    // from the jsdelivr CDN by Swagger itself, so no /static/* proxy is
+    // needed.
     const apiDocsRewrites = [
+      {
+        source: "/openapi.json",
+        destination: `${API_SERVER_FALLBACK}/openapi.json`,
+      },
       {
         source: "/api-docs/swagger/openapi.json",
         destination: `${API_SERVER_FALLBACK}/openapi.json`,
