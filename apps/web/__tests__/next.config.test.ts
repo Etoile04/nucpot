@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Tests for apps/web/next.config.ts rewrites behavior.
  *
@@ -58,6 +59,10 @@ function lightragRewrites(baseUrl = "http://localhost:9621") {
  */
 function apiDocsRewrites(baseUrl = "http://nucpot-prod-api:8000") {
   return [
+    {
+      source: "/openapi.json",
+      destination: `${baseUrl}/openapi.json`,
+    },
     {
       source: "/api-docs/swagger/openapi.json",
       destination: `${baseUrl}/openapi.json`,
@@ -289,6 +294,46 @@ describe("next.config.ts rewrites", () => {
       expect(
         rewrites.fallback.some((r) => r.source === "/api/:path*"),
         `scenario ${JSON.stringify(env)}: /api/* must be in fallback`,
+      ).toBe(true)
+    }
+  })
+
+  // NFM-5006 AC-2e regression guard: the /api-docs Swagger UI iframe must
+  // be able to fetch the OpenAPI spec. Swagger UI constructs the spec URL
+  // as `window.location.origin + url`, where `url` is hardcoded to
+  // `/openapi.json` in the FastAPI /docs HTML. `window.location.origin`
+  // is the iframe PARENT origin (e.g. https://nucpot.dpdns.org), NOT the
+  // iframe document URL (/api-docs/swagger/). So the spec fetch resolves
+  // to `/openapi.json` against the public origin, and the Next.js rewrite
+  // MUST include a bare `/openapi.json` → API_SERVER_FALLBACK entry —
+  // placed before any `:path*` catch-all (order-dependent matching).
+  it("exposes the bare /openapi.json rewrite before any /api-docs/swagger catch-all (NFM-5006 AC-2e)", async () => {
+    const config = await loadConfig({
+      API_SERVER_URL: "http://nucpot-prod-api:8000",
+      NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
+      DISABLE_API_REWRITE: "true",
+    })
+    const rewrites = (await config.rewrites!()) as {
+      afterFiles: Array<{ source: string; destination: string }>
+    }
+    const openapiIdx = rewrites.afterFiles.findIndex(
+      (r) => r.source === "/openapi.json",
+    )
+    expect(openapiIdx, "bare /openapi.json rewrite must be present").toBeGreaterThanOrEqual(0)
+    expect(
+      rewrites.afterFiles[openapiIdx]?.destination,
+      "bare /openapi.json must proxy to FastAPI /openapi.json",
+    ).toBe("http://nucpot-prod-api:8000/openapi.json")
+    // The bare rewrite must precede any :path* catch-all so it cannot be
+    // swallowed by the more specific /api-docs/swagger/:path* route when
+    // Next.js iterates the rewrite table in order.
+    const catchAllIdx = rewrites.afterFiles.findIndex(
+      (r) => r.source === "/api-docs/swagger/:path*",
+    )
+    if (catchAllIdx >= 0) {
+      expect(
+        openapiIdx < catchAllIdx,
+        "bare /openapi.json must come before /api-docs/swagger/:path*",
       ).toBe(true)
     }
   })
