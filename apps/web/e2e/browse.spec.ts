@@ -53,7 +53,7 @@ test.describe("Browse Page", { tag: "@smoke" }, () => {
     await page.goto("/potentials")
     const headerNav = page.locator("nav").first()
     await expect(headerNav).toBeVisible()
-    await expect(headerNav.locator('a[href="/potentials"]')).toContainText("浏览")
+    await expect(headerNav.locator('a[href="/potentials"]')).toContainText("势函数列表")
   })
 
   // TODO: Re-enable when pagination nav with aria-label="分页导航" is implemented
