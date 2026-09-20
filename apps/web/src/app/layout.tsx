@@ -46,7 +46,13 @@ export default function RootLayout({
                   (mount + 60s re-check) instead of a build-time env var. */}
               <DataLossNoticeGate>
                 <Nav />
-                <main className="flex-1 overflow-y-auto">{children}</main>
+                {/* NFM-5026: `min-h-0` lets <main> shrink below its
+                    content height inside body's `h-screen flex flex-col`
+                    chain so `overflow-y-auto` is the actual scroll
+                    surface. Belt-and-suspenders for body > .ant-app in
+                    globals.css — survives future shell changes that
+                    introduce another wrapper. */}
+                <main className="flex-1 overflow-y-auto min-h-0">{children}</main>
                 <Footer />
                 <FeedbackFloatButton />
               </DataLossNoticeGate>
