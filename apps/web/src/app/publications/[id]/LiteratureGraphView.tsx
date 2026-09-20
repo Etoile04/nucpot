@@ -58,7 +58,7 @@ export default function LiteratureGraphView({
   }, [fetchDetail])
 
   const handleBack = useCallback(() => {
-    void router.push("/literature")
+    void router.push("/publications")
   }, [router])
 
   const handleSwitchToReviewView = useCallback(() => {

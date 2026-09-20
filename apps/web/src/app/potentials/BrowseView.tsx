@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Pagination, Spin, Empty, Space, Typography } from "antd"
 import type { PaginationProps } from "antd"
 import { PotentialCard } from "@/components/potential/PotentialCard"
@@ -19,10 +20,11 @@ const { Title, Text } = Typography
 
 const TYPES: readonly string[] = ["EAM", "MEAM", "ML", "MTP", "ACE", "Buckingham", "other"]
 
-type SortField = "updated" | "name" | "type"
+type SortField = "updated" | "name" | "type" | "downloads"
 
 const SORT_OPTIONS: readonly { readonly label: string; readonly value: SortField }[] = [
   { label: "最近更新", value: "updated" },
+  { label: "热门下载", value: "downloads" },
   { label: "按名称", value: "name" },
   { label: "按类型", value: "type" },
 ]
@@ -52,6 +54,8 @@ export function BrowseView() {
     error: elementsError,
     retry: retryElements,
   } = useElementOptions()
+  const router = useRouter()
+  const [quickSearch, setQuickSearch] = useState("")
   const [selectedElements, setSelectedElements] = useState<string[]>([])
   const [elementSearch, setElementSearch] = useState<string>("")
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set())
@@ -224,13 +228,48 @@ export function BrowseView() {
   return (
     <main className="max-w-[1200px] mx-auto px-6 py-8">
       <Space direction="vertical" size="middle" className="w-full mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Title level={2} className="!m-0 text-white">
             浏览势函数
           </Title>
-          <Link href="/search" className="text-blue-400 hover:text-blue-300 text-sm">
-            高级检索
-          </Link>
+          <div className="flex items-center gap-3">
+            {/* NFM-4990: quick search moved from the retired /search
+                top-level nav entry into the list header — Enter or the
+                button jumps to the secondary /potentials/search page
+                (NFM-1064 §3.1 contract, retargeted). */}
+            <form
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const q = quickSearch.trim()
+                router.push(
+                  q ? `/potentials/search?q=${encodeURIComponent(q)}` : "/potentials/search"
+                )
+              }}
+              className="flex items-center gap-2"
+            >
+              <label htmlFor="potential-quick-search" className="sr-only">
+                搜索势函数
+              </label>
+              <input
+                id="potential-quick-search"
+                type="search"
+                value={quickSearch}
+                onChange={(e) => setQuickSearch(e.target.value)}
+                placeholder="搜索势函数…"
+                className="w-44 sm:w-56 px-3 py-1.5 rounded-lg bg-[#111827] border border-[#374151] text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-[#3b82f6]"
+              />
+              <button
+                type="submit"
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition"
+              >
+                搜索
+              </button>
+            </form>
+            <Link href="/potentials/search" className="text-blue-400 hover:text-blue-300 text-sm">
+              高级检索
+            </Link>
+          </div>
         </div>
       </Space>
 

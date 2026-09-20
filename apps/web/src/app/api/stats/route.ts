@@ -7,7 +7,7 @@ const API_BASE = process.env.API_SERVER_URL || 'http://nucpot-prod-api:8000'
  *
  * NFM-4310 (BUG-29): upstream failures must surface as errors here.
  * The previous implementation fabricated a 200 with empty stats on any
- * failure, which made the /browse and /search element filter render
+ * failure, which made the /potentials and /search element filter render
  * 「无匹配元素」with no way to distinguish outage from empty library.
  */
 export async function GET() {

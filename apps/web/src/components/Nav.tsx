@@ -7,28 +7,34 @@ import { App } from 'antd'
 import { useAuth } from '@/components/AuthProvider'
 import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/components/session'
 
-const NAV_LINKS = [
-  { href: '/browse', label: '浏览' },
-  { href: '/materials', label: '材料库' },
-  { href: '/ontology', label: '本体' },
-  { href: '/literature', label: '文献管理' },
-  { href: '/search', label: '势函数检索' },
-  { href: '/compare', label: '对比' },
-  { href: '/feedback', label: '反馈' },
+// NFM-4990 (IA-REFACTOR P1, NFM-4984 裁决定稿站点地图): first level =
+// 势函数列表 / 材料体系 / 文献库 / 关于. Everything that used to be a
+// first-level entry (检索, 对比, 本体, KG, 博客, 反馈) moves into the
+// 「更多」dropdown — functionality preserved, just no longer first-level.
+// Benchmark/数据集/API 文档 blocks are unbuilt in P1 and intentionally
+// NOT rendered (P2 will enable them).
+const PRIMARY_LINKS = [
+  { href: '/potentials', label: '势函数列表' },
+  { href: '/materials', label: '材料体系' },
+  { href: '/publications', label: '文献库' },
   { href: '/about', label: '关于' },
-  { href: '/blog', label: '博客' },
 ]
 
-const KG_LINKS = [
+const MORE_LINKS = [
+  { href: '/potentials/search', label: '势函数检索' },
+  { href: '/potentials/compare', label: '势函数对比' },
   { href: '/kg/explore', label: '图谱浏览' },
   { href: '/kg/search', label: 'KG 搜索' },
+  { href: '/ontology', label: '本体' },
+  { href: '/blog', label: '博客' },
+  { href: '/feedback', label: '反馈' },
 ]
 
-function isKgActive(pathname: string): boolean {
-  return pathname.startsWith('/kg')
+function isMoreActive(pathname: string): boolean {
+  return MORE_LINKS.some((link) => pathname.startsWith(link.href))
 }
 
-function isKgLinkActive(pathname: string, href: string): boolean {
+function isMoreLinkActive(pathname: string, href: string): boolean {
   return pathname === href
 }
 
@@ -38,12 +44,12 @@ export default function Nav() {
   const { user, loading, signOut } = useAuth()
 
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [kgMobileOpen, setKgMobileOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [kgDropdownOpen, setKgDropdownOpen] = useState(false)
+  const [moreDropdownOpen, setMoreDropdownOpen] = useState(false)
+  const [moreMobileOpen, setMoreMobileOpen] = useState(false)
 
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const kgDropdownRef = useRef<HTMLDivElement>(null)
+  const moreDropdownRef = useRef<HTMLDivElement>(null)
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -51,8 +57,8 @@ export default function Nav() {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false)
       }
-      if (kgDropdownRef.current && !kgDropdownRef.current.contains(e.target as Node)) {
-        setKgDropdownOpen(false)
+      if (moreDropdownRef.current && !moreDropdownRef.current.contains(e.target as Node)) {
+        setMoreDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -61,9 +67,9 @@ export default function Nav() {
 
   async function handleSignOut() {
     setDropdownOpen(false)
-    setKgDropdownOpen(false)
+    setMoreDropdownOpen(false)
     setMobileOpen(false)
-    setKgMobileOpen(false)
+    setMoreMobileOpen(false)
     await signOut()
     router.push('/')
     router.refresh()
@@ -89,11 +95,10 @@ export default function Nav() {
           NucPot <span className="text-blue-400 text-sm font-normal">核材料势函数库</span>
         </Link>
 
-        {/* Desktop nav — switched from md (768px) to lg (1024px) to keep
-            Chinese character labels on a single line. The 582px inner width at
-            768px is too narrow for 11 links; see NFM-2198. */}
+        {/* Desktop nav — lg (1024px) keeps the CJK labels comfortably on
+            one line even with the 更多 dropdown open. */}
         <div className="hidden lg:flex items-center gap-6 text-sm">
-          {NAV_LINKS.map(link => (
+          {PRIMARY_LINKS.map(link => (
             <Link
               key={link.href}
               href={link.href}
@@ -124,35 +129,35 @@ export default function Nav() {
             </Link>
           ))}
 
-          {/* KG dropdown */}
-          <div className="relative" ref={kgDropdownRef}>
+          {/* 更多 dropdown — retired first-level destinations (NFM-4990) */}
+          <div className="relative" ref={moreDropdownRef}>
             <button
-              onClick={() => setKgDropdownOpen(prev => !prev)}
+              onClick={() => setMoreDropdownOpen(prev => !prev)}
               // NFM-3794 a11y: see desktop link note above — inactive
-              // dropdown trigger needs a base color too.
-              // NFM-3794 a11y: see desktop link note above. `py-2` ensures ≥24px tall.
-              className={`flex items-center gap-1 transition py-2 ${isKgActive(pathname) ? '!text-blue-400' : '!text-gray-200 hover:!text-blue-400'}`}
-              aria-expanded={kgDropdownOpen}
+              // dropdown trigger needs a base color too. `py-2` ensures
+              // ≥24px tall.
+              className={`flex items-center gap-1 transition py-2 ${isMoreActive(pathname) ? '!text-blue-400' : '!text-gray-200 hover:!text-blue-400'}`}
+              aria-expanded={moreDropdownOpen}
               aria-haspopup="true"
             >
-              知识图谱
+              更多
               <svg
-                className={`w-3.5 h-3.5 transition-transform ${kgDropdownOpen ? 'rotate-180' : ''}`}
+                className={`w-3.5 h-3.5 transition-transform ${moreDropdownOpen ? 'rotate-180' : ''}`}
                 fill="none" stroke="currentColor" viewBox="0 0 24 24"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
 
-            {kgDropdownOpen && (
-              <div className="absolute left-0 mt-2 w-36 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
-                {KG_LINKS.map(link => (
+            {moreDropdownOpen && (
+              <div className="absolute left-0 mt-2 w-40 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 py-1 text-sm">
+                {MORE_LINKS.map(link => (
                   <Link
                     key={link.href}
                     href={link.href}
-                    onClick={() => setKgDropdownOpen(false)}
-                    aria-current={isKgLinkActive(pathname, link.href) ? 'page' : undefined}
-                    className={`block px-4 py-2 hover:bg-gray-700/60 transition ${isKgLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-200 hover:text-white'}`}
+                    onClick={() => setMoreDropdownOpen(false)}
+                    aria-current={isMoreLinkActive(pathname, link.href) ? 'page' : undefined}
+                    className={`block px-4 py-2 hover:bg-gray-700/60 transition ${isMoreLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-200 hover:text-white'}`}
                   >
                     {link.label}
                   </Link>
@@ -161,8 +166,8 @@ export default function Nav() {
             )}
           </div>
 
-          {/* Session indicator — right of NAV_LINKS/KG, left of auth.
-              * Hidden on mobile (md:flex wraps the entire desktop nav, so the
+          {/* Session indicator — right of nav links, left of auth.
+              * Hidden on mobile (lg:flex wraps the entire desktop nav, so the
               * indicator is implicitly hidden on small viewports per spec §2.1).
               * Spec: [NFM-2251](/NFM/issues/NFM-2251) §2.6 */}
           <SessionIndicator />
@@ -323,7 +328,7 @@ export default function Nav() {
       {/* Mobile menu */}
       {mobileOpen && (
         <div className="lg:hidden px-6 pb-4 flex flex-col gap-3 text-sm border-t border-gray-700/50">
-          {NAV_LINKS.map(link => (
+          {PRIMARY_LINKS.map(link => (
             <Link
               key={link.href}
               href={link.href}
@@ -334,29 +339,29 @@ export default function Nav() {
             </Link>
           ))}
 
-          {/* Mobile KG sub-menu */}
+          {/* Mobile 更多 sub-menu */}
           <button
-            onClick={() => setKgMobileOpen(prev => !prev)}
-            className={`flex items-center gap-1 text-left transition ${isKgActive(pathname) ? 'text-blue-400' : 'text-gray-200 hover:text-blue-400'}`}
-            aria-expanded={kgMobileOpen}
+            onClick={() => setMoreMobileOpen(prev => !prev)}
+            className={`flex items-center gap-1 text-left transition ${isMoreActive(pathname) ? 'text-blue-400' : 'text-gray-200 hover:text-blue-400'}`}
+            aria-expanded={moreMobileOpen}
             aria-haspopup="true"
           >
-            知识图谱
+            更多
             <svg
-              className={`w-3.5 h-3.5 transition-transform ${kgMobileOpen ? 'rotate-180' : ''}`}
+              className={`w-3.5 h-3.5 transition-transform ${moreMobileOpen ? 'rotate-180' : ''}`}
               fill="none" stroke="currentColor" viewBox="0 0 24 24"
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          {kgMobileOpen && (
+          {moreMobileOpen && (
             <div className="ml-4 flex flex-col gap-2">
-              {KG_LINKS.map(link => (
+              {MORE_LINKS.map(link => (
                 <Link
                   key={link.href}
                   href={link.href}
-                  onClick={() => { setMobileOpen(false); setKgMobileOpen(false) }}
-                  className={isKgLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400 transition'}
+                  onClick={() => { setMobileOpen(false); setMoreMobileOpen(false) }}
+                  className={isMoreLinkActive(pathname, link.href) ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400 transition'}
                 >
                   {link.label}
                 </Link>

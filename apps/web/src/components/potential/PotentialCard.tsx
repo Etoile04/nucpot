@@ -32,7 +32,7 @@ export function PotentialCard({ potential, compareSelected, onCompareToggle }: P
         <Tag color={tagColor}>{type}</Tag>
       </Space>
 
-      <Link href={`/potential/${id}`} className="no-underline">
+      <Link href={`/potentials/${id}`} className="no-underline">
         <Typography.Title level={5} className="!m-0 text-white">
           {name}
         </Typography.Title>
@@ -57,7 +57,7 @@ export function PotentialCard({ potential, compareSelected, onCompareToggle }: P
       )}
 
       <div className="mt-auto pt-1 flex items-center justify-between">
-        <Link href={`/potential/${id}`} className="text-blue-400 hover:text-blue-300">查看详情</Link>
+        <Link href={`/potentials/${id}`} className="text-blue-400 hover:text-blue-300">查看详情</Link>
         {onCompareToggle && (
           <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-white transition">
             <input

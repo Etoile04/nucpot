@@ -135,7 +135,7 @@ export default function LiteratureDetailView({
     try {
       await literatureApi.delete(literatureId)
       message.success("已删除，返回文献列表")
-      void router.push("/literature")
+      void router.push("/publications")
     } catch (err) {
       const msg = err instanceof Error ? err.message : "删除失败"
       message.error(msg, 8)
@@ -157,7 +157,7 @@ export default function LiteratureDetailView({
       <div className="px-4 py-6 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <Button
           icon={<ArrowLeftOutlined />}
-          onClick={() => void router.push("/literature")}
+          onClick={() => void router.push("/publications")}
           className="mb-4"
         >
           返回文献列表
@@ -183,7 +183,7 @@ export default function LiteratureDetailView({
         <div className="flex items-start gap-3">
           <Button
             icon={<ArrowLeftOutlined />}
-            onClick={() => void router.push("/literature")}
+            onClick={() => void router.push("/publications")}
             className="mt-1"
           >
             返回

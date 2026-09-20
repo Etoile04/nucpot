@@ -43,7 +43,7 @@ const SessionContext = createContext<SessionContextValue | null>(null)
 
 /**
  * Safe default returned by useSession() when rendered outside a
- * <SessionProvider> — e.g. on public routes (/, /login, /browse) where
+ * <SessionProvider> — e.g. on public routes (/, /login, /potentials) where
  * the dashboard-only provider is not mounted.  Consumers (SessionIndicator,
  * ReAuthPrompt) already handle the "unauthenticated" state gracefully.
  */

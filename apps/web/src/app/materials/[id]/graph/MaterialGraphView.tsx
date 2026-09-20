@@ -123,7 +123,7 @@ function NotFoundState({ materialId }: { readonly materialId: string }) {
         <Button key="back" type="primary" href={`/materials/${materialId}/properties`}>
           返回材料属性
         </Button>,
-        <Button key="browse" href="/browse">
+        <Button key="browse" href="/potentials">
           浏览材料
         </Button>,
       ]}
@@ -227,7 +227,7 @@ export function MaterialGraphView({ materialId }: MaterialGraphViewProps) {
           >
             材料属性
           </Link>
-          <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
+          <Link href="/potentials" className="text-blue-400 hover:text-blue-300 text-sm">
             返回浏览
           </Link>
         </div>

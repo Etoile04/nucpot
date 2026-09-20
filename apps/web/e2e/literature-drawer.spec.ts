@@ -23,7 +23,7 @@ import { test, expect } from "@playwright/test"
  */
 
 const BASE_URL = process.env.BASE_URL ?? "https://nucpot.dpdns.org"
-const LIT_PATH = "/literature"
+const LIT_PATH = "/publications"
 
 test.describe("Literature drawer feedback + resize (NFM-3765)", { tag: "@integration" }, () => {
   test("drawer mounts with a resize handle and the new wider default", async ({ page }) => {

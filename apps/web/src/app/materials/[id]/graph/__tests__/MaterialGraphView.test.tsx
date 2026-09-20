@@ -248,7 +248,7 @@ describe("MaterialGraphView", () => {
     const backLink = screen.getByRole("link", { name: /返回材料属性/ })
     expect(backLink).toHaveAttribute("href", "/materials/test-material/properties")
     const browseLink = screen.getByRole("link", { name: "浏览材料" })
-    expect(browseLink).toHaveAttribute("href", "/browse")
+    expect(browseLink).toHaveAttribute("href", "/potentials")
   })
 
   it("shows error state with retry button on generic failure", async () => {

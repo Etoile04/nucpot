@@ -105,7 +105,7 @@ export function SearchView() {
     <div className="space-y-6">
       {/* Browse link */}
       <div className="flex justify-end">
-        <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
+        <Link href="/potentials" className="text-blue-400 hover:text-blue-300 text-sm">
           浏览全部
         </Link>
       </div>

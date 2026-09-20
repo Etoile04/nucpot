@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 VALID_LICENSE_TYPES = ("own_work", "author_permission", "open_license")
 
@@ -25,6 +25,24 @@ class PotentialSummary(BaseModel):
     tags: list[str] = []
     file_url: str | None = None
     provider: str = "local"
+    # Captured from the ORM row so ``download_count`` below can rank list
+    # items by popularity (NFM-4990 热门势函数), but excluded from list JSON
+    # — the summary contract stays lean. PotentialDetail redeclares the
+    # field without ``exclude`` so the detail payload is unchanged.
+    extra: dict = Field(default={}, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def download_count(self) -> int:
+        """Proxy download hits (``extra.download_count``; 0 when never downloaded).
+
+        Derived from ``extra`` rather than stored on the model — NFM-4309
+        keeps the counter inside the JSON blob so no migration is needed.
+        """
+        value = (self.extra or {}).get("download_count")
+        if isinstance(value, bool) or not isinstance(value, int):
+            return 0
+        return value
 
 
 class PotentialDetail(PotentialSummary):
@@ -51,23 +69,12 @@ class PotentialDetail(PotentialSummary):
     source: str | None = None
     source_doi: str | None = None
     license: str | None = None
+    # Redeclared without ``exclude`` (see PotentialSummary.extra): the
+    # detail payload keeps serializing the full blob as it always has.
     extra: dict = {}
     verification_status: str = "unverified"
     created_at: datetime | None = None
     updated_at: datetime | None = None
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def download_count(self) -> int:
-        """Proxy download hits (``extra.download_count``; 0 when never downloaded).
-
-        Derived from ``extra`` rather than stored on the model — NFM-4309
-        keeps the counter inside the JSON blob so no migration is needed.
-        """
-        value = self.extra.get("download_count")
-        if isinstance(value, bool) or not isinstance(value, int):
-            return 0
-        return value
 
 
 class PotentialListResponse(BaseModel):

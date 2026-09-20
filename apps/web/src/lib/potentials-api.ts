@@ -58,7 +58,7 @@ export interface ListParams {
   q?: string
   page?: number
   limit?: number
-  sort?: "updated" | "name" | "type"
+  sort?: "updated" | "name" | "type" | "downloads"
 }
 
 /**

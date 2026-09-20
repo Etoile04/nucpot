@@ -38,6 +38,22 @@ const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 const LIGHTRAG_WEBUI_URL =
   process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
 
+// NFM-4990 (IA-REFACTOR P1, supersedes NFM-4987): the potential-function
+// library is a first-level path family, literature lives at /publications,
+// and search is a secondary route under /potentials. Legacy URLs
+// permanently redirect (308) to the new routes; Next.js appends the
+// original query string to redirect destinations, so /browse filter
+// params, /compare?ids=, and /search?q= survive the hop.
+const LEGACY_ROUTE_REDIRECTS = [
+  { source: "/browse", destination: "/potentials" },
+  // :id* matches zero or more segments, so bare /potential redirects to
+  // /potentials and /potential/<id> to /potentials/<id>.
+  { source: "/potential/:id*", destination: "/potentials/:id*" },
+  { source: "/compare", destination: "/potentials/compare" },
+  { source: "/literature/:path*", destination: "/publications/:path*" },
+  { source: "/search", destination: "/potentials/search" },
+]
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -56,6 +72,9 @@ const nextConfig: NextConfig = {
     "d3-zoom",
     "d3-selection",
   ],
+  async redirects() {
+    return LEGACY_ROUTE_REDIRECTS.map((r) => ({ ...r, permanent: true }))
+  },
   async headers() {
     return [
       {

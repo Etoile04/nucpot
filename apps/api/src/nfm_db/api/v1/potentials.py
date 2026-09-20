@@ -208,7 +208,7 @@ async def list_potentials_endpoint(
     type: str | None = Query(None, description="Comma-separated potential types"),
     elements: str | None = Query(None, description="Comma-separated element symbols"),
     q: str | None = Query(None),
-    sort: str = Query("updated", pattern="^(updated|name|type)$"),
+    sort: str = Query("updated", pattern="^(updated|name|type|downloads)$"),
     irradiation: bool | None = Query(None, description="Filter extra.irradiationRelevant == true"),
     has_defect: bool | None = Query(None, alias="hasDefect", description="Filter extra.hasDefectData == true"),
     has_liquid: bool | None = Query(None, alias="hasLiquid", description="Filter extra.hasLiquidPhase == true"),

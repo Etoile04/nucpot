@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test"
 
 /**
- * E2E tests for the Search page (/search).
+ * E2E tests for the Search page (/potentials/search).
  *
  * Covers:
  *  - Smoke: page loads with heading and search interface
@@ -21,7 +21,7 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
   test("loads the search page with heading and mode toggle", async ({
     page,
   }) => {
-    await page.goto("/search", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials/search", { waitUntil: "domcontentloaded" })
 
     // Should show the search heading (default mode is "text")
     const heading = page.locator("h2").first()
@@ -39,7 +39,7 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
   })
 
   test("has meaningful page content after hydration", async ({ page }) => {
-    await page.goto("/search", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials/search", { waitUntil: "domcontentloaded" })
     await expect(page.locator("h2").first()).toBeVisible()
 
     const bodyText = await page.locator("body").innerText()
@@ -47,7 +47,7 @@ test.describe("Search Page", { tag: "@smoke" }, () => {
   })
 
   test("switches to semantic search mode", async ({ page }) => {
-    await page.goto("/search", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials/search", { waitUntil: "domcontentloaded" })
 
     // Default is text search mode
     await expect(page.locator("h2").first()).toContainText("势函数检索")
@@ -71,7 +71,7 @@ test.describe("Search Page — 1440px viewport", { tag: "@integration" }, () => 
       if (msg.type() === "error") consoleErrors.push(msg.text())
     })
 
-    await page.goto("/search", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials/search", { waitUntil: "domcontentloaded" })
     // WHY: `networkidle` is unreliable when the live site holds open streaming
     // or long-poll responses — Playwright never reaches the idle state and the
     // wait times out at 30s. The page is hydrated as soon as the heading h2 is

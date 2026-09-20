@@ -5,7 +5,7 @@
  * that the scoped CSS rules in `blog.css` (`body:has(.blog-page-mount) …`)
  * only override the global app-shell `body { overflow: hidden }` /
  * `<main { overflow-y: auto }>` lock while a blog page is being rendered.
- * Other routes (e.g. /browse, /materials, /compare) keep their original
+ * Other routes (e.g. /potentials, /materials, /potentials/compare) keep their original
  * scroll behaviour.
  */
 

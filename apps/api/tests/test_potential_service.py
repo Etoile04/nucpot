@@ -382,3 +382,51 @@ async def test_list_latency_guard_under_500ms(db_session) -> None:
     elapsed = time.perf_counter() - start
     assert result.total == 65
     assert elapsed < 0.5, f"list_potentials took {elapsed * 1000:.1f}ms (>500ms budget)"
+
+
+@pytest.mark.asyncio
+async def test_list_sorts_by_download_count(db_session) -> None:
+    """NFM-4990: sort=downloads ranks by extra.download_count desc."""
+    await _seed(db_session, name="a_zero", extra={})
+    await _seed(db_session, name="b_top", extra={"download_count": 9})
+    await _seed(db_session, name="c_mid", extra={"download_count": 4})
+    await _seed(db_session, name="d_draft", status="draft", extra={"download_count": 99})
+    result = await list_potentials(db_session, page=1, limit=20, sort="downloads")
+    assert [p.name for p in result.potentials] == ["b_top", "c_mid", "a_zero"]
+    assert result.total == 3
+    assert result.potentials[0].download_count == 9
+
+
+@pytest.mark.asyncio
+async def test_list_download_count_tiebreaks_by_name(db_session) -> None:
+    """Equal counts must paginate deterministically (name asc)."""
+    await _seed(db_session, name="zz_same", extra={"download_count": 5})
+    await _seed(db_session, name="aa_same", extra={"download_count": 5})
+    result = await list_potentials(db_session, page=1, limit=1, sort="downloads")
+    assert result.total == 2
+    assert result.potentials[0].name == "aa_same"
+
+
+@pytest.mark.asyncio
+async def test_list_summary_exposes_download_count_not_extra(db_session) -> None:
+    """List JSON gains download_count but must NOT leak the extra blob."""
+    await _seed(db_session, name="with_dl", extra={"download_count": 7, "internal": "x"})
+    result = await list_potentials(db_session, page=1, limit=20)
+    summary = next(p for p in result.potentials if p.name == "with_dl")
+    assert summary.download_count == 7
+    dumped = summary.model_dump()
+    assert "extra" not in dumped
+    assert dumped["download_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_detail_still_serializes_extra_and_count(db_session) -> None:
+    """Detail contract unchanged: extra serialized, count derived from it."""
+    seeded = await _seed(
+        db_session, name="detail_dl", extra={"download_count": 3, "k": "v"}
+    )
+    detail = await get_potential_by_id(db_session, seeded.id)
+    assert detail is not None
+    assert detail.download_count == 3
+    dumped = detail.model_dump()
+    assert dumped["extra"] == {"download_count": 3, "k": "v"}

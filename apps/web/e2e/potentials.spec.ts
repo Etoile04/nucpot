@@ -19,8 +19,8 @@ import { expect, test } from "@playwright/test"
  * asserts the page shell loads, not that real data renders.
  */
 test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
-  test("/browse page loads (smoke)", async ({ page }) => {
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+  test("/potentials page loads (smoke)", async ({ page }) => {
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await expect(page.locator("nav").first()).toBeVisible()
     await expect(page.locator("body")).toBeVisible()
   })
@@ -29,18 +29,20 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
   // /potential after #1141 claimed the fix — the merged redirect was fine
   // but nothing pinned it, so a stale deploy or accidental route removal
   // had no test to catch it. page.goto follows the redirect, so the
-  // response is /browse's 200; a 404 route would fail both assertions.
-  test("/potential top-level redirects to /browse (BUG-10, NFM-4313)", async ({ page }) => {
+  // response is /potentials' 200; a 404 route would fail both assertions.
+  // Since NFM-4987 the redirect lives in next.config.ts (permanent 308
+  // /potential/:id* → /potentials/:id*), not a route file.
+  test("/potential top-level redirects to /potentials (BUG-10, NFM-4313)", async ({ page }) => {
     const response = await page.goto("/potential", {
       waitUntil: "domcontentloaded",
     })
     expect(response?.status()).toBe(200)
-    await expect(page).toHaveURL(/\/browse/)
+    await expect(page).toHaveURL(/\/potentials\/?$/)
     await expect(page.locator("nav").first()).toBeVisible()
   })
 
   test("/search page loads", async ({ page }) => {
-    await page.goto("/search", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials/search", { waitUntil: "domcontentloaded" })
     await expect(page.locator("body")).toBeVisible()
     // Search page should render its nav like the other pages
     await expect(page.locator("nav").first()).toBeVisible()
@@ -58,7 +60,7 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     // Deep-link to an arbitrary id. The page renders an Empty state rather
     // than 404 when the id is unknown / API is down, so this is a safe shell
     // render check that does not depend on a seeded DB.
-    await page.goto("/potential/smoke-test-id", {
+    await page.goto("/potentials/smoke-test-id", {
       waitUntil: "domcontentloaded",
     })
     await expect(page.locator("body")).toBeVisible()
@@ -69,16 +71,16 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     await expect(page.locator("main").first()).toBeVisible()
   })
 
-  test("/potential/[id] reachable via /browse card click when data exists", async ({ page }) => {
-    // Navigate from /browse. If the API is reachable and returns potentials,
-    // clicking the first card should land on a /potential/<id> URL. If the
+  test("/potentials/[id] reachable via /potentials card click when data exists", async ({ page }) => {
+    // Navigate from /potentials. If the API is reachable and returns potentials,
+    // clicking the first card should land on a /potentials/<id> URL. If the
     // API is down, no card renders and we skip gracefully (test still passes
-    // the /browse shell assertion). This is intentionally tolerant so the
+    // the /potentials shell assertion). This is intentionally tolerant so the
     // suite is green both locally (no API) and in CI (seeded API).
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await expect(page.locator("nav").first()).toBeVisible()
 
-    const firstDetailLink = page.locator('a[href^="/potential/"]').first()
+    const firstDetailLink = page.locator('a[href^="/potentials/"]').first()
     const hasCard = (await firstDetailLink.count()) > 0
 
     if (!hasCard) {
@@ -87,7 +89,7 @@ test.describe("Potential routes (@nfm-283)", { tag: "@integration" }, () => {
     }
 
     await firstDetailLink.click()
-    await expect(page).toHaveURL(/\/potential\//)
+    await expect(page).toHaveURL(/\/potentials\//)
     await expect(page.locator("body")).toBeVisible()
   })
 })
