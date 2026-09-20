@@ -57,17 +57,67 @@ export default function AboutPage() {
           <ul className="space-y-2 text-gray-400">
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              湖南大学邓辉球团队 — 势函数梳理与设计
+              <span className="min-w-0">
+                湖南大学邓辉球团队 — 势函数梳理与设计
+              </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              核动力院 — 核心协作方
+              <span className="min-w-0">核动力院 — 核心协作方</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
-              李文杰 — 项目开发与维护
+              <span className="min-w-0">
+                李文杰 — 项目开发与维护
+              </span>
             </li>
+          </ul>
+        </section>
 
+        <hr className="border-gray-700" />
+
+        {/* Section 3b: 详细页面入口 — NFM-4991 P2 把内联的标准 / 协作
+            章节拆为 /about/standards 与 /about/contributing 详细页。
+            /about 主页保留简短摘要，详细规范与贡献流程跳转到子页。 */}
+        <section>
+          <h2 className="text-2xl font-semibold mb-4">更多</h2>
+          <ul className="space-y-2 text-gray-400">
+            <li className="flex items-start gap-2">
+              <span className="text-blue-400 mt-1">•</span>
+              <span className="min-w-0">
+                <a
+                  href="/about/standards"
+                  className="text-blue-400 hover:underline"
+                >
+                  数据与元数据规范
+                </a>
+                {" "}— 势函数格式、标识符、合规披露、版本发布
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-400 mt-1">•</span>
+              <span className="min-w-0">
+                <a
+                  href="/about/contributing"
+                  className="text-blue-400 hover:underline"
+                >
+                  贡献指南
+                </a>
+                {" "}— 势函数 / 数据集上传、代码 PR 流程、协作团队详情
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-400 mt-1">•</span>
+              <span className="min-w-0">
+                <a
+                  href="/about/data-integrity"
+                  className="text-blue-400 hover:underline"
+                >
+                  数据完整性说明
+                </a>
+                {" "}— 2026-09-02 迁移 070 影响披露与恢复措施
+              </span>
+            </li>
           </ul>
         </section>
 
