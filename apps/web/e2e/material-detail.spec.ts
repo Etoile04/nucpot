@@ -118,6 +118,13 @@ test.describe("Material Detail — interaction tests", { tag: "@integration" }, 
   test("return to browse link is present", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
     await page.goto(DETAIL_URL, { waitUntil: "domcontentloaded" })
+    // Mirror the wait used in the smoke + the other interaction tests: the
+    // detail page is in the "加载中..." loading state until ~t=2000ms while
+    // the API responds with a 404 for the missing fixture and the global
+    // error UI mounts. Without this wait, isMaterialMissingError() races
+    // against the loading text and returns false, causing the test to fall
+    // through to the strict back-link assertion below and fail.
+    await page.waitForTimeout(2000)
 
     if (await isMaterialMissingError(page)) {
       expect(filterRealErrors(consoleErrors)).toEqual([])
