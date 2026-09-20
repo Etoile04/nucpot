@@ -11,12 +11,23 @@ import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/com
 // 势函数列表 / 材料体系 / 文献库 / 关于. Everything that used to be a
 // first-level entry (检索, 对比, 本体, KG, 博客, 反馈) moves into the
 // 「更多」dropdown — functionality preserved, just no longer first-level.
-// Benchmark/数据集/API 文档 blocks are unbuilt in P1 and intentionally
-// NOT rendered (P2 will enable them).
+//
+// NFM-4991 (IA-REFACTOR P2): /datasets is enabled as a first-level entry
+// because the dataset table has real, discoverable rows (see
+// apps/api/src/nfm_db/models/property.py Dataset). The /benchmarks block
+// stays un-rendered (P2 spike: no benchmarks table in ORM yet — deferred
+// to a follow-up ticket per the spike report on NFM-4991). The /api-docs
+// block lives in MORE_LINKS rather than the first-level nav because
+// technical API docs are infrequent-visit content; promoting it to
+// first-level would push the lg-viewport (1024px) CJK nav over the
+// comfortable one-line threshold (6 items + logo + auth + 更多 + session
+// indicator). PR-backlog candidate: revisit when /api-docs gains a public
+// changelog or versioning surface.
 const PRIMARY_LINKS = [
   { href: '/potentials', label: '势函数列表' },
   { href: '/materials', label: '材料体系' },
   { href: '/publications', label: '文献库' },
+  { href: '/datasets', label: '数据集' },
   { href: '/about', label: '关于' },
 ]
 
@@ -28,6 +39,7 @@ const MORE_LINKS = [
   { href: '/ontology', label: '本体' },
   { href: '/blog', label: '博客' },
   { href: '/feedback', label: '反馈' },
+  { href: '/api-docs', label: 'API 文档' },
 ]
 
 function isMoreActive(pathname: string): boolean {

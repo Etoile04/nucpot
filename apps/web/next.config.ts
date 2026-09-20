@@ -133,12 +133,48 @@ const nextConfig: NextConfig = {
       },
     ]
 
+    // NFM-4991 (IA-REFACTOR P2 /api-docs block): expose FastAPI's
+    // Swagger UI + OpenAPI JSON under /docs and /openapi.json so the
+    // /api-docs page can iframe the explorer and a download link can
+    // fetch the spec without CORS surprises. These rewrites are
+    // deliberately merged into `afterFiles` for ALL branches (including
+    // DISABLE_API_REWRITE=true and wouldLoop), so they keep working in
+    // production where nginx handles /api/* — nginx must NOT proxy
+    // /docs or /openapi.json (it would shadow these Next.js rewrites
+    // and bypass the fallback layer). See the deploy note for nginx
+    // exclusions.
+    const docsRewrites = [
+      {
+        // Swagger UI HTML shell. The trailing slash matters: FastAPI
+        // returns the HTML for both /docs and /docs/ but Swagger's
+        // internal links resolve assets relative to the URL it was
+        // loaded from, so /docs is the canonical entry.
+        source: "/docs",
+        destination: `${API_SERVER_FALLBACK}/docs`,
+      },
+      {
+        // Swagger UI assets (swagger-ui-bundle.js, swagger-ui.css,
+        // favicon, etc.). Without this rule the iframe loads an HTML
+        // shell with broken JS/CSS references.
+        source: "/docs/:path*",
+        destination: `${API_SERVER_FALLBACK}/docs/:path*`,
+      },
+      {
+        // Raw OpenAPI 3 spec. The /api-docs page exposes this as a
+        // download link for tooling (Postman / Insomnia / code-gen).
+        source: "/openapi.json",
+        destination: `${API_SERVER_FALLBACK}/openapi.json`,
+      },
+    ]
+
+    const baseAfterFiles = [...lightragRewrites, ...docsRewrites]
+
     // Explicit disable: production deployments with nginx (or another
     // upstream proxy) handling /api/* must set DISABLE_API_REWRITE=true.
     // Without this, the rewrite below would proxy /api/* back through
     // Next.js and either hang or fail (NFM-1407).
     if (DISABLE_API_REWRITE) {
-      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
+      return { ...corpusIndexRewrites, afterFiles: baseAfterFiles }
     }
 
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
@@ -148,12 +184,12 @@ const nextConfig: NextConfig = {
       new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
-      return { ...corpusIndexRewrites, afterFiles: lightragRewrites }
+      return { ...corpusIndexRewrites, afterFiles: baseAfterFiles }
     }
 
     return {
       ...corpusIndexRewrites,
-      afterFiles: lightragRewrites,
+      afterFiles: baseAfterFiles,
       // NFM-3317: the /api/* proxy must be a FALLBACK rewrite, not
       // afterFiles. afterFiles rewrites run BEFORE dynamic routes match, so
       // the catch-all hijacked every dynamic BFF route (/api/potentials/[id],

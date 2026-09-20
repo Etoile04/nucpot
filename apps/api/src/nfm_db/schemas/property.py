@@ -138,6 +138,41 @@ class DatasetResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# NFM-4991 (IA-REFACTOR P2 /datasets block)
+# ---------------------------------------------------------------------------
+
+
+class DatasetListItem(BaseModel):
+    """Lightweight projection of ``Dataset`` for the /datasets list page.
+
+    Deliberately excludes ``description`` (potentially long and is rendered
+    on the detail page) and keeps the join columns (``material_id``,
+    ``source_id``) as raw UUIDs so the list endpoint stays a single-table
+    query without ORM eager-loads.  The frontend renders the IDs as
+    monospace chips and links them to /materials/<id> and
+    /publications/<id> respectively.
+
+    Optional ``material_name`` / ``source_title`` are populated only when
+    the caller explicitly opts in (e.g. via ``?expand=material``); the
+    default list response keeps them null so simple anonymous list fetches
+    don't trigger the extra join round-trip.
+    """
+
+    id: UUID
+    material_id: UUID
+    material_name: str | None = None
+    source_id: UUID | None
+    source_title: str | None = None
+    title: str
+    measurement_date: date | None
+    is_verified: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
 # NFM-4159 — §5.2 attribution blocks (LOCKED contract).
 # Block definitions live ABOVE the response subclasses that embed them.
 # ---------------------------------------------------------------------------
