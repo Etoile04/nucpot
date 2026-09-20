@@ -45,5 +45,9 @@
         <key>Minute</key>
         <integer>20</integer>
     </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/nfm-g2/launchd-cleanup-daily.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/nfm-g2/launchd-cleanup-daily.log</string>
 </dict>
 </plist>
