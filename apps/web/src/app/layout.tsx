@@ -24,7 +24,7 @@ export const metadata: Metadata = {
  * which made it invisible to Nav (root-level sibling).  Moving it here
  * resolves the context-hierarchy bug.  The provider gracefully returns
  * "unauthenticated" when no session cookie exists, so public routes
- * (/login, /browse) are unaffected — SessionIndicator simply hides.
+ * (/login, /potentials) are unaffected — SessionIndicator simply hides.
  */
 export default function RootLayout({
   children,

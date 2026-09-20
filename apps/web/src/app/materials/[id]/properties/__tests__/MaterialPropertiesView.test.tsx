@@ -166,6 +166,6 @@ describe("MaterialPropertiesView", () => {
     await waitFor(() => {
       expect(screen.getByText("返回浏览")).toBeInTheDocument()
     })
-    expect(screen.getByText("返回浏览").closest("a")).toHaveAttribute("href", "/browse")
+    expect(screen.getByText("返回浏览").closest("a")).toHaveAttribute("href", "/potentials")
   })
 })

@@ -8,14 +8,16 @@ interface NavItem {
   ariaLabel?: string
 }
 
+// NFM-4990 (IA-REFACTOR P1): first-level entries mirror the Nav.tsx
+// primary set from the NFM-4984 site-map ruling, plus 博客 itself — this
+// header belongs to the blog surface. Retired first-level destinations
+// (检索/对比/本体/反馈) stay reachable via the global Nav 更多 menu.
 const mainNavigation: NavItem[] = [
-  { label: "浏览", href: "/browse", ariaLabel: "浏览数据" },
-  { label: "本体", href: "/ontology", ariaLabel: "本体可视化浏览" },
-  { label: "高级检索", href: "/search", ariaLabel: "高级检索功能" },
-  { label: "对比", href: "/compare", ariaLabel: "对比材料数据" },
-  { label: "反馈", href: "/feedback", ariaLabel: "提供反馈" },
-  { label: "关于", href: "/about", ariaLabel: "关于我们" },
+  { label: "势函数列表", href: "/potentials", ariaLabel: "浏览势函数数据" },
+  { label: "材料体系", href: "/materials", ariaLabel: "材料体系库" },
+  { label: "文献库", href: "/publications", ariaLabel: "文献库" },
   { label: "博客", href: "/blog", ariaLabel: "技术博客文章" },
+  { label: "关于", href: "/about", ariaLabel: "关于我们" },
 ]
 
 export function SiteHeader() {

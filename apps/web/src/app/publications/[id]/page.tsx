@@ -23,7 +23,7 @@ export async function generateMetadata({
  * /literature/{uuid} — Literature Detail (deep-link page)
  *
  * Serves as the canonical deep-link target for literature items. The list
- * page at /literature renders an <a href="/literature/{id}"> on each row
+ * page at /publications renders an <a href="/publications/{id}"> on each row
  * title so that right-click / open-in-new-tab lands here instead of 404.
  *
  * Default view is **Layout B** per docs/specs/G1-extraction-value-

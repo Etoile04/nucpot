@@ -58,6 +58,18 @@ def _matches_temperature(
     return not (temp_max is not None and low > temp_max)
 
 
+def _download_count(row: Potential) -> int:
+    """Read the NFM-4309 ``extra.download_count`` counter, 0 when absent.
+
+    Mirrors the PotentialSummary/PotentialDetail computed field so ranking
+    (sort=downloads) and the serialized value can never disagree.
+    """
+    value = (row.extra or {}).get("download_count")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
 async def list_potentials(
     db: AsyncSession,
     *,
@@ -121,17 +133,35 @@ async def list_potentials(
     python_filters = bool(
         elements or extra_filters or temp_min is not None or temp_max is not None
     )
-    if python_filters:
-        wanted = {e.strip() for e in (elements or []) if e.strip()}
-        extra_filters = extra_filters or {}
+    wanted = {e.strip() for e in (elements or []) if e.strip()}
+    extras = extra_filters or {}
+
+    def _passes_python_filters(row: Potential) -> bool:
+        return (
+            (not wanted or wanted.intersection(row.elements or []))
+            and _matches_extra(row, extras)
+            and _matches_temperature(row, temp_min, temp_max)
+        )
+
+    if sort == "downloads":
+        # NFM-4990 热门势函数: popularity lives in extra.download_count
+        # (the NFM-4309 counter), which has no SQL column. Keep the query
+        # portable — no PG-specific JSONB ordering — by ranking the
+        # materialized rows in Python, same rationale as the
+        # python_filters path below (corpus is small, ≤ hundreds of rows).
+        # Name is the deterministic tiebreak between equal counts.
+        # NFM-4993 F4: Python-side element/extra/temp filters apply BEFORE
+        # ranking so `?sort=downloads&elements=Fe` no longer silently
+        # drops them (data is already materialized — zero extra cost).
+        candidates = (await db.execute(stmt)).scalars().all()
+        if python_filters:
+            candidates = [r for r in candidates if _passes_python_filters(r)]
+        ranked = sorted(candidates, key=lambda r: (-_download_count(r), r.name))
+        total = len(ranked)
+        rows = ranked[offset : offset + limit]
+    elif python_filters:
         all_rows = (await db.execute(stmt)).scalars().all()
-        matched = [
-            r
-            for r in all_rows
-            if (not wanted or wanted.intersection(r.elements or []))
-            and _matches_extra(r, extra_filters)
-            and _matches_temperature(r, temp_min, temp_max)
-        ]
+        matched = [r for r in all_rows if _passes_python_filters(r)]
         total = len(matched)
         rows = matched[offset : offset + limit]
     else:

@@ -144,7 +144,7 @@ export function MaterialPropertiesView({
           </Text>
         </div>
         <Link
-          href="/browse"
+          href="/potentials"
           className="text-blue-400 hover:text-blue-300 text-sm"
         >
           返回浏览

@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import LiteratureManager from "./LiteratureManager"
 
 export const metadata: Metadata = {
-  title: "文献管理 - NucPot",
+  title: "文献库 - NucPot",
   description:
     "管理核材料文献库：上传 PDF、检索文献、追踪提取状态、并触发 LLM 提取。",
 }

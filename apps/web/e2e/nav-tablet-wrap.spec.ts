@@ -12,7 +12,10 @@
  *     desktop strip is hidden (lg breakpoint chosen as the fix) and the
  *     hamburger is shown, or — if a future fix shrinks the strip — every
  *     desktop link renders as one visual line.
- *   - AC-2: 1024px (lg) -> desktop nav shows all 11 links single-line.
+ *   - AC-2: 1024px (lg) -> desktop nav shows all primary links + the 更多
+ *     dropdown trigger single-line. (NFM-4989: label list re-based from the
+ *     retired 11-link strip to the 4-item primary nav + 更多 of the
+ *     NFM-4984/NFM-4990 IA refactor.)
  *   - AC-3: 767px and below -> hamburger button replaces the inline nav strip.
  *   - AC-4: this spec must fail on main before the fix, pass after.
  */
@@ -25,19 +28,17 @@ import { test, expect, type Locator, type Page } from "@playwright/test"
 const DESKTOP_NAV = "nav > div > div.hidden.lg\\:flex, nav > div > div.hidden.md\\:flex"
 const HAMBURGER = "nav button[aria-label='打开导航菜单']"
 
-/** The 11 link labels the desktop strip should expose, in render order. */
+/** The primary labels the desktop strip should expose, in render order.
+ *  NFM-4984/NFM-4990 IA refactor: 4 first-level destinations + the 更多
+ *  dropdown trigger that collected the retired first-level entries
+ *  (检索/对比/图谱/本体/博客/反馈). The session area (登录) is auth-state
+ *  dependent and is covered by session specs, not this layout regression. */
 const DESKTOP_LABELS = [
-  "浏览",
-  "材料库",
-  "本体",
-  "文献管理",
-  "高级检索",
-  "对比",
-  "反馈",
+  "势函数列表",
+  "材料体系",
+  "文献库",
   "关于",
-  "博客",
-  "知识图谱",
-  "登录",
+  "更多",
 ] as const
 
 function desktopLinkByLabel(page: Page, label: string): Locator {
@@ -99,7 +100,7 @@ test.describe("Global Top Nav — Tablet Wrap Regression (NFM-2198)", () => {
     }
   })
 
-  test("AC-2: 1024px (lg) — desktop nav shows all 11 links single-line", async ({ page }) => {
+  test("AC-2: 1024px (lg) — desktop nav shows all primary links + 更多 single-line", async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 800 })
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 })
 

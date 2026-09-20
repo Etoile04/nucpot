@@ -167,7 +167,7 @@ export function MaterialDetailContent({ materialId }: MaterialDetailContentProps
             {m?.formula ? `化学式：${m.formula}` : `材料 ID：${materialId}`}
           </Text>
         </div>
-        <Link href="/browse" className="text-blue-400 hover:text-blue-300 text-sm">
+        <Link href="/potentials" className="text-blue-400 hover:text-blue-300 text-sm">
           返回浏览
         </Link>
       </div>

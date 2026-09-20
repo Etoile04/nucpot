@@ -421,7 +421,7 @@ export default function LiteratureManager() {
               e.preventDefault()
               void openDetail(record.id)
             }}
-            href={`/literature/${record.id}`}
+            href={`/publications/${record.id}`}
           >
             {record.title || "(无标题)"}
           </a>

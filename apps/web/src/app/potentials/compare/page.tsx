@@ -46,7 +46,7 @@ function CompareContent() {
           <h1 className="text-xl font-semibold mb-2">势函数对比</h1>
           <p className="text-gray-400 mb-4">请至少选择 2 个势函数进行对比</p>
           <Link
-            href="/browse"
+            href="/potentials"
             className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm transition"
           >
             前往浏览
@@ -69,7 +69,7 @@ function CompareContent() {
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-400 mb-4">{error}</p>
-          <Link href="/browse" className="text-blue-400 hover:text-blue-300">
+          <Link href="/potentials" className="text-blue-400 hover:text-blue-300">
             返回浏览
           </Link>
         </div>
@@ -198,7 +198,7 @@ function CompareContent() {
             </p>
           </div>
           <Link
-            href="/browse"
+            href="/potentials"
             className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm transition"
           >
             ← 返回浏览
@@ -219,7 +219,7 @@ function CompareContent() {
                     className="text-center p-3 text-sm font-semibold min-w-[200px]"
                   >
                     <Link
-                      href={`/potential/${p.id}`}
+                      href={`/potentials/${p.id}`}
                       className="text-blue-400 hover:text-blue-300 transition"
                     >
                       {p.display_name || p.name}

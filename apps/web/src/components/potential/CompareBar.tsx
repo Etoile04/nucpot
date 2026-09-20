@@ -18,7 +18,7 @@ export function CompareBar({ selectedIds, potentials, onRemove, onClear }: Compa
 
   const handleCompare = () => {
     if (!canCompare) return
-    router.push(`/compare?ids=${selectedIds.join(",")}`)
+    router.push(`/potentials/compare?ids=${selectedIds.join(",")}`)
   }
 
   return (

@@ -154,7 +154,7 @@ describe("MaterialDetailContent", () => {
 
     await waitFor(() => {
       const link = screen.getByText("返回浏览").closest("a")
-      expect(link).toHaveAttribute("href", "/browse")
+      expect(link).toHaveAttribute("href", "/potentials")
     })
   })
 
