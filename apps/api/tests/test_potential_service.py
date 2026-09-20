@@ -408,6 +408,23 @@ async def test_list_download_count_tiebreaks_by_name(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_sorts_by_downloads_applies_python_filters(db_session) -> None:
+    """NFM-4993 F4: sort=downloads must not silently drop element filters.
+
+    `?sort=downloads&elements=Mo` previously returned the unfiltered corpus
+    ranked by downloads; the combination must filter first, then rank.
+    """
+    await _seed(db_session, name="mo_top", elements=["Mo"], extra={"download_count": 9})
+    await _seed(db_session, name="u_top", elements=["U"], extra={"download_count": 8})
+    await _seed(db_session, name="mo_low", elements=["Mo"], extra={"download_count": 1})
+    result = await list_potentials(
+        db_session, page=1, limit=20, sort="downloads", elements=["Mo"]
+    )
+    assert [p.name for p in result.potentials] == ["mo_top", "mo_low"]
+    assert result.total == 2
+
+
+@pytest.mark.asyncio
 async def test_list_summary_exposes_download_count_not_extra(db_session) -> None:
     """List JSON gains download_count but must NOT leak the extra blob."""
     await _seed(db_session, name="with_dl", extra={"download_count": 7, "internal": "x"})
