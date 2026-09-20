@@ -48,6 +48,6 @@ describe("PotentialCard", () => {
     render(<PotentialCard potential={mockPotential} />)
 
     const nameLink = screen.getByText("Nb-EAM-FS-001").closest("a")
-    expect(nameLink?.getAttribute("href")).toBe("/potential/pot-001")
+    expect(nameLink?.getAttribute("href")).toBe("/potentials/pot-001")
   })
 })

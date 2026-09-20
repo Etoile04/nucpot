@@ -24,7 +24,7 @@ beforeEach(() => {
 })
 
 // ---------------------------------------------------------------------------
-// NFM-4310 (BUG-29): the element filter on /browse and /search was fed by a
+// NFM-4310 (BUG-29): the element filter on /potentials and /search was fed by a
 // fetch that read `body.elements` at the wrong nesting level (pre-envelope)
 // and swallowed every error. These tests pin the corrected contract.
 // ---------------------------------------------------------------------------

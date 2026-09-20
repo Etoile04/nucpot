@@ -9,10 +9,10 @@ interface NavItem {
 }
 
 const mainNavigation: NavItem[] = [
-  { label: "浏览", href: "/browse", ariaLabel: "浏览数据" },
+  { label: "浏览", href: "/potentials", ariaLabel: "浏览数据" },
   { label: "本体", href: "/ontology", ariaLabel: "本体可视化浏览" },
   { label: "高级检索", href: "/search", ariaLabel: "高级检索功能" },
-  { label: "对比", href: "/compare", ariaLabel: "对比材料数据" },
+  { label: "对比", href: "/potentials/compare", ariaLabel: "对比材料数据" },
   { label: "反馈", href: "/feedback", ariaLabel: "提供反馈" },
   { label: "关于", href: "/about", ariaLabel: "关于我们" },
   { label: "博客", href: "/blog", ariaLabel: "技术博客文章" },

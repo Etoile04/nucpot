@@ -19,7 +19,7 @@ interface ElementOptionsState {
 
 /**
  * Candidate element list for the potential-function element filter
- * (/browse and /search). Reads the ApiResponse envelope from /api/stats
+ * (/potentials and /search). Reads the ApiResponse envelope from /api/stats
  * and keeps loading / error / data states distinct so an outage renders
  * an error state with retry instead of 「无匹配元素」 (NFM-4310, BUG-29).
  */

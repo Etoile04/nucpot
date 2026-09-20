@@ -33,14 +33,14 @@ function filterRealErrors(errors: string[]): string[] {
 test.describe("Browse Page", { tag: "@smoke" }, () => {
   test("loads the browse page successfully", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     const headerNav = page.locator("nav").first()
     await expect(headerNav).toBeVisible()
     expect(filterRealErrors(consoleErrors)).toEqual([])
   })
 
   test("has page content (not blank after JS hydration)", async ({ page }) => {
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await expect(page.locator("nav").first()).toBeVisible()
 
     const bodyText = await page.locator("body").innerText()
@@ -50,17 +50,17 @@ test.describe("Browse Page", { tag: "@smoke" }, () => {
   test("navigation header is present with browse link active", async ({
     page,
   }) => {
-    await page.goto("/browse")
+    await page.goto("/potentials")
     const headerNav = page.locator("nav").first()
     await expect(headerNav).toBeVisible()
-    await expect(headerNav.locator('a[href="/browse"]')).toContainText("浏览")
+    await expect(headerNav.locator('a[href="/potentials"]')).toContainText("浏览")
   })
 
   // TODO: Re-enable when pagination nav with aria-label="分页导航" is implemented
   test.skip(true, "Pagination nav[aria-label=\"分页导航\"] not present on live site browse page")
 
   test("pagination navigation is rendered", async ({ page }) => {
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     const paginationNav = page.locator('nav[aria-label="分页导航"]')
     await expect(paginationNav).toBeVisible({ timeout: 15_000 })
   })
@@ -69,7 +69,7 @@ test.describe("Browse Page", { tag: "@smoke" }, () => {
 test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
   test("filter controls are present and interactive", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // The browse page has a filter sidebar with checkboxes for function types
@@ -87,7 +87,7 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
 
   test("sort dropdown is present", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // The sort dropdown has options: 最近更新/按名称/按类型
@@ -103,7 +103,7 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
 
   test("potential cards render after load", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // Potential cards should render in the grid
@@ -115,7 +115,7 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
 
   test("reset filters button is present", async ({ page }) => {
     const consoleErrors = collectConsoleErrors(page)
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     const resetBtn = page.getByRole("button", { name: /重置筛选|重置|reset/i })
@@ -133,7 +133,7 @@ test.describe("Browse — interaction tests", { tag: "@integration" }, () => {
     const pageErrors: string[] = []
     page.on("pageerror", (e) => pageErrors.push(e.message))
 
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     expect(filterRealErrors(consoleErrors)).toEqual([])
@@ -146,7 +146,7 @@ test.describe("Browse — responsive", { tag: "@integration" }, () => {
     const consoleErrors = collectConsoleErrors(page)
 
     await page.setViewportSize({ width: 1024, height: 768 })
-    await page.goto("/browse", { waitUntil: "domcontentloaded" })
+    await page.goto("/potentials", { waitUntil: "domcontentloaded" })
     await page.waitForTimeout(2000)
 
     // Nav should be visible

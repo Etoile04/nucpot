@@ -97,7 +97,7 @@ export function PotentialDetailPage({ id }: PotentialDetailPageProps) {
   return (
     <main className="max-w-[1000px] mx-auto px-6 py-8">
       <Space direction="vertical" size="small" style={{ width: "100%" }} className="mb-4">
-        <Link href="/browse">← 返回列表</Link>
+        <Link href="/potentials">← 返回列表</Link>
         <Title level={2} style={{ margin: 0 }}>
           {title}
           {detail.version && detail.version !== "1.0" && (

@@ -19,11 +19,11 @@ test.describe("Homepage", { tag: "@smoke" }, () => {
     const homeLink = page.locator('nav a[href="/"]')
     await expect(homeLink).toContainText("NucPot")
 
-    const browseLink = page.locator('nav a[href="/browse"]')
+    const browseLink = page.locator('nav a[href="/potentials"]')
     await expect(browseLink).toContainText("浏览")
 
     await browseLink.click()
-    await expect(page).toHaveURL(/\/browse/)
+    await expect(page).toHaveURL(/\/potentials\/?$/)
   })
 
   // TODO: Re-enable when search form is added to homepage

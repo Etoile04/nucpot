@@ -44,7 +44,7 @@ export default function GraphError({ error, reset }: ErrorProps) {
         }
       />
       <Text type="secondary" className="block mt-4">
-        <Link href="/browse" className="text-blue-400 hover:text-blue-300">
+        <Link href="/potentials" className="text-blue-400 hover:text-blue-300">
           ← 返回材料浏览
         </Link>
       </Text>
