@@ -1,14 +1,19 @@
 /**
- * API client for dataset endpoints.
+ * Browser-side API client for dataset endpoints.
  *
  * NFM-4991 (IA-REFACTOR P2 /datasets block):
  *   - listDatasets() → GET /api/datasets          (BFF → FastAPI)
- *   - getDataset(id) → GET /api/datasets/{id}     (BFF → FastAPI)
  *
- * Same-origin BFF routes so the page can hit `/api/datasets` without
- * worrying about the FastAPI host or CORS. The BFF forwards to the
- * co-located FastAPI (`API_SERVER_URL`) and unwraps the standard
+ * Same-origin BFF routes so client components can hit `/api/datasets`
+ * without worrying about the FastAPI host or CORS. The BFF forwards to
+ * the co-located FastAPI (`API_SERVER_URL`) and unwraps the standard
  * `{success, data}` envelope.
+ *
+ * BROWSER-ONLY (NFM-5020): these relative URLs throw in Node
+ * (`Failed to parse URL from /api/...`) when fetched from a server
+ * component. Server-side data access lives in lib/datasets-server.ts,
+ * which resolves an absolute API base — the former getDataset() moved
+ * there as getDatasetServer() after it broke /datasets/{id} SSR.
  */
 
 export interface DatasetListItem {
@@ -22,21 +27,6 @@ export interface DatasetListItem {
   is_verified: boolean
   created_at: string
   updated_at: string
-}
-
-export interface DatasetDetail {
-  id: string
-  material_id: string
-  source_id: string | null
-  title: string
-  description: string | null
-  measurement_date: string | null
-  is_verified: boolean
-  created_at: string
-  updated_at: string
-  // NFM-4159 §5.2 attribution block — locked field names. Status is
-  // 'placeholder' on recast-restored datasets, 'intact' otherwise.
-  attribution: { status: "placeholder" | "intact" }
 }
 
 export interface DatasetListResult {
@@ -90,42 +80,6 @@ export async function listDatasets(
     const envelope = (await response.json()) as {
       success?: boolean
       data?: DatasetListResult
-      error?: string
-    }
-    if (!envelope.success || !envelope.data) {
-      throw new Error(envelope.error ?? "数据集响应格式异常")
-    }
-    return envelope.data
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error("数据集请求超时")
-    }
-    throw err
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-export async function getDataset(id: string): Promise<DatasetDetail> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    const response = await fetch(`/api/datasets/${encodeURIComponent(id)}`, {
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      cache: "no-store",
-    })
-    if (response.status === 404) {
-      throw new Error("数据集不存在")
-    }
-    if (!response.ok) {
-      throw new Error(
-        `加载数据集失败: ${response.status} ${response.statusText}`.trim(),
-      )
-    }
-    const envelope = (await response.json()) as {
-      success?: boolean
-      data?: DatasetDetail
       error?: string
     }
     if (!envelope.success || !envelope.data) {

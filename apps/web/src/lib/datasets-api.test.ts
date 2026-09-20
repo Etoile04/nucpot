@@ -1,14 +1,15 @@
 /**
- * Unit tests for the dataset API client.
+ * Unit tests for the browser-side dataset API client.
  *
  * NFM-4991 (IA-REFACTOR P2 /datasets block): the client unwraps the
- * BFF envelope and surfaces 404 distinctly so the detail page can
- * render a friendly error boundary.
+ * BFF envelope and surfaces errors distinctly so the list view can
+ * render a friendly error state. Server-side (SSR) data access is
+ * covered by datasets-server.test.ts (NFM-5020).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { getDataset, listDatasets } from "@/lib/datasets-api"
+import { listDatasets } from "@/lib/datasets-api"
 
 function callUrl(call: unknown): string {
   const args = call as unknown as [unknown, RequestInit?]
@@ -110,41 +111,5 @@ describe("listDatasets", () => {
     )
 
     await expect(listDatasets()).rejects.toThrow(/boom/)
-  })
-})
-
-describe("getDataset", () => {
-  it("calls /api/datasets/{id} with URL-encoded id", async () => {
-    fetchMock.mockResolvedValueOnce(
-      okJson({
-        success: true,
-        data: {
-          id: "id-1",
-          material_id: "m-1",
-          source_id: null,
-          title: "t",
-          description: null,
-          measurement_date: null,
-          is_verified: false,
-          created_at: "2026-09-20T00:00:00Z",
-          updated_at: "2026-09-20T00:00:00Z",
-          attribution: { status: "intact" },
-        },
-      }),
-    )
-
-    await getDataset("id-1")
-    expect(callUrl(fetchMock.mock.calls[0])).toBe("/api/datasets/id-1")
-  })
-
-  it("throws a friendly 404 message", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: false, error: "no such" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      }),
-    )
-
-    await expect(getDataset("missing")).rejects.toThrow("数据集不存在")
   })
 })
