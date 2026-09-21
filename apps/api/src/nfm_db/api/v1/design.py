@@ -242,9 +242,15 @@ def _compute_convergence(result) -> ConvergenceMetrics:  # type: ignore[type-arg
         return ConvergenceMetrics()
 
     # Reference point for HV: 10 % above the worst objective across all
-    # generations.  This ensures the entire front is "inside" the box.
+    # generations.  pymoo HV requires the reference to *dominate* every
+    # F row (F[i] <= ref_point in every dim).  Since F values are <= 0
+    # (negated objectives in minimization sense), ``worst`` is the
+    # *least* negative row; multiplying by 0.9 brings the reference 10 %
+    # *toward zero*, i.e. larger than worst, so it dominates every row.
+    # Multiplying by 1.1 would push the reference past the front and
+    # shrink HV below the true dominated volume (NFM-5064).
     worst = np.max(np.vstack(all_F), axis=0)
-    ref_point = worst * 1.1
+    ref_point = worst * 0.9
 
     # GD reference set = final Pareto front (approximation quality
     # measured as distance to the final front).

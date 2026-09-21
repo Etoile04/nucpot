@@ -443,3 +443,61 @@ def test_constraints_schema():
     assert c.max_single_element == 20
     assert c.n_elements == (2, 6)
     assert c.bv_ratio == (3.0, 6.5)
+
+
+# ---------------------------------------------------------------------------
+# HV reference-point formula (NFM-5064)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_compute_convergence_hv_nonzero_for_non_degenerate_front():
+    """`_compute_convergence` must return non-zero hv_history for a front
+    whose objectives are dominated by the reference point (NFM-5064).
+
+    The bug being fixed: ``ref_point = worst * 1.1`` places the reference
+    *past* the front when F is negative (minimization sense), so pymoo HV
+    computes a value smaller than the true dominated volume. After the
+    fix (``worst * 0.9``), the reference is dominated by every F row and
+    HV matches the actual dominated hypervolume.
+    """
+    from nfm_db.api.v1.design import _compute_convergence
+
+    # Build a 3-objective front in minimization sense with a diagonal of
+    # 10 solutions spanning [-2.0, -1.0] in each dim (separation 1.0 ≫
+    # 0.1, satisfying the AC's "max-min separation ≥ 0.1" requirement).
+    # With buggy ``worst * 1.1`` (ref_point = -1.1), pymoo HV computes
+    # 0.7290 — below the AC threshold of 1.0. With fixed ``worst * 0.9``
+    # (ref_point = -0.9), HV computes 1.3310 — comfortably ≥ 1.0. The
+    # threshold therefore discriminates the bug from the fix.
+    grid = np.linspace(-2.0, -1.0, 10)
+    F1 = np.column_stack([grid, grid, grid])
+    F2 = F1 - 0.2  # second generation improved by 0.2 in every dim
+    F3 = F1 - 0.4  # third generation improved by 0.4 in every dim
+
+    def _make_entry(F: np.ndarray) -> MagicMock:
+        pop = MagicMock()
+        pop.__len__.return_value = F.shape[0]
+        pop.get.side_effect = lambda key, _F=F: {"F": _F}.get(key)
+        entry = MagicMock()
+        entry.pop = pop
+        return entry
+
+    history = [_make_entry(F1), _make_entry(F2), _make_entry(F3)]
+    result = MagicMock()
+    result.algorithm.history = history
+
+    metrics = _compute_convergence(result)
+
+    assert len(metrics.hv_history) == 3
+    for hv in metrics.hv_history:
+        # Per NFM-5064 AC: hv_history must be non-zero (≥ 1.0 against a
+        # 3-objective front with max-min separation ≥ 0.1 in each dim).
+        # A buggy ref_point = worst * 1.1 puts the reference past the
+        # front and pymoo HV computes a value below 1.0; the fix lifts
+        # the reference to the dominated side and HV reaches ≥ 1.0.
+        assert hv > 0.0, f"HV collapsed to {hv} — ref_point is past the front"
+        assert hv >= 1.0, f"HV = {hv:.4f} below 1.0 — ref_point formula regressed"
+
+    # GD history should remain finite and non-negative.
+    assert all(gd >= 0.0 for gd in metrics.gd_history)
