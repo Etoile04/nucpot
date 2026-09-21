@@ -25,6 +25,13 @@ import { SessionIndicator, SessionTimerBadge, useExpiringSoonToast } from '@/com
 // /benchmarks remains deferred (still un-built — ORM ticket pending);
 // its placement is the responsibility of its own ticket per the
 // NFM-4991 spike's T2 unblock criterion.
+//
+// NFM-5068 (NAV-CLEANUP, CEO directive 2026-09-21): 「势函数检索」and
+// 「势函数对比」are removed from 「更多」— both capabilities are embedded
+// in the browse page (/potentials header search box → /potentials/search,
+// card compare checkboxes + CompareBar → /potentials/compare). The routes
+// themselves stay (the browse page links to them; legacy 308 targets
+// unchanged), they are just no longer nav entries.
 const PRIMARY_LINKS = [
   { href: '/potentials', label: '势函数列表' },
   { href: '/materials', label: '材料体系' },
@@ -35,8 +42,6 @@ const PRIMARY_LINKS = [
 ]
 
 const MORE_LINKS = [
-  { href: '/potentials/search', label: '势函数检索' },
-  { href: '/potentials/compare', label: '势函数对比' },
   { href: '/kg/explore', label: '图谱浏览' },
   { href: '/kg/search', label: 'KG 搜索' },
   { href: '/ontology', label: '本体' },
