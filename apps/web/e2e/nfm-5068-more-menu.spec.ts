@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test"
 
+import { setupPotentialsListMock } from "./fixtures/nfm-5068-potentials-mock-server"
+
 /**
  * NFM-5068 — 「更多」dropdown dedupe (CEO decision, 2026-09-21).
  *
@@ -70,7 +72,15 @@ test.describe("NFM-5068 更多 dropdown dedupe", () => {
     }
   })
 
-  test("浏览势函数 still embeds both entry points (search form + compare toggle)", async ({ page }) => {
+  test("浏览势函数 still embeds both entry points (search form + compare toggle)", async ({
+    page,
+  }) => {
+    // NFM-5070 R1: 「对比」 is the per-card compare label — it only renders
+    // when ≥1 card exists, so a dataless backend (empty corpus or unreachable
+    // API) leaves the page on the 暂无势函数数据 / 加载失败 state and this
+    // test times out. Seed the list via route interception (NFM-4204 mock
+    // convention) so the assertion holds in every environment.
+    await setupPotentialsListMock(page)
     await page.goto("/potentials", { waitUntil: "domcontentloaded" })
 
     // 页头快速检索(role=search) → /potentials/search?q=
