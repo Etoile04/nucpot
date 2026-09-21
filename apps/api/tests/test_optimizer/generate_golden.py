@@ -28,15 +28,6 @@ import sys
 import time
 from pathlib import Path
 
-# ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
-# ruff flags both, prefer the lowercase form for readability here.
-_USE_NEW_ALIAS = hasattr(_dt, "UTC")
-_NOW = (
-    (lambda: _dt.datetime.now(tz=_dt.UTC))  # type: ignore[attr-defined]
-    if _USE_NEW_ALIAS
-    else (lambda: _dt.datetime.now(tz=_dt.timezone.utc))
-)
-
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.crossover.sbx import SBX
@@ -46,6 +37,16 @@ from pymoo.optimize import minimize
 
 from nfm_db.optimization.nsga2_problem import ALLOY_ELEMENTS
 from nfm_db.optimization.zr_only import ZrOnlyProblem
+
+
+# ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
+# prefer the lowercase form for readability here. ``hasattr`` keeps this
+# working on Python 3.10 where ``datetime.UTC`` does not yet exist.
+def _now() -> _dt.datetime:
+    """Return ``datetime.now()`` with a UTC tzinfo across Python versions."""
+    if hasattr(_dt, "UTC"):
+        return _dt.datetime.now(tz=_dt.UTC)  # type: ignore[attr-defined]
+    return _dt.datetime.now(tz=_dt.UTC)
 
 HERE = Path(__file__).resolve().parent
 GOLDEN_PATH = HERE / "test_zr_pareto_golden.json"
@@ -134,7 +135,7 @@ def _build_compositions(X: np.ndarray) -> list[dict[str, float]]:
 
 def _build_provenance() -> dict:
     return {
-        "generated_at_utc": _NOW().isoformat(),
+        "generated_at_utc": _now().isoformat(),
         "generator": "tests.test_optimizer.generate_golden",
         "boundary": "Zr-only (Mo, Nb, V, Ti, Cr forced to 0)",
         "excluded_element_basis": {
