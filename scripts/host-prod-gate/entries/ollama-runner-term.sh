@@ -29,13 +29,27 @@
 #      escalation: a runner that ignores SIGTERM is an operator record,
 #      not something the daemon should force-kill.
 #
+# NFM-5083 (Option D-2): same chokepoint, additive --max-lifetime <sec>
+# mode for preventive recycle of IDLE MLX runners older than the knob
+# (initial 1500s = 25 min — may be raised to 90 min once upstream #18505
+# lands via NFM-4925). The under-load guard is `ps -o %cpu=` — a runner
+# actively decoding pegs CPU and is NEVER recycled, even past the
+# lifetime; the mode exists to also recycle a stable, no-longer-needed
+# subprocess before it has had time to wedge, so future wedge events
+# become bounded single-document failures rather than container-down
+# events. The existing wedge-recovery path is untouched: --max-lifetime
+# is opt-in (default behavior unchanged).
+#
 # usage: ollama-runner-term.sh <pid> --model <model>
+#        ollama-runner-term.sh <pid> --model <model> --max-lifetime <sec>
 # Exit codes:
 #   0   runner terminated (or already gone — idempotent)
 #   1   runner still alive after SIGTERM + grace window
-#   64  usage error (bad pid / bad or missing --model)
+#   64  usage error (bad pid / bad or missing --model / bad --max-lifetime)
 #   65  pid is not an `ollama runner` process — REFUSED
 #   66  runner --model does not match — REFUSED
+#   67  max-lifetime: runner age < knob — SKIP (no kill, too young)
+#   68  max-lifetime: runner busy (CPU active) — SKIP — under-load guard
 # ============================================================================
 set -euo pipefail
 
@@ -44,13 +58,32 @@ WAIT_SEC="${NFM_OLLAMA_TERM_WAIT_SEC:-15}"
 # default is the absolute real binary) and interceptable by the test
 # shims via env — sudo env_reset never passes the override through.
 KILL_BIN="${NFM_OLLAMA_TERM_KILL:-/bin/kill}"
+# D-2: idle-threshold CPU% (a runner below this is considered idle and
+# eligible for preventive recycle). 5.0% leaves ample headroom for any
+# real generation burst while ensuring a wedged idle runner is caught.
+IDLE_CPU_MAX="${NFM_OLLAMA_TERM_IDLE_CPU_MAX:-5.0}"
 
 usage() {
-  echo "usage: ollama-runner-term.sh <pid> --model <model>" >&2
+  echo "usage: ollama-runner-term.sh <pid> --model <model> [--max-lifetime <sec>]" >&2
   exit 64
 }
 
-[ $# -eq 3 ] || usage
+# ---- arg parse --------------------------------------------------------------
+# Shape 1: 3 args  → <pid> --model <model>          (wedge-recovery mode)
+# Shape 2: 5 args  → <pid> --model <model> --max-lifetime <sec>  (D-2)
+case "$#" in
+  3) max_lifetime=0 ;;            # 0 = wedge mode (skip the D-2 gate)
+  5)
+    [ "$4" = "--max-lifetime" ] || usage
+    max_lifetime="$5"
+    case "${max_lifetime}" in
+      ''|*[!0-9]*) usage ;;
+    esac
+    [ "${max_lifetime}" -gt 0 ] || usage
+    ;;
+  *) usage ;;
+esac
+
 pid="$1"
 [ "$2" = "--model" ] || usage
 model="$3"
@@ -63,6 +96,37 @@ case "${pid}" in
 esac
 [ "${pid}" -gt 0 ] || usage
 
+# ---- D-2 helper: parse ps etime -> seconds ---------------------------------
+# `ps -o etime=` on macOS returns [[DD-]HH:]MM:SS (blank if process gone).
+# All-arithmetic, no external deps; falls back to 0 on any malformed input
+# so the policy gate errs on the safe (skip-recycle) side.
+etime_to_seconds() {
+  local raw="$1" days=0 hours=0 mins=0 secs=0
+  # Strip optional DD- prefix.
+  case "${raw}" in
+    *-*)
+      days="${raw%%-*}"
+      raw="${raw#*-}"
+      case "${days}" in ''|*[!0-9]*) days=0 ;; esac
+      ;;
+  esac
+  # bash 3.2 (host's /bin/bash) has no mapfile/readarray — split via IFS
+  # round-trip with positional parameters; HH:MM:SS lands in $1/$2/$3,
+  # MM:SS lands in $1/$2. Word-split is intentional (IFS=:).
+  local IFS_BAK="${IFS}"
+  IFS=:
+  # SC2086: word-split is intentional — colon-separated etime parts.
+  set -- ${raw}
+  IFS="${IFS_BAK}"
+  case $# in
+    2) mins="$1"; secs="$2" ;;
+    3) hours="$1"; mins="$2"; secs="$3" ;;
+    *) printf '%s\n' "0"; return ;;
+  esac
+  printf '%s\n' "$(( days * 86400 + hours * 3600 + mins * 60 + secs ))"
+}
+
+# ---- chokepoint validation (runs FIRST — same as wedge mode) ----------------
 # The command read doubles as validation input and liveness probe — the
 # same `ps -o command= -p <pid>` shape, re-issued right before the kill.
 runner_cmd() { ps -o command= -p "${pid}" 2>/dev/null || true; }
@@ -86,6 +150,50 @@ case "${cmd}" in
     exit 66
     ;;
 esac
+
+# ---- D-2 max-lifetime policy check (additive; wedge path skips this) --------
+if [ "${max_lifetime}" -gt 0 ]; then
+  # `ps -o etime= -p <pid>` on macOS returns [[DD-]HH:]MM:SS (empty if gone).
+  # The process table is the same one we just validated — gone-again is the
+  # idempotent success case (the race window between read and signal is
+  # exactly the case the chokepoint's "always re-read" rule exists for).
+  etime_raw="$(ps -o etime= -p "${pid}" 2>/dev/null || true)"
+  if [ -z "${etime_raw}" ]; then
+    echo "max-lifetime pid=${pid} already-gone (model=${model})"
+    exit 0
+  fi
+  age_secs="$(etime_to_seconds "${etime_raw}")"
+  if [ "${age_secs}" -lt "${max_lifetime}" ]; then
+    echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s < ${max_lifetime}s — skip"
+    exit 67
+  fi
+  # Under-load guard: a runner mid-decode pegs CPU. The threshold is a
+  # floor below the lowest observed real-generation tail (the reingest
+  # burst's decode phase samples at ≥500 — well above 5.0%); anything
+  # below this is the idle signal we want to recycle on. CPU > threshold
+  # → busy, skip. The script reads CPU ONCE immediately before the kill
+  # — same freshness guarantee as the chokepoint's re-read of command.
+  cpu_raw="$(ps -o %cpu= -p "${pid}" 2>/dev/null || true)"
+  # %cpu may be blank, "0.0", " 0.0", or "12.3". Truncate (NOT round)
+  # to integer for the threshold comparison — rounding would push 4.9
+  # to 5 and falsely flag an idle runner as busy. The decimal-trim is
+  # the portable form (no awk dependency, no printf rounding surprises).
+  # A missing/blank reading (process vanished between the command check
+  # and this read — rare race) defaults to the THRESHOLD value so the
+  # runner is treated as busy → skip. The follow-on kill will fail
+  # idempotently if the pid is truly gone (handled below).
+  cpu_int="${cpu_raw%%.*}"
+  cpu_int="${cpu_int// /}"
+  cpu_int="${cpu_int:-${idle_int:-5}}"
+  idle_int="${IDLE_CPU_MAX%%.*}"
+  idle_int="${idle_int// /}"
+  idle_int="${idle_int:-5}"
+  if [ "${cpu_int}" -ge "${idle_int}" ]; then
+    echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw} >= ${IDLE_CPU_MAX} — busy, skip"
+    exit 68
+  fi
+  echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw} <= ${IDLE_CPU_MAX} — recycling"
+fi
 
 if ! "${KILL_BIN}" -TERM "${pid}" 2>/dev/null; then
   # Root only fails here if the pid vanished since the read above —

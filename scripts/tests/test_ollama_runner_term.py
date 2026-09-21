@@ -44,14 +44,29 @@ OTHER_MODEL_RUNNER_CMD = ("/Applications/Ollama.app/Contents/Resources/ollama "
                           "runner --mlx-engine --model qwen3.8:27b-mlx --port 56841")
 FOREIGN_CMD = "/Applications/Safari.app/Contents/MacOS/Safari"
 
-# Fake ps: mirrors ONLY the call shape the script uses —
-# `ps -o command= -p <pid>` (full command line, empty if gone).
+# Fake ps: mirrors the call shapes the script uses —
+#   `ps -o command= -p <pid>` (full command line, empty if gone)
+#   `ps -o etime=   -p <pid>` (process wall-clock age, empty if gone) — NFM-5083
+#   `ps -o %cpu=    -p <pid>` (current CPU%, empty if gone)           — NFM-5083
+# Tables: FAKE_PS_PROCS (pid|cmd), FAKE_PS_ETIME (pid|etime), FAKE_PS_CPU (pid|cpu).
 FAKE_PS = """\
 #!/bin/bash
 echo "ps $*" >> "$FAKE_PS_CALLS"
-if [ "$1" = "-o" ] && [ "$2" = "command=" ] && [ "$3" = "-p" ]; then
-  grep "^$4|" "$FAKE_PS_PROCS" 2>/dev/null | cut -d'|' -f2-
-fi
+case "$1" in
+  -o)
+    case "$2" in
+      command=)
+        grep "^$4|" "$FAKE_PS_PROCS" 2>/dev/null | cut -d'|' -f2-
+        ;;
+      etime=)
+        grep "^$4|" "$FAKE_PS_ETIME" 2>/dev/null | cut -d'|' -f2-
+        ;;
+      %cpu=)
+        grep "^$4|" "$FAKE_PS_CPU" 2>/dev/null | cut -d'|' -f2-
+        ;;
+    esac
+    ;;
+esac
 exit 0
 """
 
@@ -83,15 +98,26 @@ def harness(tmp_path: Path):
     procs = tmp_path / "procs"
     ps_calls = tmp_path / "ps-calls"
     kill_calls = tmp_path / "kill-calls"
+    etime = tmp_path / "etime"
+    cpu = tmp_path / "cpu"
 
     def run(argv: list[str], *, procs_table: dict[int, str] | None = None,
-            kill_effect: str = "recover", wait_sec: str = "1"):
+            kill_effect: str = "recover", wait_sec: str = "1",
+            etime_table: dict[int, str] | None = None,
+            cpu_table: dict[int, str] | None = None,
+            extra_env: dict | None = None):
         lines = [f"{pid}|{cmd}" for pid, cmd in (procs_table or {}).items()]
         procs.write_text("\n".join(lines) + ("\n" if lines else ""))
+        etime_lines = [f"{pid}|{val}" for pid, val in (etime_table or {}).items()]
+        etime.write_text("\n".join(etime_lines) + ("\n" if etime_lines else ""))
+        cpu_lines = [f"{pid}|{val}" for pid, val in (cpu_table or {}).items()]
+        cpu.write_text("\n".join(cpu_lines) + ("\n" if cpu_lines else ""))
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "FAKE_PS_CALLS": str(ps_calls),
             "FAKE_PS_PROCS": str(procs),
+            "FAKE_PS_ETIME": str(etime),
+            "FAKE_PS_CPU": str(cpu),
             "FAKE_KILL_CALLS": str(kill_calls),
             "FAKE_KILL_EFFECT": kill_effect,
             # 1s grace → the persisted case costs one sleep, not fifteen.
@@ -100,6 +126,8 @@ def harness(tmp_path: Path):
             # at the recording shim (sudo env_reset strips this in prod).
             "NFM_OLLAMA_TERM_KILL": str(bin_dir / "kill"),
         }
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), *argv],
             capture_output=True, text=True, env=env, check=False,
@@ -212,3 +240,216 @@ def test_pid_revalidated_immediately_before_kill(harness) -> None:
     shapes = [c for c in harness["ps_calls"]() if "command=" in c]
     assert all(c == "ps -o command= -p 77444" for c in shapes), shapes
     assert shapes, "helper must read the command before signaling"
+
+
+# ===========================================================================
+# NFM-5083 Option D-2 — additive --max-lifetime <sec> mode for preventive
+# recycle of idle MLX runners older than the knob (initial 1500s = 25 min).
+#
+# Same chokepoint, new mode: <pid> --model <m> --max-lifetime <sec>
+# Exit codes (additions):
+#   67  max-lifetime: age < knob → SKIP (no kill — too young)
+#   68  max-lifetime: runner busy (CPU active) → SKIP — under-load guard
+#
+# The existing wedge-recovery path is untouched: --max-lifetime is OPT-IN
+# (default behavior is unchanged) and the chokepoint validation runs FIRST
+# in either mode (refuses non-runner / wrong-model before any policy check).
+# ===========================================================================
+
+
+def test_max_lifetime_requires_model(harness) -> None:
+    """In --max-lifetime mode the model match is still the security
+    boundary: missing --model → usage 64, no ps / kill issued at all."""
+    proc = harness["run"](["77444", "--max-lifetime", "1500"],
+                          procs_table={77444: RUNNER_CMD})
+    assert proc.returncode == 64, proc.stdout + proc.stderr
+    assert harness["ps_calls"]() == []
+    assert harness["kills"]() == []
+
+
+def test_max_lifetime_must_be_a_positive_integer(harness) -> None:
+    """A non-numeric or non-positive lifetime has no defined meaning:
+    usage 64, no ps / kill issued."""
+    for lifetime in ("0", "-1", "abc", "1500s", "1.5"):
+        proc = harness["run"](
+            ["77444", "--model", "qwen3.5:4b-nvfp4",
+             "--max-lifetime", lifetime],
+            procs_table={77444: RUNNER_CMD})
+        assert proc.returncode == 64, (lifetime, proc.stdout + proc.stderr)
+        assert harness["ps_calls"]() == []
+        assert harness["kills"]() == []
+
+
+def test_max_lifetime_skips_young_runner(harness) -> None:
+    """The point of the knob is to recycle runners that have hung
+    around too long; a young runner (< knob) is NOT eligible. Exit
+    67 = "under threshold, skip"; the chokepoint MUST NOT signal —
+    no legitimate short generation must ever be collateral damage."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "05:00"},   # 5 min wall-clock → under 1500s
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 67, proc.stdout + proc.stderr
+    assert harness["kills"]() == [], "young runner must NEVER be signaled"
+
+
+def test_max_lifetime_recycles_idle_old_runner(harness) -> None:
+    """Happy path: an old (≥ knob) idle (CPU 0) MLX runner is recycled
+    — exit 0, exactly one SIGTERM, same chokepoint as the wedge path."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},   # 26 min wall-clock → over 1500s
+        cpu_table={77444: " 0.0"},      # idle
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+def test_max_lifetime_skips_busy_runner(harness) -> None:
+    """A legitimate long-running generation pegs the runner's CPU —
+    recycling it would interrupt real work. Exit 68 = "busy, skip";
+    the helper MUST NOT signal under any CPU threshold breach."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},   # over 1500s but CPU active
+        cpu_table={77444: " 42.5"},     # prefill / decode running
+    )
+    assert proc.returncode == 68, proc.stdout + proc.stderr
+    assert harness["kills"]() == [], "busy runner must NEVER be signaled"
+
+
+def test_max_lifetime_idempotent_when_runner_gone(harness) -> None:
+    """If the runner PID vanished between discovery and the helper
+    (ollama server reaped it on its idle TTL) there is nothing to
+    signal — exit 0, no kill issued (the safety boundary stays)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+
+
+def test_max_lifetime_refuses_non_runner(harness) -> None:
+    """The chokepoint validation runs FIRST: a non-`ollama runner` PID
+    is refused (exit 65) before any policy / age check, even when
+    --max-lifetime is supplied. The new mode MUST NOT weaken the
+    sudoers grant's security boundary."""
+    proc = harness["run"](
+        ["4242", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={4242: FOREIGN_CMD},
+        etime_table={4242: "26:00"},
+    )
+    assert proc.returncode == 65, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+
+
+def test_max_lifetime_refuses_model_mismatch(harness) -> None:
+    """A co-loaded qwen3.8:27b-mlx runner is INVISIBLE to the
+    qwen3.5 wedge path — same rule holds in --max-lifetime mode
+    (a different tenant's idle MLX runner is never our recycle)."""
+    proc = harness["run"](
+        ["5150", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={5150: OTHER_MODEL_RUNNER_CMD},
+        etime_table={5150: "26:00"},
+        cpu_table={5150: " 0.0"},
+    )
+    assert proc.returncode == 66, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+
+
+def test_max_lifetime_parses_etime_hhmmss(harness) -> None:
+    """`ps -o etime=` on macOS returns [[DD-]HH:]MM:SS — pin the
+    HH:MM:SS branch (a runner > 24h is not a thing here, but the
+    branch must be exact)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "01:30:00"},   # 1h30m = 5400s — over 1500s
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+def test_max_lifetime_parses_etime_mmss(harness) -> None:
+    """MM:SS branch — the common short-running shape. 30:00 = 1800s
+    is over 1500s so this MUST recycle (idle + over knob)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "30:00"},
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+def test_max_lifetime_parses_etime_dd_hhmmss(harness) -> None:
+    """DD-HH:MM:SS branch — a multi-day runaway process. 02-12:00:00
+    is well over the 1500s knob so this MUST recycle."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "02-12:00:00"},
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+def test_max_lifetime_rechecks_etime_before_signal(harness) -> None:
+    """D-2 re-reads etime immediately before the SIGTERM so a fast
+    recycle (knob = 1, age = 1 → eligible, then age drops because
+    the process exits) cannot race the policy check. Pin the read
+    shape: at least one `etime=` lookup AND a `command=` lookup
+    happen BEFORE the kill."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 0
+    ps_lines = harness["ps_calls"]()
+    assert any("etime=" in c for c in ps_lines), ps_lines
+    assert any("command=" in c for c in ps_lines), ps_lines
+    # The kill comes AFTER the policy checks — no policy lookup
+    # is allowed AFTER the signal is sent.
+    seen = ps_lines + ["kill -TERM 77444"]   # anchor the signal line
+    kill_idx = len(ps_lines)
+    policy_idx = max(i for i, line in enumerate(ps_lines)
+                    if "etime=" in line or "%cpu=" in line)
+    assert policy_idx < kill_idx, (seen, kill_idx, policy_idx)
+
+
+def test_max_lifetime_at_threshold_is_busy(harness) -> None:
+    """A runner at exactly the idle threshold (5.0) is BUSY — the
+    under-load guard is `>=`, not `>`, so a runner sitting at the
+    ceiling does NOT recycle (might be in decode tail)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},
+        cpu_table={77444: " 5.0"},   # exactly the threshold
+    )
+    assert proc.returncode == 68, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+
+
+def test_max_lifetime_just_below_threshold_is_idle(harness) -> None:
+    """Just below the threshold (4.9) the runner IS idle — the
+    integer truncation of the threshold comparison means 4.x
+    recycles, 5.x skips. Pin both sides of the boundary."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},
+        cpu_table={77444: " 4.9"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
