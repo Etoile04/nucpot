@@ -23,20 +23,34 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-import numpy as np
-from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.operators.crossover.sbx import SBX
-from pymoo.operators.mutation.pm import PM
-from pymoo.operators.sampling.lhs import LHS
-from pymoo.optimize import minimize
+# NFM-5058 / PR #1400 run 2: same thread pin as tests/conftest.py — the
+# golden must be generated under the same single-threaded BLAS regime the
+# regression test runs under, or regenerated goldens bake in thread-order
+# noise. Must precede the numpy import below.
+for _threads_var in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_threads_var, "1")
 
-from nfm_db.optimization.nsga2_problem import ALLOY_ELEMENTS
-from nfm_db.optimization.zr_only import ZrOnlyProblem
+import numpy as np  # noqa: E402 (thread pin above must precede numpy)
+from pymoo.algorithms.moo.nsga2 import NSGA2  # noqa: E402
+from pymoo.operators.crossover.sbx import SBX  # noqa: E402
+from pymoo.operators.mutation.pm import PM  # noqa: E402
+from pymoo.operators.sampling.lhs import LHS  # noqa: E402
+from pymoo.optimize import minimize  # noqa: E402
+
+from nfm_db.optimization.nsga2_problem import ALLOY_ELEMENTS  # noqa: E402
+from nfm_db.optimization.zr_only import ZrOnlyProblem  # noqa: E402
 
 # ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
 # the hasattr shim keeps the script runnable on pre-3.11 interpreters,
