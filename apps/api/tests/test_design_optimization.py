@@ -687,3 +687,95 @@ def test_optimize_response_json_shape_with_confidence_payload():
     assert payload["pareto_points"][0]["prediction_confidence"] == 0.72
     assert payload["pareto_points"][0]["low_confidence"] is False
     assert payload["n_solutions"] == 1
+
+
+# ---------------------------------------------------------------------------
+# HV reference-point formula (NFM-5064)
+# ---------------------------------------------------------------------------
+
+
+def _mock_result_with_fixed_f(F_matrices):
+    """Build a pymoo Result mock whose history contains the supplied F matrices.
+
+    The mock mirrors what ``minimize(...)`` returns so ``_compute_convergence``
+    can iterate ``result.algorithm.history[i].pop.get("F")`` directly. Used
+    only by the NFM-5064 unit tests so the reference-point bug is reproducible
+    without spinning up the HTTP layer.
+    """
+    result = MagicMock()
+    history = []
+    for F in F_matrices:
+        h_entry = MagicMock()
+        h_pop = MagicMock()
+        h_pop.get.side_effect = lambda key, _F=F: {"F": _F}.get(key)
+        h_pop.__len__.return_value = F.shape[0]
+        h_entry.pop = h_pop
+        history.append(h_entry)
+    result.algorithm = MagicMock()
+    result.algorithm.history = history
+    return result
+
+
+@pytest.mark.unit
+def test_compute_convergence_hv_history_non_zero_for_negative_objectives():
+    """NFM-5064 (AC #2): ``_compute_convergence`` must return hv_history > 0.
+
+    NuclearFuelOptimizationProblem stores objectives in *minimization* sense
+    with all F values <= 0. The pre-fix ``worst * 1.1`` formula moves the
+    reference point *further from zero* (past the front in the negative
+    direction), so pymoo's HV collapses to 0. The fix pads the reference
+    10% toward zero so it dominates every row.
+
+    Front design: 3 objectives (matching nsga2_problem), 3 solutions, max-min
+    separation 4.0 in each dim — well above the AC's 0.1 floor. With the
+    correct reference (``worst * 0.9``) the worst-point dominated box has
+    volume ~4.1^3 ≈ 68.9, comfortably above the AC's 1.0 threshold.
+    """
+    from nfm_db.api.v1.design import _compute_convergence
+
+    F = np.array(
+        [
+            [-1.0, -1.0, -1.0],   # "worst" (least negative in min sense)
+            [-3.0, -3.0, -3.0],
+            [-5.0, -5.0, -5.0],   # deepest in all dims
+        ],
+        dtype=float,
+    )
+
+    result = _mock_result_with_fixed_f([F])
+
+    metrics = _compute_convergence(result)
+
+    assert len(metrics.hv_history) == 1, (
+        "hv_history must contain one entry per generation in history"
+    )
+    assert metrics.hv_history[0] >= 1.0, (
+        f"hv_history[0] = {metrics.hv_history[0]:.6f} is below 1.0 — "
+        "reference point is likely below the front (NFM-5064 bug)"
+    )
+
+
+@pytest.mark.unit
+def test_compute_convergence_hv_history_zero_pre_fix_recovers_with_fix():
+    """NFM-5064 (AC #2 + regression guard): pre-fix the bug yields HV == 0,
+    post-fix it yields a strictly positive value.
+
+    Pinning both sides of the fix in one test makes the regression signature
+    explicit: any future change that re-introduces ``worst * 1.1`` (or any
+    formula where the reference can fall below the front) will fail this
+    test with a precise diff.
+    """
+    from nfm_db.api.v1.design import _compute_convergence
+
+    # Production-shaped front: all F <= 0, single-generation history.
+    F = np.array([[-2.0, -4.0, -6.0]], dtype=float)
+    result = _mock_result_with_fixed_f([F])
+
+    metrics = _compute_convergence(result)
+
+    assert len(metrics.hv_history) == 1
+    # Bug fingerprint: 0.0 (silent collapse). Fix fingerprint: > 0.
+    assert metrics.hv_history[0] > 0.0, (
+        "hv_history must be strictly positive for non-empty F history "
+        "— a zero indicates the reference point is below the front"
+    )

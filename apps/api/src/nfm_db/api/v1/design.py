@@ -241,10 +241,15 @@ def _compute_convergence(result) -> ConvergenceMetrics:  # type: ignore[type-arg
     if not all_F:
         return ConvergenceMetrics()
 
-    # Reference point for HV: 10 % above the worst objective across all
-    # generations.  This ensures the entire front is "inside" the box.
+    # Reference point for HV: 10 % *toward zero* from the worst objective.
+    # ``NuclearFuelOptimizationProblem`` stores objectives in minimization
+    # sense with all F values <= 0, so multiplying by 0.9 (the pre-existing
+    # ConvergenceTracker convention) puts the reference *above* every row in
+    # every dim. Multiplying by 1.1 would push the reference *past* the front
+    # in the negative direction and collapse pymoo's HV to 0 — the bug
+    # flagged in NFM-5059 / fixed in NFM-5064.
     worst = np.max(np.vstack(all_F), axis=0)
-    ref_point = worst * 1.1
+    ref_point = worst * 0.9
 
     # GD reference set = final Pareto front (approximation quality
     # measured as distance to the final front).
