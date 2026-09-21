@@ -33,6 +33,29 @@ async def client():
         yield c
 
 
+@pytest.fixture
+def mock_confidence_stream():
+    """Patch the energy-confidence stream used by pareto_points (NFM-5063).
+
+    The route lazy-imports ``predict_energy_from_composition`` from
+    ``nfm_db.ml.prediction_service`` at call time, so patching the module
+    attribute intercepts it. Default: confidence 0.72 (high-confidence,
+    low_confidence=False). Tests override ``return_value``/``side_effect``
+    to exercise the low-confidence and degraded paths.
+    """
+    with patch(
+        "nfm_db.ml.prediction_service.predict_energy_from_composition",
+        return_value={
+            "predicted_energy": -0.31,
+            "confidence": 0.72,
+            "confidence_source": "grouped_cv_r2_mean",
+            "model_version": "v3.0",
+            "warnings": [],
+        },
+    ) as mocked:
+        yield mocked
+
+
 # ---------------------------------------------------------------------------
 # Mock helpers
 # ---------------------------------------------------------------------------
@@ -173,6 +196,7 @@ async def test_optimize_empty_pareto(mock_problem_cls, mock_minimize, client):
     data = resp.json()["data"]
     assert data["n_solutions"] == 0
     assert data["pareto_front"] == []
+    assert data["pareto_points"] == []  # NFM-5063: length invariant {0, 0}
     assert len(data["warnings"]) > 0
     assert "no feasible" in data["warnings"][0].lower() or "empty" in data["warnings"][0].lower()
 
@@ -191,7 +215,9 @@ async def test_optimize_empty_pareto(mock_problem_cls, mock_minimize, client):
     "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
     autospec=True,
 )
-async def test_optimize_small_population(mock_problem_cls, mock_minimize, client):
+async def test_optimize_small_population(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
     """Small pop_size (10) × 1 gen should still return valid structure."""
     mock_problem_cls.return_value = _mock_problem(ml_available=True)
     mock_minimize.return_value = _mock_result(n_solutions=2)
@@ -215,7 +241,9 @@ async def test_optimize_small_population(mock_problem_cls, mock_minimize, client
     "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
     autospec=True,
 )
-async def test_optimize_custom_objectives(mock_problem_cls, mock_minimize, client):
+async def test_optimize_custom_objectives(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
     """Custom objective weights should be accepted without error."""
     mock_problem_cls.return_value = _mock_problem(ml_available=True)
     mock_minimize.return_value = _mock_result(n_solutions=3)
@@ -240,7 +268,9 @@ async def test_optimize_custom_objectives(mock_problem_cls, mock_minimize, clien
     "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
     autospec=True,
 )
-async def test_optimize_success(mock_problem_cls, mock_minimize, client):
+async def test_optimize_success(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
     """Should return 200 with Pareto solutions and convergence metrics."""
     mock_problem_cls.return_value = _mock_problem(ml_available=True)
     mock_minimize.return_value = _mock_result(n_solutions=5)
@@ -266,6 +296,21 @@ async def test_optimize_success(mock_problem_cls, mock_minimize, client):
     assert "fabricability" in sol["objectives"]
     assert sol["rank"] == 1
 
+    # NFM-5063: pareto_points is populated in lockstep with pareto_front
+    # (ADR-021 §2.4 wire shape: same composition/objectives/rank plus
+    # prediction_confidence and the derived low_confidence flag).
+    assert len(data["pareto_points"]) == data["n_solutions"]
+    for sol, point in zip(data["pareto_front"], data["pareto_points"], strict=True):
+        assert point["composition"] == sol["composition"]
+        assert point["objectives"] == sol["objectives"]
+        assert point["rank"] == sol["rank"]
+        assert point["prediction_confidence"] == 0.72
+        assert point["low_confidence"] is False
+
+    # Confidence stream consulted exactly once per solution (AC #1:
+    # call once, reuse — no redundant predict_* round-trips).
+    assert mock_confidence_stream.call_count == data["n_solutions"]
+
     # Verify convergence metrics
     assert "convergence" in data
     assert "gd_history" in data["convergence"]
@@ -276,6 +321,110 @@ async def test_optimize_success(mock_problem_cls, mock_minimize, client):
     # Verify algorithm params echoed back
     assert data["algorithm_params"]["pop_size"] == 10
     assert data["algorithm_params"]["n_gen"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 200: pareto_points confidence payloads (NFM-5063, ADR-021 §2.3/§5.5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_pareto_points_low_confidence_flag(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
+    """confidence 0.55 < 0.6 threshold → low_confidence=True on every point."""
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_result(n_solutions=3)
+    mock_confidence_stream.return_value = {
+        "predicted_energy": -0.28,
+        "confidence": 0.55,
+        "confidence_source": "grouped_cv_r2_mean",
+        "model_version": "v3.0",
+        "warnings": [],
+    }
+
+    payload = {"algorithm": {"pop_size": 10, "n_gen": 1}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert len(data["pareto_points"]) == data["n_solutions"] == 3
+    for point in data["pareto_points"]:
+        assert point["prediction_confidence"] == 0.55
+        assert point["low_confidence"] is True  # 0.55 < 0.6 (strict <)
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_pareto_points_degraded_when_confidence_unavailable(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
+    """Missing confidence stream → pareto_points=[] (all-or-nothing, §5.5).
+
+    pareto_front still carries the full front and the endpoint still
+    returns 200: a missing confidence stream is not a 503 (ADR-020 §4 only
+    gates phase/temp surrogate availability).
+    """
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_result(n_solutions=4)
+    # Legacy pre-NFM-3953 artifacts report confidence=None (and an absent
+    # artifact makes the whole call return None) — both must degrade to [].
+    mock_confidence_stream.return_value = {
+        "predicted_energy": -0.30,
+        "confidence": None,
+        "confidence_source": "v10_or_v11_unevaluated",
+        "model_version": "v1.0",
+        "warnings": [],
+    }
+
+    payload = {"algorithm": {"pop_size": 10, "n_gen": 1}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert len(data["pareto_front"]) == data["n_solutions"] == 4
+    assert data["pareto_points"] == []  # length invariant: {0, n_solutions}
+
+
+@pytest.mark.unit
+@patch(
+    "nfm_db.api.v1.design.minimize",
+    autospec=True,
+)
+@patch(
+    "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
+    autospec=True,
+)
+async def test_optimize_pareto_points_degraded_on_prediction_error(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
+    """A raising confidence stream degrades to [] instead of a 500."""
+    mock_problem_cls.return_value = _mock_problem(ml_available=True)
+    mock_minimize.return_value = _mock_result(n_solutions=3)
+    mock_confidence_stream.side_effect = RuntimeError("artifact corrupted")
+
+    payload = {"algorithm": {"pop_size": 10, "n_gen": 1}}
+    resp = await client.post("/api/v1/design/optimize", json=payload)
+    assert resp.status_code == 200
+
+    data = resp.json()["data"]
+    assert len(data["pareto_front"]) == data["n_solutions"] == 3
+    assert data["pareto_points"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +441,9 @@ async def test_optimize_success(mock_problem_cls, mock_minimize, client):
     "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
     autospec=True,
 )
-async def test_optimize_defaults(mock_problem_cls, mock_minimize, client):
+async def test_optimize_defaults(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
     """Empty request body should use all defaults."""
     mock_problem_cls.return_value = _mock_problem(ml_available=True)
     mock_minimize.return_value = _mock_result(n_solutions=3)
@@ -320,7 +471,9 @@ async def test_optimize_defaults(mock_problem_cls, mock_minimize, client):
     "nfm_db.api.v1.design.NuclearFuelOptimizationProblem",
     autospec=True,
 )
-async def test_optimize_null_seed(mock_problem_cls, mock_minimize, client):
+async def test_optimize_null_seed(
+    mock_problem_cls, mock_minimize, mock_confidence_stream, client
+):
     """seed=null should default to 42 internally."""
     mock_problem_cls.return_value = _mock_problem(ml_available=True)
     mock_minimize.return_value = _mock_result(n_solutions=2)

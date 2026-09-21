@@ -28,15 +28,6 @@ import sys
 import time
 from pathlib import Path
 
-# ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
-# ruff flags both, prefer the lowercase form for readability here.
-_USE_NEW_ALIAS = hasattr(_dt, "UTC")
-_NOW = (
-    (lambda: _dt.datetime.now(tz=_dt.UTC))  # type: ignore[attr-defined]
-    if _USE_NEW_ALIAS
-    else (lambda: _dt.datetime.now(tz=_dt.timezone.utc))
-)
-
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.crossover.sbx import SBX
@@ -46,6 +37,16 @@ from pymoo.optimize import minimize
 
 from nfm_db.optimization.nsga2_problem import ALLOY_ELEMENTS
 from nfm_db.optimization.zr_only import ZrOnlyProblem
+
+# ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
+# the hasattr shim keeps the script runnable on pre-3.11 interpreters,
+# so the legacy fallback below is deliberate (UP017 suppressed for it).
+_USE_NEW_ALIAS = hasattr(_dt, "UTC")
+_NOW = (
+    (lambda: _dt.datetime.now(tz=_dt.UTC))  # type: ignore[attr-defined]
+    if _USE_NEW_ALIAS
+    else (lambda: _dt.datetime.now(tz=_dt.timezone.utc))  # noqa: UP017
+)
 
 HERE = Path(__file__).resolve().parent
 GOLDEN_PATH = HERE / "test_zr_pareto_golden.json"
