@@ -7,6 +7,7 @@ Covers POST /api/v1/design/optimize with:
   - Empty Pareto front returns 200 with warning
   - Convergence metrics are included in response
   - Default parameters work correctly
+  - Surrogate-confidence fields on ParetoPoint (NFM-5057, ADR-021)
 """
 
 from __future__ import annotations
@@ -501,3 +502,246 @@ def test_compute_convergence_hv_nonzero_for_non_degenerate_front():
 
     # GD history should remain finite and non-negative.
     assert all(gd >= 0.0 for gd in metrics.gd_history)
+
+
+# ---------------------------------------------------------------------------
+# Surrogate-confidence fields (NFM-5057, ADR-021)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_pareto_point_low_confidence_true_below_threshold():
+    """confidence < 0.6 → low_confidence=True.
+
+    Mocks the ML prediction_service output at 0.55 (below the v3.2 LOESO
+    dispatch threshold of 0.6) and asserts the validator-driven flag flips.
+    """
+    from nfm_db.schemas.design import (
+        LOW_CONFIDENCE_THRESHOLD,
+        ParetoPoint,
+    )
+
+    assert LOW_CONFIDENCE_THRESHOLD == 0.6
+
+    # Mock ML output: prediction_confidence = 0.55 (strictly below 0.6).
+    point = ParetoPoint(
+        composition={"U": 0.90, "Mo": 0.10},
+        objectives={"u_density": 17.0, "phase_temp": 540.0, "fabricability": 0.5},
+        rank=1,
+        prediction_confidence=0.55,
+        low_confidence=True,  # derived: 0.55 < 0.6 → True
+    )
+    assert point.prediction_confidence == 0.55
+    assert point.low_confidence is True
+
+
+@pytest.mark.unit
+def test_pareto_point_low_confidence_false_above_threshold():
+    """confidence ≥ 0.6 → low_confidence=False.
+
+    Mocks the ML prediction_service output at 0.72 (above the threshold)
+    and asserts the flag stays False.
+    """
+    from nfm_db.schemas.design import ParetoPoint
+
+    # Mock ML output: prediction_confidence = 0.72 (strictly above 0.6).
+    point = ParetoPoint(
+        composition={"U": 0.882, "Mo": 0.084, "Ti": 0.006, "V": 0.028},
+        objectives={"u_density": 18.4, "phase_temp": 612.5, "fabricability": 0.83},
+        rank=1,
+        prediction_confidence=0.72,
+        low_confidence=False,  # derived: 0.72 ≥ 0.6 → False
+    )
+    assert point.prediction_confidence == 0.72
+    assert point.low_confidence is False
+
+
+@pytest.mark.unit
+def test_pareto_point_low_confidence_false_at_boundary():
+    """confidence == 0.6 exactly → low_confidence=False (strict `<` boundary).
+
+    The threshold derivation uses `<` not `≤`. Boundary confidence equal to
+    0.6 must NOT be flagged as low. The test pins the boundary so a future
+    switch to `≤` is a deliberate ADR change, not a silent regression.
+    """
+    from nfm_db.schemas.design import ParetoPoint
+
+    point = ParetoPoint(
+        composition={"U": 0.90, "Mo": 0.10},
+        objectives={"u_density": 17.0, "phase_temp": 540.0, "fabricability": 0.5},
+        rank=1,
+        prediction_confidence=0.6,
+        low_confidence=False,  # derived: 0.6 < 0.6 is False
+    )
+    assert point.low_confidence is False
+
+
+@pytest.mark.unit
+def test_pareto_point_validator_rejects_inconsistent_low_confidence():
+    """The model_validator rejects (confidence, low_confidence) drift.
+
+    `low_confidence` must equal `prediction_confidence < 0.6` — sending a
+    pair that disagrees (e.g. confidence=0.72 with low_confidence=True) is
+    a developer error and must be rejected at validation time so the wire
+    contract cannot drift between the two fields.
+    """
+    from pydantic import ValidationError
+
+    from nfm_db.schemas.design import ParetoPoint
+
+    with pytest.raises(ValidationError) as exc_info:
+        ParetoPoint(
+            composition={"U": 0.90, "Mo": 0.10},
+            objectives={"u_density": 17.0, "phase_temp": 540.0, "fabricability": 0.5},
+            rank=1,
+            prediction_confidence=0.72,
+            low_confidence=True,  # inconsistent with 0.72 ≥ 0.6
+        )
+    assert "inconsistent" in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+def test_pareto_point_confidence_out_of_range_rejected():
+    """prediction_confidence outside [0.0, 1.0] is rejected (422-style).
+
+    Bounds `ge=0.0` and `le=1.0` are part of the wire contract — values
+    outside that range are nonsensical regardless of the threshold.
+    """
+    from pydantic import ValidationError
+
+    from nfm_db.schemas.design import ParetoPoint
+
+    with pytest.raises(ValidationError):
+        ParetoPoint(
+            composition={"U": 0.90, "Mo": 0.10},
+            objectives={"u_density": 17.0, "phase_temp": 540.0, "fabricability": 0.5},
+            rank=1,
+            prediction_confidence=1.5,  # out of range
+            low_confidence=False,
+        )
+
+    with pytest.raises(ValidationError):
+        ParetoPoint(
+            composition={"U": 0.90, "Mo": 0.10},
+            objectives={"u_density": 17.0, "phase_temp": 540.0, "fabricability": 0.5},
+            rank=1,
+            prediction_confidence=-0.1,  # out of range
+            low_confidence=True,
+        )
+
+
+@pytest.mark.unit
+def test_optimize_response_includes_pareto_points_field():
+    """OptimizeResponse JSON includes the `pareto_points` field (NFM-5057).
+
+    Asserts the new field is present in the serialized response. Default
+    is an empty list when the LE wrapper has not yet been updated to emit
+    it — verified here so the additive contract is observable.
+    """
+    from nfm_db.schemas.design import (
+        AlgorithmParams,
+        ConvergenceMetrics,
+        OptimizeResponse,
+        ParetoSolution,
+    )
+
+    # Empty default — additive back-compat path.
+    resp_empty = OptimizeResponse(
+        pareto_front=[],
+        n_solutions=0,
+        compute_time_ms=100,
+        algorithm_params=AlgorithmParams(),
+    )
+    assert resp_empty.pareto_points == []
+    assert "pareto_points" in resp_empty.model_dump()
+
+    # Populated path — LE wrapper emits the new field.
+    from nfm_db.schemas.design import ParetoPoint
+
+    resp_populated = OptimizeResponse(
+        pareto_front=[
+            ParetoSolution(
+                composition={"U": 0.882, "Mo": 0.084, "Ti": 0.006, "V": 0.028},
+                objectives={
+                    "u_density": 18.4,
+                    "phase_temp": 612.5,
+                    "fabricability": 0.83,
+                },
+                rank=1,
+            ),
+        ],
+        pareto_points=[
+            ParetoPoint(
+                composition={"U": 0.882, "Mo": 0.084, "Ti": 0.006, "V": 0.028},
+                objectives={
+                    "u_density": 18.4,
+                    "phase_temp": 612.5,
+                    "fabricability": 0.83,
+                },
+                rank=1,
+                prediction_confidence=0.72,
+                low_confidence=False,
+            ),
+        ],
+        convergence=ConvergenceMetrics(
+            gd_history=[0.52, 0.31, 0.18],
+            hv_history=[101.2, 143.7, 168.9],
+        ),
+        n_solutions=1,
+        compute_time_ms=41250,
+        algorithm_params=AlgorithmParams(),
+    )
+    dump = resp_populated.model_dump()
+    assert "pareto_points" in dump
+    assert len(dump["pareto_points"]) == 1
+    assert dump["pareto_points"][0]["prediction_confidence"] == 0.72
+    assert dump["pareto_points"][0]["low_confidence"] is False
+
+
+@pytest.mark.unit
+def test_optimize_response_json_shape_with_confidence_payload():
+    """End-to-end JSON shape matches ADR-021 §2.4 example.
+
+    Pins the wire shape so a serializer regression (e.g. field rename,
+    accidental float→str) is caught before reaching consumers.
+    """
+    import json
+
+    from nfm_db.schemas.design import (
+        AlgorithmParams,
+        ConvergenceMetrics,
+        OptimizeResponse,
+        ParetoPoint,
+        ParetoSolution,
+    )
+
+    resp = OptimizeResponse(
+        pareto_front=[
+            ParetoSolution(
+                composition={"U": 0.882, "Mo": 0.084, "Ti": 0.006, "V": 0.028},
+                objectives={"u_density": 18.4, "phase_temp": 612.5, "fabricability": 0.83},
+                rank=1,
+            ),
+        ],
+        pareto_points=[
+            ParetoPoint(
+                composition={"U": 0.882, "Mo": 0.084, "Ti": 0.006, "V": 0.028},
+                objectives={"u_density": 18.4, "phase_temp": 612.5, "fabricability": 0.83},
+                rank=1,
+                prediction_confidence=0.72,
+                low_confidence=False,
+            ),
+        ],
+        convergence=ConvergenceMetrics(
+            gd_history=[0.52, 0.31, 0.18],
+            hv_history=[101.2, 143.7, 168.9],
+        ),
+        n_solutions=1,
+        compute_time_ms=41250,
+        algorithm_params=AlgorithmParams(),
+    )
+    payload = json.loads(resp.model_dump_json())
+    assert payload["pareto_front"][0]["composition"]["U"] == 0.882
+    assert payload["pareto_points"][0]["prediction_confidence"] == 0.72
+    assert payload["pareto_points"][0]["low_confidence"] is False
+    assert payload["n_solutions"] == 1
