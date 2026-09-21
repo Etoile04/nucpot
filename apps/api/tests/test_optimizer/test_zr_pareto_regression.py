@@ -107,6 +107,96 @@ def _per_axis_drift(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.max(np.abs(a - b), axis=0)
 
 
+def _sorted_marginal_drift(a: np.ndarray, b: np.ndarray) -> np.ndarray | None:
+    """Per-axis drift of the independently sorted columns, or None on
+    shape mismatch.
+
+    Allocation-invariant companion to ``_per_axis_drift``: NSGA-II does
+    not guarantee that two runs place non-dominated points at the same
+    positions along the same front curve, which rank-pairing after
+    canonical ordering misreads as drift. Sorting each objective axis
+    independently compares per-axis quantiles instead of point ranks.
+    """
+    if a.shape != b.shape:
+        return None
+    return np.max(np.abs(np.sort(a, axis=0) - np.sort(b, axis=0)), axis=0)
+
+
+def _nn_per_axis_drift(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Per-axis drift against the nearest neighbour in the other front.
+
+    Symmetric (max of both directions) and shape-agnostic: every point of
+    each front is compared, per axis, against its Euclidean-nearest point
+    in the other front. This is the per-axis analogue of the Hausdorff
+    check and reads ~0 for fronts that differ only by row order or point
+    allocation.
+    """
+    a2 = np.sum(a ** 2, axis=1, keepdims=True)
+    b2 = np.sum(b ** 2, axis=1, keepdims=True)
+    sq = np.maximum(a2 + b2.T - 2.0 * a @ b.T, 0.0)
+    d = np.sqrt(sq)
+    nn_b_for_a = b[d.argmin(axis=1)]
+    nn_a_for_b = a[d.argmin(axis=0)]
+    return np.maximum(
+        np.max(np.abs(a - nn_b_for_a), axis=0),
+        np.max(np.abs(b - nn_a_for_b), axis=0),
+    )
+
+
+def _front_metrics_report(cur_norm: np.ndarray, gold_norm: np.ndarray) -> str:
+    """One-shot diagnosis dump appended to any metric-failure message.
+
+    PR #1400 run 2 taught us that a bare drift vector cannot distinguish
+    row permutation, point-allocation noise, and genuine value drift —
+    each needs a different remedy. A single failed CI run must therefore
+    carry enough evidence to pick the remedy without a second
+    instrumentation cycle: all three per-axis variants plus Hausdorff
+    plus both canonical fronts.
+    """
+    lines = [
+        "front-drift diagnostics (normalized space):",
+        f"  fresh shape={cur_norm.shape}  golden shape={gold_norm.shape}",
+    ]
+    if cur_norm.shape == gold_norm.shape:
+        rank = _per_axis_drift(cur_norm, gold_norm)
+        lines.append(
+            f"  rank-paired per-axis drift (AC #3 metric): "
+            f"{np.round(rank, 6).tolist()}"
+        )
+        marg = _sorted_marginal_drift(cur_norm, gold_norm)
+        lines.append(
+            f"  sorted-marginal per-axis drift (allocation-invariant): "
+            f"{np.round(marg, 6).tolist()}"
+        )
+    else:
+        lines.append(
+            "  rank-paired / sorted-marginal per-axis drift: n/a "
+            "(front sizes differ)"
+        )
+    nn = _nn_per_axis_drift(cur_norm, gold_norm)
+    lines.append(
+        f"  nearest-neighbour per-axis drift (order+allocation-invariant): "
+        f"{np.round(nn, 6).tolist()}"
+    )
+    lines.append(
+        f"  bidirectional Hausdorff (Euclidean, normalized): "
+        f"{_hausdorff_normalized(cur_norm, gold_norm):.6f}"
+    )
+    for label, arr in (("fresh", cur_norm), ("golden", gold_norm)):
+        lo = np.round(np.min(arr, axis=0), 4).tolist()
+        hi = np.round(np.max(arr, axis=0), 4).tolist()
+        lines.append(f"  {label} per-axis envelope min: {lo}  max: {hi}")
+    lines.append("  canonical fresh front (6 dp, one row per solution):")
+    lines.extend(
+        f"    {np.round(row, 6).tolist()}" for row in _canonical_order(cur_norm)
+    )
+    lines.append("  canonical golden front (6 dp, one row per solution):")
+    lines.extend(
+        f"    {np.round(row, 6).tolist()}" for row in _canonical_order(gold_norm)
+    )
+    return "\n".join(lines)
+
+
 def _canonical_order(front: np.ndarray) -> np.ndarray:
     """Return front rows in a deterministic lexicographic order.
 
@@ -211,7 +301,8 @@ def test_zr_pareto_front_matches_golden():
         f"({PER_AXIS_DRIFT_MAX}) defined for NFM-5058. Inspect the "
         f"surrogate / NSGA-II code path for silent drift; if the change "
         f"is intentional, regenerate the golden via "
-        f"`python3 tests/test_optimizer/generate_golden.py`."
+        f"`python3 tests/test_optimizer/generate_golden.py`.\n"
+        f"{_front_metrics_report(cur_norm, gold_norm)}"
     )
 
     # AC #3 acceptance criterion 3: bidirectional Hausdorff ≤ 2%.
@@ -222,7 +313,8 @@ def test_zr_pareto_front_matches_golden():
         f"defined for NFM-5058. Possible causes: NSGA-II hyperparameter "
         f"drift, surrogate evaluation path change, constraint relaxation, "
         f"or composition search-space change. Regenerate the golden via "
-        f"`python3 tests/test_optimizer/generate_golden.py`."
+        f"`python3 tests/test_optimizer/generate_golden.py`.\n"
+        f"{_front_metrics_report(cur_norm, gold_norm)}"
     )
 
 
@@ -245,6 +337,31 @@ def test_per_axis_drift_survives_row_permutation():
     np.testing.assert_allclose(canon_base, canon_perm)
     drift = _per_axis_drift(canon_base, canon_perm)
     assert float(drift.max()) <= PER_AXIS_DRIFT_MAX
+
+
+@pytest.mark.unit
+def test_front_drift_metric_variants_separate_permutation_from_shift():
+    """Guard hardening (PR #1400 run 2): pin the diagnostic metrics' semantics.
+
+    ``_nn_per_axis_drift`` and ``_sorted_marginal_drift`` back the
+    failure-path diagnostics dump. They must read ~0 for a pure row
+    permutation (same front, any ordering) and read the full magnitude
+    of a genuine uniform value shift — the two cases a bare rank-paired
+    drift vector could not tell apart.
+    """
+    golden = np.zeros((10, 3))
+    golden[:, 1] = 0.4  # pinned-constant axis, mirroring T_stable
+    golden[:, 0] = np.linspace(0.0, 0.9, 10)
+    golden[:, 2] = 0.9 - golden[:, 0]
+
+    permuted = golden[::-1]
+    assert float(_nn_per_axis_drift(golden, permuted).max()) < 1e-12
+    assert float(_sorted_marginal_drift(golden, permuted).max()) < 1e-12
+
+    shifted = golden.copy()
+    shifted[:, 0] += 0.1  # genuine surrogate-drift-style value shift
+    assert float(_nn_per_axis_drift(golden, shifted).max()) == pytest.approx(0.1)
+    assert float(_sorted_marginal_drift(golden, shifted).max()) == pytest.approx(0.1)
 
 
 @pytest.mark.unit
