@@ -3,7 +3,7 @@
   "issue": "NFM-5058",
   "title": "Zr-only Pareto regression golden (KR-OPT-Q4-S2)",
   "provenance": {
-    "generated_at_utc": "2026-09-21T01:20:47.444590+00:00",
+    "generated_at_utc": "2026-09-21T01:22:34.604562+00:00",
     "generator": "tests.test_optimizer.generate_golden",
     "boundary": "Zr-only (Mo, Nb, V, Ti, Cr forced to 0)",
     "excluded_element_basis": {
@@ -42,7 +42,7 @@
       "prediction_service.py": "b39a8ddd44e792cbcef136d966b989cbb351a439",
       "nsga2_problem.py": "08cdc934c34a7945e519de58428607d62f104445",
       "ml_surrogate.py": "1402edceb3d5e296bdf169b3b6f95f20405fa3b6",
-      "zr_only.py": ""
+      "zr_only.py": "f35df96048efe95bd63c32334392c9a2a434e383"
     },
     "tolerance_spec": {
       "per_axis_drift_max": 0.05,
@@ -53,7 +53,7 @@
   "front": {
     "n_solutions": 200,
     "n_evaluations": 20000,
-    "wall_time_s": 0.98,
+    "wall_time_s": 0.989,
     "objective_axis_spans": {
       "rho_U": {
         "fmin": -17.665854,
