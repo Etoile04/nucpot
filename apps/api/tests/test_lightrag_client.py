@@ -756,7 +756,15 @@ class TestTimeoutSplit:
         ) as mock_post:
             await client.ingest(text="[Material] UO2")
 
-        assert mock_post.call_args.kwargs["timeout"] == client.ingest_timeout
+        # NFM-5082 D-1: every ollama-bound call is capped at 90s per attempt.
+        # Ingest's nominal budget (300s) is now clamped to the 90s envelope;
+        # 3 attempts with jittered backoff bound the worst-case wall-clock.
+        from nfm_db.services.lightrag_client import (  # type: ignore[import-untyped]
+            _DEFAULT_OLLAMA_REQUEST_TIMEOUT_S,
+        )
+
+        expected_budget = min(client.ingest_timeout, _DEFAULT_OLLAMA_REQUEST_TIMEOUT_S)
+        assert mock_post.call_args.kwargs["timeout"] == expected_budget
 
     @pytest.mark.asyncio
     async def test_health_check_uses_query_timeout(self) -> None:
