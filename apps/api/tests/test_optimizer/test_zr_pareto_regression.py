@@ -107,6 +107,23 @@ def _per_axis_drift(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.max(np.abs(a - b), axis=0)
 
 
+def _canonical_order(front: np.ndarray) -> np.ndarray:
+    """Return front rows in a deterministic lexicographic order.
+
+    pymoo's row ordering of the final non-dominated set is not stable
+    across platforms: survival-sort ties break on last-ulp floating-point
+    differences, so the same front (seed, versions, and lockfile all
+    pinned) emerged from Linux CI in a different row order than from the
+    macOS box that generated the golden. An element-wise per-axis
+    comparison then measured the *permutation*, not front drift —
+    PR #1400's first CI run reported drift [0.88, 0.0, 0.87] (the free
+    axes permuted; the pinned-constant axis read exactly 0.0) while the
+    order-invariant Hausdorff distance was ~1e-5. Canonical sorting
+    removes that ordering degree of freedom before element-wise checks.
+    """
+    return front[np.lexsort(front.T[::-1])]
+
+
 # ---------------------------------------------------------------------------
 # Fresh-run harness
 # ---------------------------------------------------------------------------
@@ -175,6 +192,16 @@ def test_zr_pareto_front_matches_golden():
     cur_norm = _normalize_axis(F, fmin, fmax)
     gold_norm = _normalize_axis(golden_min, fmin, fmax)
 
+    # Element-wise checks need aligned shapes AND a canonical row order
+    # (see _canonical_order) — raw pymoo ordering is platform-dependent.
+    assert cur_norm.shape == gold_norm.shape, (
+        f"Front size drifted: fresh {cur_norm.shape[0]} vs golden "
+        f"{gold_norm.shape[0]} non-dominated solutions; NSGA-II "
+        f"convergence or the constraint set changed, not just ordering."
+    )
+    cur_norm = _canonical_order(cur_norm)
+    gold_norm = _canonical_order(gold_norm)
+
     # AC #3 acceptance criterion 2: per-axis drift ≤ 5%.
     drift = _per_axis_drift(cur_norm, gold_norm)
     drift_max = float(drift.max())
@@ -197,6 +224,27 @@ def test_zr_pareto_front_matches_golden():
         f"or composition search-space change. Regenerate the golden via "
         f"`python3 tests/test_optimizer/generate_golden.py`."
     )
+
+
+@pytest.mark.unit
+def test_per_axis_drift_survives_row_permutation():
+    """Guard hardening (PR #1400 first CI run): row order is not front drift.
+
+    A front differing from the golden only by row order must pass the
+    per-axis check. Before canonical ordering, the permuted front read
+    ~0.98 drift on the free axes while the pinned-constant axis read
+    exactly 0.0 — the fingerprint of pure permutation, masked as drift.
+    """
+    rng = np.random.default_rng(11)
+    base = np.sort(rng.random((30, 3)), axis=0)
+    base[:, 1] = 0.4  # pinned-constant axis, mirroring T_stable in the golden
+    permuted = base[rng.permutation(base.shape[0])]
+
+    canon_base = _canonical_order(base)
+    canon_perm = _canonical_order(permuted)
+    np.testing.assert_allclose(canon_base, canon_perm)
+    drift = _per_axis_drift(canon_base, canon_perm)
+    assert float(drift.max()) <= PER_AXIS_DRIFT_MAX
 
 
 @pytest.mark.unit
