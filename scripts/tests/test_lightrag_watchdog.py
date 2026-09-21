@@ -211,13 +211,22 @@ fi
 exit "${FAKE_OLLAMA_STOP_RC:-0}"
 """
 
-# The root-owned term chokepoint stand-in: invoked as `<pid> --model <m>`.
-# FAKE_TERM_EFFECT=recover removes the pid (SIGTERM worked); persist
-# leaves it and exits 1 (runner ignored SIGTERM).
+# The root-owned term chokepoint stand-in: invoked as `<pid> --model <m>`
+# (wedge path) or `<pid> --model <m> --max-lifetime <sec>` (D-2 path —
+# NFM-5083). FAKE_TERM_EFFECT=recover removes the pid (SIGTERM worked);
+# persist leaves it and exits 1 (runner ignored SIGTERM). NFM-5083
+# D-2 exit codes (67 = under threshold, 68 = busy) are surfaced by
+# FAKE_TERM_EXIT_CODE so the watchdog's always-run stage can be tested
+# without a real ollama host. Default behavior is unchanged.
 FAKE_TERM = """\
 #!/bin/bash
 echo "term: $*" >> "$FAKE_ORDER_FILE" 2>/dev/null || true
 echo "term-called: $*" >> "$FAKE_TERM_CALLS"
+if [ -n "${FAKE_TERM_EXIT_CODE:-}" ]; then
+  # Test pins a specific D-2 exit (67/68/1/...) — do not touch the
+  # procs table; the watchdog treats anything but 0 as a no-op anyway.
+  exit "${FAKE_TERM_EXIT_CODE}"
+fi
 if [ "${FAKE_TERM_EFFECT:-recover}" = "recover" ]; then
   pid="$1"
   grep -v "^$pid|" "$FAKE_PS_PROCS" > "$FAKE_PS_PROCS.tmp" || true
@@ -277,7 +286,11 @@ def harness(tmp_path: Path):
             procs: dict[int, str] | None = None,
             cpu: dict[int, str] | None = None,
             ollama_stop_effect: str = "recover",
-            term_effect: str = "recover"):
+            term_effect: str = "recover",
+            term_exit_code: str | None = None,
+            mlx_max_lifetime: str = "0"):   # default OFF — wedge-path tests
+                                             # stay focused on wedge behavior;
+                                             # NFM-5083 tests opt in explicitly.
         log_file.write_text(log_text)
         if runner_pids:
             pgrp_pids.write_text("\n".join(str(p) for p in runner_pids) + "\n")
@@ -319,6 +332,13 @@ def harness(tmp_path: Path):
             "FAKE_TERM_CALLS": str(tcalls),
             "FAKE_TERM_EFFECT": term_effect,
         }
+        if term_exit_code is not None:
+            env["FAKE_TERM_EXIT_CODE"] = term_exit_code
+        # Always set the D-2 knob — the script's own default is 1500
+        # (production behavior). Tests default to "0" so wedge-path
+        # tests stay focused on the NFM-4887 contract; NFM-5083 tests
+        # opt in explicitly with "1500".
+        env["NFM_LIGHTRAG_WATCHDOG_MLX_MAX_LIFETIME_S"] = mlx_max_lifetime
         if runner_pids:
             # The single-runner case lets `ollama stop` recover that pid.
             env["FAKE_RUNNER_PID"] = str(runner_pids[-1])
@@ -657,3 +677,193 @@ def test_cooldown_gates_the_host_stage_too(harness) -> None:
     assert harness["ollama_calls"]() == ["stop qwen3.5:4b-nvfp4"]
     assert harness["term_calls"]() == ["77444 --model qwen3.5:4b-nvfp4"]
     assert "reason=cooldown" in harness["watchdog_log"].read_text()
+
+
+# ===========================================================================
+# NFM-5083 Option D-2 — always-run max-lifetime preventive recycle.
+#
+# The D-2 stage runs on EVERY probe (not just wedges) — the point of D-2
+# is to recycle before wedge probability grows. The chokepoint helper
+# returns exit 67 (under threshold) or 68 (busy) to signal "no-op"; the
+# watchdog must treat those as silent (no per-probe log noise) and only
+# log the terminal d2=recycled / d2=error records.
+# ===========================================================================
+
+
+def test_d2_max_lifetime_runs_on_every_probe(harness) -> None:
+    """D-2 fires on every probe — even a no-stop-line (clean) probe must
+    invoke the chokepoint with --max-lifetime, because the point is to
+    recycle BEFORE wedge probability grows."""
+    proc = harness["run"]("",   # no docker logs → exit 0 (no-pipeline-stop)
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_effect="recover",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0, proc.stderr
+    # The chokepoint was invoked in D-2 mode (max-lifetime flag present).
+    calls = harness["term_calls"]()
+    assert any("--max-lifetime" in c for c in calls), calls
+    assert any("77444 --model qwen3.5:4b-nvfp4 --max-lifetime" in c
+               for c in calls), calls
+
+
+def test_d2_recycle_is_logged(harness) -> None:
+    """A successful recycle (chokepoint exit 0) emits d2=recycled so
+    operators can grep the G2 log dir for recycle events (AC: ≤1
+    recycle per runner-hour during normal load)."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_effect="recover",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=recycled" in log_text, log_text
+    assert "pid=77444" in log_text, log_text
+
+
+def test_d2_under_threshold_is_silent(harness) -> None:
+    """Exit 67 (under threshold — runner too young to recycle) is the
+    common case on every probe: logging it would flood the G2 log dir.
+    Watchdog MUST treat exit 67 as a silent no-op."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_exit_code="67",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=recycled" not in log_text, log_text
+    assert "d2=" not in log_text, log_text   # no log noise at all
+
+
+def test_d2_busy_is_silent(harness) -> None:
+    """Exit 68 (busy — under-load guard) is the expected case whenever
+    the runner is actively generating; logging it would also flood the
+    G2 log dir. Watchdog MUST treat exit 68 as a silent no-op."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "99.0"},   # busy
+                          term_exit_code="68",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=" not in log_text, log_text
+
+
+def test_d2_infra_error_is_logged(harness) -> None:
+    """An unexpected chokepoint exit (anything but 0/67/68) is logged
+    as d2=error so an operator can chase a misconfiguration. The
+    watchdog NEVER blocks the wedge-recovery path on D-2 infra."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_exit_code="1",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=error" in log_text, log_text
+    assert "rc=1" in log_text, log_text
+
+
+def test_d2_disabled_via_zero_knob(harness) -> None:
+    """MLX_RUNNER_MAX_LIFETIME_S=0 disables D-2 entirely (the wedge
+    path below is the only signal). The chokepoint must NOT be invoked
+    when the knob is zero."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_effect="recover",
+                          mlx_max_lifetime="0")
+    assert proc.returncode == 0
+    # Only the wedge-recovery path could invoke the chokepoint (it
+    # doesn't here — no wedge log). The D-2 flag MUST be absent.
+    assert not any("--max-lifetime" in c for c in harness["term_calls"]()), \
+        harness["term_calls"]()
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=" not in log_text, log_text
+
+
+def test_d2_skips_when_no_runner_loaded(harness) -> None:
+    """If the runner PID cannot be found (server hasn't loaded the
+    model yet), D-2 is a no-op — no log noise, no chokepoint call."""
+    proc = harness["run"]("",
+                          runner_pids=[],   # no runner visible
+                          term_effect="recover",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    assert harness["term_calls"]() == []
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=" not in log_text, log_text
+
+
+def test_d2_runs_before_wedge_check(harness) -> None:
+    """The D-2 stage fires on EVERY probe (the point of D-2 is to recycle
+    BEFORE wedge probability grows). Pin the order: D-2 chokepoint call
+    happens before any wedge-stage action (no wedge here — pure D-2 path).
+    A future integration may add D-2 to the wedge stage too; for now the
+    always-run stage is the single source of preventive recycles."""
+    proc = harness["run"]("",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          term_effect="recover",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 0
+    order = harness["order"]()
+    # D-2 chokepoint invocation is recorded in the order file by the
+    # FAKE_TERM shim. With no wedge, there are no probe/curl/stop entries.
+    assert any(c.startswith("term:") and "--max-lifetime" in c for c in order), order
+    assert not any(c.startswith("curl[") for c in order), order
+    assert not any(c.startswith("ollama:") for c in order), order
+
+
+def test_d2_recycle_preempts_wedge_stage(harness) -> None:
+    """The success case for D-2: a runner that has hung around too long
+    is recycled BEFORE the wedge-stage runs, so the wedge-stage finds
+    no runner to signal. The container recovery still fires (the wedge
+    happened), but the host-stage records "host=runner-absent" — exactly
+    the bounded single-document-failure outcome D-2 is meant to enable."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          ollama_stop_effect="leave-hung",
+                          mlx_max_lifetime="1500")
+    assert proc.returncode == 2, proc.stderr
+    log_text = harness["watchdog_log"].read_text()
+    # D-2 fired and recycled — wedge-stage sees runner-absent (no term call).
+    assert "d2=recycled" in log_text, log_text
+    assert "host=runner-absent" in log_text, log_text
+    # Only the D-2 call hit the chokepoint — wedge-stage had nothing to signal.
+    d2_calls = [c for c in harness["term_calls"]() if "--max-lifetime" in c]
+    wedge_calls = [c for c in harness["term_calls"]() if "--max-lifetime" not in c]
+    assert len(d2_calls) == 1, harness["term_calls"]()
+    assert wedge_calls == [], harness["term_calls"]()
+
+
+def test_wedge_path_still_works_when_d2_disabled(harness) -> None:
+    """Regression guard: when D-2 is disabled (knob=0, the legacy
+    NFM-4887 behavior), the wedge-stage still runs the SIGTERM after
+    a failed ollama stop — the existing wedge recovery contract is
+    preserved as additive-only (NFM-5083 constraint)."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout",
+                          runner_pids=[77444],
+                          procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: " 0.0"},
+                          ollama_stop_effect="leave-hung",
+                          mlx_max_lifetime="0")    # D-2 OFF
+    assert proc.returncode == 2, proc.stderr
+    log_text = harness["watchdog_log"].read_text()
+    # No d2 noise — D-2 was off.
+    assert "d2=" not in log_text, log_text
+    # Wedge-stage did the SIGTERM via the chokepoint (no --max-lifetime flag).
+    calls = harness["term_calls"]()
+    assert any("--max-lifetime" not in c and "77444" in c for c in calls), calls
+    assert "host=term" in log_text, log_text

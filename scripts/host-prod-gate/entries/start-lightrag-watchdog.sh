@@ -50,6 +50,15 @@
 # OPEN (logs and proceeds) — the proven container recovery is never
 # blocked by host-probe infrastructure.
 #
+# NFM-5083 Option D-2: preventive recycle of IDLE MLX runners older
+# than MLX_RUNNER_MAX_LIFETIME_S (initial 1500s = 25 min — may be
+# raised to 90 min once upstream #18505 lands via NFM-4925). The chokepoint
+# helper handles the chokepoint validation + etime/cpu policy check; the
+# watchdog only invokes it on every probe (this is the point of D-2:
+# recycle before wedge probability grows), regardless of whether a
+# wedge was detected. Exit 67 = under threshold, exit 68 = busy (under-
+# load guard) — both are no-ops and not worth a per-probe log entry.
+#
 # Exit codes:
 #   0  clean (no wedge, or cooldown suppressed)
 #   2  wedge detected AND sanctioned restart issued
@@ -77,6 +86,11 @@ OLLAMA_BIN="${NFM_LIGHTRAG_WATCHDOG_OLLAMA:-ollama}"
 # to the desktop user, so the daemon (nfmdeploy) signals it only through
 # this root-owned validating chokepoint.
 TERM_CMD="${NFM_LIGHTRAG_WATCHDOG_TERM:-sudo -n /usr/local/lib/nfm-g2/ollama-runner-term.sh}"
+# NFM-5083 D-2: preventive recycle of MLX runners older than this knob
+# (default 1500s = 25 min — raises to 90 min after upstream #18505 lands
+# via NFM-4925). Set to 0 to disable D-2 (the wedge-recovery path below
+# is untouched regardless).
+MLX_RUNNER_MAX_LIFETIME_S="${NFM_LIGHTRAG_WATCHDOG_MLX_MAX_LIFETIME_S:-1500}"
 
 # Under launchd (UserName=nfmdeploy) PATH is the secure path and no docker
 # context/DOCKER_HOST is set, so the CLI would target the walled default
@@ -97,6 +111,33 @@ log_record() {
 }
 
 # ---------------------------------------------------------------------------
+# 0. Shared host-runner helpers (used by BOTH the D-2 always-run stage and
+#    the wedge-recovery host stage). Hoisted here so the D-2 invocation
+#    at section 1b can call find_runner before the wedge-stage definitions
+#    at section 5 — bash resolves function names at CALL time (not at the
+#    definition time of the enclosing function), so an earlier reference
+#    inside max_lifetime_check to a not-yet-defined find_runner would fail
+#    "command not found". Defining these here keeps both paths honest.
+# ---------------------------------------------------------------------------
+runner_cmd_for_pid() { ps -o command= -p "$1" 2>/dev/null || true; }
+
+find_runner() {
+  # The runner serving the RAG model: `ollama runner ... --model <m>`.
+  # A co-loaded tenant runner (different --model) is invisible here.
+  local pid cmd
+  for pid in $(pgrep -f 'ollama runner' 2>/dev/null || true); do
+    cmd="$(runner_cmd_for_pid "${pid}")"
+    case "${cmd}" in
+      *"--model ${OLLAMA_MODEL} "*|*"--model ${OLLAMA_MODEL}")
+        RUNNER_PID="${pid}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # 1. Container up? (if not, compose `restart: unless-stopped` owns it)
 # ---------------------------------------------------------------------------
 running="$(docker inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null || true)"
@@ -104,6 +145,33 @@ if [ "${running}" != "true" ]; then
   log_record "probe=skip container=${CONTAINER} running=${running:-absent} (compose policy owns restarts)"
   exit 0
 fi
+
+# ---------------------------------------------------------------------------
+# 1b. NFM-5083 D-2 — preventive max-lifetime recycle (always-run stage).
+#     Runs on every probe regardless of wedge status; the point of D-2
+#     is to recycle before wedge probability grows. Failure paths fail
+#     OPEN (logs and proceeds) so the wedge-recovery path below is
+#     never blocked by D-2 infra. Exit 67/68 are no-ops — they signal
+#     "not eligible right now" and the next 5-minute probe will retry.
+# ---------------------------------------------------------------------------
+max_lifetime_check() {
+  if [ "${MLX_RUNNER_MAX_LIFETIME_S}" -le 0 ] 2>/dev/null; then
+    return 0
+  fi
+  if ! find_runner; then
+    return 0
+  fi
+  rc=0
+  ${TERM_CMD} "${RUNNER_PID}" --model "${OLLAMA_MODEL}" \
+    --max-lifetime "${MLX_RUNNER_MAX_LIFETIME_S}" || rc=$?
+  case "${rc}" in
+    0)  log_record "d2=recycled model=${OLLAMA_MODEL} pid=${RUNNER_PID} max_lifetime_s=${MLX_RUNNER_MAX_LIFETIME_S}" ;;
+    67) ;;  # under threshold — common, no log noise
+    68) ;;  # busy — legitimate load, no log noise
+    *)  log_record "d2=error model=${OLLAMA_MODEL} pid=${RUNNER_PID} rc=${rc} (operator attention)" ;;
+  esac
+}
+max_lifetime_check || log_record "d2=infra-error (D-2 stage failed open; wedge check proceeds)"
 
 # ---------------------------------------------------------------------------
 # 2. Logs since the current boot (docker logs survive restarts; the anchor
@@ -185,6 +253,8 @@ fi
 #    survives the stop → verify generate. Every failure path fails OPEN:
 #    log and continue — the container-level recovery below is proven and
 #    must never be blocked by host-probe infrastructure.
+#    (runner_cmd_for_pid + find_runner are defined in section 0 — D-2 needs
+#    them too, and bash resolves function names at CALL time.)
 # ---------------------------------------------------------------------------
 gen_probe() {
   # $1 = curl --max-time budget. Success = HTTP 200 + a completed
@@ -201,24 +271,6 @@ gen_probe() {
     return 0
   fi
   rm -f "${body}"
-  return 1
-}
-
-runner_cmd_for_pid() { ps -o command= -p "$1" 2>/dev/null || true; }
-
-find_runner() {
-  # The runner serving the RAG model: `ollama runner ... --model <m>`.
-  # A co-loaded tenant runner (different --model) is invisible here.
-  local pid cmd
-  for pid in $(pgrep -f 'ollama runner' 2>/dev/null || true); do
-    cmd="$(runner_cmd_for_pid "${pid}")"
-    case "${cmd}" in
-      *"--model ${OLLAMA_MODEL} "*|*"--model ${OLLAMA_MODEL}")
-        RUNNER_PID="${pid}"
-        return 0
-        ;;
-    esac
-  done
   return 1
 }
 
