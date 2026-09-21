@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
+import time
 from typing import Any
 
 import httpx
@@ -23,6 +25,29 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_HOST = "localhost"
 _DEFAULT_PORT = 9621
+
+# ---------------------------------------------------------------------------
+# Hang-timeout envelope (NFM-5082 Option D-1, CTO charter from NFM-5079)
+# ---------------------------------------------------------------------------
+# The LightRAG sidecar talks to a host ollama MLX runner (qwen3.5:4b-nvfp4)
+# that has wedged five times since 2026-09-19.  The wedge is opaque from our
+# side: the sidecar accepts the request, then never sends a first byte.  No
+# httpx transport timeout ever fires because bytes *are* flowing (slowly) —
+# it just stalls indefinitely on the LLM path inside the sidecar.  D-1
+# bounds the blast radius so a wedged runner becomes a single-doc failure
+# rather than a container-down event:
+#
+#   per-attempt budget:  90s wall-clock from request → first byte
+#   retry budget:        3 attempts
+#   jitter between:      200-800ms (random)
+#   on exhaustion:       raise ``LightRAGRrunnerHangTimeoutError`` carrying
+#                        ``failure_reason='runner_hang_timeout'`` (NFM-4742
+#                        vocabulary) and emit a structured audit record.
+_DEFAULT_OLLAMA_REQUEST_TIMEOUT_S: float = 90.0
+_DEFAULT_OLLAMA_MAX_ATTEMPTS: int = 3
+_JITTER_MIN_S: float = 0.2
+_JITTER_MAX_S: float = 0.8
+_FAILURE_REASON_RUNNER_HANG_TIMEOUT: str = "runner_hang_timeout"
 
 # ---------------------------------------------------------------------------
 # Timeouts (NFM-2565)
@@ -109,12 +134,84 @@ def _resolve_query_timeout(
 
 
 # ---------------------------------------------------------------------------
+# Hang-timeout envelope helpers (NFM-5082 D-1)
+# ---------------------------------------------------------------------------
+
+
+def _jittered_backoff_s(rng: random.Random | None = None) -> float:
+    """Return a backoff sleep in ``[_JITTER_MIN_S, _JITTER_MAX_S]``.
+
+    NFM-5082 charter: jitter range is 200-800ms. ``rng`` lets the test
+    suite pin deterministic values without patching ``random`` globally.
+    """
+    r = rng if rng is not None else random
+    return r.uniform(_JITTER_MIN_S, _JITTER_MAX_S)
+
+
+def _emit_hang_timeout_audit(
+    *,
+    endpoint: str,
+    attempts: int,
+    elapsed_s: float,
+) -> None:
+    """Emit a structured audit record on hang-timeout exhaustion.
+
+    NFM-4742 vocabulary: ``failure_reason='runner_hang_timeout'``. The
+    record is logged via the module logger so the audit collector can
+    correlate without coupling the client to a DB session — the calling
+    pipeline owns the DB write that consumes the audit row.
+    """
+    logger.error(
+        (
+            "lightrag hang timeout exhausted: endpoint=%s attempts=%d "
+            "elapsed_s=%.3f failure_reason=%s"
+        ),
+        endpoint,
+        attempts,
+        elapsed_s,
+        _FAILURE_REASON_RUNNER_HANG_TIMEOUT,
+        extra={
+            "failure_reason": _FAILURE_REASON_RUNNER_HANG_TIMEOUT,
+            "endpoint": endpoint,
+            "attempts": attempts,
+            "elapsed_s": elapsed_s,
+            "audit_vocabulary": "NFM-4742",
+            "charter": "NFM-5082",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Exception
 # ---------------------------------------------------------------------------
 
 
 class LightRAGClientError(Exception):
     """Raised when a LightRAG API call fails."""
+
+
+class LightRAGRrunnerHangTimeoutError(LightRAGClientError):
+    """Raised when a sidecar HTTP call exhausts the 90s/3x hang budget.
+
+    NFM-5082 Option D-1: bounds the blast radius of an upstream ollama MLX
+    nvfp4 wedge (CTO charter NFM-5079). Carries the NFM-4742 vocabulary
+    value ``failure_reason='runner_hang_timeout'`` so the calling pipeline
+    can route the failure to its audit log without parsing the message
+    text. ``attempts`` and ``elapsed_s`` survive on the instance for
+    observability.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempts: int,
+        elapsed_s: float,
+    ) -> None:
+        super().__init__(message)
+        self.failure_reason: str = _FAILURE_REASON_RUNNER_HANG_TIMEOUT
+        self.attempts: int = attempts
+        self.elapsed_s: float = elapsed_s
 
 
 class LightRAGConflictError(LightRAGClientError):
@@ -265,6 +362,137 @@ class LightRAGClient:
         return self._base_url
 
     # ------------------------------------------------------------------
+    # Hang-guard envelope (NFM-5082 Option D-1)
+    # ------------------------------------------------------------------
+    # Architectural contract: every sidecar HTTP call goes through this
+    # helper. The Code Reviewer enforces exhaustiveness via the AST test in
+    # ``test_lightrag_client_hang_timeout.TestExhaustiveness`` — no path
+    # may bypass it.
+    #
+    # Per attempt the helper wraps the underlying ``AsyncClient.request``
+    # coroutine in ``asyncio.wait_for`` at ``per_request_timeout`` seconds
+    # (defaults to the 90s D-1 budget). On ``asyncio.TimeoutError`` (the
+    # wall-clock cap fired) it retries up to ``_DEFAULT_OLLAMA_MAX_ATTEMPTS``
+    # times, sleeping in ``[_JITTER_MIN_S, _JITTER_MAX_S]`` seconds between
+    # attempts. On exhaustion it raises
+    # :class:`LightRAGRrunnerHangTimeoutError` carrying
+    # ``failure_reason='runner_hang_timeout'`` and emits a structured
+    # audit record via :func:`_emit_hang_timeout_audit`.
+    #
+    # Non-timeout transport errors (``httpx.ConnectError``,
+    # ``httpx.ReadTimeout`` from the byte-level httpx path, etc.) are NOT
+    # retried — they surface to the caller exactly as before so existing
+    # selector fallback paths keep working.
+
+    async def _request_with_hang_guard(
+        self,
+        method: str,
+        url: str,
+        *,
+        per_request_timeout: float | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Execute ``method url`` through the 90s/3x hang envelope.
+
+        Args:
+            method: HTTP verb (``GET``/``POST``/``DELETE``/...).
+            url: Path or absolute URL passed to the underlying httpx shortcut.
+            per_request_timeout: Per-attempt wall-clock budget in seconds.
+                Defaults to :data:`_DEFAULT_OLLAMA_REQUEST_TIMEOUT_S` (90s).
+                Lower values are honoured by callers that already use a
+                tighter inner budget (e.g. ``query_timeout=8s``).
+            **kwargs: Forwarded verbatim to the httpx shortcut — ``json``,
+                ``params``, ``content``, ``headers``, etc.
+
+        Returns:
+            ``httpx.Response`` from the underlying transport.
+
+        Raises:
+            LightRAGRrunnerHangTimeoutError: When the retry budget is
+                exhausted. Carries
+                ``failure_reason='runner_hang_timeout'`` (NFM-4742).
+            httpx.HTTPError: For any non-timeout transport failure; not
+                retried (those signals carry information the caller
+                needs to route on).
+
+        Notes:
+            The helper dispatches via the per-verb shortcuts on the
+            underlying ``httpx.AsyncClient`` (``get``/``post``/``delete``
+            /``put``/``patch``) so existing test fixtures that patch
+            ``client._http_client.<verb>`` continue to work after the
+            refactor.  The hang-guard contract (90s wall-clock + 3
+            attempts) is enforced identically regardless of verb.
+        """
+        budget = (
+            per_request_timeout
+            if per_request_timeout is not None
+            else _DEFAULT_OLLAMA_REQUEST_TIMEOUT_S
+        )
+        method_upper = method.upper()
+        shortcut_name = method_upper.lower()
+        if shortcut_name not in {"get", "post", "delete", "put", "patch"}:
+            raise ValueError(
+                f"unsupported HTTP method for hang-guard: {method!r}"
+            )
+        # Per-call resolution: the ``_http_client`` is rebound by
+        # ``lightrag_lifecycle`` when the Celery loop changes (NFM-4719),
+        # so we must not cache the bound method at decoration time.
+        shortcut = getattr(self._http_client, shortcut_name)
+
+        # Propagate the per-request budget to the underlying httpx call so
+        # the protocol layer enforces the same ceiling.  Existing callers
+        # that supplied their own ``timeout=`` keep their override (the
+        # ``setdefault`` pattern); new callers get the budget automatically.
+        # D-1 caps every ollama call at 90s regardless of caller intent —
+        # the public methods compute ``per_request_timeout`` as the
+        # ``min(...)`` of their nominal budget and the 90s ceiling, so the
+        # value injected here is already the correct D-1 envelope.
+        kwargs.setdefault("timeout", budget)
+
+        started = time.monotonic()
+        last_exc: asyncio.TimeoutError | None = None
+        for attempt in range(1, _DEFAULT_OLLAMA_MAX_ATTEMPTS + 1):
+            try:
+                return await asyncio.wait_for(
+                    shortcut(url, **kwargs),
+                    timeout=budget,
+                )
+            except TimeoutError as exc:
+                last_exc = exc
+                logger.warning(
+                    (
+                        "lightrag hang timeout attempt %d/%d method=%s "
+                        "url=%s budget_s=%.3f"
+                    ),
+                    attempt,
+                    _DEFAULT_OLLAMA_MAX_ATTEMPTS,
+                    method_upper,
+                    url,
+                    budget,
+                )
+                if attempt < _DEFAULT_OLLAMA_MAX_ATTEMPTS:
+                    await asyncio.sleep(_jittered_backoff_s())
+                    continue
+                break
+        elapsed = time.monotonic() - started
+        endpoint = f"{method_upper} {url}"
+        _emit_hang_timeout_audit(
+            endpoint=endpoint,
+            attempts=_DEFAULT_OLLAMA_MAX_ATTEMPTS,
+            elapsed_s=elapsed,
+        )
+        raise LightRAGRrunnerHangTimeoutError(
+            (
+                f"LightRAG {method_upper} {url} hung for "
+                f"{_DEFAULT_OLLAMA_MAX_ATTEMPTS}x{budget:.1f}s "
+                f"(= {elapsed:.1f}s wall-clock); "
+                f"failure_reason={_FAILURE_REASON_RUNNER_HANG_TIMEOUT!r}"
+            ),
+            attempts=_DEFAULT_OLLAMA_MAX_ATTEMPTS,
+            elapsed_s=elapsed,
+        ) from last_exc
+
+    # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
 
@@ -272,12 +500,16 @@ class LightRAGClient:
         """Check if the LightRAG service is healthy.
 
         Returns True if the service responds with HTTP 200, False otherwise.
-        Connection errors and non-200 responses both return False.
+        Connection errors, non-200 responses, and D-1 hang-timeout
+        exhaustion (NFM-5082) all return False so the RAG provider
+        selector can fall back without indefinite waiting on a wedged
+        runner.
         """
         try:
-            response = await self._http_client.get(
+            response = await self._request_with_hang_guard(
+                "GET",
                 "/health",
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
             return response.status_code == 200
         except httpx.HTTPError:
@@ -286,6 +518,16 @@ class LightRAGClient:
                 self.host,
                 self.port,
                 exc_info=True,
+            )
+            return False
+        except LightRAGRrunnerHangTimeoutError:
+            # NFM-5082 D-1: a wedged runner must not let the probe hang.
+            # The audit row is emitted by the helper; surface as unhealthy.
+            logger.warning(
+                "LightRAG health check exhausted the 90s/3x hang-guard: "
+                "host=%s, port=%d",
+                self.host,
+                self.port,
             )
             return False
 
@@ -314,9 +556,10 @@ class LightRAGClient:
         and must not reconcile as covered.
         """
         try:
-            response = await self._http_client.get(
+            response = await self._request_with_hang_guard(
+                "GET",
                 "/documents",
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -400,10 +643,11 @@ class LightRAGClient:
                 sidecar's deletion of an unknown id is a no-op in practice.
         """
         try:
-            response = await self._http_client.delete(
+            response = await self._request_with_hang_guard(
+                "DELETE",
                 "/documents",
                 params={"doc_id": doc_id},
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
         except httpx.HTTPError as exc:
             raise LightRAGClientError(
@@ -453,9 +697,10 @@ class LightRAGClient:
         silently no-op.
         """
         try:
-            response = await self._http_client.get(
+            response = await self._request_with_hang_guard(
+                "GET",
                 "/documents",
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -519,9 +764,10 @@ class LightRAGClient:
         if "/" in doc_id or ".." in doc_id:
             raise ValueError(f"unsafe doc_id: {doc_id!r}")
         try:
-            response = await self._http_client.delete(
+            response = await self._request_with_hang_guard(
+                "DELETE",
                 f"/documents/{doc_id}",
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
         except httpx.HTTPError as exc:
             raise LightRAGClientError(
@@ -561,10 +807,20 @@ class LightRAGClient:
             payload["file_source"] = file_source
 
         try:
-            response = await self._http_client.post(
+            # NFM-5082 D-1: the 90s/3x envelope replaces the legacy
+            # ``self.ingest_timeout`` (300s) as the binding wall-clock so
+            # a wedged ollama runner cannot exceed the D-1 blast radius
+            # budget. ``self.ingest_timeout`` still wins when the caller
+            # passes a value tighter than the 90s default (preserving
+            # the test-fixture path).
+            response = await self._request_with_hang_guard(
+                "POST",
                 "/documents/text",
                 json=payload,
-                timeout=self.ingest_timeout,
+                per_request_timeout=min(
+                    self.ingest_timeout,
+                    _DEFAULT_OLLAMA_REQUEST_TIMEOUT_S,
+                ),
             )
             response.raise_for_status()
             return response.json()
@@ -619,10 +875,11 @@ class LightRAGClient:
         }
 
         try:
-            response = await self._http_client.post(
+            response = await self._request_with_hang_guard(
+                "POST",
                 "/query",
                 json=payload,
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -676,10 +933,11 @@ class LightRAGClient:
         }
 
         try:
-            response = await self._http_client.post(
+            response = await self._request_with_hang_guard(
+                "POST",
                 "/query/data",
                 json=payload,
-                timeout=self.query_timeout,
+                per_request_timeout=self.query_timeout,
             )
             response.raise_for_status()
             return response.json()
