@@ -26,10 +26,12 @@ from nfm_db.optimization.nsga2_problem import (
 )
 from nfm_db.schemas.common import ApiResponse
 from nfm_db.schemas.design import (
+    LOW_CONFIDENCE_THRESHOLD,
     AlgorithmParams,
     ConvergenceMetrics,
     OptimizeRequest,
     OptimizeResponse,
+    ParetoPoint,
     ParetoSolution,
 )
 
@@ -156,6 +158,12 @@ async def optimize_endpoint(
     X = result.opt.get("X")
     pareto_solutions = _build_pareto_solutions(F, X)
 
+    # 8b. Surrogate-confidence enrichment (NFM-5057 / NFM-5063, ADR-021 §2.3):
+    # one predict_* call per rank-1 solution, its confidence reused verbatim.
+    # Degrades all-or-nothing to [] so len(pareto_points) ∈ {0, n_solutions}
+    # (ADR-021 §5.5).
+    pareto_points = _build_pareto_points(pareto_solutions)
+
     # 9. Compute per-generation convergence metrics.
     convergence = _compute_convergence(result)
 
@@ -163,6 +171,7 @@ async def optimize_endpoint(
         success=True,
         data=OptimizeResponse(
             pareto_front=pareto_solutions,
+            pareto_points=pareto_points,
             convergence=convergence,
             n_solutions=len(pareto_solutions),
             compute_time_ms=elapsed_ms,
@@ -207,6 +216,69 @@ def _build_pareto_solutions(
         )
 
     return solutions
+
+
+def _build_pareto_points(
+    pareto_solutions: list[ParetoSolution],
+) -> list[ParetoPoint]:
+    """Enrich each rank-1 solution with surrogate confidence (NFM-5057).
+
+    Calls ``prediction_service.predict_energy_from_composition`` once per
+    solution and reuses that single call's ``confidence`` as the point's
+    ``prediction_confidence`` (ADR-021 §2.3). The energy predictor is the
+    model whose v3.2 LOESO out-of-system calibration fixes
+    ``LOW_CONFIDENCE_THRESHOLD``, so its per-prediction confidence is the
+    stream the threshold was derived against.
+
+    All-or-nothing degradation (ADR-021 §5.5): if any prediction fails,
+    returns ``None``, or reports a missing/out-of-range confidence (legacy
+    pre-NFM-3953 artifacts emit ``confidence=None``), the whole list is
+    empty so ``len(pareto_points) ∈ {0, n_solutions}`` holds. Consumers
+    then fall back to reading ``pareto_front`` alone — the endpoint still
+    succeeds; a missing confidence stream is not a 503 (ADR-020 §4 only
+    gates the phase/temp surrogate availability checked at step 1).
+    """
+    try:
+        from nfm_db.ml.prediction_service import (
+            predict_energy_from_composition,
+        )
+    except ImportError as exc:
+        logger.warning("Confidence stream unavailable (import): %s", exc)
+        return []
+
+    points: list[ParetoPoint] = []
+    for sol in pareto_solutions:
+        try:
+            prediction = predict_energy_from_composition(sol.composition)
+        except Exception as exc:
+            logger.warning(
+                "Confidence prediction failed for %s: %s", sol.composition, exc
+            )
+            return []
+
+        confidence = (prediction or {}).get("confidence")
+        if not isinstance(confidence, (int, float)) or not (
+            0.0 <= confidence <= 1.0
+        ):
+            logger.warning(
+                "Confidence stream unavailable for %s (confidence=%r); "
+                "emitting empty pareto_points",
+                sol.composition,
+                confidence,
+            )
+            return []
+
+        points.append(
+            ParetoPoint(
+                composition=sol.composition,
+                objectives=sol.objectives,
+                rank=sol.rank,
+                prediction_confidence=float(confidence),
+                low_confidence=float(confidence) < LOW_CONFIDENCE_THRESHOLD,
+            )
+        )
+
+    return points
 
 
 def _decision_to_composition(x: np.ndarray) -> dict[str, float]:
