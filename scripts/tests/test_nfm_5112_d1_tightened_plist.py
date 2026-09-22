@@ -144,6 +144,7 @@ def _expected_rollback_commands() -> list[str]:
     return [
         f"launchctl bootout gui/$UID/{EXPECTED_LABEL}",
         f"launchctl bootout gui/$UID {new_plist}",
+        f"mv {new_plist} {DISABLED_AGENTS_DIR}/",
         f"mv {DISABLED_AGENTS_DIR}/{OLD_NFM_5080_LABEL}.plist ~/Library/LaunchAgents/",
         f"launchctl bootstrap gui/$UID {old_plist}",
     ]
@@ -282,8 +283,10 @@ def test_rollback_disables_tightened_and_restores_old_agent() -> None:
     """AC3 + CR R2 F1: rollback must (1) disable the tightened agent via
     BOTH forms — the label form, then the deployed absolute-path form
     (a bare filename resolves under ~ and the bootout silently fails) —
-    and (2) restore the agent Deploy retired (mv its plist back from
-    the disabled dir, then bootstrap it)."""
+    (2) move the tightened plist out of ~/Library/LaunchAgents (bootout
+    alone is per-session; left in place it would reload BOTH agents at
+    next login), and (3) restore the agent Deploy retired (mv its plist
+    back from the disabled dir, then bootstrap it)."""
     section = _section(_header_text(), "Rollback (")
     assert _commands(section) == _expected_rollback_commands(), (
         "rollback runbook must boot out the tightened agent (label form, "

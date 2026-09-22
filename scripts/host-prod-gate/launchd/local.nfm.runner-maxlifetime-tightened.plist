@@ -71,14 +71,18 @@
   Rollback (AC3 — restores the NFM-5080 25min agent):
     launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened
     launchctl bootout gui/$UID ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+    mv ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist ~/Library/LaunchAgents.disabled/
     mv ~/Library/LaunchAgents.disabled/local.nfm.runner-maxlifetime.plist ~/Library/LaunchAgents/
     launchctl bootstrap gui/$UID \
       ~/Library/LaunchAgents/local.nfm.runner-maxlifetime.plist
   (steps 1-2 are the AC3-spec bootouts of the tightened agent — label
   form first, then the deployed plist's absolute path under
   ~/Library/LaunchAgents/ — a bare filename resolves under ~ and the
-  bootout silently fails. Steps 3-4 restore the agent Deploy retired,
-  per CR R2 F1 / amended AC3 NFM-5121.)
+  bootout silently fails. Step 3 moves the tightened plist out of
+  ~/Library/LaunchAgents, the reboot-resilience mirror of Deploy's
+  rationale: bootout alone is per-session, so the tightened plist left
+  in place would reload BOTH agents at next login. Steps 4-5 restore
+  the agent Deploy retired, per CR R2 F1 / amended AC3 NFM-5121.)
 
   Deploy (RE — retire the old agent FIRST; CR R2 F1):
     launchctl bootout gui/$UID/local.nfm.runner-maxlifetime
