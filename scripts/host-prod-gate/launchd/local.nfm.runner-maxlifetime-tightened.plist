@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NFM-5112 D1-tighten — Burst-window MLX runner max-lifetime watchdog
+  (cadence tightened from 25 min → 22 min per CTO escalation NFM-5079).
+
+  Why this plist exists (separate label from NFM-5080's):
+    3 wedges on 09-21 slipped through the 25 min cadence (wedges arrived
+    at cycle minute 26-30). Tightening to 22 min closes the wedge-formation
+    gap (now <20 min) below the observed 30 min no-progress window.
+
+  Why a NEW plist (not an edit to NFM-5080's):
+    - Charter hygiene: additive invocation surface, no source modification
+      to the chokepoint (sha 37a69e1f0fb6 preserved), no probe changes
+      to lightrag-watchdog, no changes to the reingest 03:30Z trigger.
+    - Rollback symmetry: any of the two plists can be independently
+      disabled without disturbing the other. CR/RE can A/B the two
+      cadences without overwriting each other's running config.
+    - AC2 (CR verification) wants an isolated, byte-diffable surface so
+      schedule arithmetic can be inspected independently of the existing
+      plist's evidence trail.
+
+  Schedule (UTC + local +08:00 — 22 min spacing, ±60s tolerance):
+    03:30Z  →  11:30 local   (first post-03:30Z reingest fire)
+    03:52Z  →  11:52 local   (+22m)
+    04:14Z  →  12:14 local   (+44m)
+    04:36Z  →  12:36 local   (+66m)
+    04:58Z  →  12:58 local   (+88m)
+    05:20Z  →  13:20 local   (+110m, last, on the burst-window boundary)
+
+  Spacing verification (CR AC2):
+    03:30→03:52 = 22 min, 03:52→04:14 = 22 min, 04:14→04:36 = 22 min,
+    04:36→04:58 = 22 min, 04:58→05:20 = 22 min. 6 fires total.
+    Off-burst: NO firings (soak behavior unchanged from NFM-5080).
+
+  Identity: runs in the lwj04 user-session launchd domain (gui/$UID).
+  The MLX runner is owned by lwj04 (same desktop user), so the chokepoint's
+  existing sudoers grant (for nfmdeploy → root) is NOT consumed — lwj04
+  can SIGTERM own processes directly. No sudoers change. Chokepoint
+  byte-identical before/after deploy (sha 37a69e1f0fb6).
+
+  Hard constraints honored:
+    - chokepoint sha 37a69e1f0fb6 preserved (NFM-4922 RCA, NFM-5080 charter)
+    - auto-unwedge path unchanged (NFM-4887)
+    - no probe changes to lightrag-watchdog
+    - no changes to reingest 03:30Z trigger
+    - new invocation surface only (plist + schedule modification)
+    - sibling NFM-5080 plist (local.nfm.runner-maxlifetime) left UNTOUCHED
+
+  Wrapper script is the SAME as NFM-5080's:
+    /Users/lwj04/.local/nfm/runner-maxlifetime.sh
+  Only the invocation cadence changes; the chokepoint call site is
+  identical. No wrapper script modification required.
+
+  Convention (matches ~/Library/LaunchAgents/local.nfm.runner-maxlifetime.plist):
+    - NO RunAtLoad: install does NOT fire immediately
+    - NO KeepAlive: each fire is independent
+    - Label prefix local.nfm.* per charter hygiene
+    - Label distinct from NFM-5080's so launchctl can disambiguate
+
+  Rollback (AC3, 2 commands):
+    launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened
+    launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened.plist
+  (first form matches the LaunchAgent label; second form is the file
+  target accepted by some launchd versions — both are safe.)
+
+  Deploy (RE):
+    launchctl bootstrap gui/$UID \
+      ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+
+  Verify (RE):
+    launchctl list | grep runner-maxlifetime-tightened
+    plutil -p ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+
+  Acceptance evidence (NFM-5111 AC):
+    - Schedule arithmetic: plutil -p on deployed plist (CR-side AC2)
+    - Chokepoint sha unchanged: shasum -a 256 /usr/local/lib/nfm-g2/ollama-runner-term.sh
+    - Loaded status: launchctl list | grep runner-maxlifetime-tightened
+    - Burst-window restart count (after deploy):
+        grep -c "D1 fire:" /var/log/nfm-g2/runner-maxlifetime.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.nfm.runner-maxlifetime-tightened</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/lwj04/.local/nfm/runner-maxlifetime.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>11</integer>
+            <key>Minute</key><integer>52</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>12</integer>
+            <key>Minute</key><integer>14</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>12</integer>
+            <key>Minute</key><integer>36</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>12</integer>
+            <key>Minute</key><integer>58</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>13</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/lwj04/.local/nfm/runner-maxlifetime-tightened-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/lwj04/.local/nfm/runner-maxlifetime-tightened-launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
