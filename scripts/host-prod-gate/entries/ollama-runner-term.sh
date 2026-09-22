@@ -102,6 +102,10 @@ esac
 # so the policy gate errs on the safe (skip-recycle) side.
 etime_to_seconds() {
   local raw="$1" days=0 hours=0 mins=0 secs=0
+  # Defensive: strip any space padding a ps variant may emit — `10#`
+  # arithmetic below is not space-tolerant, and the split (IFS=:) would
+  # otherwise glue a leading space onto the first field.
+  raw="${raw// /}"
   # Strip optional DD- prefix.
   case "${raw}" in
     *-*)
@@ -123,7 +127,22 @@ etime_to_seconds() {
     3) hours="$1"; mins="$2"; secs="$3" ;;
     *) printf '%s\n' "0"; return ;;
   esac
-  printf '%s\n' "$(( days * 86400 + hours * 3600 + mins * 60 + secs ))"
+  # NFM-5122: ps ZERO-PADS every etime field (a 3s-old process prints
+  # 00:03) and bash 3.2 `$(( ))` treats leading-zero tokens as OCTAL —
+  # 00-07 parse to identical values, but 08/09 throw "value too great
+  # for base", which under `set -e` aborts rc=1 BEFORE the busy-guard/
+  # SIGTERM (watchdog then misclassifies the probe as d2=error). Force
+  # base-10; `${var:-0}` guards empties because `10#` alone rejects an
+  # empty expansion (word-split can yield empty fields, e.g. `08::09`).
+  # Malformed-input contract (unchanged from the octal era, where a bad
+  # token evaluated as an unset name → 0): any non-numeric field falls
+  # back to 0 = safe skip rather than aborting — `10#` alone would turn
+  # a bad token into a script abort under set -e. Concatenated scan so
+  # one case guards all four fields (days is pre-validated above).
+  case "${days}${hours}${mins}${secs}" in
+    *[!0-9]*) printf '%s\n' "0"; return ;;
+  esac
+  printf '%s\n' "$(( 10#${days:-0} * 86400 + 10#${hours:-0} * 3600 + 10#${mins:-0} * 60 + 10#${secs:-0} ))"
 }
 
 # ---- chokepoint validation (runs FIRST — same as wedge mode) ----------------

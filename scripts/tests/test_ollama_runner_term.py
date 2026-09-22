@@ -38,10 +38,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "host-prod-gate" / "entries" / "ollama-runner-term.sh"
 
 # The runner as observed on the prod host (NFM-4886, PID 77444 shape):
-RUNNER_CMD = ("/Applications/Ollama.app/Contents/Resources/ollama runner "
-              "--mlx-engine --model qwen3.5:4b-nvfp4 --port 56840")
-OTHER_MODEL_RUNNER_CMD = ("/Applications/Ollama.app/Contents/Resources/ollama "
-                          "runner --mlx-engine --model qwen3.8:27b-mlx --port 56841")
+RUNNER_CMD = (
+    "/Applications/Ollama.app/Contents/Resources/ollama runner "
+    "--mlx-engine --model qwen3.5:4b-nvfp4 --port 56840"
+)
+OTHER_MODEL_RUNNER_CMD = (
+    "/Applications/Ollama.app/Contents/Resources/ollama "
+    "runner --mlx-engine --model qwen3.8:27b-mlx --port 56841"
+)
 FOREIGN_CMD = "/Applications/Safari.app/Contents/MacOS/Safari"
 
 # Fake ps: mirrors the call shapes the script uses —
@@ -101,11 +105,16 @@ def harness(tmp_path: Path):
     etime = tmp_path / "etime"
     cpu = tmp_path / "cpu"
 
-    def run(argv: list[str], *, procs_table: dict[int, str] | None = None,
-            kill_effect: str = "recover", wait_sec: str = "1",
-            etime_table: dict[int, str] | None = None,
-            cpu_table: dict[int, str] | None = None,
-            extra_env: dict | None = None):
+    def run(
+        argv: list[str],
+        *,
+        procs_table: dict[int, str] | None = None,
+        kill_effect: str = "recover",
+        wait_sec: str = "1",
+        etime_table: dict[int, str] | None = None,
+        cpu_table: dict[int, str] | None = None,
+        extra_env: dict | None = None,
+    ):
         lines = [f"{pid}|{cmd}" for pid, cmd in (procs_table or {}).items()]
         procs.write_text("\n".join(lines) + ("\n" if lines else ""))
         etime_lines = [f"{pid}|{val}" for pid, val in (etime_table or {}).items()]
@@ -130,16 +139,17 @@ def harness(tmp_path: Path):
             env.update(extra_env)
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), *argv],
-            capture_output=True, text=True, env=env, check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
         )
 
     def kills() -> list[str]:
-        return (kill_calls.read_text().splitlines()
-                if kill_calls.exists() else [])
+        return kill_calls.read_text().splitlines() if kill_calls.exists() else []
 
     def ps_seen() -> list[str]:
-        return (ps_calls.read_text().splitlines()
-                if ps_calls.exists() else [])
+        return ps_calls.read_text().splitlines() if ps_calls.exists() else []
 
     return {"run": run, "kills": kills, "ps_calls": ps_seen, "procs": procs}
 
@@ -147,8 +157,7 @@ def harness(tmp_path: Path):
 def test_terminates_matching_runner(harness) -> None:
     """Happy path: a wedged qwen3.5:4b-nvfp4 runner gets exactly one
     SIGTERM and the helper reports success once the pid is gone."""
-    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={77444: RUNNER_CMD})
+    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"], procs_table={77444: RUNNER_CMD})
     assert proc.returncode == 0, proc.stderr
     assert harness["kills"]() == ["kill -TERM 77444"]
 
@@ -156,8 +165,7 @@ def test_terminates_matching_runner(harness) -> None:
 def test_already_gone_pid_is_success_without_kill(harness) -> None:
     """Idempotent: the runner exited between discovery and the helper
     (e.g. ollama stop landed late) — nothing to signal, exit 0."""
-    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={})
+    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"], procs_table={})
     assert proc.returncode == 0, proc.stderr
     assert harness["kills"]() == []
 
@@ -166,8 +174,7 @@ def test_refuses_non_runner_process(harness) -> None:
     """The root grant must never become a general-purpose kill: a pid
     whose command is not an `ollama runner` is refused (exit 65) with
     no signal issued."""
-    proc = harness["run"](["4242", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={4242: FOREIGN_CMD})
+    proc = harness["run"](["4242", "--model", "qwen3.5:4b-nvfp4"], procs_table={4242: FOREIGN_CMD})
     assert proc.returncode == 65, proc.stdout + proc.stderr
     assert harness["kills"]() == []
 
@@ -176,8 +183,9 @@ def test_refuses_model_mismatch(harness) -> None:
     """A healthy runner serving a DIFFERENT model (multi-tenant host:
     qwen3.8:27b-mlx co-load) must not be collateral damage of a
     qwen3.5 wedge — mismatch is refused (exit 66), no signal."""
-    proc = harness["run"](["5150", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={5150: OTHER_MODEL_RUNNER_CMD})
+    proc = harness["run"](
+        ["5150", "--model", "qwen3.5:4b-nvfp4"], procs_table={5150: OTHER_MODEL_RUNNER_CMD}
+    )
     assert proc.returncode == 66, proc.stdout + proc.stderr
     assert harness["kills"]() == []
 
@@ -203,10 +211,10 @@ def test_model_argument_with_pattern_characters_is_rejected(harness) -> None:
     match, so the validation cannot be loosened by pattern
     interpretation of the model string — usage failure (64), no
     ps/kill at all."""
-    for model in ("*", "qwen3.5:*", "qwen3.5:?", "qwen3.5:[a]",
-                  'x"y', "x\\y"):
-        proc = harness["run"](["77444", "--model", model],
-                              procs_table={77444: OTHER_MODEL_RUNNER_CMD})
+    for model in ("*", "qwen3.5:*", "qwen3.5:?", "qwen3.5:[a]", 'x"y', "x\\y"):
+        proc = harness["run"](
+            ["77444", "--model", model], procs_table={77444: OTHER_MODEL_RUNNER_CMD}
+        )
         assert proc.returncode == 64, (model, proc.stdout + proc.stderr)
         assert harness["ps_calls"]() == []
         assert harness["kills"]() == []
@@ -221,9 +229,11 @@ def test_persisted_pid_reports_failure(harness) -> None:
     """If the runner ignores SIGTERM past the grace window the helper
     says so (exit 1) — the watchdog records it for the operator; it
     must NOT escalate to SIGKILL on its own."""
-    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={77444: RUNNER_CMD},
-                          kill_effect="persist")
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4"],
+        procs_table={77444: RUNNER_CMD},
+        kill_effect="persist",
+    )
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert harness["kills"]() == ["kill -TERM 77444"]
 
@@ -234,8 +244,7 @@ def test_pid_revalidated_immediately_before_kill(harness) -> None:
     ps read for validation + kill against a stale read would race a
     recycled pid). Pin the shape: exactly the `command=` lookups for
     the target pid — validate, then poll."""
-    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"],
-                          procs_table={77444: RUNNER_CMD})
+    proc = harness["run"](["77444", "--model", "qwen3.5:4b-nvfp4"], procs_table={77444: RUNNER_CMD})
     assert proc.returncode == 0
     shapes = [c for c in harness["ps_calls"]() if "command=" in c]
     assert all(c == "ps -o command= -p 77444" for c in shapes), shapes
@@ -260,8 +269,7 @@ def test_pid_revalidated_immediately_before_kill(harness) -> None:
 def test_max_lifetime_requires_model(harness) -> None:
     """In --max-lifetime mode the model match is still the security
     boundary: missing --model → usage 64, no ps / kill issued at all."""
-    proc = harness["run"](["77444", "--max-lifetime", "1500"],
-                          procs_table={77444: RUNNER_CMD})
+    proc = harness["run"](["77444", "--max-lifetime", "1500"], procs_table={77444: RUNNER_CMD})
     assert proc.returncode == 64, proc.stdout + proc.stderr
     assert harness["ps_calls"]() == []
     assert harness["kills"]() == []
@@ -272,9 +280,9 @@ def test_max_lifetime_must_be_a_positive_integer(harness) -> None:
     usage 64, no ps / kill issued."""
     for lifetime in ("0", "-1", "abc", "1500s", "1.5"):
         proc = harness["run"](
-            ["77444", "--model", "qwen3.5:4b-nvfp4",
-             "--max-lifetime", lifetime],
-            procs_table={77444: RUNNER_CMD})
+            ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", lifetime],
+            procs_table={77444: RUNNER_CMD},
+        )
         assert proc.returncode == 64, (lifetime, proc.stdout + proc.stderr)
         assert harness["ps_calls"]() == []
         assert harness["kills"]() == []
@@ -288,7 +296,7 @@ def test_max_lifetime_skips_young_runner(harness) -> None:
     proc = harness["run"](
         ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
         procs_table={77444: RUNNER_CMD},
-        etime_table={77444: "05:00"},   # 5 min wall-clock → under 1500s
+        etime_table={77444: "05:00"},  # 5 min wall-clock → under 1500s
         cpu_table={77444: " 0.0"},
     )
     assert proc.returncode == 67, proc.stdout + proc.stderr
@@ -301,8 +309,8 @@ def test_max_lifetime_recycles_idle_old_runner(harness) -> None:
     proc = harness["run"](
         ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
         procs_table={77444: RUNNER_CMD},
-        etime_table={77444: "26:00"},   # 26 min wall-clock → over 1500s
-        cpu_table={77444: " 0.0"},      # idle
+        etime_table={77444: "26:00"},  # 26 min wall-clock → over 1500s
+        cpu_table={77444: " 0.0"},  # idle
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert harness["kills"]() == ["kill -TERM 77444"]
@@ -315,8 +323,8 @@ def test_max_lifetime_skips_busy_runner(harness) -> None:
     proc = harness["run"](
         ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
         procs_table={77444: RUNNER_CMD},
-        etime_table={77444: "26:00"},   # over 1500s but CPU active
-        cpu_table={77444: " 42.5"},     # prefill / decode running
+        etime_table={77444: "26:00"},  # over 1500s but CPU active
+        cpu_table={77444: " 42.5"},  # prefill / decode running
     )
     assert proc.returncode == 68, proc.stdout + proc.stderr
     assert harness["kills"]() == [], "busy runner must NEVER be signaled"
@@ -369,7 +377,7 @@ def test_max_lifetime_parses_etime_hhmmss(harness) -> None:
     proc = harness["run"](
         ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
         procs_table={77444: RUNNER_CMD},
-        etime_table={77444: "01:30:00"},   # 1h30m = 5400s — over 1500s
+        etime_table={77444: "01:30:00"},  # 1h30m = 5400s — over 1500s
         cpu_table={77444: " 0.0"},
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -402,6 +410,100 @@ def test_max_lifetime_parses_etime_dd_hhmmss(harness) -> None:
     assert harness["kills"]() == ["kill -TERM 77444"]
 
 
+# ---------------------------------------------------------------------------
+# NFM-5122 — macOS `ps -o etime=` ZERO-PADS every field (a 3s-old process
+# prints 00:03), and bash 3.2 `$(( ))` arithmetic treats leading-zero tokens
+# as OCTAL: 00-07 parse to identical values, but 08/09 abort with "value too
+# great for base" — under `set -e` the script dies rc=1 BEFORE the
+# busy-guard/SIGTERM, and the watchdog case-fallthrough misclassifies it as
+# d2=error (prod 2026-09-22T12:24:13Z, pid 86345 age ~9m → token "09").
+# These cases pin base-10 evaluation of every etime field.
+# ---------------------------------------------------------------------------
+
+
+def test_max_lifetime_parses_octal_mins_field_under_knob(harness) -> None:
+    """mins=09 on the young-runner path: 09:24 = 564s < 1500s → the
+    correct disposition is the skip (exit 67) with the age computed
+    base-10 — pre-fix this exact shape aborted rc=1 (d2=error)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "09:24"},  # mins=09 octal hazard; 564s < knob
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 67, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+    assert "age=564s" in proc.stdout, proc.stdout
+
+
+def test_max_lifetime_parses_octal_secs_field_over_knob(harness) -> None:
+    """secs=09 on the recycle path: 25:09 = 1509s ≥ 1500s → idle runner
+    recycles (exit 0, exactly one SIGTERM) with the age computed
+    base-10 — pre-fix the abort landed BEFORE the busy-guard/SIGTERM
+    (fail-safe direction: no signal sent)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "25:09"},  # secs=09 octal hazard; 1509s ≥ knob
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+    assert "age=1509s" in proc.stdout, proc.stdout
+
+
+def test_max_lifetime_parses_zero_padded_hhmmss_and_dd_prefix(harness) -> None:
+    """Every field of [[DD-]HH:]MM:SS can carry a leading zero: 01:08:09
+    = 4089s (hours=01, mins=08, secs=09) and 02-08:09:10 = 202150s
+    (days=02, hours=08, mins=09) — both idle, over the knob, and the
+    age must come out base-10 exact."""
+    for i, (etime, expect_age) in enumerate((("01:08:09", 4089), ("02-08:09:10", 202150))):
+        proc = harness["run"](
+            ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+            procs_table={77444: RUNNER_CMD},
+            etime_table={77444: etime},
+            cpu_table={77444: " 0.0"},
+        )
+        assert proc.returncode == 0, (etime, proc.stdout + proc.stderr)
+        # The kill log accumulates across loop iterations (shared fixture
+        # tmp_path) — exactly one SIGTERM per iteration so far, no more.
+        assert harness["kills"]() == ["kill -TERM 77444"] * (i + 1), etime
+        assert f"age={expect_age}s" in proc.stdout, (etime, proc.stdout)
+
+
+def test_max_lifetime_parses_space_padded_etime(harness) -> None:
+    """Host `ps -o etime=` prints clean zero-padded fields, but a ps
+    variant that space-pads must not leak a space into the first token
+    (`10#` arithmetic is not space-tolerant): "  09:24" still parses
+    as 564s → skip (exit 67), never an arithmetic abort."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "  09:24"},  # space-padded octal-hazard fields
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 67, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+    assert "age=564s" in proc.stdout, proc.stdout
+
+
+def test_max_lifetime_etime_malformed_field_falls_back_to_zero(harness) -> None:
+    """The documented malformed-input contract: a non-numeric etime
+    field parses as age 0 → under the knob → SKIP (exit 67). Before the
+    NFM-5122 base-10 switch a bad token evaluated as an unset name (0);
+    the raw `10#` form would instead ABORT rc=1 — this pins that the
+    fail-safe direction survived the fix."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "ab:cd"},  # malformed — not an etime shape
+        cpu_table={77444: " 0.0"},
+    )
+    assert proc.returncode == 67, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+    assert "age=0s" in proc.stdout, proc.stdout
+
+
 def test_max_lifetime_rechecks_etime_before_signal(harness) -> None:
     """D-2 re-reads etime immediately before the SIGTERM so a fast
     recycle (knob = 1, age = 1 → eligible, then age drops because
@@ -420,10 +522,9 @@ def test_max_lifetime_rechecks_etime_before_signal(harness) -> None:
     assert any("command=" in c for c in ps_lines), ps_lines
     # The kill comes AFTER the policy checks — no policy lookup
     # is allowed AFTER the signal is sent.
-    seen = ps_lines + ["kill -TERM 77444"]   # anchor the signal line
+    seen = [*ps_lines, "kill -TERM 77444"]  # anchor the signal line
     kill_idx = len(ps_lines)
-    policy_idx = max(i for i, line in enumerate(ps_lines)
-                    if "etime=" in line or "%cpu=" in line)
+    policy_idx = max(i for i, line in enumerate(ps_lines) if "etime=" in line or "%cpu=" in line)
     assert policy_idx < kill_idx, (seen, kill_idx, policy_idx)
 
 
@@ -435,7 +536,7 @@ def test_max_lifetime_at_threshold_is_busy(harness) -> None:
         ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "1500"],
         procs_table={77444: RUNNER_CMD},
         etime_table={77444: "26:00"},
-        cpu_table={77444: " 5.0"},   # exactly the threshold
+        cpu_table={77444: " 5.0"},  # exactly the threshold
     )
     assert proc.returncode == 68, proc.stdout + proc.stderr
     assert harness["kills"]() == []
