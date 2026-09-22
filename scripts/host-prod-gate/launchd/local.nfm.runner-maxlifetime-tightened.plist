@@ -11,7 +11,7 @@
 
   Why a NEW plist (not an edit to NFM-5080's):
     - Charter hygiene: additive invocation surface, no source modification
-      to the chokepoint (sha 37a69e1f0fb6 preserved), no probe changes
+      to the chokepoint (sha 302257a27ff5 preserved), no probe changes
       to lightrag-watchdog, no changes to the reingest 03:30Z trigger.
     - Rollback symmetry: any of the two plists can be independently
       disabled without disturbing the other. CR/RE can A/B the two
@@ -37,10 +37,12 @@
   The MLX runner is owned by lwj04 (same desktop user), so the chokepoint's
   existing sudoers grant (for nfmdeploy → root) is NOT consumed — lwj04
   can SIGTERM own processes directly. No sudoers change. Chokepoint
-  byte-identical before/after deploy (sha 37a69e1f0fb6).
+  byte-identical before/after deploy (sha 302257a27ff5).
 
   Hard constraints honored:
-    - chokepoint sha 37a69e1f0fb6 preserved (NFM-4922 RCA, NFM-5080 charter)
+    - chokepoint sha 302257a27ff5 preserved (NFM-4922 RCA; pin moved from
+      the stale NFM-5080-era 37a69e1f0fb6 by authorized NFM-5083
+      rotation, commit fa6910c4f)
     - auto-unwedge path unchanged (NFM-4887)
     - no probe changes to lightrag-watchdog
     - no changes to reingest 03:30Z trigger
@@ -76,6 +78,7 @@
   Acceptance evidence (NFM-5111 AC):
     - Schedule arithmetic: plutil -p on deployed plist (CR-side AC2)
     - Chokepoint sha unchanged: shasum -a 256 /usr/local/lib/nfm-g2/ollama-runner-term.sh
+      (expect 302257a27ff5)
     - Loaded status: launchctl list | grep runner-maxlifetime-tightened
     - Burst-window restart count (after deploy):
         grep -c "D1 fire:" ~/.local/nfm/runner-maxlifetime.log

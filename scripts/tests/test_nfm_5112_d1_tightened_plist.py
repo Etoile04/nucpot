@@ -17,12 +17,13 @@ Hard constraints asserted:
     coexist briefly during RE's bootstrap/bootout window without
     collision.
   - ProgramArguments invoke the SAME chokepoint script as NFM-5080 D1
-    so the byte-identical chokepoint sha 37a69e1f0fb6 is preserved.
+    so the byte-identical chokepoint sha 302257a27ff5 is preserved.
   - Rollback commands match the AC3 spec verbatim.
 """
 
 from __future__ import annotations
 
+import hashlib
 import plistlib
 import re
 import subprocess
@@ -49,7 +50,10 @@ BURST_WINDOW_END_LOCAL = (13, 30)  # 05:30Z == 13:30 +08:00
 EXPECTED_LABEL = "local.nfm.runner-maxlifetime-tightened"
 EXPECTED_CHOKEPOINT_SCRIPT = "/Users/lwj04/.local/nfm/runner-maxlifetime.sh"
 CHOKEPOINT_TERM_SCRIPT = "/usr/local/lib/nfm-g2/ollama-runner-term.sh"
-CHOKEPOINT_SHA_HEX_PREFIX = "37a69e1f0fb6"
+CHOKEPOINT_TERM_SCRIPT_TRACKED = "scripts/host-prod-gate/entries/ollama-runner-term.sh"
+# Repinned from the stale NFM-5080-era 37a69e1f0fb6 by the authorized
+# NFM-5083 rotation (commit fa6910c4f).
+CHOKEPOINT_SHA_HEX_PREFIX = "302257a27ff5"
 
 
 def _plist_path() -> Path:
@@ -82,7 +86,7 @@ def test_label_matches_nfm_5112(plist_data: dict) -> None:
 
 def test_program_arguments_invoke_nfm_5080_chokepoint_script(plist_data: dict) -> None:
     """ProgramArguments MUST invoke the SAME NFM-5080 D1 chokepoint script
-    so the byte-identical chokepoint sha 37a69e1f0fb6 is preserved
+    so the byte-identical chokepoint sha 302257a27ff5 is preserved
     (NFM-5111 AC1 hard constraint)."""
     args = plist_data["ProgramArguments"]
     assert args[0] == "/bin/bash"
@@ -223,4 +227,18 @@ def test_chokepoint_sha_preserved_on_disk() -> None:
         f"chokepoint {CHOKEPOINT_TERM_SCRIPT} hashes to {actual_sha}; pinned "
         f"prefix {CHOKEPOINT_SHA_HEX_PREFIX} no longer matches — the "
         "chokepoint drifted (NFM-4922 single-writer hygiene)"
+    )
+
+
+def test_chokepoint_sha_pin_matches_repo_tracked_copy() -> None:
+    """The pinned prefix must equal the sha256 of the repo-tracked
+    chokepoint snapshot (an intentionally owned byte contract), so the
+    pin moves only alongside an intentional chokepoint change on main.
+    CI-portable: hashes the tracked file directly, no host paths."""
+    tracked = Path(__file__).resolve().parents[2] / CHOKEPOINT_TERM_SCRIPT_TRACKED
+    tracked_sha = hashlib.sha256(tracked.read_bytes()).hexdigest()
+    assert tracked_sha.startswith(CHOKEPOINT_SHA_HEX_PREFIX), (
+        f"repo-tracked chokepoint {CHOKEPOINT_TERM_SCRIPT_TRACKED} hashes "
+        f"to {tracked_sha}; pinned prefix {CHOKEPOINT_SHA_HEX_PREFIX} is "
+        "stale — repin alongside the intentional chokepoint change"
     )
