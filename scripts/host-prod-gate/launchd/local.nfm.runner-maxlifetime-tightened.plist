@@ -60,9 +60,10 @@
 
   Rollback (AC3, 2 commands):
     launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened
-    launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened.plist
-  (first form matches the LaunchAgent label; second form is the file
-  target accepted by some launchd versions — both are safe.)
+    launchctl bootout gui/$UID ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+  (first form targets the LaunchAgent label; second form targets the
+  deployed plist by its absolute path under ~/Library/LaunchAgents/ —
+  a bare filename resolves under ~ and the bootout silently fails.)
 
   Deploy (RE):
     launchctl bootstrap gui/$UID \
@@ -77,7 +78,9 @@
     - Chokepoint sha unchanged: shasum -a 256 /usr/local/lib/nfm-g2/ollama-runner-term.sh
     - Loaded status: launchctl list | grep runner-maxlifetime-tightened
     - Burst-window restart count (after deploy):
-        grep -c "D1 fire:" /var/log/nfm-g2/runner-maxlifetime.log
+        grep -c "D1 fire:" ~/.local/nfm/runner-maxlifetime.log
+        (wrapper's primary log /var/log/nfm-g2/runner-maxlifetime.log is
+        not writable on this host; the wrapper falls back to the above path)
 -->
 <plist version="1.0">
 <dict>

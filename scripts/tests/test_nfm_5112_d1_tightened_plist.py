@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import plistlib
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -47,7 +48,8 @@ BURST_WINDOW_END_LOCAL = (13, 30)  # 05:30Z == 13:30 +08:00
 
 EXPECTED_LABEL = "local.nfm.runner-maxlifetime-tightened"
 EXPECTED_CHOKEPOINT_SCRIPT = "/Users/lwj04/.local/nfm/runner-maxlifetime.sh"
-CHOKEPONT_SHA_HEX_PREFIX = "37a69e1f0fb6"
+CHOKEPOINT_TERM_SCRIPT = "/usr/local/lib/nfm-g2/ollama-runner-term.sh"
+CHOKEPOINT_SHA_HEX_PREFIX = "37a69e1f0fb6"
 
 
 def _plist_path() -> Path:
@@ -184,22 +186,41 @@ def test_local_fires_map_to_03_30_to_05_30_z(plist_data: dict) -> None:
 # --- AC3: rollback documented ------------------------------------------
 
 
-def test_rollback_commands_present_in_header(plist_data: dict) -> None:
-    """AC3: rollback documented in plist header (RE reads it during
-    deploy). The bootout commands MUST use the new label verbatim."""
+def test_rollback_bootout_targets_label_and_deployed_path(plist_data: dict) -> None:
+    """AC3: rollback documented in the plist header must actually disable
+    the agent when RE copies it verbatim. The label form must match the
+    plist's own Label; the file-target form must be the deployed plist's
+    absolute path under ~/Library/LaunchAgents/ (a bare filename resolves
+    under ~ and the bootout silently fails)."""
     header = _plist_path().read_text()
-    assert "launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened" in header
-    assert (
-        "launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened.plist"
-        in header
+    bootout_args = re.findall(r"launchctl bootout (.+)$", header, re.MULTILINE)
+    targets = [arg.removeprefix("gui/$UID").lstrip("/ ").strip() for arg in bootout_args]
+    label = plist_data["Label"]
+    assert targets == [label, f"~/Library/LaunchAgents/{label}.plist"], (
+        f"documented rollback targets {targets}; expected the label form "
+        f"{label} plus the deployed-path form "
+        f"~/Library/LaunchAgents/{label}.plist"
     )
 
 
-def test_chokepoint_sha_pinned_in_header(plist_data: dict) -> None:
-    """Hard constraint: chokepoint sha 37a69e1f0fb6 must appear in the
-    header so RE can verify post-deploy (NFM-4922 RCA hygiene)."""
-    header = _plist_path().read_text()
-    assert CHOKEPONT_SHA_HEX_PREFIX in header, (
-        "chokepoint sha 37a69e1f0fb6 missing from plist header; "
-        "RE cannot verify byte-identical preservation"
+def test_chokepoint_sha_preserved_on_disk() -> None:
+    """Hard constraint (NFM-4922 RCA hygiene): the chokepoint the tightened
+    plist will invoke must still hash to the pinned value. Executes the
+    same check RE runs post-deploy (shasum -a 256 on the live chokepoint)
+    rather than trusting the header text."""
+    result = subprocess.run(
+        ["shasum", "-a", "256", CHOKEPOINT_TERM_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"cannot verify chokepoint: shasum exited {result.returncode}: "
+        f"{result.stderr.strip()}"
+    )
+    actual_sha = result.stdout.split()[0]
+    assert actual_sha.startswith(CHOKEPOINT_SHA_HEX_PREFIX), (
+        f"chokepoint {CHOKEPOINT_TERM_SCRIPT} hashes to {actual_sha}; pinned "
+        f"prefix {CHOKEPOINT_SHA_HEX_PREFIX} no longer matches — the "
+        "chokepoint drifted (NFM-4922 single-writer hygiene)"
     )
