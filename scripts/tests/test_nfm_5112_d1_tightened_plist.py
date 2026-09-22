@@ -312,8 +312,7 @@ def test_wrapper_sha_pinned_in_header() -> None:
     the wrapper script's sha256 too — post-deploy BOTH the chokepoint
     and the wrapper must be byte-identical."""
     assert WRAPPER_SHA_HEX_PREFIX in _header_text(), (
-        f"header must pin the wrapper sha ({WRAPPER_SHA_HEX_PREFIX}…) "
-        "alongside the chokepoint sha"
+        f"header must pin the wrapper sha ({WRAPPER_SHA_HEX_PREFIX}…) alongside the chokepoint sha"
     )
 
 
@@ -328,8 +327,7 @@ def test_wrapper_sha_preserved_on_disk() -> None:
         check=False,
     )
     assert result.returncode == 0, (
-        f"cannot verify wrapper: shasum exited {result.returncode}: "
-        f"{result.stderr.strip()}"
+        f"cannot verify wrapper: shasum exited {result.returncode}: {result.stderr.strip()}"
     )
     actual_sha = result.stdout.split()[0]
     assert actual_sha.startswith(WRAPPER_SHA_HEX_PREFIX), (
