@@ -27,7 +27,8 @@ import hashlib
 import plistlib
 import re
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -126,15 +127,13 @@ def test_six_fires_in_burst_window(plist_data: dict) -> None:
 def test_fires_match_expected_schedule(plist_data: dict) -> None:
     """AC2: schedule is exactly the 22min-cadence set per NFM-5111."""
     fires = _to_local_fires(plist_data)
-    assert fires == EXPECTED_LOCAL_FIRES, (
-        f"expected {EXPECTED_LOCAL_FIRES}, got {fires}"
-    )
+    assert fires == EXPECTED_LOCAL_FIRES, f"expected {EXPECTED_LOCAL_FIRES}, got {fires}"
 
 
 def test_twenty_two_minute_spacing_within_tolerance(plist_data: dict) -> None:
     """AC2: 22min spacing with ±60s tolerance. Tests each consecutive pair."""
     fires = _to_local_fires(plist_data)
-    pairs = list(zip(fires, fires[1:]))
+    pairs = list(pairwise(fires))
     deltas_minutes: list[float] = []
     for (h1, m1), (h2, m2) in pairs:
         t1 = datetime(2026, 1, 1, h1, m1, tzinfo=timezone(timedelta(hours=8)))
@@ -144,8 +143,7 @@ def test_twenty_two_minute_spacing_within_tolerance(plist_data: dict) -> None:
         deltas_minutes.append((t2 - t1).total_seconds() / 60.0)
     for idx, delta in enumerate(deltas_minutes):
         assert abs(delta - 22.0) <= 1.0, (
-            f"gap between fires {idx} and {idx+1} is {delta:.2f} min; "
-            f"expected 22min ±1min"
+            f"gap between fires {idx} and {idx + 1} is {delta:.2f} min; expected 22min ±1min"
         )
 
 
@@ -174,13 +172,11 @@ def test_local_fires_map_to_03_30_to_05_30_z(plist_data: dict) -> None:
     fires = _to_local_fires(plist_data)
     for h, m in fires:
         local = datetime(2026, 9, 22, h, m, tzinfo=timezone(timedelta(hours=8)))
-        utc = local.astimezone(timezone.utc)
+        utc = local.astimezone(UTC)
         assert (
-            utc.hour == 3 + (h - 11) and utc.minute == m % 60
-        ) or (
-            utc.hour == 4 + (h - 12) and utc.minute == m % 60
-        ) or (
-            utc.hour == 5 and utc.minute == m
+            (utc.hour == 3 + (h - 11) and utc.minute == m % 60)
+            or (utc.hour == 4 + (h - 12) and utc.minute == m % 60)
+            or (utc.hour == 5 and utc.minute == m)
         ), (
             f"local {h:02d}:{m:02d} +08:00 does not map to 03:30-05:30Z; "
             f"got UTC {utc.hour:02d}:{utc.minute:02d}"
@@ -219,8 +215,7 @@ def test_chokepoint_sha_preserved_on_disk() -> None:
         check=False,
     )
     assert result.returncode == 0, (
-        f"cannot verify chokepoint: shasum exited {result.returncode}: "
-        f"{result.stderr.strip()}"
+        f"cannot verify chokepoint: shasum exited {result.returncode}: {result.stderr.strip()}"
     )
     actual_sha = result.stdout.split()[0]
     assert actual_sha.startswith(CHOKEPOINT_SHA_HEX_PREFIX), (

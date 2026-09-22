@@ -26,7 +26,7 @@
     04:14Z  →  12:14 local   (+44m)
     04:36Z  →  12:36 local   (+66m)
     04:58Z  →  12:58 local   (+88m)
-    05:20Z  →  13:20 local   (+110m, last, on the burst-window boundary)
+    05:20Z  →  13:20 local   (+110m, last — 10 min inside the 05:30Z boundary)
 
   Spacing verification (CR AC2):
     03:30→03:52 = 22 min, 03:52→04:14 = 22 min, 04:14→04:36 = 22 min,
