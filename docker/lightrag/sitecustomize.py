@@ -1,6 +1,6 @@
 """Nucpot site customization — auto-loaded by Python at startup.
 
-Two monkey-patches over LightRAG 1.5.4 (pin: docker/lightrag.Dockerfile):
+Three monkey-patches over LightRAG 1.5.4 (pin: docker/lightrag.Dockerfile):
 
 1. **NFM-4525 — ollama thinking-mode default.** Patches LightRAG's Ollama
    LLM binding to default ``think=False`` when the prod lightrag sidecar
@@ -181,10 +181,7 @@ def _patch_lightrag_rerank_pool_cap() -> None:
 
     _utils_mod.apply_rerank_if_enabled = _pool_capped_apply_rerank_if_enabled
     setattr(_utils_mod, _RERANK_POOL_CAP_ATTR, True)
-    print(
-        "[nucmd-patch] LightRAG rerank pool cap armed "
-        "(RERANK_POOL_CAP, unset/0 = disabled)"
-    )
+    print("[nucmd-patch] LightRAG rerank pool cap armed (RERANK_POOL_CAP, unset/0 = disabled)")
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +313,17 @@ def _d1b_make_guarded(
     call_site: str,
     host_of,
     host_gate=None,
+    forward_timeout: bool = True,
 ):
     """Wrap ``orig`` in the D-1b envelope.
 
     ``host_of(kwargs)`` resolves the target host (for the audit record);
     ``host_gate(host)`` optionally short-circuits the envelope — when it
     returns False the call is a verbatim passthrough (compat-embed guard
-    for hosts off the bound list).
+    for hosts off the bound list). ``forward_timeout=False`` keeps the
+    caller's kwargs byte-for-byte and enforces the budget through
+    ``asyncio.wait_for`` alone — for wrapped functions with a closed
+    signature that rejects a ``timeout`` kwarg (``openai_embed`` 1.5.4).
     """
 
     async def _d1b_guarded(*args, **kwargs):
@@ -332,19 +333,15 @@ def _d1b_make_guarded(
 
         effective = _d1b_effective_budget_s(kwargs.get("timeout"))
         call_kwargs = dict(kwargs)
-        call_kwargs["timeout"] = effective
+        if forward_timeout:
+            call_kwargs["timeout"] = effective
         started = time.monotonic()
         for attempt in range(1, _D1B_MAX_ATTEMPTS + 1):
             try:
-                return await asyncio.wait_for(
-                    orig(*args, **call_kwargs), timeout=effective
-                )
+                return await asyncio.wait_for(orig(*args, **call_kwargs), timeout=effective)
             except TimeoutError:
                 _D1B_LOGGER.warning(
-                    (
-                        "NFM-5126 D-1b: %s attempt %d/%d hung "
-                        "(budget_s=%.3f host=%s)"
-                    ),
+                    ("NFM-5126 D-1b: %s attempt %d/%d hung (budget_s=%.3f host=%s)"),
                     call_site,
                     attempt,
                     _D1B_MAX_ATTEMPTS,
@@ -441,10 +438,7 @@ def _patch_lightrag_ollama_timeout_envelope() -> None:
         return str(kwargs.get("host") or os.getenv("LLM_BINDING_HOST", ""))
 
     chat_orig = getattr(_ollama_mod, "_ollama_model_if_cache", None)
-    if (
-        callable(chat_orig)
-        and not getattr(_ollama_mod, _D1B_CHAT_MARKER, False)
-    ):
+    if callable(chat_orig) and not getattr(_ollama_mod, _D1B_CHAT_MARKER, False):
         _ollama_mod._ollama_model_if_cache = _d1b_make_guarded(
             chat_orig,
             call_site="lightrag.llm.ollama._ollama_model_if_cache",
@@ -500,10 +494,7 @@ def _patch_lightrag_openai_embed_timeout_envelope() -> None:
         return any(entry in (host or "") for entry in entries)
 
     def _compat_host_of(kwargs):
-        return str(
-            kwargs.get("base_url")
-            or os.getenv("EMBEDDING_BINDING_HOST", "")
-        )
+        return str(kwargs.get("base_url") or os.getenv("EMBEDDING_BINDING_HOST", ""))
 
     if not getattr(_openai_mod, _D1B_OPENAI_EMBED_MARKER, False):
         _d1b_wrap_embed_attr(
@@ -515,6 +506,7 @@ def _patch_lightrag_openai_embed_timeout_envelope() -> None:
                 call_site="lightrag.llm.openai.openai_embed",
                 host_of=_compat_host_of,
                 host_gate=_bound_hosts,
+                forward_timeout=False,
             ),
         )
         if getattr(_openai_mod, _D1B_OPENAI_EMBED_MARKER, False):

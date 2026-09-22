@@ -30,10 +30,6 @@ if str(_APPS_API_SRC) not in sys.path:
 
 _cached = sys.modules.get("nfm_db")
 _cached_paths = [str(p) for p in getattr(_cached, "__path__", [])]
-if _cached is not None and not any(
-    str(_APPS_API_SRC) in p for p in _cached_paths
-):
-    for _name in [
-        n for n in sys.modules if n == "nfm_db" or n.startswith("nfm_db.")
-    ]:
+if _cached is not None and not any(str(_APPS_API_SRC) in p for p in _cached_paths):
+    for _name in [n for n in sys.modules if n == "nfm_db" or n.startswith("nfm_db.")]:
         del sys.modules[_name]

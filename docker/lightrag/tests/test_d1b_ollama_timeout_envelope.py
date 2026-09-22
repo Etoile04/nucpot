@@ -83,19 +83,51 @@ async def _hang(*args, **kwargs):
     await asyncio.sleep(30)
 
 
-def _bare_async(mock_obj):
-    """Adapt an AsyncMock into a bare async function.
+def _faithful_openai_embed(mock_obj):
+    """Adapt an AsyncMock into the real ``openai_embed`` call shape.
 
-    The production ``openai_embed`` is a plain (tenacity-wrapped) async
-    function, not an ``EmbeddingFunc`` and not a mock: mock attribute
-    access auto-creates children, so an AsyncMock installed as the module
-    attr would grow a phantom ``.func`` and take the EmbeddingFunc wrap
-    branch. Adapting keeps the fake on the production code path while
-    still letting tests assert on the underlying mock.
+    The production module-level ``openai_embed`` (lightrag-hku 1.5.4,
+    lightrag/llm/openai.py) is an ``EmbeddingFunc`` whose ``.func`` is a
+    plain tenacity-wrapped async function with a CLOSED parameter list:
+    no ``timeout`` parameter and no ``**kwargs``. A wrapper that forwards
+    a ``timeout`` kwarg raises ``TypeError`` on every call — so the fake
+    must mirror that closed signature instead of accepting ``**kwargs``
+    (an open adapter would silently swallow kwarg-injection bugs the real
+    library rejects). Tests assert on the underlying mock's kwargs.
     """
 
-    async def _impl(*args, **kwargs):
-        return await mock_obj(*args, **kwargs)
+    async def _impl(
+        texts,
+        model="text-embedding-3-small",
+        base_url=None,
+        api_key=None,
+        embedding_dim=None,
+        max_token_size=None,
+        client_configs=None,
+        token_tracker=None,
+        use_azure=False,
+        azure_deployment=None,
+        api_version=None,
+        context="document",
+        query_prefix=None,
+        document_prefix=None,
+    ):
+        return await mock_obj(
+            texts=texts,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            embedding_dim=embedding_dim,
+            max_token_size=max_token_size,
+            client_configs=client_configs,
+            token_tracker=token_tracker,
+            use_azure=use_azure,
+            azure_deployment=azure_deployment,
+            api_version=api_version,
+            context=context,
+            query_prefix=query_prefix,
+            document_prefix=document_prefix,
+        )
 
     return _impl
 
@@ -133,18 +165,12 @@ def _build_fake_modules(chat_impl=None, openai_embed_impl=None, embed_func_impl=
     only stable handle on the original is the caller's own).
     """
     fake_ollama = SimpleNamespace()
-    fake_ollama._ollama_model_if_cache = chat_impl or mock.AsyncMock(
-        return_value="chat-ok"
-    )
+    fake_ollama._ollama_model_if_cache = chat_impl or mock.AsyncMock(return_value="chat-ok")
     fake_ollama.ollama_model_complete = mock.AsyncMock(return_value="chat-ok")
-    fake_ollama.ollama_embed = _FakeEmbeddingFunc(
-        result=None, func_impl=embed_func_impl
-    )
+    fake_ollama.ollama_embed = _FakeEmbeddingFunc(result=None, func_impl=embed_func_impl)
 
     fake_openai = SimpleNamespace()
-    fake_openai.openai_embed = openai_embed_impl or mock.AsyncMock(
-        return_value=[[0.75, 0.9]]
-    )
+    fake_openai.openai_embed = openai_embed_impl or mock.AsyncMock(return_value=[[0.75, 0.9]])
 
     fake_utils = SimpleNamespace()
     fake_utils.apply_rerank_if_enabled = mock.AsyncMock(return_value=None)
@@ -200,9 +226,7 @@ def _load_sitecustomize(
     sys.modules["lightrag.llm.openai"] = fake_openai
     sys.modules["lightrag.utils"] = fake_pkg.utils
 
-    spec = importlib.util.spec_from_file_location(
-        "_nfm5126_test_sitecustomize", SITECUSTOMIZE_PATH
-    )
+    spec = importlib.util.spec_from_file_location("_nfm5126_test_sitecustomize", SITECUSTOMIZE_PATH)
     assert spec and spec.loader, "sitecustomize.py failed to load as a module spec"
     module = importlib.util.module_from_spec(spec)
 
@@ -367,9 +391,7 @@ async def test_chat_hang_exhaustion_audits_and_raises_cleanly(caplog):
         "exhaustion must carry the NFM-4742 failure_reason in the message"
     )
     audit = [
-        r
-        for r in caplog.records
-        if getattr(r, "failure_reason", None) == "runner_hang_timeout"
+        r for r in caplog.records if getattr(r, "failure_reason", None) == "runner_hang_timeout"
     ]
     assert audit, "no runner_hang_timeout audit record was emitted on exhaustion"
     record = audit[-1]
@@ -437,13 +459,10 @@ async def test_openai_embed_hang_audits_for_bound_host(caplog):
         await wrapped(["t"], base_url="http://host.docker.internal:11434/v1")
 
     audit = [
-        r
-        for r in caplog.records
-        if getattr(r, "failure_reason", None) == "runner_hang_timeout"
+        r for r in caplog.records if getattr(r, "failure_reason", None) == "runner_hang_timeout"
     ]
     assert audit, (
-        "a hang against a BOUND host (host ollama) must produce a "
-        "runner_hang_timeout audit record"
+        "a hang against a BOUND host (host ollama) must produce a runner_hang_timeout audit record"
     )
     assert getattr(audit[-1], "call_site", "").endswith("openai_embed")
 
@@ -452,23 +471,26 @@ async def test_openai_embed_hang_audits_for_bound_host(caplog):
 async def test_openai_embed_clamps_timeout_for_bound_host():
     orig = mock.AsyncMock(return_value=[[0.75, 0.9]])
     _, _, fake_openai = _load_sitecustomize(
-        _prod_env(), openai_embed_impl=_bare_async(orig)
+        _prod_env(), openai_embed_impl=_faithful_openai_embed(orig)
     )
     wrapped = fake_openai.openai_embed
     result = await wrapped(["t"], base_url="http://host.docker.internal:11434/v1")
     assert result == [[0.75, 0.9]]
     forwarded = orig.await_args.kwargs
-    assert forwarded.get("timeout") == 90, (
-        "bound-host embed calls must carry an explicit bounded timeout; "
-        f"forwarded: {forwarded!r}"
+    assert "timeout" not in forwarded, (
+        "openai_embed 1.5.4 has a closed signature (no ``timeout`` param, "
+        "no ``**kwargs``) — forwarding one raises TypeError on every "
+        "bound-host call; the budget is enforced by the wrapper's "
+        f"asyncio.wait_for. forwarded: {forwarded!r}"
     )
+    assert forwarded.get("base_url") == "http://host.docker.internal:11434/v1"
 
 
 @pytest.mark.asyncio
 async def test_openai_embed_passthrough_for_real_openai_host():
     orig = mock.AsyncMock(return_value=[[0.75, 0.9]])
     _, _, fake_openai = _load_sitecustomize(
-        _prod_env(), openai_embed_impl=_bare_async(orig)
+        _prod_env(), openai_embed_impl=_faithful_openai_embed(orig)
     )
     wrapped = fake_openai.openai_embed
     result = await wrapped(["t"], base_url="https://api.openai.com/v1")
@@ -482,22 +504,18 @@ async def test_openai_embed_passthrough_for_real_openai_host():
 
 @pytest.mark.asyncio
 async def test_openai_embed_env_host_used_when_no_base_url_kwarg():
-    orig = mock.AsyncMock(return_value=[[0.75, 0.9]])
-    env = _prod_env()
-    _, _, fake_openai = _load_sitecustomize(
-        env, openai_embed_impl=_bare_async(orig)
-    )
+    env = _prod_env(NFM_D1B_BUDGET_S="0.05")
+    _, _, fake_openai = _load_sitecustomize(env, openai_embed_impl=_hang)
     wrapped = fake_openai.openai_embed
     # The host fallback resolves from EMBEDDING_BINDING_HOST at call time
-    # (the container env is stable in production) — keep it patched.
-    with mock.patch.dict(os.environ, env, clear=True):
+    # (the container env is stable in production) — keep it patched. With
+    # no base_url kwarg and the env host on the bound list, the envelope
+    # must apply: the hang dies at the 0.05s budget, not 30s.
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        pytest.raises(TimeoutError),
+    ):
         await wrapped(["t"])
-    forwarded = orig.await_args.kwargs
-    assert forwarded.get("timeout") == 90, (
-        "EMBEDDING_BINDING_HOST must gate the guard when the per-call "
-        "base_url kwarg is absent (server versions that close over the "
-        f"host instead of passing it); forwarded: {forwarded!r}"
-    )
 
 
 @pytest.mark.asyncio
@@ -515,9 +533,7 @@ async def test_openai_embed_hang_passthrough_for_real_openai_host():
 
     started = time.monotonic()
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(
-            wrapped(["t"], base_url="https://api.openai.com/v1"), timeout=1.0
-        )
+        await asyncio.wait_for(wrapped(["t"], base_url="https://api.openai.com/v1"), timeout=1.0)
     elapsed = time.monotonic() - started
     assert elapsed >= 0.9, (
         f"real-OpenAI host was enveloped (raised after {elapsed:.3f}s, not "
@@ -528,32 +544,51 @@ async def test_openai_embed_hang_passthrough_for_real_openai_host():
 # ---------------------------------------------------------------------------
 # 5. Exhaustiveness: compose pins + drift tripwire
 # ---------------------------------------------------------------------------
+def _lightrag_service_environment() -> dict[str, str]:
+    """Parse the prod compose and return the lightrag service's environment
+    mapping (docker-compose consumers resolve this exact structure — a raw
+    text regex would also match commented-out lines or the same key under a
+    different service)."""
+    import yaml  # nucpot api env has pyyaml; tests run under uv
+
+    data = yaml.safe_load(COMPOSE_PROD_PATH.read_text())
+    environment = data["services"]["lightrag"]["environment"]
+    assert isinstance(environment, dict), (
+        "docker-compose.prod.yml lightrag service must declare a mapping-style `environment:` block"
+    )
+    return environment
+
+
 def test_compose_pins_explicit_llm_timeout_le_90():
     """The prod compose must pin an explicit bounded ``LLM_TIMEOUT`` so the
     LightRAG 240s default (constants.py DEFAULT_LLM_TIMEOUT) cannot silently
     return even if sitecustomize fails to load."""
-    contents = COMPOSE_PROD_PATH.read_text()
-    match = re.search(
-        r"LLM_TIMEOUT:\s*\$\{PROD_LIGHTRAG_LLM_TIMEOUT_S:-(\d+)\}", contents
-    )
-    assert match, (
+    raw = _lightrag_service_environment().get("LLM_TIMEOUT")
+    assert isinstance(raw, str), (
         "docker-compose.prod.yml lightrag service must set "
         "LLM_TIMEOUT: ${PROD_LIGHTRAG_LLM_TIMEOUT_S:-<n>} with n <= 90"
     )
+    match = re.fullmatch(r"\$\{PROD_LIGHTRAG_LLM_TIMEOUT_S:-(\d+)\}", raw)
+    assert match, (
+        f"lightrag LLM_TIMEOUT pin must be the explicit env-substitution "
+        f"form ${{PROD_LIGHTRAG_LLM_TIMEOUT_S:-<n>}}; got {raw!r}"
+    )
     assert int(match.group(1)) <= 90, (
-        f"compose LLM_TIMEOUT default {match.group(1)}s exceeds the D-1b "
-        "90s budget"
+        f"compose LLM_TIMEOUT default {match.group(1)}s exceeds the D-1b 90s budget"
     )
 
 
 def test_compose_pins_d1b_bound_embed_hosts():
-    contents = COMPOSE_PROD_PATH.read_text()
-    assert re.search(
-        r"NFM_D1B_BOUND_EMBED_HOSTS:\s*\$\{PROD_LIGHTRAG_D1B_BOUND_EMBED_HOSTS:-\S+",
-        contents,
-    ), (
+    raw = _lightrag_service_environment().get("NFM_D1B_BOUND_EMBED_HOSTS")
+    assert isinstance(raw, str), (
         "docker-compose.prod.yml must pin NFM_D1B_BOUND_EMBED_HOSTS so the "
         "compat-embed guard's host list is explicit and reviewable"
+    )
+    match = re.fullmatch(r"\$\{PROD_LIGHTRAG_D1B_BOUND_EMBED_HOSTS:-(\S+)\}", raw)
+    assert match and match.group(1), (
+        f"NFM_D1B_BOUND_EMBED_HOSTS pin must be the explicit env-substitution "
+        f"form ${{PROD_LIGHTRAG_D1B_BOUND_EMBED_HOSTS:-<hosts>}} with a "
+        f"non-empty default; got {raw!r}"
     )
 
 
@@ -570,9 +605,7 @@ def test_drift_tripwire_warns_on_uncovered_call_site(caplog):
     sys.modules["lightrag.llm.openai"] = fake_openai
     sys.modules["lightrag.utils"] = fake_pkg.utils
 
-    spec = importlib.util.spec_from_file_location(
-        "_nfm5126_test_drift", SITECUSTOMIZE_PATH
-    )
+    spec = importlib.util.spec_from_file_location("_nfm5126_test_drift", SITECUSTOMIZE_PATH)
     module = importlib.util.module_from_spec(spec)
     env = {k: v for k, v in os.environ.items() if k not in _CONTROLLED_ENV_KEYS}
     env.update(_prod_env())
