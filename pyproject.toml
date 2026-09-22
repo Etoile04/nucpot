@@ -74,7 +74,12 @@ module = "asyncpg.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "scripts/okr/tests"]
+# NFM-5126: docker/lightrag/tests joined CI discovery — the D-1b
+# exhaustiveness guard (sitecustomize wrap inventory + compose env pins)
+# must run on every PR, not only when someone remembers the path. The
+# four pre-existing suite files (thinking patch, Dockerfile guards, rerank
+# pool cap) pass under the root env (pytest-asyncio, asyncio_mode=auto).
+testpaths = ["tests", "scripts/okr/tests", "docker/lightrag/tests"]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
 markers = [
