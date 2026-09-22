@@ -13,9 +13,11 @@
     - Charter hygiene: additive invocation surface, no source modification
       to the chokepoint (sha 302257a27ff5 preserved), no probe changes
       to lightrag-watchdog, no changes to the reingest 03:30Z trigger.
-    - Rollback symmetry: any of the two plists can be independently
-      disabled without disturbing the other. CR/RE can A/B the two
-      cadences without overwriting each other's running config.
+    - Coexistence is UNSAFE (CR R2 F1): the union of the 25min and 22min
+      schedules has a 3-min minimum gap (11:52 tightened -> 11:55 old),
+      and the wrapper kills unconditionally per fire, so both agents
+      loaded = premature kills that corrupt the AC4 soak from night one.
+      Deploy therefore RETIRES the old agent first (see Deploy below).
     - AC2 (CR verification) wants an isolated, byte-diffable surface so
       schedule arithmetic can be inspected independently of the existing
       plist's evidence trail.
@@ -47,12 +49,18 @@
     - no probe changes to lightrag-watchdog
     - no changes to reingest 03:30Z trigger
     - new invocation surface only (plist + schedule modification)
-    - sibling NFM-5080 plist (local.nfm.runner-maxlifetime) left UNTOUCHED
+    - repo-tracked NFM-5080 plist source left UNTOUCHED; its DEPLOYED
+      agent is retired at cutover (bootout + plist moved to a disabled
+      dir — CR R2 F1, amended AC3 NFM-5121) and is restorable via the
+      Rollback runbook below
 
   Wrapper script is the SAME as NFM-5080's:
     /Users/lwj04/.local/nfm/runner-maxlifetime.sh
   Only the invocation cadence changes; the chokepoint call site is
-  identical. No wrapper script modification required.
+  identical. No wrapper script modification required. Amended AC3
+  (NFM-5121) pins the wrapper byte-identical post-deploy too:
+  shasum -a 256 /Users/lwj04/.local/nfm/runner-maxlifetime.sh
+  (expect 888cd361cd1faaef…)
 
   Convention (matches ~/Library/LaunchAgents/local.nfm.runner-maxlifetime.plist):
     - NO RunAtLoad: install does NOT fire immediately
@@ -60,25 +68,43 @@
     - Label prefix local.nfm.* per charter hygiene
     - Label distinct from NFM-5080's so launchctl can disambiguate
 
-  Rollback (AC3, 2 commands):
+  Rollback (AC3 — restores the NFM-5080 25min agent):
     launchctl bootout gui/$UID/local.nfm.runner-maxlifetime-tightened
     launchctl bootout gui/$UID ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
-  (first form targets the LaunchAgent label; second form targets the
-  deployed plist by its absolute path under ~/Library/LaunchAgents/ —
-  a bare filename resolves under ~ and the bootout silently fails.)
+    mv ~/Library/LaunchAgents.disabled/local.nfm.runner-maxlifetime.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$UID \
+      ~/Library/LaunchAgents/local.nfm.runner-maxlifetime.plist
+  (steps 1-2 are the AC3-spec bootouts of the tightened agent — label
+  form first, then the deployed plist's absolute path under
+  ~/Library/LaunchAgents/ — a bare filename resolves under ~ and the
+  bootout silently fails. Steps 3-4 restore the agent Deploy retired,
+  per CR R2 F1 / amended AC3 NFM-5121.)
 
-  Deploy (RE):
+  Deploy (RE — retire the old agent FIRST; CR R2 F1):
+    launchctl bootout gui/$UID/local.nfm.runner-maxlifetime
+    mkdir -p ~/Library/LaunchAgents.disabled
+    mv ~/Library/LaunchAgents/local.nfm.runner-maxlifetime.plist ~/Library/LaunchAgents.disabled/
     launchctl bootstrap gui/$UID \
       ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+  (bootout alone is per-session: the old plist left in
+  ~/Library/LaunchAgents would reload BOTH agents at next login, so it
+  must be moved to the disabled dir in the same change window — before
+  the next 03:30Z burst fire.)
 
   Verify (RE):
     launchctl list | grep runner-maxlifetime-tightened
+    launchctl list | grep runner-maxlifetime | grep -v tightened
     plutil -p ~/Library/LaunchAgents/local.nfm.runner-maxlifetime-tightened.plist
+  (the second grep must return NOTHING — the old 25min agent must be
+  retired, not merely idle; both agents loaded = union cadence = the
+  unsafe state CR R2 F1 forbids.)
 
   Acceptance evidence (NFM-5111 AC):
     - Schedule arithmetic: plutil -p on deployed plist (CR-side AC2)
     - Chokepoint sha unchanged: shasum -a 256 /usr/local/lib/nfm-g2/ollama-runner-term.sh
       (expect 302257a27ff5)
+    - Wrapper sha unchanged: shasum -a 256 /Users/lwj04/.local/nfm/runner-maxlifetime.sh
+      (expect 888cd361cd1faaef — amended AC3 pin, NFM-5121)
     - Loaded status: launchctl list | grep runner-maxlifetime-tightened
     - Burst-window restart count (after deploy):
         grep -c "D1 fire:" ~/.local/nfm/runner-maxlifetime.log
