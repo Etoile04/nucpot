@@ -245,6 +245,28 @@ services:
       #     '{{range .Config.Env}}{{println .}}{{end}}' | grep MAX_ASYNC_LLM
       # must print MAX_ASYNC_LLM=2.
       MAX_ASYNC_LLM: ${PROD_LIGHTRAG_MAX_ASYNC_LLM:-2}
+
+      # NFM-5126 (D-1b): bound the LightRAG server-internal ollama calls
+      # that sit OUTSIDE D-1's API-side 90s envelope (NFM-5084 canary
+      # Finding B — the 03:30Z reingest burst wedged 3x with D-1 live).
+      # LightRAG 1.5.4 defaults LLM_TIMEOUT to 240s (constants.py
+      # DEFAULT_LLM_TIMEOUT) when the env is unset, which is exactly the
+      # live container state. The sitecustomize patch (docker/lightrag/
+      # sitecustomize.py #3) envelops every server-internal ollama call
+      # site (native chat, native embed, openai-compat embed against the
+      # host runner) with the same 90s x 3 jittered budget; this env pin
+      # is the defense-in-depth layer so the stock kwargs path is also
+      # bounded at 90 even if sitecustomize fails to load. Lower it only
+      # with an architect ruling (NFM-5079 lineage).
+      LLM_TIMEOUT: ${PROD_LIGHTRAG_LLM_TIMEOUT_S:-90}
+      # Worker-level embedding guard arming (embedding_timeout * 2);
+      # pinning the implicit 30s default explicitly alongside the HTTP
+      # envelope above.
+      EMBEDDING_TIMEOUT: ${PROD_LIGHTRAG_EMBEDDING_TIMEOUT_S:-30}
+      # Hosts whose openai-compat embed traffic is actually the host
+      # ollama runner and must carry the D-1b envelope. Everything else
+      # (staging -> api.openai.com) is a byte-for-byte passthrough.
+      NFM_D1B_BOUND_EMBED_HOSTS: ${PROD_LIGHTRAG_D1B_BOUND_EMBED_HOSTS:-host.docker.internal:11434}
       EMBEDDING_BINDING: ${PROD_LIGHTRAG_EMBEDDING_BINDING:-openai}
       # NFM-1765: nomic-embed-text (768d, ~0.065s/query on Mac CPU). Was
       # qwen3-embedding:4b (2560d) per user decision 2026-07-24, but
