@@ -48,10 +48,15 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
     alongside normal relational queries.  No-op on non-PostgreSQL
     backends (e.g. SQLite for tests).
     """
-    cursor = getattr(dbapi_conn, "cursor", None)
-    if cursor is None:
+    cursor_factory = getattr(dbapi_conn, "cursor", None)
+    if cursor_factory is None:
         return
-    # Detect PostgreSQL via the connection's dialect info
+    # DB-API 2.0 (PEP 249): ``Connection.cursor`` is a METHOD that returns
+    # a cursor instance; ``.execute`` lives on the cursor, not the
+    # connection.  Calling execute on the factory itself raised
+    # ``AttributeError: 'function' object has no attribute 'execute'``
+    # on every fresh PostgreSQL connection (NFM-5191).
+    cursor = cursor_factory()
     try:
         cursor.execute("SELECT current_database()")
         cursor.execute("LOAD 'age';")
