@@ -25,37 +25,51 @@ class TestLoadAgeExtension:
     def test_postgresql_connection_loads_age(self) -> None:
         """On a real PostgreSQL connection, AGE is loaded and search_path set.
 
-        The function grabs the *cursor attribute* via getattr (not calling it),
-        so cursor.execute calls are recorded on ``mock_conn.cursor`` directly.
+        DB-API 2.0 (PEP 249) defines ``Connection.cursor`` as a method that
+        returns a cursor instance; ``.execute`` lives on the cursor, not the
+        connection.  This test mirrors a real DB-API connection where
+        ``.cursor`` is a plain callable (not a MagicMock pretending to be
+        one), so the only way for ``execute`` to be reached is to actually
+        call the cursor factory.
         """
+        cursor = MagicMock()
+        # Bound method on a real DB-API connection — plain function, not MagicMock
         mock_conn = MagicMock()
-        # cursor attribute exists (the MagicMock itself); no need to call it.
+        mock_conn.cursor = lambda *a, **k: cursor  # type: ignore[method-assign]
 
         _load_age_extension(mock_conn, MagicMock())
 
-        mock_conn.cursor.execute.assert_any_call("SELECT current_database()")
-        mock_conn.cursor.execute.assert_any_call("LOAD 'age';")
-        mock_conn.cursor.execute.assert_any_call(
+        # cursor factory must be invoked exactly once
+        # (MagicMock auto-records call count on its own .cursor attribute,
+        # but here we replaced it with a plain lambda so we assert via the
+        # cursor mock's recorded calls)
+        cursor.execute.assert_any_call("SELECT current_database()")
+        cursor.execute.assert_any_call("LOAD 'age';")
+        cursor.execute.assert_any_call(
             'SET search_path TO ag_catalog, "$current_schema";'
         )
 
     def test_non_postgresql_connection_skips_gracefully(self) -> None:
         """Non-PostgreSQL backends (e.g. SQLite) cause the try block to fail
         silently — the except swallows the exception."""
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("not postgres")
         mock_conn = MagicMock()
-        mock_conn.cursor.execute.side_effect = Exception("not postgres")
+        mock_conn.cursor = lambda *a, **k: cursor  # type: ignore[method-assign]
 
         _load_age_extension(mock_conn, MagicMock())
         # No exception propagated — silently skipped.
 
     def test_age_not_installed_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         """If AGE is unavailable, the best-effort fallback remains observable."""
-        mock_conn = MagicMock()
+        cursor = MagicMock()
         # First call succeeds (SELECT current_database), second fails (LOAD 'age')
-        mock_conn.cursor.execute.side_effect = [
+        cursor.execute.side_effect = [
             None,  # SELECT current_database
             Exception("extension not available"),  # LOAD 'age'
         ]
+        mock_conn = MagicMock()
+        mock_conn.cursor = lambda *a, **k: cursor  # type: ignore[method-assign]
 
         with caplog.at_level("WARNING", logger="nfm_db.database"):
             _load_age_extension(mock_conn, MagicMock())
