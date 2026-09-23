@@ -308,7 +308,7 @@ jobs:
       # the BASE build, not in prod-api's.)
       - name: Resolve build-base (pull or bootstrap)
         run: |
-          docker pull ghcr.io/etoile04/nucpot-build-base:stable \
+          timeout --kill-after=60 120 docker pull ghcr.io/etoile04/nucpot-build-base:stable \
             || timeout --kill-after=60 600 docker build -f docker/build-base.Dockerfile \
                  -t ghcr.io/etoile04/nucpot-build-base:stable .
 
