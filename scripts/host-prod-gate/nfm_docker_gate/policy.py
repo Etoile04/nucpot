@@ -129,6 +129,23 @@ REFUSAL_HINT = (
     "run-recovery.sh. File a Paperclip issue first if neither fits."
 )
 
+# NFM-5168: prune-shaped denials carry their own routing. The generic hint
+# above sent a disk-pressured operator to run-recovery.sh — recovery-only,
+# no prune shape — who then concluded "no prune action" and burned a
+# Paperclip round-trip while the sanctioned cleanup entry already existed
+# (NFM-4273/NFM-4802: image retention keep-N + optional --until age pass,
+# dangling layers, build cache, stale anonymous volumes; protected tag
+# classes and the keep-N rollback floor enforced inside the entry). Only
+# images/build-cache are cleanup-shaped: container/network/volume state
+# stays prod data and keeps the file-an-issue routing.
+PRUNE_REFUSAL_HINT = (
+    "nfm-g2 (NFM-4270 / ADR-013 G5): daemon-wide prunes stay denied at the "
+    "socket. For sanctioned image/build-cache retention cleanup use "
+    "run-cleanup.sh (sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-cleanup.sh; "
+    "also runs daily via com.nfm.g2.cleanup-daily). Container/network/volume "
+    "prunes touch prod state — file a Paperclip issue."
+)
+
 
 def _matches(name: str, prefixes: tuple[str, ...]) -> bool:
     """A name is in scope if it equals a prefix or extends it with -/_."""
@@ -164,6 +181,10 @@ class Decision:
     scope: str = "n/a"  # "prod" | "non-prod" | "image" | "n/a"
     audit: bool = False  # write an audit record (mutation seen)
     target: str | None = None  # best-effort human-readable target
+    # Response-message routing override for deny classes with a sanctioned
+    # alternative entry (prunes -> PRUNE_REFUSAL_HINT); None keeps the
+    # generic REFUSAL_HINT. Never logged — to_log_fields stays as-is.
+    hint: str | None = None
 
     def to_log_fields(self) -> dict[str, Any]:
         # NB: no "target" here — the proxy adds the request's own target;
@@ -567,6 +588,7 @@ def classify(
             f"{path} is daemon-wide and can remove prod state (fail-closed)",
             scope="prod",
             audit=True,
+            hint=PRUNE_REFUSAL_HINT,
         )
 
     image_action = _IMAGE_NAME_ACTION.match(path)

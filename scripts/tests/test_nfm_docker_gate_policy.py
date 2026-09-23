@@ -582,6 +582,30 @@ def test_prunes_denied():
         assert not result.allowed, path
 
 
+def test_prune_deny_hint_routes_to_sanctioned_cleanup():
+    """NFM-5168: an SRE disk warning hit the generic refusal hint, read
+    run-recovery.sh (recovery-only, no prune shape), concluded "no prune
+    action", and burned a Paperclip round-trip. The prune-class denial
+    must carry its own routing: the sanctioned cleanup entry."""
+    for path in (
+        "containers/prune",
+        "networks/prune",
+        "volumes/prune",
+        "build/prune",
+        "images/prune",
+    ):
+        result = decide("POST", f"/v1.43/{path}")
+        assert "run-cleanup.sh" in (result.hint or ""), path
+
+
+def test_hint_absent_outside_prune_class():
+    # The hint is response-message routing for the prune class only;
+    # every other denial falls back to the generic REFUSAL_HINT in the
+    # proxy.
+    result = decide("DELETE", "/v1.43/containers/nucpot-prod-api")
+    assert result.hint is None
+
+
 # ---- escape-hatch configs denied regardless of scope --------------------------
 
 
@@ -861,16 +885,6 @@ def test_get_image_other_subresources_still_fail_closed():
 # failed with the exec never "finishing".
 
 
-def test_get_exec_inspect_allowed_ro_mode():
-    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json")
-    assert result.allowed
-
-
-def test_get_exec_inspect_allowed_full_mode():
-    result = decide("GET", "/v1.43/exec/" + "a1" * 32 + "/json", full=True)
-    assert result.allowed
-
-
 def test_post_exec_start_allowed_ro_mode():
     result = decide("POST", "/v1.43/exec/" + "a1" * 32 + "/start")
     assert result.allowed and result.audit
@@ -893,6 +907,7 @@ def test_exec_other_subresources_still_fail_closed():
     exec_id = "b2" * 32
     assert not decide("POST", f"/v1.43/exec/{exec_id}/resize", "h=40").allowed
     assert not decide("GET", f"/v1.43/exec/{exec_id}/logs").allowed
+
 
 # ---- NFM-4357 (RC12): exec-instance inspect is a sanctioned read --------------
 # `docker compose exec` reads the probe's exit code via GET
