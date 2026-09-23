@@ -146,15 +146,20 @@ jobs:
       # ships only asyncpg; the deploy-lock tests use create_engine() with
       # postgresql+psycopg:// to open probe connections on separate sync
       # sessions. See test_deploy_lock.py::_sync_url().
+      # NFM-5157 / ADR-022 D3: GNU timeout makes an egress stall exit
+      # non-zero (step failure -> job `failure` -> CI Failure Triage)
+      # instead of hanging until a job-level cap cancels the run (the
+      # NFM-5151 blind spot). uv/apt internal retry behavior is untouched
+      # — timeout only bounds wall time.
       - name: Install psycopg[binary]
-        run: uv pip install "psycopg[binary]"
+        run: timeout 300 uv pip install "psycopg[binary]"
 
       # Install pg_isready (postgresql-client). pg_isready is the deterministic
       # gate for waiting on the Postgres 16 service container; the service
       # ``--health-cmd`` runs inside the container and is not visible from the
       # runner's host namespace.
       - name: Install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: sudo timeout 300 apt-get update && sudo timeout 300 apt-get install -y postgresql-client
 
       # Wait for Postgres to be reachable. ``5432:5432`` maps the container
       # port to host port 5432 deterministically; the service health check
