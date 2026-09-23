@@ -36,6 +36,7 @@ from nfm_db.services.rag_audit import (
     BucketCounts,
     _bucket_counts_from_envelope,
     _extract_doc_id,
+    _parse_lightrag_timestamp,
     _processing_row_age_hours,
     classify_failure_reason,
     run_rag_audit_document_buckets,
@@ -146,9 +147,87 @@ class TestProcessingRowAge:
         assert age is not None
         assert 11.5 < age < 12.5
 
+    def test_numeric_string_fromisoformat_does_not_raise(self) -> None:
+        """Regression wall for NFM-5162: Python 3.11+ ``datetime.fromisoformat``
+        accepts packed-date numeric strings (e.g. ``"1790111170553"``) and
+        returns a NAIVE datetime.  The age subtraction against
+        ``datetime.now(UTC)`` previously raised
+        ``TypeError: can't subtract offset-naive and offset-aware datetimes``
+        on Production Deployment run 35831060526 attempt 3.
+        """
+        # 1790111170553 is the exact value from the failing run; it parses
+        # cleanly via fromisoformat on Python 3.11+ as a NAIVE datetime,
+        # which is the branch the production code must now tz-coerce.
+        row = {"created_at": "1790111170553"}
+        age = _processing_row_age_hours(row)
+        # The exact magnitude depends on the fromisoformat interpretation,
+        # but the call must NOT raise TypeError and must return a float.
+        assert isinstance(age, float)
+
     @pytest.mark.parametrize("row", [{}, {"updated_at": None}, {"started_at": 0}])
     def test_missing_or_unparseable_returns_none(self, row: dict[str, Any]) -> None:
         assert _processing_row_age_hours(row) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_lightrag_timestamp
+# ---------------------------------------------------------------------------
+
+
+class TestParseLightragTimestamp:
+    """Accept the three timestamp shapes the 1.5.4 sidecar emits and
+    ALWAYS return a tz-aware datetime so the age subtraction in
+    :func:`_processing_row_age_hours` stays tz-safe.
+    """
+
+    def test_iso_z_is_tz_aware(self) -> None:
+        result = _parse_lightrag_timestamp("2026-09-23T08:45:00Z")
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.utcoffset() == timedelta(0)
+
+    def test_iso_with_offset_is_tz_aware(self) -> None:
+        result = _parse_lightrag_timestamp(
+            (datetime.now(UTC) - timedelta(hours=12)).isoformat()
+        )
+        assert result is not None
+        assert result.tzinfo is not None
+
+    def test_epoch_ms_is_tz_aware(self) -> None:
+        twelve_hours_ago_ms = int(
+            (datetime.now(UTC) - timedelta(hours=12)).timestamp() * 1000
+        )
+        result = _parse_lightrag_timestamp(str(twelve_hours_ago_ms))
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.utcoffset() == timedelta(0)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # Packed-date numeric form that Python 3.11+ fromisoformat
+            # accepts; this is the exact string from the failed run.
+            "1790111170553",
+            # 14-digit basic-format ISO datetime — also accepted by the
+            # permissive Python 3.11+ parser as a NAIVE datetime.
+            "20260923084500",
+        ],
+    )
+    def test_numeric_string_is_tz_aware(self, raw: str) -> None:
+        """NFM-5162 regression: numeric / packed-date strings that succeed
+        via ``datetime.fromisoformat`` must still be returned tz-aware so
+        downstream subtraction against ``datetime.now(UTC)`` does not raise
+        ``TypeError``."""
+        result = _parse_lightrag_timestamp(raw)
+        assert result is not None
+        assert result.tzinfo is not None, (
+            f"_parse_lightrag_timestamp({raw!r}) returned naive datetime; "
+            "must be tz-aware for _processing_row_age_hours subtraction"
+        )
+
+    @pytest.mark.parametrize("raw", ["", "not-a-date", "abc.def.ghi"])
+    def test_unparseable_returns_none(self, raw: str) -> None:
+        assert _parse_lightrag_timestamp(raw) is None
 
 
 # ---------------------------------------------------------------------------

@@ -597,7 +597,14 @@ def _parse_lightrag_timestamp(raw: str) -> datetime | None:
             )
     else:
         try:
-            return datetime.fromisoformat(raw)
+            # Python 3.11+ accepts packed-date numeric strings (e.g.
+            # ``"1790111170553"``) via fromisoformat and returns a NAIVE
+            # datetime, which would break the UTC subtraction in
+            # :func:`_processing_row_age_hours`.  Always coerce tz-aware
+            # so all three accepted shapes (ISO-Z, ISO+offset, epoch-ms)
+            # yield tz-aware datetimes.
+            result = datetime.fromisoformat(raw)
+            return result if result.tzinfo else result.replace(tzinfo=UTC)
         except ValueError:
             logger.debug(
                 "rag_audit_buckets: timestamp %r is not ISO-8601; "
