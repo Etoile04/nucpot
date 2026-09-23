@@ -25,7 +25,12 @@
 # verification. Adding the same COPY here keeps staging consistent with prod
 # and unblocks NFM-4077 AC #2.
 # =============================================================================
-FROM python:3.12-slim
+# ADR-022 D1 (NFM-5159): build FROM the pre-baked base image so this
+# Dockerfile performs ZERO apt-get network legs — same posture as
+# docker/prod-api.Dockerfile. See docker/build-base.Dockerfile (NFM-5156)
+# and .github/workflows/base-image.yml for the nightly shock-absorber
+# contract; `stable` is sticky, so a failed nightly never breaks this build.
+FROM ghcr.io/etoile04/nucpot-build-base:stable
 
 WORKDIR /app
 
@@ -33,17 +38,15 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
-# Build-time proxy: routes uv's outbound HTTPS through the host's VPN
-# proxy (Clash at 127.0.0.1:7892) so PyPI is reachable despite GFW.
-# ARG-driven so the same Dockerfile can be built without a proxy.
-ARG HTTP_PROXY_URL=""
-ENV http_proxy=${HTTP_PROXY_URL} \
-    https_proxy=${HTTP_PROXY_URL} \
-    HTTP_PROXY=${HTTP_PROXY_URL} \
-    HTTPS_PROXY=${HTTP_PROXY_URL}
+# ADR-018 / ADR-022 D4 (NFM-5159): egress stays DIRECT — no proxy env.
+# The historical ARG/ENV HTTP_PROXY_URL block (Clash at 127.0.0.1:7892)
+# routed uv through the host VPN; D4 rejects proxy re-introduction (single
+# point of failure, measured 5.5x latency). Builds pass no proxy vars
+# today (docker-compose.staging.yml defines no build args), so removing
+# the block is behavior-preserving.
 
-# Build-time index: Tsinghua mirror is the only reliable PyPI source from
-# inside this build environment. ARG-driven for the same reason as the proxy.
+# Build-time index: ARG-driven so the same Dockerfile can target the
+# Tsinghua mirror where that is the reliable PyPI source.
 ARG UV_INDEX_URL="https://pypi.org/simple"
 ENV UV_INDEX_URL=${UV_INDEX_URL} \
     PIP_INDEX_URL=${UV_INDEX_URL}
@@ -59,12 +62,8 @@ COPY apps/api/pyproject.toml ./
 COPY apps/api/src/ ./src/
 RUN uv pip install --system --no-cache .
 
-# Clear proxy + index env so runtime (alembic + uvicorn) does not inherit it.
-ENV http_proxy= \
-    https_proxy= \
-    HTTP_PROXY= \
-    HTTPS_PROXY= \
-    UV_DEFAULT_INDEX= \
+# Clear index env so runtime (alembic + uvicorn) does not inherit it.
+ENV UV_DEFAULT_INDEX= \
     UV_INDEX_URL= \
     PIP_INDEX_URL=
 
