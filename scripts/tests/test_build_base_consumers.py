@@ -12,17 +12,22 @@ These are content assertions in the style of test_staging_dockerfile_models.py:
 the Dockerfiles are build inputs, not importable code, so the contract is
 pinned by parsing the file text.
 
-ADR-022 D2 note: pip BuildKit cache mounts (``RUN --mount=type=cache,...``)
-are deliberately NOT asserted here. Every deploy-host build path runs the
-classic builder behind the nfm-g2 gate, which rejects buildkit's boot
-container (NFM-4357; re-verified 2026-09-23: ``container config rejected:
-Privileged=true``), and the classic builder hard-errors on ``RUN --mount``.
-D2 on consumer Dockerfiles is pending the ADR-013 G5 vs ADR-022 conflict
-ruling — see the NFM-5159 thread. The tuna->pypi retry ladder (D5) stays
-as the pip-side resilience line in the meantime.
+ADR-022 D2 note (ruled 2026-09-23, NFM-5169 Option A): D2 is re-scoped to
+BuildKit-verified CI-only build paths. Per the NFM-5159 build-matrix audit
+no in-scope consumer Dockerfile has one — prod-api/staging-api build on
+deploy-host classic-builder paths (production-deployment.yml candidate build,
+deploy_prod.sh, staging_deploy.sh, all behind the nfm-g2 gate), e2e-hub/
+e2e-resource on host-driven docker-compose.e2e.yml (classic). The classic
+builder hard-errors on ``RUN --mount`` ("the --mount option requires
+BuildKit") and the gate rejects buildkit's privileged boot container
+(NFM-4357; re-verified 2026-09-23: ``container config rejected:
+Privileged=true``). So these Dockerfiles must carry NO BuildKit-only syntax
+and keep ``--no-cache-dir``/``--no-cache`` installs with the tuna->pypi
+retry ladder (D5) as the pip-side resilience line.
 """
 
 from pathlib import Path
+import re
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,6 +38,24 @@ CONSUMER_DOCKERFILES = (
     REPO_ROOT / "docker" / "staging-api.Dockerfile",
     REPO_ROOT / "docker" / "lightrag.Dockerfile",
 )
+
+# NFM-5169 Option A normative rule: BuildKit-only syntax is permitted ONLY in
+# Dockerfiles whose EVERY build path has BuildKit verified available. Per the
+# NFM-5159 build-matrix audit these five all build on classic-builder paths
+# (deploy-host scripts behind the nfm-g2 gate, host-driven compose for e2e) —
+# one classic path vetoes BuildKit syntax for the whole file.
+CLASSIC_BUILDER_DOCKERFILES = (
+    REPO_ROOT / "docker" / "prod-api.Dockerfile",
+    REPO_ROOT / "docker" / "staging-api.Dockerfile",
+    REPO_ROOT / "docker" / "lightrag.Dockerfile",
+    REPO_ROOT / "docker" / "e2e-hub.Dockerfile",
+    REPO_ROOT / "docker" / "e2e-resource.Dockerfile",
+)
+
+# BuildKit-only syntax the classic builder cannot parse: RUN/COPY flags
+# --mount/--ssh and RUN/COPY heredocs (``RUN <<EOF``). ``COPY --from`` is
+# classic-safe (multi-stage, docker 17.05) and deliberately NOT matched.
+_BUILDKIT_ONLY_SYNTAX = re.compile(r"(?im)^\s*(?:RUN|COPY)\s+(?:--(?:mount|ssh)\b|<<)")
 
 
 def _read(path: Path) -> str:
@@ -146,3 +169,81 @@ def test_consumer_dockerfiles_carry_no_proxy_env() -> None:
                 "banned by ADR-018 / ADR-022 D4 (deproxy egress). Ref: "
                 "NFM-5159."
             )
+
+
+def test_classic_builder_dockerfiles_have_no_buildkit_only_syntax() -> None:
+    """NFM-5169 Option A: no BuildKit-only syntax on classic-built files.
+
+    Every Dockerfile in CLASSIC_BUILDER_DOCKERFILES is consumed by at least
+    one classic-builder path (deploy-host scripts behind the nfm-g2 gate or
+    host-driven compose). The classic builder hard-errors on ``RUN --mount``
+    ("the --mount option requires BuildKit"), so a well-meant pip cache mount
+    added later would break every deploy-host build of that image. BuildKit
+    syntax stays permitted only where every build path has BuildKit verified
+    (today: CI ubuntu-latest jobs only, e.g. the build-base workflow).
+    """
+    for path in CLASSIC_BUILDER_DOCKERFILES:
+        content = _code_lines(_read(path))
+        hits = _BUILDKIT_ONLY_SYNTAX.findall(content)
+        assert not hits, (
+            f"{path.name} uses BuildKit-only syntax {hits!r} but builds on "
+            "classic-builder paths (NFM-5169 Option A re-scope of ADR-022 "
+            "D2). Use --no-cache-dir installs + the tuna->pypi ladder (D5) "
+            "instead; a cache mount here hard-errors the deploy-host build."
+        )
+
+
+def test_classic_builder_pip_legs_stay_no_cache() -> None:
+    """Deploy-host installs keep --no-cache-dir/--no-cache (NFM-5169).
+
+    With D2 re-scoped off these paths, an uncached install IS the contract:
+    the classic builder has no cache-mount escape hatch, and D5 retry
+    ladders bound the residual pip exposure. Re-adding a cache dir flag pair
+    (e.g. ``--cache-dir``) on a classic path just burns deploy time on a
+    cache the next build cannot hit.
+    """
+    expected_no_cache = {
+        "prod-api.Dockerfile": "pip install --no-cache-dir",
+        "lightrag.Dockerfile": "pip install --no-cache-dir",
+        "e2e-hub.Dockerfile": "pip install --no-cache-dir",
+        "e2e-resource.Dockerfile": "pip install --no-cache-dir",
+        "staging-api.Dockerfile": "uv pip install --system --no-cache",
+    }
+    for path in CLASSIC_BUILDER_DOCKERFILES:
+        content = _code_lines(_read(path))
+        assert expected_no_cache[path.name] in content, (
+            f"{path.name} lost its {expected_no_cache[path.name]!r} install "
+            "leg. NFM-5169 Option A keeps classic-builder installs uncached "
+            "with D5 ladders as the resilience line."
+        )
+
+
+def test_buildkit_only_syntax_matcher_has_teeth() -> None:
+    """The guard regex must catch every banned form and pass classic-safe ones.
+
+    Pins the matcher itself against synthetic strings so a future regex edit
+    cannot silently defang test_classic_builder_dockerfiles_have_no_
+    buildkit_only_syntax without a visible failure here.
+    """
+    banned = (
+        "RUN --mount=type=cache,target=/root/.cache/pip pip install .",
+        "run --mount=type=secret,id=tokens cat /run/secrets/tokens",
+        "COPY --mount=type=bind,source=dist,target=/app/dist dist /app/dist",
+        "RUN --ssh=default git clone git@github.com:example/repo.git",
+        "RUN <<EOF\npip install .\nEOF",
+        "COPY <<EOF /app/deps.txt\nflask\nEOF",
+    )
+    for line in banned:
+        assert _BUILDKIT_ONLY_SYNTAX.search(line), f"matcher missed: {line!r}"
+
+    classic_safe = (
+        "RUN pip install --no-cache-dir .",
+        "COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv",
+        "COPY apps/api/pyproject.toml ./",
+        "RUN mkdir -p /app/data",
+        "# comment: RUN --mount=type=cache would be BuildKit-only",
+    )
+    for line in classic_safe:
+        assert not _BUILDKIT_ONLY_SYNTAX.search(line), (
+            f"matcher false-positives on classic-safe line: {line!r}"
+        )
