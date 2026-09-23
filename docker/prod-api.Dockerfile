@@ -36,7 +36,11 @@ COPY apps/api/migrations/ ./migrations/
 # NFM-2418: Try Tsinghua mirror first (fast in CN), retry once, then fall
 # back to pypi.org as the ultimate safety net so builds never stall on a
 # single unreachable mirror.
-RUN pip install --no-cache-dir --default-timeout=120 --retries=3 --index-url http://192.0.2.1:9/simple nonexistent-probe-pkg-nfm5160
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
+    (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple .) || \
+    pip install --no-cache-dir --default-timeout=180 --retries=15 .
 
 # Explicitly install xgboost as a defensive layer. The dependency is also
 # declared in apps/api/pyproject.toml, but pinning here ensures the package
