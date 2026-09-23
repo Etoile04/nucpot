@@ -11,7 +11,14 @@
 # =============================================================================
 ARG LIGHTRAG_VERSION=1.5.4
 
-FROM python:3.12-slim
+# ADR-022 D1 (NFM-5159): build FROM the pre-baked base image so this
+# Dockerfile performs ZERO apt-get network legs — same posture as
+# docker/prod-api.Dockerfile. See docker/build-base.Dockerfile (NFM-5156)
+# and .github/workflows/base-image.yml for the nightly shock-absorber
+# contract; `stable` is sticky, so a failed nightly never breaks this build.
+# Base derives from digest-pinned python:3.12-slim, so the
+# /usr/local/lib/python3.12/ site-packages target below is unchanged.
+FROM ghcr.io/etoile04/nucpot-build-base:stable
 
 ARG LIGHTRAG_VERSION=1.5.4
 
