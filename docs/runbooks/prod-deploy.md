@@ -837,3 +837,68 @@ ADR-015 §5); deploy is main-push-only. Legacy tags (`canary/*`,
 `v2026.318~626` series) are **not rollback targets** — most point at
 non-main upstream commits.
 
+## 11. Host-tracked G2 entries re-propagation (NFM-5149)
+
+### 11.1. Why this exists
+
+The host-side G2 wall installs root-owned entry scripts into
+`/usr/local/lib/nfm-g2/` (run-deploy, run-recovery, the lightrag watchdog
+starter, `ollama-runner-term.sh`, …). Their source of truth is the repo tree
+`scripts/host-prod-gate/entries/`. A release that changes one of those files
+ships it **docker-only**: the deploy identity (`nfmdeploy`) has no root path —
+by design (ADR-013 G2) — so the root-owned host copies only ever change when
+an operator applies them. Until NFM-5149 that apply was an unscripted manual
+catch-up; the NFM-5122 base-10 etime fix sat un-applied for two consecutive
+deploy cycles while the lightrag watchdog kept exec'ing the pre-fix host blob
+(NFM-5094 → NFM-5134 lineage).
+
+### 11.2. The mechanism (staged apply + ONE operator action per release)
+
+* **At deploy time** — `scripts/deploy_prod.sh` runs
+  `scripts/host-prod-gate/entry-sync.sh --check` after the health gates. A
+  release carrying a host-file diff prints a `HOST-ENTRY-DRIFT` block in the
+  deploy log with the exact one-line action below. Non-fatal by design: the
+  docker side of the release is already live.
+* **The single operator action** — from the synced checkout (the deploy flow
+  already reset it to the deploying SHA):
+
+  ```bash
+  cd ~/Projects/nucpot && sudo bash scripts/host-prod-gate/entry-sync.sh --apply
+  ```
+
+  `--apply` installs **only drifted entries**, after verifying (NFM-4297 CR F7
+  SHA binding, entry-sync form) that repo HEAD is reachable from `origin/main`
+  and every applied byte equals the committed HEAD blob — uncommitted local
+  edits are refused. The previous copy is backed up under
+  `/usr/local/lib/nfm-g2/backups/entry-sync/<UTC-ts>/` and a JSONL audit row
+  lands in `/var/log/nfm-g2/entry-sync.log`. Idempotent: in-sync ⇒ no-op.
+* **No restarts** — host consumers of these entries are a fresh bash per fire
+  (the lightrag watchdog LaunchDaemon uses `StartInterval` 300), so a replaced
+  file takes effect on the next fire. `entry-sync.sh` never touches launchctl.
+* **Authorization boundary preserved** — there is deliberately **no sudoers
+  grant** for `entry-sync.sh`. The operator's interactive `sudo` password IS
+  the per-release authorization; agents can only ever run `--check` (the SRE
+  canary uses exactly that). A LaunchDaemon auto-pull that applies
+  agent-influenced bytes without the operator would move that boundary and is
+  explicitly out of scope for v1 — it would need a separate governance
+  decision (CEO sign-off) first.
+
+### 11.3. Verification (SRE post-deploy canary)
+
+```bash
+cd ~/Projects/nucpot && bash scripts/host-prod-gate/entry-sync.sh --check
+# ENTRY-SYNC-OK …            → host copies match the repo (exit 0)
+# HOST-ENTRY-DRIFT <name> …  → the operator action above is still pending (exit 1)
+```
+
+For behavior-carrying fixes, pair the sha check with the fix's own functional
+probe (e.g. the NFM-5134 extracted-function probe for the NFM-5122 base-10
+etime arithmetic) before declaring the propagation complete.
+
+### 11.4. References
+
+- [NFM-5149](../../issues/NFM-5149) — the deploy-path gap this section closes.
+- [NFM-4297](../../issues/NFM-4297) — CR F7 SHA binding reused by `--apply`.
+- [prod-compose-gate.md](./prod-compose-gate.md) — the G2 wall itself
+  (`host_setup.sh` installs `entry-sync.sh` root-side alongside the entries).
+

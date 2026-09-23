@@ -366,6 +366,42 @@ else
     --actor "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}"
 fi
 
+# NFM-5149 — host-tracked entry drift surfacing. Repo-side fixes to
+# scripts/host-prod-gate/entries/*.sh ship DOCKER-ONLY through this deploy:
+# the deploy identity has no root path (G2 wall, ADR-013), so the root-owned
+# copies under /usr/local/lib/nfm-g2/ can only be updated by the operator's
+# single per-release apply (runbook §11). This check makes every release
+# that carries a host-file diff surface it AT deploy time, with the exact
+# one-line action that closes it. Deliberately NOT fatal: the docker side of
+# the release is already live and verified; the host apply is a separate,
+# operator-gated propagation step (the SRE canary tracks it to closure).
+echo "==> Checking host-tracked G2 entries (NFM-5149)"
+if [ -x scripts/host-prod-gate/entry-sync.sh ] && [ -d scripts/host-prod-gate/entries ]; then
+  HESYNC_RC=0
+  bash scripts/host-prod-gate/entry-sync.sh --check || HESYNC_RC=$?
+  case "${HESYNC_RC}" in
+    0) echo "==> host G2 entries in sync with repo" ;;
+    2) echo "==> NOTE: host gate not installed / not readable — entry-sync check skipped (NFM-5149)" ;;
+    *) cat <<'HESYNC_EOM'
+===================================================================
+HOST-ENTRY-DRIFT: this release contains changes to host-tracked files
+(scripts/host-prod-gate/entries/) that the deploy path cannot write —
+they are live in docker only; host consumers (lightrag watchdog, root
+entries) still run the OLD bytes.
+
+One operator action propagates them (deploy runbook §11):
+
+  cd ~/Projects/nucpot && sudo bash scripts/host-prod-gate/entry-sync.sh --apply
+
+(The SRE post-deploy canary tracks this until host sha == repo sha.)
+===================================================================
+HESYNC_EOM
+      ;;
+  esac
+else
+  echo "==> NOTE: host-prod-gate entry-sync not present in this checkout — NFM-5149 drift check skipped"
+fi
+
 # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent 10
 # nucpot-prod-* tags per repository in the local daemon. The new SHA we just
 # built is always newest, so it is never pruned.
