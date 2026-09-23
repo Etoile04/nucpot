@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted |
+| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169)) |
 | **Date** | 2026-09-23 |
 | **Author** | CTO (architecture sign-off; routed from [NFM-5153](/NFM/issues/NFM-5153) SRE lane) |
 | **Scope** | Runner Docker build path (`docker/*.Dockerfile`) + network legs in CI/deploy workflows |
@@ -85,16 +85,57 @@ cancels + the NFM-4931 class).
   dependence — the nightly job absorbs that pull once per night into the
   runner's layer cache.
 
-### D2 — ADOPT: pip BuildKit cache mounts
+### D2 — ADOPT (amended 2026-09-23, [NFM-5169](/NFM/issues/NFM-5169)): pip BuildKit cache mounts — BuildKit-verified build paths only
 
-Replace `pip install --no-cache-dir` with
+**Original scope (superseded):** replace `pip install --no-cache-dir` with
 `RUN --mount=type=cache,target=/root/.cache/pip pip install …` in all consumer
-Dockerfiles. Wheel sets persist in the runner's BuildKit cache across builds;
-during brownouts, cached wheels serve installs with zero network. Only
-genuinely new packages hit the network. Keep the tuna→pypi ladder as the
-second line (cheap once cache absorbs the steady state). Requires BuildKit on
-every build path (buildx in Docker Build Verification; deploy build must set
-`DOCKER_BUILDKIT=1` / buildx — verify at implementation).
+Dockerfiles; BuildKit on every build path ("verify at implementation").
+
+**Verified constraint (2026-09-23, deploy host — the verification came back
+negative, two ways):**
+
+1. `DOCKER_BUILDKIT=1 docker build` through the G2 RO gate
+   (`unix:///var/run/nfm-g2/docker-ro.sock`) routes buildx to the
+   docker-container driver, whose boot container the gate rejects:
+   `container config rejected: Privileged=true. nfm-g2 (NFM-4270 / ADR-013
+   G5)`.
+2. The classic builder (`DOCKER_BUILDKIT=0`, pinned in
+   `production-deployment.yml` L516 candidate build, `scripts/deploy_prod.sh`
+   ×3, `scripts/staging_deploy.sh`) hard-errors on `RUN --mount` ("the
+   --mount option requires BuildKit").
+
+**Amended scope (normative rule):** BuildKit-only syntax (`RUN --mount=…`,
+heredocs, `RUN --ssh`) is permitted ONLY in Dockerfiles whose *every* build
+path has BuildKit verified available (today: CI jobs on ubuntu-latest with
+setup-buildx-action). A Dockerfile is a single artifact consumed by all its
+build paths — one non-BuildKit path vetoes BuildKit syntax for the whole
+file. Dockerfiles with any deploy-host build path MUST remain
+classic-builder-clean.
+
+- `prod-api` and `staging-api` are on deploy-host paths (candidate build +
+  deploy scripts) → keep `pip install --no-cache-dir` + the tuna→pypi ladder
+  (D5) as the pip resilience line. `lightrag` / `web` / `e2e-*` follow the
+  same rule per the [NFM-5159](/NFM/issues/NFM-5159) build-matrix audit.
+- Wheel-cache benefit concentrates on CI (every push/PR); deploy-host builds
+  are low-frequency, so cache warmth there is marginal against the cost below.
+- D1 (base `FROM`, apt-ladder deletion) and D3 (fail-don't-cancel) are
+  unaffected on all paths.
+
+**Rejected alternative (NFM-5169 Option B):** commissioning an nfm-g2
+(root-owned) gate change to admit buildkit's privileged boot container, or
+sanctioned buildx provisioning on the deploy host (incl. the NFM-848
+locked-keychain constraint). Rejected now: G5 is a deliberate non-privilege
+invariant on the prod deploy host; weakening it buys pip-cache warmth on
+low-frequency deploy builds whose residual pip risk is already bounded by D5
+and triage-visibilized by D3. This is the same category of trade as rejected
+D4 — boundary weakening for resilience convenience.
+
+**Re-open trigger:** ≥2 deploy-host pip-ladder exhaustions in a rolling
+30 days post-D1 landing, or any single deploy build burning >15 min on pip
+legs → commission Option B as a separately-costed infra track (gate owner +
+security review + NFM-848 constraint; rootless buildx provisioning preferred
+over privileged boot-container admission if it preserves the G5 non-privilege
+invariant). Until then the trigger is measured, not speculated.
 
 ### D3 — ADOPT: fail-don't-cancel at stall caps (NFM-5151 remediation)
 
