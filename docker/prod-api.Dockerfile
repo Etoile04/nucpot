@@ -1,4 +1,14 @@
-FROM python:3.12-slim
+# ADR-022 D1 (NFM-5159): build FROM the pre-baked base image so this
+# Dockerfile performs ZERO apt-get network legs. The apt build deps
+# (gcc libpq-dev libcurl4-openssl-dev curl ca-certificates, plus the
+# NFM-4931 apt timeout conf) are baked nightly into
+# ghcr.io/etoile04/nucpot-build-base by .github/workflows/base-image.yml
+# (NFM-5156) — the nightly job is the designated shock absorber for the
+# flaky tuna/deb.debian.org legs behind the 2026-09-23 timeout-cancel
+# pair. Dependency changes land via PR editing docker/build-base.Dockerfile
+# and roll out on the next green nightly; `stable` is sticky, so a failed
+# nightly never breaks this build.
+FROM ghcr.io/etoile04/nucpot-build-base:stable
 
 # ADR-015 §4 (NFM-4452): the deploying git SHA, injected by deploy_prod.sh
 # (--build-arg GIT_SHA=<DEPLOY_SHA>) and surfaced by /api/v1/health as
@@ -9,48 +19,13 @@ ENV NFM_GIT_SHA=${GIT_SHA}
 
 WORKDIR /app
 
-# NFM-4931: bound apt network I/O so a half-open mirror connection fails
-# fast and climbs the retry ladder instead of hanging the build. During the
-# 2026-09-17 production deploy (run 35219971646), /usr/lib/apt/methods/http
-# hung ~22 min on a half-open connection while the mirrors answered <0.4s
-# from the host — apt's defaults never bound the stall. 30s timeouts are
-# ~75x the observed healthy mirror latency; Acquire::Retries re-fetches
-# each URI on timeout, composing with the shell-level mirror ladder below.
-# Dropped in as a conf snippet so every apt-get leg is covered (mirror
-# ladder AND the proxy-bypass fallback), including any future apt call.
-RUN printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "5";\n' \
-      > /etc/apt/apt.conf.d/99-nfm-acquire-timeouts
-
-# Install build dependencies with retry for flaky mirror proxies (NFM-2502).
-# The local HTTP proxy (Clash/mihomo) returns transient 502 for .deb
-# downloads.  Retries with backoff absorb transient failures; as a last
-# resort we bypass the proxy entirely and connect to mirrors directly
-# (the runner is in CN with direct mirror access).
-#
-# libcurl4-openssl-dev is needed to build the pycurl wheel used by
-# nfm_db.services.mineru_client (NFM-MINERU-1) — pycurl uses libcurl
-# because httpx/urllib fail the TLS 1.3 handshake against
-# cdn-mineru.openxlab.org.cn on some egress networks, while libcurl handles
-# it reliably.
-RUN TSINGHUA="https://mirrors.tuna.tsinghua.edu.cn/debian"; \
-    DEBIAN="http://deb.debian.org/debian"; \
-    for mirror in "$TSINGHUA" "$DEBIAN"; do \
-      for attempt in 1 2 3; do \
-        [ "$attempt" -gt 1 ] && { echo "==> apt retry $attempt/3 via $mirror (sleep $((attempt*5))s)..."; sleep $((attempt * 5)); }; \
-        sed -i "s|$TSINGHUA|$DEBIAN|g" /etc/apt/sources.list.d/debian.sources; \
-        sed -i "s|$DEBIAN|$mirror|g" /etc/apt/sources.list.d/debian.sources; \
-        apt-get update && \
-        apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
-        rm -rf /var/lib/apt/lists/* && exit 0; \
-        echo "==> apt via $mirror attempt $attempt failed"; \
-      done; \
-    done; \
-    echo "==> All retries via proxy failed, bypassing HTTP proxy..."; \
-    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; \
-    sed -i "s|$TSINGHUA|$DEBIAN|g" /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# ADR-022 D1 (NFM-5159): the apt legs that used to live here (NFM-4931
+# acquire-timeout conf + the NFM-2502 tuna->deb.debian.org mirror ladder
+# installing gcc libpq-dev libcurl4-openssl-dev curl ca-certificates) are
+# deleted — those packages and that conf are pre-baked into
+# ghcr.io/etoile04/nucpot-build-base:stable (docker/build-base.Dockerfile,
+# NFM-5156). libcurl4-openssl-dev rationale (pycurl wheel for
+# nfm_db.services.mineru_client, NFM-MINERU-1) is recorded there.
 
 # Copy project definition, source, and migrations together so pip can find the package
 COPY apps/api/pyproject.toml ./
