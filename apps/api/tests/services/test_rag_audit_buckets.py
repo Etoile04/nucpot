@@ -73,9 +73,7 @@ class TestClassifyFailureReason:
             ("Traceback (most recent call last): ...", FAILURE_REASON_ERROR),
         ],
     )
-    def test_maps_messages(
-        self, message: str | None, expected: str
-    ) -> None:
+    def test_maps_messages(self, message: str | None, expected: str) -> None:
         assert classify_failure_reason(message) == expected
 
     def test_empty_and_none_are_indistinguishable(self) -> None:
@@ -123,9 +121,7 @@ class TestProcessingRowAge:
     """Stamp handling for ``created_at`` / ``updated_at`` / ``started_at``."""
 
     def test_iso_z_returns_hours(self) -> None:
-        two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         row = {"updated_at": two_days_ago}
         age = _processing_row_age_hours(row)
         assert age is not None
@@ -139,11 +135,30 @@ class TestProcessingRowAge:
         assert 11.5 < age < 12.5
 
     def test_epoch_ms_returns_hours(self) -> None:
-        twelve_hours_ago_ms = int(
-            (datetime.now(UTC) - timedelta(hours=12)).timestamp() * 1000
-        )
-        row = {"created_at": str(twelve_hours_ago_ms)}
-        age = _processing_row_age_hours(row)
+        """NFM-5166: literal epoch-ms input + injected ``now`` — the
+        magnitude assertion is deterministic across wall clock AND
+        interpreter (run 35831060526 attempt 3 proved the previous
+        now-derived 13-digit input flips red/green with the clock)."""
+        literal_ms = 1790111170553
+        now = datetime.fromtimestamp(literal_ms / 1000.0, tz=UTC) + timedelta(hours=12)
+        row = {"created_at": str(literal_ms)}
+        age = _processing_row_age_hours(row, now=now)
+        assert age is not None
+        assert 11.5 < age < 12.5
+
+    def test_pure_digit_epoch_ms_never_misread_as_packed_date(self) -> None:
+        """NFM-5166 finding 1: pure-digit strings must take the epoch-ms
+        branch on EVERY interpreter.  ``fromisoformat("1790111170553")``
+        succeeds as a packed date (year 1790) on permissive builds
+        (verified on CPython 3.12.12/3.13.12/3.14.2), which previously
+        hid the correct epoch-ms reading (~2026) and reported ~2.07M-hour
+        ages to the reaper.
+        """
+        literal_ms = 1790111170553
+        parsed = _parse_lightrag_timestamp(str(literal_ms))
+        assert parsed == datetime.fromtimestamp(literal_ms / 1000.0, tz=UTC)
+        now = datetime.fromtimestamp(literal_ms / 1000.0, tz=UTC) + timedelta(hours=12)
+        age = _processing_row_age_hours({"created_at": str(literal_ms)}, now=now)
         assert age is not None
         assert 11.5 < age < 12.5
 
@@ -187,16 +202,12 @@ class TestParseLightragTimestamp:
         assert result.utcoffset() == timedelta(0)
 
     def test_iso_with_offset_is_tz_aware(self) -> None:
-        result = _parse_lightrag_timestamp(
-            (datetime.now(UTC) - timedelta(hours=12)).isoformat()
-        )
+        result = _parse_lightrag_timestamp((datetime.now(UTC) - timedelta(hours=12)).isoformat())
         assert result is not None
         assert result.tzinfo is not None
 
     def test_epoch_ms_is_tz_aware(self) -> None:
-        twelve_hours_ago_ms = int(
-            (datetime.now(UTC) - timedelta(hours=12)).timestamp() * 1000
-        )
+        twelve_hours_ago_ms = int((datetime.now(UTC) - timedelta(hours=12)).timestamp() * 1000)
         result = _parse_lightrag_timestamp(str(twelve_hours_ago_ms))
         assert result is not None
         assert result.tzinfo is not None
@@ -205,11 +216,16 @@ class TestParseLightragTimestamp:
     @pytest.mark.parametrize(
         "raw",
         [
-            # Packed-date numeric form that Python 3.11+ fromisoformat
-            # accepts; this is the exact string from the failed run.
+            # Packed-date numeric form that permissive fromisoformat
+            # builds accept; this is the exact string from the failed run.
+            # NFM-5166: the digit guard routes it to the epoch-ms branch
+            # on every interpreter.
             "1790111170553",
-            # 14-digit basic-format ISO datetime — also accepted by the
-            # permissive Python 3.11+ parser as a NAIVE datetime.
+            # 14-digit basic-format ISO datetime — REJECTED by
+            # fromisoformat on 3.13/3.14 (and any build without the
+            # permissive numeric parse), so it reaches the epoch-ms
+            # fall-through (year-2610, tz-aware).  NFM-5166: the digit
+            # guard makes that epoch-ms reading deterministic fleet-wide.
             "20260923084500",
         ],
     )
@@ -415,12 +431,8 @@ class TestRunRagAuditDocumentBuckets:
         monkeypatch: pytest.MonkeyPatch,
         session: AsyncSession,
     ) -> None:
-        two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        one_hour_ago = (datetime.now(UTC) - timedelta(hours=1)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        one_hour_ago = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         envelope = {
             "processing": [
                 {"id": "stale-1", "updated_at": two_days_ago},
@@ -443,9 +455,7 @@ class TestRunRagAuditDocumentBuckets:
 
         reaped_rows = await _audit_rows(session, action="processing_reaped")
         assert len(reaped_rows) == 2
-        assert all(
-            r.failure_reason == FAILURE_REASON_TIMEOUT for r in reaped_rows
-        )
+        assert all(r.failure_reason == FAILURE_REASON_TIMEOUT for r in reaped_rows)
 
     @pytest.mark.asyncio
     async def test_reap_errors_do_not_crash_the_run(
@@ -453,9 +463,7 @@ class TestRunRagAuditDocumentBuckets:
         monkeypatch: pytest.MonkeyPatch,
         session: AsyncSession,
     ) -> None:
-        two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        two_days_ago = (datetime.now(UTC) - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
         envelope = {
             "processing": [
                 {"id": "will-fail", "updated_at": two_days_ago},

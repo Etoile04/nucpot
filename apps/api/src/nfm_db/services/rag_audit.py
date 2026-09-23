@@ -334,9 +334,7 @@ async def run_rag_audit_index_coverage(
             else:
                 # Some legacy rows may carry non-UUID markers; skip rather
                 # than fail the whole run.
-                logger.debug(
-                    "rag_audit: non-UUID marker %r — skipped", marker
-                )
+                logger.debug("rag_audit: non-UUID marker %r — skipped", marker)
 
     drift_ids = completed_ids - indexed_ids
     reingested = 0
@@ -387,9 +385,7 @@ async def run_rag_audit_index_coverage(
             drained = await _drain_wave(in_flight, timeout_s=drain_timeout_s)
             if not drained:
                 ready_count = sum(
-                    1
-                    for result in in_flight
-                    if result is not None and result.ready()
+                    1 for result in in_flight if result is not None and result.ready()
                 )
                 if ready_count == 0:
                     # NFM-4953 fail-closed: zero ready results at the
@@ -596,28 +592,36 @@ def _parse_lightrag_timestamp(raw: str) -> datetime | None:
                 raw,
             )
     else:
-        try:
-            # Python 3.11+ accepts packed-date numeric strings (e.g.
-            # ``"1790111170553"``) via fromisoformat and returns a NAIVE
-            # datetime, which would break the UTC subtraction in
-            # :func:`_processing_row_age_hours`.  Always coerce tz-aware
-            # so all three accepted shapes (ISO-Z, ISO+offset, epoch-ms)
-            # yield tz-aware datetimes.
-            result = datetime.fromisoformat(raw)
-            return result if result.tzinfo else result.replace(tzinfo=UTC)
-        except ValueError:
-            logger.debug(
-                "rag_audit_buckets: timestamp %r is not ISO-8601; "
-                "falling through to epoch-ms parser",
-                raw,
-            )
+        # NFM-5166: pure-digit strings must NEVER reach fromisoformat.
+        # Permissive builds (verified on CPython 3.12.12/3.13.12/3.14.2)
+        # accept 13-digit packed-date strings (``"1790111170553"`` →
+        # 1790-11-11) and would shadow the correct epoch-ms reading
+        # (~2026), feeding the reaper ~2.07M-hour ages.  Routing digits
+        # straight to the epoch-ms branch makes the interpretation
+        # deterministic on every interpreter.
+        if not raw.isdigit():
+            try:
+                # Python 3.11+ accepts packed-date numeric strings (e.g.
+                # ``"1790111170553"``) via fromisoformat and returns a
+                # NAIVE datetime, which would break the UTC subtraction
+                # in :func:`_processing_row_age_hours`.  Always coerce
+                # tz-aware so the accepted ISO shapes (ISO-Z,
+                # ISO+offset, offset-less ISO) yield tz-aware datetimes.
+                result = datetime.fromisoformat(raw)
+                return result if result.tzinfo else result.replace(tzinfo=UTC)
+            except ValueError:
+                logger.debug(
+                    "rag_audit_buckets: timestamp %r is not ISO-8601; "
+                    "falling through to epoch-ms parser",
+                    raw,
+                )
     try:
         return datetime.fromtimestamp(float(raw) / 1000.0, tz=UTC)
     except (ValueError, OSError):
         return None
 
 
-def _processing_row_age_hours(row: dict[str, Any]) -> float | None:
+def _processing_row_age_hours(row: dict[str, Any], *, now: datetime | None = None) -> float | None:
     """Return how many hours a ``processing`` row has been in-flight.
 
     The 1.5.4 sidecar stamps each row with one of ``created_at`` /
@@ -625,18 +629,20 @@ def _processing_row_age_hours(row: dict[str, Any]) -> float | None:
     ``file_source`` which we cannot use to age the row.  Returns
     ``None`` when we cannot determine the age so the reaper skips
     the row rather than evict a doc that just entered the pipeline.
+
+    ``now`` is injectable so tests can assert ages against literal
+    epoch-ms stamps instead of wall-clock-derived inputs (NFM-5166:
+    the now-derived 13-digit form is what made
+    ``test_epoch_ms_returns_hours`` clock-dependent).
     """
-    ts_raw = (
-        row.get("updated_at")
-        or row.get("started_at")
-        or row.get("created_at")
-    )
+    ts_raw = row.get("updated_at") or row.get("started_at") or row.get("created_at")
     if not isinstance(ts_raw, str):
         return None
     parsed = _parse_lightrag_timestamp(ts_raw)
     if parsed is None:
         return None
-    return (datetime.now(UTC) - parsed).total_seconds() / 3600.0
+    reference = now if now is not None else datetime.now(UTC)
+    return (reference - parsed).total_seconds() / 3600.0
 
 
 def _bucket_counts_from_envelope(
@@ -795,8 +801,7 @@ async def run_rag_audit_document_buckets(
             doc_id = _extract_doc_id(row)
             if not doc_id:
                 logger.warning(
-                    "rag_audit_buckets: stranded processing row without "
-                    "id — skipping: %r",
+                    "rag_audit_buckets: stranded processing row without id — skipping: %r",
                     row,
                 )
                 continue
