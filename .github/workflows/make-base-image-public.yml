@@ -36,6 +36,7 @@ jobs:
         env:
           OWNER: Etoile04
           PACKAGE: nucpot-build-base
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           echo "Current visibility:"
