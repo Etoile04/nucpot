@@ -207,6 +207,11 @@ done
 for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health start-lightrag-watchdog ollama-runner-term; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
+# NFM-5149: entry-sync re-propagates the entries above per release. It is
+# operator-invoked from the checkout (the interactive sudo IS the per-release
+# authorization — deliberately no sudoers grant); this root-side copy is a
+# fixed-path convenience only, refreshed by full host_setup reruns.
+install -m 0755 -o root -g wheel "${SRC}/entry-sync.sh" "${G2}/entry-sync.sh"
 # NFM-4273 (ADR-013 G2×G4a): canonical shared G4 state dir — the ONE place
 # the gated deploy body (as nfmdeploy) and the desktop-user drift cron
 # (G4b) agree on. nfmdeploy-owned so only the deploy identity can write
