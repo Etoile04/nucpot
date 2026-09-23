@@ -1118,7 +1118,11 @@ jobs:
     name: Smoke Tests (@smoke)
     runs-on: ubuntu-latest
     needs: [deploy-prod]
-    timeout-minutes: 20  # NFM-3321: watchdog — fail fast if smoke hangs (was 50+ min)
+    # NFM-3321 watchdog, retuned NFM-5157 / ADR-022 D3 to BACKSTOP ONLY:
+    # must stay >= 1.5x the sum of this job's step caps (15m Playwright
+    # install below) so a network stall fails that step red instead of
+    # cancelling the job (the NFM-5151 blind spot).
+    timeout-minutes: 25  # NFM-3321: watchdog — fail fast if smoke hangs (was 50+ min)
     defaults:
       run:
         working-directory: apps/web
@@ -1143,6 +1147,12 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: playwright-chromium-${{ runner.os }}-
+      # NFM-5157 / ADR-022 D3 verify: this step-level cap IS the D3 bound
+      # for the browser-download + --with-deps apt network leg — a stall
+      # exceeds it and fails the step (job `failure`), never cancelling
+      # the job (which only fires at the 25m backstop above). No GNU
+      # wrap added: the runner-enforced step kill also reaps the sudo
+      # apt-get child cleanly, and a second bound would need syncing.
       - name: Install Playwright browsers
         timeout-minutes: 15  # NFM-3321: fail fast on slow download (was 50+ min)
         run: pnpm exec playwright install --with-deps chromium
