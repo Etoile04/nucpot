@@ -304,6 +304,16 @@ def test_prune_denied(ro):
     assert not ro.daemon.seen("POST", "prune")
 
 
+def test_prune_denial_body_routes_to_sanctioned_cleanup(ro):
+    """NFM-5168: the images/prune 403 body must itself name the sanctioned
+    cleanup entry — the generic deploy/recovery hint dead-ends operators
+    at run-recovery.sh, which has no prune shape."""
+    response = ro.request(http("POST", "/v1.43/images/prune"))
+    assert response.startswith(b"HTTP/1.1 403")
+    assert b"run-cleanup.sh" in response
+    assert not ro.daemon.seen("POST", "images/prune")
+
+
 def test_network_connect_body_prod_container_denied(ro):
     """NFM-4273 review E2: ``docker network connect rogue-net
     nucpot-prod-api-1`` — the prod container rides in the connect BODY,

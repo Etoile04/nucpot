@@ -43,8 +43,10 @@ What still works unchanged through `nfm-ro`: `docker ps/inspect/logs/stats`,
 and image builds/pulls (candidate builds in CI). What now gets a 403:
 anything touching `nucpot-prod-*` containers/networks/volumes/images
 (delete/re-tag/push/export of prod images, incl. by image id), `docker exec`
-into prod, daemon-wide prunes (incl. `docker image prune` — the dangling-
-image cleanup cron must move to a sanctioned entry or the retention script),
+into prod, daemon-wide prunes (incl. `docker image prune`; since NFM-5168 the
+prune-class 403 body itself routes image/build-cache cleanup to the
+sanctioned `run-cleanup.sh` entry below — container/network/volume prunes
+touch prod state and stay "file a Paperclip issue"),
 and container escape hatches (privileged, docker.sock mounts, forbidden-path
 binds — `/Users` `/private` `/etc` `/var` `/usr` `/tmp` `/opt` `/Volumes` —
 host networking, host device requests).
@@ -91,6 +93,7 @@ behavior in `scripts/tests/test_nfm_docker_gate_*`.
 | Deploy (CI does this) | repo owner: `cd ~/Projects/nucpot && git fetch origin && git reset --hard <sha>`, then `DEPLOY_SHA=<sha> sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh` (ADR-018 / NFM-4762: PROXY_PORT no longer required — direct egress by default; set `PROXY_PORT=<port>` to override for legacy/manual runs) |
 | Restart a sick service | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh restart api\|web\|worker\|lightrag\|db` |
 | Rollback (NFM-2148 SHA-tagged) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <last-good-sha>` |
+| Image/build-cache retention cleanup (NFM-4273/4802; the prune-class 403 routes here since NFM-5168) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-cleanup.sh [--keep-candidates N] [--keep-shas N] [--until HOURS]` (image tags, dangling layers, build cache only — no containers/volumes/restarts; also runs daily 04:20 via `com.nfm.g2.cleanup-daily`) |
 | Reprocess lightrag FAILED/PENDING docs (NFM-4816) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh lightrag-reprocess` (sidecar `/documents/reprocess_failed` via docker exec through the full gate; the NFM-4804 watchdog also runs this after every wedge restart) |
 | Standalone SQL (run-migration.yml) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh <repo-relative.sql>` (or `-` for stdin) |
 | Celery inspect | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-worker-inspect.sh` |

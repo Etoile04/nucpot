@@ -383,7 +383,9 @@ class DockerGateProxy:
                 file=sys.stderr,
                 flush=True,
             )
-        message = f"{decision.reason}. {REFUSAL_HINT}"
+        # NFM-5168: deny classes with a sanctioned alternative entry (prunes)
+        # carry their own routing hint; everything else keeps the generic one.
+        message = f"{decision.reason}. {decision.hint or REFUSAL_HINT}"
         payload = json.dumps({"message": message}).encode()
         response = (
             "HTTP/1.1 403 Forbidden\r\n"
