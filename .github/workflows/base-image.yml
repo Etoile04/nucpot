@@ -1,0 +1,182 @@
+# =============================================================================
+# NucPot Build Base Image — nightly pre-baked GHCR base (ADR-022 D1 / NFM-5156)
+# =============================================================================
+# Builds and publishes ghcr.io/etoile04/nucpot-build-base from
+# docker/build-base.Dockerfile so routine consumer builds (prod-api,
+# staging-api, lightrag — ADR-022 Scope B) perform ZERO apt-get network
+# legs. This nightly job is the designated shock absorber for the flaky
+# docker.io / deb.debian.org legs behind the 2026-09-23 timeout-cancel
+# pair and NFM-4931: it touches them once per night, and a failed nightly
+# never breaks routine builds (sticky `stable`, see below).
+#
+# Why the build job runs on GitHub-hosted (ubuntu-latest), not the CN
+# self-hosted runner: the deploy host's docker is fenced by ADR-013 G2 —
+# the read-only gate socket (unix:///var/run/nfm-g2/docker-ro.sock)
+# sanctions build/tag/pull but not registry pushes, and the buildx
+# host-side credential path is unavailable in non-interactive sessions
+# (locked keychain; production-deployment.yml pins DOCKER_BUILDKIT=0 for
+# exactly this reason). Provenance-attested pushes need buildx + registry
+# credentials, so they can only happen on GitHub-hosted egress, which is
+# also direct and reliable for docker.io (ADR-018: no proxy anywhere).
+# The deploy host still gets the image into its local layer cache via the
+# `warm-cache` job below, which pulls `stable` through the sanctioned
+# read-only gate — the runner-layer-cache half of the ADR-022 D1 design.
+#
+# Post-merge follow-up (tracked by the integration task): flip the
+# ghcr.io/etoile04/nucpot-build-base package to public visibility so the
+# deploy host's anonymous (credential-helper-free) `docker pull` can reach
+# it, matching the alpine:3.20 / pgvector/pgvector:pg16 pull pattern in
+# production-deployment.yml.
+# =============================================================================
+name: NucPot Build Base Image
+
+on:
+  schedule:
+    # Nightly 19:23 UTC = 03:23 CST (off-peak CN local time). Off-round
+    # minute by design — avoid the :00/:30 fleet collision.
+    - cron: '23 19 * * *'
+  # Required to mint the FIRST green run / `stable` tag on demand instead
+  # of waiting for the nightly window (ADR-022 D1 acceptance criterion).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # GHCR push of nucpot-build-base
+  actions: read # failure-streak alert reads this workflow's run history
+
+# Queue, never cancel: an in-flight green-bound build must not be killed
+# by an overlapping nightly/dispatch run — that would turn a would-be
+# green build into a "cancelled" (the NFM-5151 blind spot).
+concurrency:
+  group: base-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # backstop only: a hang fails red, it does not queue-cancel
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compute run date (UTC)
+        run: echo "RUN_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Sticky-`stable` mechanics: build-push-action pushes ONLY after a
+      # fully successful build. A failing nightly therefore moves neither
+      # tag — `stable` keeps pointing at the last green digest and routine
+      # consumer builds keep working off it. `nightly-YYYYMMDD` is the
+      # immutable per-run audit trail.
+      - name: Build and push base image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build-base.Dockerfile
+          push: true
+          provenance: true
+          tags: |
+            ghcr.io/etoile04/nucpot-build-base:nightly-${{ env.RUN_DATE }}
+            ghcr.io/etoile04/nucpot-build-base:stable
+
+  # Land the fresh base image in the deploy host's docker layer cache so
+  # consumer deploy builds (production-deployment.yml, same host) resolve
+  # `FROM ghcr.io/etoile04/nucpot-build-base:stable` from local cache with
+  # no docker.io / ghcr.io round-trip. Advisory by design: a failed warm
+  # pull (e.g. package visibility not yet flipped to public) must not
+  # redden the nightly — the deploy build's own pull is the correctness
+  # gate, exactly like the NFM-2564 pre-pull step in production-deployment.
+  warm-cache:
+    runs-on: [self-hosted, production]
+    needs: build
+    if: needs.build.result == 'success'
+    timeout-minutes: 10
+    steps:
+      - name: Pull stable into the runner layer cache (RO gate, advisory)
+        env:
+          BUILD_DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          # House pattern (NFM-2564 / NFM-4333): scratch DOCKER_CONFIG so
+          # no credential helper / locked keychain is ever invoked; pin the
+          # ADR-013 G2 read-only gate socket (image ls/pull are sanctioned
+          # reads). Direct egress per ADR-018 — no proxy env anywhere.
+          DOCKER_CONFIG="$(mktemp -d "${RUNNER_TEMP:-/tmp}/base-image-no-cred-docker-config.XXXXXXXX")"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '{}' > "$DOCKER_CONFIG/config.json"
+          export DOCKER_CONFIG
+          export DOCKER_HOST=unix:///var/run/nfm-g2/docker-ro.sock
+
+          IMAGE="ghcr.io/etoile04/nucpot-build-base:stable"
+          if docker image inspect "$IMAGE" 2>/dev/null \
+             | grep -q "sha256:${BUILD_DIGEST#sha256:}"; then
+            echo "Runner cache already holds ${IMAGE} @ ${BUILD_DIGEST}; skipping pull."
+            exit 0
+          fi
+          if docker pull "$IMAGE"; then
+            docker image inspect "$IMAGE" --format 'Warmed {{.RepoDigests}}'
+          else
+            echo "::warning::docker pull ${IMAGE} failed (visibility not yet public / ghcr leg); deploy builds will pull it themselves"
+          fi
+
+  # SRE-lane visibility (NFM-5153): alert when the nightly has not produced
+  # a green build for 3 consecutive runs. Counts the current run's outcome
+  # (from the build job) plus completed prior runs of this workflow,
+  # newest-first; `cancelled` counts as a miss — a stalled nightly that
+  # ends cancelled left consumers without a fresh base just as surely as a
+  # red one (the NFM-5151 blind spot).
+  alert:
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Alert on 3 consecutive non-green runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_OUTCOME: ${{ needs.build.result }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/base-image.yml/runs?per_page=20" > runs.json
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          runs = json.load(open("runs.json"))["workflow_runs"]
+          run_id = int(os.environ["RUN_ID"])
+          outcomes = [os.environ["CURRENT_OUTCOME"]]
+          for run in runs:  # newest-first from the API
+              if run["id"] == run_id or run["status"] != "completed":
+                  continue
+              outcomes.append(run["conclusion"] or "failure")
+
+          streak = 0
+          for outcome in outcomes:
+              if outcome == "success":
+                  break
+              streak += 1
+
+          print(f"outcome sequence (newest first): {outcomes}")
+          print(f"non-green streak: {streak}")
+          if streak >= 3:
+              print(
+                  "::error title=base-image nightly degraded::"
+                  f"{streak} consecutive non-green base-image.yml runs — "
+                  "stable has not been refreshed. Consumers keep building "
+                  "off the last green base, but the apt-layer shock absorber "
+                  "is not absorbing. SRE lane: check runner egress + ghcr push."
+              )
+              sys.exit(1)
+          PY
