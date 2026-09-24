@@ -26,12 +26,21 @@ and keep ``--no-cache-dir``/``--no-cache`` installs with the tuna->pypi
 retry ladder (D5) as the pip-side resilience line.
 """
 
-from pathlib import Path
 import re
+from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 BUILD_BASE_REF = "ghcr.io/etoile04/nucpot-build-base:stable"
+
+BASE_IMAGE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "base-image.yml"
+
+# NFM-5203: every platform a consumer build path resolves `stable` FOR.
+# The deploy host is arm64 macOS (classic builder, DOCKER_BUILDKIT=0), CI
+# consumers are amd64 ubuntu-latest — the nightly must serve BOTH.
+REQUIRED_BASE_PLATFORMS = ("linux/amd64", "linux/arm64")
 
 CONSUMER_DOCKERFILES = (
     REPO_ROOT / "docker" / "prod-api.Dockerfile",
@@ -247,3 +256,91 @@ def test_buildkit_only_syntax_matcher_has_teeth() -> None:
         assert not _BUILDKIT_ONLY_SYNTAX.search(line), (
             f"matcher false-positives on classic-safe line: {line!r}"
         )
+
+
+def _build_job() -> dict:
+    """The `build` job dict from .github/workflows/base-image.yml."""
+    workflow = yaml.safe_load(_read(BASE_IMAGE_WORKFLOW))
+    jobs = workflow.get("jobs") or {}
+    build = jobs.get("build")
+    assert build, "base-image.yml lost its `build` job (nightly publisher)"
+    return build
+
+
+def test_base_image_workflow_publishes_multiarch_manifest() -> None:
+    """NFM-5203: the nightly must publish amd64 AND arm64 under `stable`.
+
+    The production deploy runner is a self-hosted arm64 macOS host (classic
+    builder, DOCKER_BUILDKIT=0 pinned by production-deployment.yml), while
+    the nightly builds on amd64 ubuntu-latest. Without a `platforms:` input
+    build-push-action publishes linux/amd64 only, and the deploy host's
+    ``FROM ghcr.io/etoile04/nucpot-build-base:stable`` resolves for
+    linux/arm64 -> "no matching manifest in the manifest list entries" —
+    the 2026-09-23 Production Deployment hard-down (4 red runs on main,
+    6 commits undeployed). CI stayed green because ci.yml consumers are
+    amd64, which is exactly the deploy-host-only regression shape this
+    guard pins: both REQUIRED_BASE_PLATFORMS must be in the build-push
+    step's platforms list, and docker/setup-qemu-action must be present so
+    the arm64 leg can execute under emulation on the amd64 hosted runner.
+    """
+    steps = _build_job().get("steps") or []
+    build_push = next(
+        (
+            step
+            for step in steps
+            if str(step.get("uses", "")).startswith("docker/build-push-action")
+        ),
+        None,
+    )
+    assert build_push, (
+        "base-image.yml lost its docker/build-push-action step — the nightly "
+        "publisher (ADR-022 D1 / NFM-5156) must build AND push `stable`."
+    )
+    platforms = build_push.get("with", {}).get("platforms") or ""
+    for platform in REQUIRED_BASE_PLATFORMS:
+        assert platform in platforms.split(","), (
+            f"base-image.yml build-push platforms={platforms!r} omits "
+            f"{platform!r}. The deploy host resolves `stable` for arm64 and "
+            "CI consumers for amd64 — the nightly must publish BOTH or the "
+            "arm64 deploy build dies at FROM (NFM-5203 Production Deployment "
+            "hard-down)."
+        )
+
+    assert any(
+        str(step.get("uses", "")).startswith("docker/setup-qemu-action")
+        for step in steps
+    ), (
+        "base-image.yml lacks docker/setup-qemu-action. The arm64 leg of a "
+        "multi-arch build cannot execute on the amd64 ubuntu-latest runner "
+        "without the binfmt handlers it installs (NFM-5203)."
+    )
+
+    # Order matters: the emulators must be registered before the build starts.
+    step_indexes = {
+        str(step.get("uses", "")).split("@")[0]: idx for idx, step in enumerate(steps)
+    }
+    assert step_indexes.get("docker/setup-qemu-action", len(steps)) < step_indexes.get(
+        "docker/build-push-action", -1
+    ), (
+        "docker/setup-qemu-action must run BEFORE docker/build-push-action — "
+        "a QEMU step appended after the build leaves the arm64 leg "
+        "unbuildable on the amd64 runner (NFM-5203)."
+    )
+
+
+def test_base_image_build_timeout_sized_for_qemu() -> None:
+    """NFM-5203: the build backstop must cover QEMU-emulated arm64 legs.
+
+    The 15-minute backstop was sized for a native amd64 build. Under
+    docker/setup-qemu-action the arm64 leg runs emulated and runs the same
+    apt legs materially slower, so the hang backstop must be at least 25
+    minutes or a healthy nightly can be failed-red by its own timeout
+    (turning the shock absorber into the outage — the NFM-5151 blind spot
+    this workflow's queue-never-cancel design already guards elsewhere).
+    """
+    timeout = _build_job().get("timeout-minutes") or 0
+    assert timeout >= 25, (
+        f"base-image.yml build job timeout-minutes={timeout!r} is not sized "
+        "for the QEMU-emulated arm64 leg of the multi-arch publish (NFM-5203 "
+        "fix); raise the backstop to >= 25."
+    )

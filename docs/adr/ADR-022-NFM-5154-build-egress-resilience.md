@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169)) |
+| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169); amended 2026-09-24 — D1 publishes multi-arch, [NFM-5203](/NFM/issues/NFM-5203)) |
 | **Date** | 2026-09-23 |
 | **Author** | CTO (architecture sign-off; routed from [NFM-5153](/NFM/issues/NFM-5153) SRE lane) |
 | **Scope** | Runner Docker build path (`docker/*.Dockerfile`) + network legs in CI/deploy workflows |
@@ -84,6 +84,19 @@ cancels + the NFM-4931 class).
   the base pull there removes routine `docker.io` (python:3.12-slim) registry
   dependence — the nightly job absorbs that pull once per night into the
   runner's layer cache.
+
+**Amended 2026-09-24 ([NFM-5203](/NFM/issues/NFM-5203)):** the nightly
+publishes a **multi-arch manifest list** — `platforms:
+linux/amd64,linux/arm64`, with `docker/setup-qemu-action` registered before
+the build so the arm64 leg executes under emulation on the amd64 hosted
+runner. `stable` is resolved by BOTH amd64 CI consumers and the arm64
+production deploy host (classic builder, `DOCKER_BUILDKIT=0`); the original
+builder-native-arch publish served amd64 only, so the deploy host's `FROM`
+failed with "no matching manifest for linux/arm64/v8" (2026-09-23 Production
+Deployment hard-down, 4 red runs — CI stayed green because its consumers are
+amd64). The build timeout backstop was raised 15m → 25m to cover the
+QEMU-emulated arm64 apt legs. Pinned by guard tests in
+`scripts/tests/test_build_base_consumers.py` (`REQUIRED_BASE_PLATFORMS`).
 
 ### D2 — ADOPT (amended 2026-09-23, [NFM-5169](/NFM/issues/NFM-5169)): pip BuildKit cache mounts — BuildKit-verified build paths only
 

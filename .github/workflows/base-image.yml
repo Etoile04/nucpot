@@ -54,7 +54,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # backstop only: a hang fails red, it does not queue-cancel
+    # Backstop sized for the QEMU-emulated arm64 leg (NFM-5203): the bare
+    # amd64 build fit in 15m, the emulated apt legs do not. Still backstop
+    # only: a hang fails red, it does not queue-cancel.
+    timeout-minutes: 25
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -63,6 +66,14 @@ jobs:
 
       - name: Compute run date (UTC)
         run: echo "RUN_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+
+      # NFM-5203: `stable` is resolved by BOTH amd64 consumers (ci.yml on
+      # ubuntu-latest) and the arm64 production deploy host (classic
+      # builder, DOCKER_BUILDKIT=0). The amd64 hosted runner cannot execute
+      # arm64 build legs without QEMU's binfmt handlers, so they are
+      # registered BEFORE buildx/build-push touches the arm64 platform.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -85,6 +96,13 @@ jobs:
         with:
           context: .
           file: docker/build-base.Dockerfile
+          # NFM-5203: publish a manifest list serving every sanctioned
+          # consumer platform — linux/amd64 (GitHub-hosted CI) AND
+          # linux/arm64 (the self-hosted deploy host). Without this input
+          # the publish is builder-native-arch only, and the deploy host's
+          # FROM resolution dies with "no matching manifest for
+          # linux/arm64/v8" (2026-09-23 deploy hard-down, 4 red runs).
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: true
           tags: |
