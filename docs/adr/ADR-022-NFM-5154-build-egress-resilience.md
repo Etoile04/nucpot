@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169); amended 2026-09-24 — D1 publishes multi-arch, [NFM-5203](/NFM/issues/NFM-5203)) |
+| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169); amended 2026-09-24 — D1 publishes multi-arch, [NFM-5203](/NFM/issues/NFM-5203); amended 2026-09-24 — D5 pip ladders span distinct mirrors, [NFM-5209](/NFM/issues/NFM-5209)) |
 | **Date** | 2026-09-23 |
 | **Author** | CTO (architecture sign-off; routed from [NFM-5153](/NFM/issues/NFM-5153) SRE lane) |
 | **Scope** | Runner Docker build path (`docker/*.Dockerfile`) + network legs in CI/deploy workflows |
@@ -27,7 +27,7 @@ Live SRE probes 08:29–08:35Z during the 09-23 cluster: westbound flows via Fas
 degraded/flapping (0/4 HTTPS + 0/6 TCP), while **`api.github.com` and `ghcr.io`
 stayed green throughout** and the CN mirror (tuna) was healthy.
 
-### 1.2 Current state on `origin/main` (grounding)
+### 1.2 Current state on `origin/main` at decision time (grounding; pip ladders since amended by D5/NFM-5209)
 
 - `docker/prod-api.Dockerfile`: `FROM python:3.12-slim`; NFM-4931 apt conf
   (`Acquire::http(s)::Timeout 30`, `Retries 5`); 2-mirror × 3-attempt apt ladder
@@ -126,9 +126,10 @@ file. Dockerfiles with any deploy-host build path MUST remain
 classic-builder-clean.
 
 - `prod-api` and `staging-api` are on deploy-host paths (candidate build +
-  deploy scripts) → keep `pip install --no-cache-dir` + the tuna→pypi ladder
-  (D5) as the pip resilience line. `lightrag` / `web` / `e2e-*` follow the
-  same rule per the [NFM-5159](/NFM/issues/NFM-5159) build-matrix audit.
+  deploy scripts) → keep `pip install --no-cache-dir` + the distinct-mirror
+  pip ladder (D5) as the pip resilience line. `lightrag` / `web` / `e2e-*`
+  follow the same rule per the [NFM-5159](/NFM/issues/NFM-5159) build-matrix
+  audit.
 - Wheel-cache benefit concentrates on CI (every push/PR); deploy-host builds
   are low-frequency, so cache warmth there is marginal against the cost below.
 - D1 (base `FROM`, apt-ladder deletion) and D3 (fail-don't-cancel) are
@@ -174,6 +175,19 @@ redundancy against this failure signature. Egress stays direct.
 
 The existing apt/pip ladders stay. Post D1+D2 they rarely fire; post D3 their
 exhaustion is triage-visible instead of silently cancelled.
+
+**Amended 2026-09-24 ([NFM-5209](/NFM/issues/NFM-5209)):** a pip retry
+ladder's legs must span **distinct mirror indexes** — repeating the same
+mirror (the pre-amendment tuna×2 shape) is no fallback: a single mirror
+outage exhausted the whole ladder during the 2026-09-24 candidate-build
+brownout (tuna hard-403'd the setuptools≥75.0 wheel, run 36003157519; the
+pypi.org-direct leg then died on the CN-egress read-timeout, run
+35991349533). Contract for `prod-api` / `lightrag` pip ladders: ≥ 2
+distinct CN mirror indexes (tuna → aliyun), every leg bounded
+(`--default-timeout` + `--retries`), exactly one un-indexed pypi.org-direct
+leg as last resort. Pinned by
+`test_pip_ladders_span_distinct_mirror_indexes` in
+`scripts/tests/test_build_base_consumers.py`.
 
 ## 3. Consequences
 
