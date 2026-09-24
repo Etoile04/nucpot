@@ -31,14 +31,47 @@ logger = logging.getLogger(__name__)
 _PARSE_FAILED_STATUS = "failed"
 _PARSE_ERROR_MAX_LEN = 500
 
+
 # 收编前的兼容类型:async_sessionmaker 满足它;测试的鸭子类型工厂也满足它。
 # T2+ 迁移完成后评估是否收窄为 async_sessionmaker。
 class SessionFactory(Protocol):
     def __call__(self) -> AbstractAsyncContextManager[AsyncSession]: ...
 
+
 _engine: AsyncEngine | None = None
 _default_factory: async_sessionmaker[AsyncSession] | None = None
 _engine_lock = threading.Lock()
+
+# NFM-5213: process-level circuit breaker for the AGE connect listener.
+# Prod (nucpot-prod-db on pgvector/pgvector:pg16) has no AGE binary, so
+# ``LOAD 'age'`` fails with undefined_file (58P01) on every fresh pooled
+# connection — ~24 traceback warnings/hour in nucpot-prod-api.  The first
+# proof-of-absence trips ``_age_absent``; later connections skip the
+# attempt entirely and the warning fires exactly once per process.
+# Only failures that PROVE the binary is missing server-side trip it;
+# transient errors keep the historical per-connection warning.  A process
+# restart (or the test-isolation hook) re-arms the probe, so an image that
+# later ships AGE resumes loading it without a code change.
+_age_absent: bool = False
+_age_state_lock = threading.Lock()
+
+# SQLSTATE 58P01 = undefined_file ("could not access file" for a LOAD target).
+_AGE_UNDEFINED_FILE_SQLSTATE = "58P01"
+_AGE_ABSENT_MESSAGE_MARKER = 'could not access file "age"'
+
+
+def _is_age_absent_error(exc: BaseException) -> bool:
+    """True when a ``LOAD 'age'`` failure proves the binary is absent server-side.
+
+    Matches whichever signal the driver surfaces: asyncpg raises
+    ``UndefinedFileError`` carrying ``sqlstate == '58P01'``; other drivers
+    leave only the class name or the server's message text.
+    """
+    if getattr(exc, "sqlstate", None) == _AGE_UNDEFINED_FILE_SQLSTATE:
+        return True
+    if type(exc).__name__ == "UndefinedFileError":
+        return True
+    return _AGE_ABSENT_MESSAGE_MARKER in str(exc)
 
 
 def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
@@ -46,8 +79,13 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
 
     This sets search_path so AGE graph functions are available
     alongside normal relational queries.  No-op on non-PostgreSQL
-    backends (e.g. SQLite for tests).
+    backends (e.g. SQLite for tests).  Once ``_age_absent`` is tripped
+    (NFM-5213) it is a no-op for the rest of the process: the server
+    provably lacks the AGE binary.
     """
+    global _age_absent
+    if _age_absent:
+        return
     cursor_factory = getattr(dbapi_conn, "cursor", None)
     if cursor_factory is None:
         return
@@ -61,8 +99,26 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
         cursor.execute("SELECT current_database()")
         cursor.execute("LOAD 'age';")
         cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
-    except Exception:
-        logger.warning("AGE extension not available, skipping LOAD 'age' setup", exc_info=True)
+    except Exception as exc:
+        if not _is_age_absent_error(exc):
+            # Unknown/transient failure — stays observable per connection.
+            logger.warning(
+                "AGE extension not available, skipping LOAD 'age' setup",
+                exc_info=True,
+            )
+            return
+        with _age_state_lock:
+            if _age_absent:
+                # A concurrent connection already tripped the breaker and
+                # emitted the one warning — stay silent.
+                return
+            logger.warning(
+                "AGE extension binary absent (undefined_file/58P01): "
+                "skipping LOAD 'age' on all future connections of this "
+                "process (NFM-5213)",
+                exc_info=True,
+            )
+            _age_absent = True
 
 
 def _new_engine(poolclass: type[Pool] | None = None) -> AsyncEngine:
@@ -120,12 +176,16 @@ def reset_for_tests() -> None:
     ``__resetFlagCacheForTests``): production code must never call it.
     Needed because a provider built under one test's env (e.g. an
     in-memory SQLite ``NFM_DATABASE_URL``) must not leak into later
-    tests that expect a fresh resolve.
+    tests that expect a fresh resolve.  Also re-arms the NFM-5213 AGE
+    absent-breaker so a tripped probe cannot silence a later test (or,
+    in production terms, a restart re-probes after an image upgrade).
     """
-    global _engine, _default_factory
+    global _engine, _default_factory, _age_absent
     with _engine_lock:
         _engine = None
         _default_factory = None
+    with _age_state_lock:
+        _age_absent = False
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -191,8 +251,7 @@ async def mark_parse_failed(
                 # lookup below reports "not found" rather than silently
                 # swallowing the malformed id.
                 logger.warning(
-                    "parse-failure mark: datasource id %r is not a UUID; "
-                    "passing through unchanged",
+                    "parse-failure mark: datasource id %r is not a UUID; passing through unchanged",
                     ds_id,
                 )
         if session_factory is not None:
