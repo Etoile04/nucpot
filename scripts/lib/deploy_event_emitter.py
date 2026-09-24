@@ -171,7 +171,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--health-gate-first-poll-passed",
         required=True,
-        help="'true' or 'false'. Prod always emits false (C6.1.3).",
+        help=(
+            "'true' or 'false'. Prod always emits false (C6.1.3). Name frozen "
+            "by spec §3.1; the predicate is per-environment (ADR-KR3 C6.4, "
+            "NFM-5208): staging = literal first probe, prod = passed within "
+            "the bounded retry budget."
+        ),
     )
     parser.add_argument(
         "--rollback-triggered",
