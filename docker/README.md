@@ -76,7 +76,7 @@ uvicorn …`).
 |-----------|---------|-------------|
 | `docker/build-base.Dockerfile` | Nightly pre-baked apt base (ADR-022 D1), published multi-arch `linux/amd64` + `linux/arm64` as `ghcr.io/etoile04/nucpot-build-base:stable` | `python:3.12-slim` |
 | `docker/prod-api.Dockerfile` | FastAPI production build | `ghcr.io/etoile04/nucpot-build-base:stable` |
-| `docker/lightrag/Dockerfile` | LightRAG sidecar | `ghcr.io/etoile04/nucpot-build-base:stable` |
+| `docker/lightrag/Dockerfile` | LightRAG sidecar | `python:3.11-slim` |
 | `docker/web.Dockerfile` | Next.js frontend | `node:22-slim` |
 | `docker/staging-api.Dockerfile` | API staging build | `ghcr.io/etoile04/nucpot-build-base:stable` |
 
