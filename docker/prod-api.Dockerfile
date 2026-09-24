@@ -33,13 +33,17 @@ COPY apps/api/src/ ./src/
 COPY apps/api/migrations/ ./migrations/
 
 # Install the package (pip fallback chain for flaky PyPI networks).
-# NFM-2418: Try Tsinghua mirror first (fast in CN), retry once, then fall
-# back to pypi.org as the ultimate safety net so builds never stall on a
-# single unreachable mirror.
+# NFM-2418: Tsinghua mirror first (fast in CN), pypi.org direct as the
+# ultimate safety net so builds never stall on a single unreachable mirror.
+# NFM-5209: the second leg moves to an INDEPENDENT mirror (aliyun) — the
+# 2026-09-24 brownout showed tuna-twice is no ladder at all: tuna hard-403'd
+# the setuptools>=75.0 wheel (run 36003157519) and the pypi.org-direct leg
+# cannot carry a CN-egress build (files.pythonhosted.org read-timeout, run
+# 35991349533). Ladder: tuna -> aliyun -> pypi.org, every leg bounded.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple .) || \
+      -i https://mirrors.aliyun.com/pypi/simple/ .) || \
     pip install --no-cache-dir --default-timeout=180 --retries=15 .
 
 # Explicitly install xgboost as a defensive layer. The dependency is also
@@ -47,11 +51,13 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
 # is present in this image layer even if the pyproject deps list is ever
 # pruned. xgboost is required to unpickle phase_classifier_v*.joblib and
 # energy_predictor_v*.joblib artifacts at API startup (PHASE3-LIGHTRAG-PHASECLASSIFIER-FIX).
-RUN pip install --no-cache-dir 'xgboost>=3.0,<4' \
+# NFM-5209: same distinct-mirror ladder + bounding as the app-install leg
+# above (this ladder previously had no --default-timeout/--retries at all).
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,<4' \
       -i https://pypi.tuna.tsinghua.edu.cn/simple || \
-    (sleep 5 && pip install --no-cache-dir 'xgboost>=3.0,<4' \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple) || \
-    pip install --no-cache-dir 'xgboost>=3.0,<4'
+    (sleep 5 && pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,<4' \
+      -i https://mirrors.aliyun.com/pypi/simple/) || \
+    pip install --no-cache-dir --default-timeout=180 --retries=15 'xgboost>=3.0,<4'
 
 # NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
 # so the deploy-time migration step (scripts/prod_migrate.sh) can invoke

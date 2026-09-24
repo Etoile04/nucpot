@@ -66,6 +66,21 @@ CLASSIC_BUILDER_DOCKERFILES = (
 # classic-safe (multi-stage, docker 17.05) and deliberately NOT matched.
 _BUILDKIT_ONLY_SYNTAX = re.compile(r"(?im)^\s*(?:RUN|COPY)\s+(?:--(?:mount|ssh)\b|<<)")
 
+# NFM-5209: the 2026-09-24 candidate-build brownout. tuna hard-403'd the
+# setuptools>=75.0 wheel mid-build (run 36003157519) and the old ladders'
+# second leg pointed at tuna AGAIN, so a single mirror outage exhausted the
+# whole ladder; the final pypi.org-direct leg then died on the GFW
+# read-timeout from files.pythonhosted.org (run 35991349533). A retry
+# ladder is only as wide as its set of DISTINCT indexes — repeating the
+# same mirror is pip's own --retries wearing a disguise.
+PIP_LADDER_DOCKERFILES = (
+    REPO_ROOT / "docker" / "prod-api.Dockerfile",
+    REPO_ROOT / "docker" / "lightrag.Dockerfile",
+)
+
+# ``-i URL`` / ``--index-url URL`` / ``--index-url=URL`` — one per ladder leg.
+_PIP_INDEX_URL_RE = re.compile(r"(?:^|\s)(?:-i|--index-url)(?:\s+|=)(https?://\S+)")
+
 
 def _read(path: Path) -> str:
     assert path.is_file(), f"required file missing: {path}"
@@ -90,6 +105,31 @@ def _code_lines(content: str) -> str:
     return "\n".join(
         line for line in content.splitlines() if not line.lstrip().startswith("#")
     )
+
+
+def _pip_ladders(path: Path) -> list:
+    """Logical pip-install RUN statements from a Dockerfile.
+
+    Joins backslash continuations into single statements (one RUN ladder ==
+    one statement) and drops comment lines so rationale prose mentioning
+    mirrors or pip cannot satisfy or trip the ladder assertions.
+    """
+    statements: list = []
+    current = ""
+    for line in _read(path).splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        stripped = line.rstrip()
+        if stripped.endswith("\\"):
+            current += stripped[:-1] + " "
+            continue
+        current += stripped
+        if current.strip():
+            statements.append(current)
+        current = ""
+    if current.strip():
+        statements.append(current)
+    return [stmt for stmt in statements if "pip install" in stmt]
 
 
 def test_consumer_dockerfiles_build_from_ghcr_build_base() -> None:
@@ -137,6 +177,47 @@ def test_prod_api_retains_pip_retry_ladder() -> None:
         "docker/prod-api.Dockerfile lost the tuna mirror leg of the pip "
         "retry ladder (ADR-022 D5 / NFM-2418). Ref: NFM-5159."
     )
+
+
+def test_pip_ladders_span_distinct_mirror_indexes() -> None:
+    """NFM-5209: every deploy-time pip ladder retries across DISTINCT mirrors.
+
+    The deploy host sits behind CN egress — pypi.org direct is a guaranteed
+    read-timeout there — so CN mirrors carry candidate builds, and a ladder
+    whose legs all share one mirror (tuna twice, as before NFM-5209) has no
+    fallback at all: that exact shape 403-exhausted both red runs on
+    2026-09-24 (35991349533, 36003157519). Contract per pip-install RUN:
+
+    * >= 2 DISTINCT explicit mirror indexes (e.g. tuna then aliyun)
+    * every leg bounded (``--default-timeout`` + ``--retries``)
+    * exactly one un-indexed leg kept as the pypi.org-direct last resort —
+      a bounded escape hatch for non-CN build paths, never the carrier
+    """
+    for path in PIP_LADDER_DOCKERFILES:
+        ladders = _pip_ladders(path)
+        assert ladders, f"{path.name} lost its pip install legs entirely"
+        for ladder in ladders:
+            indexes = _PIP_INDEX_URL_RE.findall(ladder)
+            mirror_indexes = {url for url in indexes if "pypi.org" not in url}
+            assert len(mirror_indexes) >= 2, (
+                f"{path.name} pip ladder spans only {sorted(mirror_indexes)!r} "
+                "(< 2 distinct mirror indexes). One mirror outage 403s every "
+                "indexed leg and the pypi.org-direct leg cannot carry a "
+                "CN-egress build — the 2026-09-24 brownout shape (NFM-5209: "
+                "runs 35991349533 / 36003157519). Add an independent CN "
+                "mirror (e.g. aliyun) as the second leg."
+            )
+            legs = ladder.count("pip install")
+            assert legs - len(indexes) == 1, (
+                f"{path.name} pip ladder has {legs} legs but {len(indexes)} "
+                "explicitly indexed — keep exactly ONE un-indexed pypi.org "
+                "direct leg as the final last resort (NFM-5209)."
+            )
+            assert "--default-timeout" in ladder and "--retries" in ladder, (
+                f"{path.name} pip ladder lost --default-timeout/--retries "
+                "bounding. Unbounded legs can hang a deploy indefinitely "
+                "(NFM-4931 class)."
+            )
 
 
 def test_prod_api_guards_untouched() -> None:

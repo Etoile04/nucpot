@@ -34,8 +34,12 @@ WORKDIR /app
 #
 # NFM-3328: pip against pypi.org from the deploy host is unreliable
 # (2026-08-20 deploy failed resolving aiohttp: "No matching distribution
-# found"). Mirror-first with retry ladder, mirroring prod-api.Dockerfile:
-# tuna twice, then tuna for deps, then pypi.org as the last resort.
+# found"). Mirror-first with retry ladder, mirroring prod-api.Dockerfile.
+# NFM-5209: the ladder's legs must span DISTINCT mirrors — tuna twice is no
+# fallback (2026-09-24: tuna hard-403'd the setuptools>=75.0 wheel in run
+# 36003157519, ladder exhausted; pypi.org-direct died on the GFW read
+# timeout in run 35991349533). Ladder: tuna -> aliyun -> pypi.org, every
+# leg bounded.
 #
 # NFM-932: prod uses PGVectorStorage, whose postgres_impl imports asyncpg
 # at runtime. lightrag-hku[api] does NOT pull it in; without it baked into
@@ -65,7 +69,7 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple \
       "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0' || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
-      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      -i https://mirrors.aliyun.com/pypi/simple/ \
       "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0') || \
     (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
       "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0')
