@@ -313,22 +313,41 @@ bash tools/post-deploy-cutover-assert/assert.sh \
   --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}" \
   --distinct-exit 71
 
-# Internal health checks — the first curl -f is the production equivalent of
-# staging's first-poll gate (ADR-KR3-A2 §Failure-mode 6). We write a marker
-# file on success so the "Emit prod deploy-event fragment" post-step can read
-# the outcome without re-parsing this script's output. The deploy-prod job
-# runs on a self-hosted runner on the same Mac Studio host, so the runner's
-# /tmp is the host's /tmp.
+# Internal health checks — the production equivalent of staging's first-poll
+# gate (ADR-KR3-A2 §Failure-mode 6): a freshly recreated api can 5xx for a
+# few seconds while its dependency checks warm up (NFM-5203: 500 at +31s
+# after container start on an otherwise fully-landed deploy), so a single
+# curl -f races warmup and flips a healthy deploy red. Poll with a bounded
+# budget instead. We write a marker file on success so the "Emit prod
+# deploy-event fragment" post-step can read the outcome without re-parsing
+# this script's output. The deploy-prod job runs on a self-hosted runner on
+# the same Mac Studio host, so the runner's /tmp is the host's /tmp.
+health_first_poll() {
+  local url="$1" attempts="$2" delay_s="$3" i
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS --max-time 10 "$url" >/dev/null 2>&1; then
+      if [ "$i" -gt 1 ]; then
+        echo "  health OK on poll $i/$attempts for $url (after $((i - 1)) failure(s))"
+      fi
+      return 0
+    fi
+    echo "  health poll $i/$attempts failed for $url; retrying in ${delay_s}s"
+    sleep "$delay_s"
+  done
+  echo "  health gate FAILED: $url not healthy after ${attempts} polls" >&2
+  return 1
+}
+
 echo "Checking API health..."
 rm -f "${NFMD_HEALTH_MARKER}"
-if curl -f http://localhost:8001/api/v1/health; then
+if health_first_poll http://localhost:8001/api/v1/health 12 5; then
   touch "${NFMD_HEALTH_MARKER}"
 else
   exit 1
 fi
 
 echo "Checking Web health..."
-curl -f http://localhost:3000/ || exit 1
+health_first_poll http://localhost:3000/ 12 5 || exit 1
 
 # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest now that cutover and
 # health gates have passed. The manifest (one JSON artifact, overwritten per
