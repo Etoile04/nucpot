@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nfm_db import database
 from nfm_db.database import _load_age_extension, get_db
 
 # ---------------------------------------------------------------------------
@@ -15,6 +17,18 @@ from nfm_db.database import _load_age_extension, get_db
 
 class TestLoadAgeExtension:
     """Cover the PostgreSQL connect-event listener that loads Apache AGE."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_age_breaker(self):
+        """NFM-5213: the absent-AGE circuit breaker is process state.
+
+        Reset it around every listener test so a tripped breaker can never
+        leak from one test into another (e.g. silencing the happy-path
+        test that runs after a breaker test).
+        """
+        database.reset_for_tests()
+        yield
+        database.reset_for_tests()
 
     def test_skips_when_cursor_missing(self) -> None:
         """Connection objects without a .cursor attribute are silently skipped."""
@@ -45,9 +59,7 @@ class TestLoadAgeExtension:
         # cursor mock's recorded calls)
         cursor.execute.assert_any_call("SELECT current_database()")
         cursor.execute.assert_any_call("LOAD 'age';")
-        cursor.execute.assert_any_call(
-            'SET search_path TO ag_catalog, "$current_schema";'
-        )
+        cursor.execute.assert_any_call('SET search_path TO ag_catalog, "$current_schema";')
 
     def test_non_postgresql_connection_skips_gracefully(self) -> None:
         """Non-PostgreSQL backends (e.g. SQLite) cause the try block to fail
@@ -75,6 +87,117 @@ class TestLoadAgeExtension:
             _load_age_extension(mock_conn, MagicMock())
 
         assert "AGE extension not available" in caplog.text
+
+    # ------------------------------------------------------------------
+    # NFM-5213: process-level circuit breaker for absent AGE binary
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pg_conn(cursor: MagicMock) -> MagicMock:
+        """DB-API-shaped connection whose ``cursor()`` returns ``cursor``."""
+        conn = MagicMock()
+        conn.cursor = lambda *a, **k: cursor  # type: ignore[method-assign]
+        return conn
+
+    @staticmethod
+    def _age_undefined_file_error() -> Exception:
+        """asyncpg-shaped UndefinedFileError (SQLSTATE 58P01), no asyncpg."""
+        return type(
+            "UndefinedFileError",
+            (Exception,),
+            {"sqlstate": "58P01"},
+        )('could not access file "age": No such file or directory')
+
+    def test_absent_age_trips_breaker_and_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 58P01 on one connection stops LOAD attempts on every later
+        connection, with exactly ONE warning for the whole process.
+
+        Prod reality this encodes: pgvector/pgvector:pg16 lacks the AGE
+        binary, so the old per-connection retry emitted ~24 traceback
+        warnings/hour in nucpot-prod-api (NFM-5213).
+        """
+        failing = MagicMock()
+        failing.execute.side_effect = [None, self._age_undefined_file_error()]
+
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            _load_age_extension(self._pg_conn(failing), MagicMock())
+
+        assert "AGE extension binary absent" in caplog.text
+
+        fresh = MagicMock()
+        _load_age_extension(self._pg_conn(fresh), MagicMock())
+        # Second connection: skipped before any SQL executes.
+        fresh.execute.assert_not_called()
+
+        # Exactly one warning for the process — not one per connection.
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_records) == 1
+
+    def test_absent_detection_by_message_without_sqlstate(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Driver-agnostic detection: the server's message text trips the
+        breaker even when the driver attaches no sqlstate metadata."""
+        failing = MagicMock()
+        failing.execute.side_effect = [
+            None,
+            Exception('could not access file "age": No such file or directory'),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            _load_age_extension(self._pg_conn(failing), MagicMock())
+
+        assert "AGE extension binary absent" in caplog.text
+
+    def test_absent_detection_by_class_name_only(self, caplog: pytest.LogCaptureFixture) -> None:
+        """asyncpg's exception class name alone trips the breaker when a
+        wrapper strips both sqlstate and the message (message "boom"
+        deliberately matches no marker)."""
+        failing = MagicMock()
+        failing.execute.side_effect = [
+            None,
+            type("UndefinedFileError", (Exception,), {})("boom"),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            _load_age_extension(self._pg_conn(failing), MagicMock())
+
+        assert "AGE extension binary absent" in caplog.text
+
+    def test_transient_failure_does_not_trip_breaker(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Generic/transient failures keep the historical per-connection
+        warning — only proof the binary is missing server-side trips the
+        breaker, so novel failures stay observable."""
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            for _ in range(2):
+                flaky = MagicMock()
+                flaky.execute.side_effect = [None, Exception("connection reset")]
+                _load_age_extension(self._pg_conn(flaky), MagicMock())
+
+        assert caplog.text.count("AGE extension not available") == 2
+
+        # Breaker still armed: a healthy connection gets the full setup.
+        healthy = MagicMock()
+        _load_age_extension(self._pg_conn(healthy), MagicMock())
+        healthy.execute.assert_any_call("LOAD 'age';")
+
+    def test_reset_for_tests_rearms_breaker(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The test-isolation hook clears a tripped breaker, mirroring a
+        process restart after the server image gains the AGE binary."""
+        failing = MagicMock()
+        failing.execute.side_effect = [None, self._age_undefined_file_error()]
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            _load_age_extension(self._pg_conn(failing), MagicMock())
+
+        database.reset_for_tests()
+
+        retried = MagicMock()
+        _load_age_extension(self._pg_conn(retried), MagicMock())
+        retried.execute.assert_any_call("LOAD 'age';")
 
 
 # ---------------------------------------------------------------------------
