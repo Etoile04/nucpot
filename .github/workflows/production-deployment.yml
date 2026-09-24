@@ -1035,7 +1035,13 @@ jobs:
             SUCCESS="true"
           fi
 
-          # First-poll gate: the deploy heredoc's internal API curl succeeded.
+          # Health gate: the deploy heredoc's internal API gate passed WITHIN
+          # BUDGET (12 polls x 5s since PR #1416), NOT necessarily on the
+          # literal first attempt — the fragment field's name is frozen by
+          # spec §3.1 but the predicate drifted with the bounded retry
+          # (ADR-KR3 C6.4 / NFM-5208; staging's field of the same name keeps
+          # the literal first-probe meaning per C3). The deploy log's
+          # "health OK on poll N/12" line carries the operator distinction.
           # The marker file lives on the Mac Studio (same fs as the runner).
           # NFM-4333 RC8: moved out of /tmp (sticky bit + cross-identity
           # ownership makes /tmp unsafe for markers written by nfmdeploy and

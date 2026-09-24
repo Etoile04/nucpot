@@ -352,3 +352,61 @@ Amendments to an Accepted ADR require architecture sign-off **before** the
 implementing issue starts, not after. This is a routing gap rather than a fault
 in the design: NFM-2109 hangs off a different parent than the NFM-2108 subtree,
 so the conflict was invisible to both tracks until integration.
+
+## Amendment C6.4 — `health_gate_first_poll_passed` prod semantics: passed within budget (NFM-5208, 2026-09-24)
+
+Origin: CR non-blocking notes on PR #1416 (NFM-5203 close-out, relay NFM-5207).
+Follow-up NFM-5208 considered renaming the schema field and ruled it out;
+this amendment is the resulting decision record.
+
+### C6.4.1 — What drifted
+
+C3 defines the field as a probe counter: "the first `check_health_once`
+invocation returned 0". That is still exactly what **staging** emits
+(`poll_count == 0`, staging_deploy.sh `wait_for_health`).
+
+PR #1416 gave the **prod** post-cutover gate a bounded retry (12 polls × 5 s)
+because a freshly recreated api can 5xx for seconds during dependency warmup
+(NFM-5203: HTTP 500 at +31 s on an otherwise fully-landed deploy). The prod
+producer derives the field from the `nfmd_prod_health_passed` marker, which
+`deploy_prod.sh::health_first_poll` now touches when the gate passes **within
+budget** — poll 1 or poll 12. Prod's field therefore no longer means "literal
+first attempt". The operator-facing distinction survives in the deploy log
+(`health OK on poll N/12 for <url>`), not in the event stream.
+
+### C6.4.2 — Rename rejected; name frozen, semantics documented per environment
+
+NFM-5208 AC2 allowed "renamed (or documented)". Rename is rejected on three
+independent grounds:
+
+1. **The schema is frozen by spec §3.1 and strictly enforced.**
+   `collect_prod_events.py::SCHEMA_FIELDS` accepts exactly the ten §3.1
+   names — any extra field quarantines the event. A rename means the
+   collector must accept two schemas forever, because …
+2. **The JSONL is append-only and never rewritten** (spec §3.1). Historical
+   lines carry the old name; new lines would carry the new one. Every
+   reader (collector, `prod_event_collector.py`, `coverage_kr3.py`,
+   `report.py`) permanently needs dual-name normalisation, and any
+   out-of-repo consumer of the JSONL breaks silently on one of the two
+   line shapes. A rename buys a mixed-name log in perpetuity.
+3. **The name is still accurate for staging**, the majority producer.
+   Renaming to e.g. `health_gate_passed_within_budget` would make the
+   staging events (where the literal first-probe meaning is correct and
+   load-bearing per C3) the misleading ones.
+
+Decision: the field name stays; the per-environment semantics are documented
+at every producer and consumer surface — `deploy_prod.sh` (gate comment),
+`staging_deploy.sh` (unchanged, C3), `deploy_event.sh` (usage header),
+`deploy_event_emitter.py` (flag help), the workflow fragment step, and this
+amendment. Guard tests (`scripts/okr/tests/test_health_gate_field_semantics.py`)
+pin the frozen name in all three schema definitions so no future rename lands
+without superseding this amendment.
+
+### C6.4.3 — Comparability note
+
+Cross-environment reads of this field must remember prod is strictly more
+permissive since PR #1416: identical underlying warmup behaviour yields
+`true` in prod (passed on poll 3 of 12) and `false` in staging (poll 3 of
+the deadline loop). KR-3 aggregation (coverage_kr3) already filters by
+environment; it must not sum this field across environments as if the
+predicate were uniform.

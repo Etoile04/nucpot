@@ -322,19 +322,57 @@ bash tools/post-deploy-cutover-assert/assert.sh \
 # deploy-event fragment" post-step can read the outcome without re-parsing
 # this script's output. The deploy-prod job runs on a self-hosted runner on
 # the same Mac Studio host, so the runner's /tmp is the host's /tmp.
+#
+# NFM-5208 marker semantics: the marker (and therefore the fragment's
+# health-gate-first-poll-passed field) means "API gate passed WITHIN BUDGET
+# (12 polls x 5s)", NOT "passed on the literal first attempt" — that was
+# true before PR #1416's bounded retry and drifted with it. Staging's field
+# of the same name keeps the literal first-probe meaning (ADR-KR3 C3); the
+# §3.1 schema is frozen and the JSONL append-only, so the name stays and
+# the per-environment semantics are documented here and in ADR-KR3
+# amendment C6.4. The in-script "health OK on poll N/12" line preserves the
+# operator distinction between first-attempt pass and retried pass.
 health_first_poll() {
-  local url="$1" attempts="$2" delay_s="$3" i
+  local url="$1" attempts="$2" delay_s="$3" i rc=0
+  # NFM-5208 AC1: capture each poll's diagnostics instead of discarding them
+  # (>/dev/null 2>&1). On exhaustion the LAST attempt's curl exit code,
+  # error message and response body are printed to stderr for triage — the
+  # output run 35991349533's failure class needed and #1416 dropped.
+  # --fail-with-body (curl >= 7.75) additionally saves the error body that
+  # plain -f suppresses; probe once and degrade to -f rather than let an
+  # older curl fail every poll with "option is unknown" — a capability gap
+  # must cost diagnostics, never the gate itself. Diagnostic files are
+  # overwritten per poll: only the final attempt's output survives when the
+  # gate exhausts, so a warmup 5xx storm cannot bury the real last error.
+  if curl --fail-with-body --version >/dev/null 2>&1; then
+    poll_curl() { curl --fail-with-body -sS --max-time 10 "$@"; }
+  else
+    poll_curl() { curl -fsS --max-time 10 "$@"; }
+  fi
+  local diag_root="${TMPDIR:-/tmp}"
+  local body_file="$diag_root/nfmd-health-gate-last-body.$$"
+  local err_file="$diag_root/nfmd-health-gate-last-err.$$"
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS --max-time 10 "$url" >/dev/null 2>&1; then
+    rc=0
+    poll_curl -o "$body_file" "$url" 2>"$err_file" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      rm -f "$body_file" "$err_file"
       if [ "$i" -gt 1 ]; then
         echo "  health OK on poll $i/$attempts for $url (after $((i - 1)) failure(s))"
       fi
       return 0
     fi
-    echo "  health poll $i/$attempts failed for $url; retrying in ${delay_s}s"
-    sleep "$delay_s"
+    if [ "$i" -lt "$attempts" ]; then
+      echo "  health poll $i/$attempts failed for $url (curl exit $rc); retrying in ${delay_s}s"
+      sleep "$delay_s"
+    else
+      echo "  health poll $i/$attempts failed for $url (curl exit $rc)"
+    fi
   done
   echo "  health gate FAILED: $url not healthy after ${attempts} polls" >&2
+  echo "  last poll $attempts/$attempts curl stderr: $(head -c 512 "$err_file" 2>/dev/null | tr '\n' ' ')" >&2
+  echo "  last poll response body (first 1 KiB): $(head -c 1024 "$body_file" 2>/dev/null | tr '\n' ' ')" >&2
+  rm -f "$body_file" "$err_file"
   return 1
 }
 

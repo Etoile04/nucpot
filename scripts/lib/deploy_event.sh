@@ -22,6 +22,16 @@
 # Event schema is fixed by the NFM-2035 spec, section 3.1: one JSON object per
 # line, appended, never rewritten.
 #
+# health-gate-first-poll-passed semantics differ by environment (ADR-KR3
+# amendment C6.4, NFM-5208) — the name is frozen by §3.1 but the predicate
+# is not uniform:
+#   staging — literal first probe: wait_for_health's first check_health_once
+#             returned 0 (ADR-KR3 C3, a probe counter).
+#   prod    — passed WITHIN BUDGET: the post-cutover gate's bounded retry
+#             (12 polls x 5s, PR #1416) succeeded on some poll; the marker
+#             does not record which. The deploy log's "health OK on poll
+#             N/12" line carries that distinction for operators.
+#
 # Storage path: override with NFMD_DEPLOY_EVENTS_PATH; the default is
 # <repo>/docker/.deploy-events.jsonl.
 
