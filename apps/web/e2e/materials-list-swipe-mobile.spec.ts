@@ -197,20 +197,43 @@ test.describe("Materials list — touch swipe pagination (NFM-4085 C)", () => {
 
   test("swipe left on the last page is a silent no-op (no toast)", async ({
     page,
+    request,
   }) => {
-    // Deep-link to the last page (the right boundary). The seeded
-    // catalogue has 111 rows at PAGE_SIZE=20, so page=6 is the last
-    // page. Swiping left (→ page 7) should be a silent no-op.
-    await page.goto("/materials?page=6", { waitUntil: "domcontentloaded" })
+    // Deep-link to the last page (the right boundary). The catalogue is
+    // live data that grows over time (111 rows / 6 pages when this spec
+    // was written, 155 rows / 8 pages by NFM-5210), so the last page is
+    // derived from the API instead of hardcoded. The swipe handler in
+    // MaterialsListView computes totalPages = ceil(total / PAGE_SIZE)
+    // with PAGE_SIZE = 20; this mirrors that exact math.
+    const resp = await request.get("/api/v1/materials?page=1&per_page=20")
+    expect(resp.ok()).toBeTruthy()
+    const body = (await resp.json()) as { data: { total: number } }
+    const total = body.data.total
+    // Both boundary tests presuppose a multi-page catalogue (the
+    // advance-to-page-2 test above requires one too).
+    expect(total).toBeGreaterThan(20)
+    const lastPage = Math.ceil(total / 20)
+    await page.goto(`/materials?page=${lastPage}`, {
+      waitUntil: "domcontentloaded",
+    })
     await expect(page.locator("h2")).toContainText("材料列表")
     await expect(swipeArea(page)).toBeVisible({ timeout: 10_000 })
     await expect(page.locator(".ant-pagination").first()).toBeVisible({
       timeout: 15_000,
     })
 
+    // Precondition: the deep link really landed on the last page. antd
+    // disables the next-item there, so an enabled next button means the
+    // catalogue grew past `total` mid-test and this page is no longer
+    // the boundary — fail here with that explanation rather than on an
+    // opaque toastCount mismatch after the swipe.
+    await expect(page.locator(".ant-pagination-next").first()).toHaveClass(
+      /ant-pagination-disabled/,
+    )
+
     // Wait for the data fetch to resolve — until then the handler
-    // can't know there are exactly 6 pages and a left swipe could
-    // re-fetch the next page.
+    // can't know there are exactly `lastPage` pages and a left swipe
+    // could re-fetch the next page.
     await page.waitForTimeout(500)
 
     // Dispatch a left swipe. The handler recognises the boundary
@@ -221,7 +244,7 @@ test.describe("Materials list — touch swipe pagination (NFM-4085 C)", () => {
     const toastCount = await page.locator(".ant-message-notice-content").count()
     expect(toastCount).toBe(0)
 
-    // URL should still reflect page=6 (no advance to page=7).
-    expect(page.url()).toContain("page=6")
+    // URL should still reflect the last page (no advance beyond it).
+    expect(page.url()).toContain(`page=${lastPage}`)
   })
 })
