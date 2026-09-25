@@ -54,6 +54,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -211,6 +212,21 @@ fi
 exit "${FAKE_OLLAMA_STOP_RC:-0}"
 """
 
+# date: pure passthrough to /bin/date EXCEPT the zero-padded %H/%M shapes
+# the E-1 window computation reads (NFM-5122 octal-hazard pin: FAKE_DATE_H /
+# FAKE_DATE_M pin a canned hour/minute so the window math can be tested at
+# 08/09 wall-clock values deterministically).
+FAKE_DATE = """\
+#!/bin/bash
+if [ "$1" = "-u" ] && [ "$2" = "+%H" ] && [ -n "${FAKE_DATE_H:-}" ]; then
+  echo "$FAKE_DATE_H"; exit 0
+fi
+if [ "$1" = "-u" ] && [ "$2" = "+%M" ] && [ -n "${FAKE_DATE_M:-}" ]; then
+  echo "$FAKE_DATE_M"; exit 0
+fi
+exec /bin/date "$@"
+"""
+
 # The root-owned term chokepoint stand-in: invoked as `<pid> --model <m>`
 # (wedge path) or `<pid> --model <m> --max-lifetime <sec>` (D-2 path —
 # NFM-5083). FAKE_TERM_EFFECT=recover removes the pid (SIGTERM worked);
@@ -255,6 +271,7 @@ def harness(tmp_path: Path):
         "pgrep": FAKE_PGRP,
         "ps": FAKE_PS,
         "ollama": FAKE_OLLAMA,
+        "date": FAKE_DATE,
         "fake-term.sh": FAKE_TERM,
     }
     for name, body in shims.items():
@@ -339,6 +356,12 @@ def harness(tmp_path: Path):
         # tests stay focused on the NFM-4887 contract; NFM-5083 tests
         # opt in explicitly with "1500".
         env["NFM_LIGHTRAG_WATCHDOG_MLX_MAX_LIFETIME_S"] = mlx_max_lifetime
+        # NFM-5219 E-1 hermeticity: the script's own default ENABLES the
+        # burst-window policy — without this override a bare test run
+        # inside the real 03:25-05:00Z window would take in-window
+        # branches (and enter the tick wrapper!). E-1 tests opt in via
+        # _e1_env(); same default-off convention as mlx_max_lifetime.
+        env["NFM_LIGHTRAG_WATCHDOG_E1_ENABLED"] = "0"
         if runner_pids:
             # The single-runner case lets `ollama stop` recover that pid.
             env["FAKE_RUNNER_PID"] = str(runner_pids[-1])
@@ -867,3 +890,309 @@ def test_wedge_path_still_works_when_d2_disabled(harness) -> None:
     calls = harness["term_calls"]()
     assert any("--max-lifetime" not in c and "77444" in c for c in calls), calls
     assert "host=term" in log_text, log_text
+
+
+# ===========================================================================
+# NFM-5219 Option E-1 — burst-window deterministic runner lifecycle.
+#
+# Deployed D-2 was a GLOBAL max_lifetime_s=1500 with a busy-exempt eval on
+# a 5-min launchd cadence; the 03:30Z nvfp4 hang PRESENTS as eternal busy,
+# so inside the nightly burst window the deployed policy never evaluated
+# or recycled the burst runner (2026-09-24T04:00:10Z wedge: zero d2=
+# events bracketing it). E-1 adds, for the 03:25-05:00Z window ONLY:
+#
+#   1. a once-per-UTC-day pre-burst recycle at window entry (wedge-mode
+#      chokepoint — unconditional) so the 03:30Z burst starts cold;
+#   2. the in-window max-lifetime knob (default 600s, floor 300s) with
+#      --ignore-busy on the chokepoint call;
+#   3. a d2= decision line for EVERY in-window eval (d2=recycled |
+#      d2=skip reason=... | d2=error) so the E-gate can distinguish
+#      "policy inactive" from "policy active but insufficient";
+#   4. a tick wrapper: a fire landing inside the window re-execs the
+#      single-probe body every <=60s until window close (launchd never
+#      co-runs the label; daytime 5-min cadence is untouched).
+#
+# Outside the window every behavior is byte-identical to NFM-5083 D-2.
+# ===========================================================================
+
+
+def _utc_minutes_of_day() -> int:
+    now = datetime.now(timezone.utc)
+    return now.hour * 60 + now.minute
+
+
+def _e1_env(**overrides) -> dict:
+    """Env enabling E-1 with the burst window spanning the CURRENT UTC
+    minute (bounds as minutes-of-day) so tests are deterministic at any
+    wall-clock time. E1_CHILD=1 runs the single-probe body ONCE — the
+    wrapper has its own dedicated tests below."""
+    now_min = _utc_minutes_of_day()
+    env = {
+        "NFM_LIGHTRAG_WATCHDOG_E1_ENABLED": "1",
+        "NFM_LIGHTRAG_WATCHDOG_E1_START_MIN": str(now_min),
+        "NFM_LIGHTRAG_WATCHDOG_E1_END_MIN": str(now_min + 5),
+        "NFM_LIGHTRAG_WATCHDOG_E1_CHILD": "1",
+    }
+    env.update({k: str(v) for k, v in overrides.items()})
+    return env
+
+
+def _e1_outside_env(**overrides) -> dict:
+    """Env with E-1 enabled but the window NOT spanning now (daytime)."""
+    now_min = _utc_minutes_of_day()
+    start = (now_min + 10) % 1440
+    env = {
+        "NFM_LIGHTRAG_WATCHDOG_E1_ENABLED": "1",
+        "NFM_LIGHTRAG_WATCHDOG_E1_START_MIN": str(start),
+        "NFM_LIGHTRAG_WATCHDOG_E1_END_MIN": str((start + 30) % 1440),
+    }
+    env.update({k: str(v) for k, v in overrides.items()})
+    return env
+
+
+def _e1_preburst_done(harness) -> None:
+    """Pre-write the once-per-UTC-day pre-burst marker so a test exercises
+    the in-window lifecycle eval alone (E1_STATE defaults to STATE + .e1)."""
+    marker = harness["state"].parent / (harness["state"].name + ".e1")
+    marker.write_text(datetime.now(timezone.utc).strftime("%Y-%m-%d") + "\n")
+
+
+def test_e1_preburst_recycles_once_per_utc_day(harness) -> None:
+    """First in-window eval of the day recycles the runner via the
+    WEDGE-MODE chokepoint (no --max-lifetime, no busy guard) and logs
+    d2=recycled window=1 phase=preburst; the marker makes the next eval
+    skip the preburst (the <=60s ticks must not repeat it)."""
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "99.0"}, term_effect="recover",
+                          mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert proc.returncode == 0, proc.stderr
+    calls = harness["term_calls"]()
+    # Preburst ran wedge-mode (unconditional). The pid was then gone from
+    # the fake table, so the lifecycle eval found no runner — exactly the
+    # cold-runner state the burst should start from.
+    assert calls == ["77444 --model qwen3.5:4b-nvfp4"], calls
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=recycled window=1 phase=preburst" in log_text, log_text
+    assert "pid=77444" in log_text, log_text
+    marker = harness["state"].parent / (harness["state"].name + ".e1")
+    assert marker.exists(), "preburst marker must be written (once-per-day guard)"
+    # Second eval same UTC day: runner back (fake table rewritten), but
+    # preburst must NOT re-fire — only the lifecycle eval runs.
+    second = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                            cpu={77444: "99.0"}, term_effect="recover",
+                            mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert second.returncode == 0, second.stderr
+    # The term-calls file accumulates across both runs — the second run's
+    # calls are the delta after the first run's single wedge-mode call.
+    calls2 = harness["term_calls"]()[len(calls):]
+    assert calls2 == ["77444 --model qwen3.5:4b-nvfp4 --max-lifetime 600 --ignore-busy"], calls2
+    assert log_text.count("phase=preburst") == 1, harness["watchdog_log"].read_text()
+
+
+def test_e1_preburst_no_runner_logs_skip_and_marks_done(harness) -> None:
+    """No runner loaded at window entry (server down / model unloaded):
+    nothing to recycle — d2=skip reason=no-runner, and the marker is still
+    written so the 60s ticks do not re-log the skip every tick."""
+    proc = harness["run"]("", runner_pids=[], term_effect="recover",
+                          mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert proc.returncode == 0, proc.stderr
+    assert harness["term_calls"]() == []
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=skip window=1 phase=preburst reason=no-runner" in log_text, log_text
+    marker = harness["state"].parent / (harness["state"].name + ".e1")
+    assert marker.exists()
+
+
+def test_e1_in_window_lifecycle_uses_reduced_lifetime_and_ignores_busy(harness) -> None:
+    """In-window lifecycle eval passes the in-window knob (600) and
+    --ignore-busy — the nvfp4 hang PRESENTS as eternal busy, so a
+    busy-exempt eval never recycles the wedged runner (NFM-5079 verdict:
+    the deployed policy's exact miss)."""
+    _e1_preburst_done(harness)
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "99.0"}, term_effect="recover",
+                          mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert proc.returncode == 0, proc.stderr
+    calls = harness["term_calls"]()
+    assert calls == ["77444 --model qwen3.5:4b-nvfp4 --max-lifetime 600 --ignore-busy"], calls
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=recycled window=1" in log_text, log_text
+    assert "busy_guard=off" in log_text, log_text
+
+
+def test_e1_in_window_under_age_logs_skip_with_reason(harness) -> None:
+    """Every in-window eval decision leaves a d2= line: a young runner
+    (chokepoint exit 67) logs d2=skip reason=under-max-lifetime — the
+    E-gate's 'policy active' liveness signal at 60s cadence."""
+    _e1_preburst_done(harness)
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "0.0"}, term_exit_code="67",
+                          mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert proc.returncode == 0, proc.stderr
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=skip window=1 reason=under-max-lifetime age_lt=600s" in log_text, log_text
+    assert "d2=recycled" not in log_text, log_text
+
+
+def test_e1_in_window_no_runner_logs_skip(harness) -> None:
+    """In-window eval with no runner loaded logs d2=skip reason=no-runner
+    (liveness), instead of the daytime silent return."""
+    _e1_preburst_done(harness)
+    proc = harness["run"]("", runner_pids=[], term_effect="recover",
+                          mlx_max_lifetime="1500", extra_env=_e1_env())
+    assert proc.returncode == 0, proc.stderr
+    assert harness["term_calls"]() == []
+    assert "d2=skip window=1 reason=no-runner" in harness["watchdog_log"].read_text()
+
+
+def test_e1_max_lifetime_floor_is_300(harness) -> None:
+    """SRE-tunable knob with a hard floor: a configured value below 300s
+    clamps to 300 — the ticket floor for in-window lifetime."""
+    _e1_preburst_done(harness)
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "0.0"}, term_effect="recover",
+                          mlx_max_lifetime="1500",
+                          extra_env=_e1_env(NFM_LIGHTRAG_WATCHDOG_E1_MAX_LIFETIME_S="100"))
+    assert proc.returncode == 0, proc.stderr
+    calls = harness["term_calls"]()
+    assert calls == ["77444 --model qwen3.5:4b-nvfp4 --max-lifetime 300 --ignore-busy"], calls
+
+
+def test_e1_disabled_knob_keeps_daytime_d2(harness) -> None:
+    """Kill-switch: E1_ENABLED=0 disables ALL window logic even with the
+    bounds spanning now — the eval is the daytime D-2 policy (no
+    --ignore-busy, no window= field, no preburst)."""
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "0.0"}, term_effect="recover",
+                          mlx_max_lifetime="1500",
+                          extra_env=_e1_env(NFM_LIGHTRAG_WATCHDOG_E1_ENABLED="0"))
+    assert proc.returncode == 0, proc.stderr
+    calls = harness["term_calls"]()
+    assert calls == ["77444 --model qwen3.5:4b-nvfp4 --max-lifetime 1500"], calls
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=recycled model=qwen3.5:4b-nvfp4" in log_text, log_text
+    assert "window=1" not in log_text, log_text
+    assert "phase=preburst" not in log_text, log_text
+
+
+def test_e1_outside_window_is_byte_identical_daytime(harness) -> None:
+    """AC3: outside the window the silent-skip contract is unchanged —
+    exit 67/68 log NOTHING (no d2= noise), and a recycle logs the exact
+    NFM-5083 line shape with no window= field."""
+    silent = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                            cpu={77444: "99.0"}, term_exit_code="68",
+                            mlx_max_lifetime="1500", extra_env=_e1_outside_env())
+    assert silent.returncode == 0, silent.stderr
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=" not in log_text, log_text
+    assert "phase=preburst" not in log_text, log_text
+    recycled = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                              cpu={77444: "0.0"}, term_effect="recover",
+                              mlx_max_lifetime="1500", extra_env=_e1_outside_env())
+    assert recycled.returncode == 0, recycled.stderr
+    log_text2 = harness["watchdog_log"].read_text()
+    assert "d2=recycled model=qwen3.5:4b-nvfp4 pid=77444 max_lifetime_s=1500" in log_text2, log_text2
+    assert "window=1" not in log_text2, log_text2
+    # Both runs called D-2 daytime-mode (the file accumulates across runs):
+    # the silent 68 probe AND the recycle, identical argv — no --ignore-busy.
+    calls = [c for c in harness["term_calls"]() if "--max-lifetime" in c]
+    assert calls == ["77444 --model qwen3.5:4b-nvfp4 --max-lifetime 1500"] * 2, calls
+
+
+def test_e1_wrapper_loops_child_until_cap(harness) -> None:
+    """A fire landing inside the window HOLDS the job: the parent re-execs
+    the single-probe body (E1_SELF) every tick until window close. With
+    the hermetic E1_TICKS_MAX cap the loop is deterministic: exactly N
+    child runs, e1=window-enter / e1=window-exit records, and the parent
+    never runs the probe body itself (no docker calls from the parent)."""
+    child_stub = Path(str(harness["state"]).replace("watchdog.state", "")) / "child-stub.sh"
+    child_stub.write_text("#!/bin/bash\necho child >> \"$FAKE_CHILD_CALLS\"\n")
+    child_stub.chmod(child_stub.stat().st_mode | stat.S_IXUSR)
+    child_calls = child_stub.parent / "child-calls"
+    proc = harness["run"](
+        "", mlx_max_lifetime="0",
+        extra_env={
+            "NFM_LIGHTRAG_WATCHDOG_E1_ENABLED": "1",
+            "NFM_LIGHTRAG_WATCHDOG_E1_START_MIN": str(_utc_minutes_of_day()),
+            "NFM_LIGHTRAG_WATCHDOG_E1_END_MIN": str(_utc_minutes_of_day() + 5),
+            "NFM_LIGHTRAG_WATCHDOG_E1_TICK_S": "0",
+            "NFM_LIGHTRAG_WATCHDOG_E1_TICKS_MAX": "3",
+            "NFM_LIGHTRAG_WATCHDOG_E1_SELF": str(child_stub),
+            "FAKE_CHILD_CALLS": str(child_calls),
+        })
+    assert proc.returncode == 0, proc.stderr
+    assert child_calls.exists()
+    assert len(child_calls.read_text().splitlines()) == 3, child_calls.read_text()
+    log_text = harness["watchdog_log"].read_text()
+    assert "e1=window-enter" in log_text, log_text
+    assert "e1=window-exit ticks=3" in log_text, log_text
+    # The parent's own probe body never ran — the wrapper owns the parent.
+    assert not harness["docker_calls"].exists(), "parent must not probe; the child does"
+
+
+def test_e1_wrapper_not_entered_outside_window(harness) -> None:
+    """Outside the window the wrapper is a no-op: the fire runs the normal
+    single probe (docker inspect happens) and no e1= records are written."""
+    child_stub = Path(str(harness["state"]).replace("watchdog.state", "")) / "child-stub.sh"
+    child_stub.write_text("#!/bin/bash\necho child >> \"$FAKE_CHILD_CALLS\"\n")
+    child_stub.chmod(child_stub.stat().st_mode | stat.S_IXUSR)
+    child_calls = child_stub.parent / "child-calls"
+    proc = harness["run"](
+        "", mlx_max_lifetime="0",
+        extra_env={
+            "NFM_LIGHTRAG_WATCHDOG_E1_ENABLED": "1",
+            "NFM_LIGHTRAG_WATCHDOG_E1_START_MIN": str((_utc_minutes_of_day() + 10) % 1440),
+            "NFM_LIGHTRAG_WATCHDOG_E1_END_MIN": str((_utc_minutes_of_day() + 40) % 1440),
+            "NFM_LIGHTRAG_WATCHDOG_E1_SELF": str(child_stub),
+            "FAKE_CHILD_CALLS": str(child_calls),
+        })
+    assert proc.returncode == 0, proc.stderr
+    assert not child_calls.exists()
+    log_text = harness["watchdog_log"].read_text()
+    assert "e1=window-enter" not in log_text, log_text
+    assert harness["docker_calls"].exists(), "normal single probe must run outside the window"
+
+
+def test_e1_child_flag_runs_body_once_without_loop(harness) -> None:
+    """E1_CHILD=1 (set by the wrapper on its re-execs) must suppress the
+    wrapper: a child invocation inside the window runs the probe body
+    exactly once and exits — no re-entry loop."""
+    child_stub = Path(str(harness["state"]).replace("watchdog.state", "")) / "child-stub.sh"
+    child_stub.write_text("#!/bin/bash\necho child >> \"$FAKE_CHILD_CALLS\"\n")
+    child_stub.chmod(child_stub.stat().st_mode | stat.S_IXUSR)
+    child_calls = child_stub.parent / "child-calls"
+    proc = harness["run"](
+        "", mlx_max_lifetime="0",
+        extra_env={
+            "NFM_LIGHTRAG_WATCHDOG_E1_ENABLED": "1",
+            "NFM_LIGHTRAG_WATCHDOG_E1_START_MIN": str(_utc_minutes_of_day()),
+            "NFM_LIGHTRAG_WATCHDOG_E1_END_MIN": str(_utc_minutes_of_day() + 5),
+            "NFM_LIGHTRAG_WATCHDOG_E1_CHILD": "1",
+            "NFM_LIGHTRAG_WATCHDOG_E1_SELF": str(child_stub),
+            "FAKE_CHILD_CALLS": str(child_calls),
+        })
+    assert proc.returncode == 0, proc.stderr
+    assert not child_calls.exists(), "child flag must prevent wrapper re-entry"
+    log_text = harness["watchdog_log"].read_text()
+    assert "e1=window-enter" not in log_text, log_text
+    assert harness["docker_calls"].exists(), "the body (probe) must have run once"
+
+
+def test_e1_window_computation_is_base10_safe(harness) -> None:
+    """NFM-5122 in the NEW window code: `date -u +%H` / `%M` are
+    zero-padded, and bash 3.2 treats 08/09 as OCTAL — pre-fix the
+    minutes-of-day arithmetic aborted the whole probe ("value too great
+    for base") at 09:0x UTC instead of evaluating the window. Pin the
+    canned 09:08 shape: 548 minutes-of-day lands inside 500-600 and the
+    in-window lifecycle eval runs (d2=skip reason=under-max-lifetime)."""
+    _e1_preburst_done(harness)
+    proc = harness["run"]("", runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "0.0"}, term_exit_code="67",
+                          mlx_max_lifetime="1500",
+                          extra_env=_e1_env(NFM_LIGHTRAG_WATCHDOG_E1_START_MIN="500",
+                                            NFM_LIGHTRAG_WATCHDOG_E1_END_MIN="600",
+                                            FAKE_DATE_H="09", FAKE_DATE_M="08"))
+    assert proc.returncode == 0, proc.stderr
+    assert "value too great for base" not in proc.stderr, proc.stderr
+    log_text = harness["watchdog_log"].read_text()
+    assert "d2=skip window=1 reason=under-max-lifetime" in log_text, log_text

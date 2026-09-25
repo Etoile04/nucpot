@@ -40,8 +40,18 @@
 # events. The existing wedge-recovery path is untouched: --max-lifetime
 # is opt-in (default behavior unchanged).
 #
+# NFM-5219 (Option E-1): additive --ignore-busy flag for the
+# --max-lifetime mode, passed ONLY inside the SRE-tuned burst window
+# (03:25-05:00Z) by the lightrag watchdog. The nvfp4 hang PRESENTS as
+# eternal busy (prefill stall at processed=total-1, upstream #18505
+# still open), so the D-2 under-load guard exempts the wedged runner
+# FOREVER — the 2026-09-24T04:00:10Z wedge had ZERO d2= events. With
+# the flag the CPU comparison is skipped; the AGE gate and the chokepoint
+# validation are unchanged, and the wedge-recovery mode never passes it
+# (daytime D-2 behavior stays byte-identical to NFM-5083).
+#
 # usage: ollama-runner-term.sh <pid> --model <model>
-#        ollama-runner-term.sh <pid> --model <model> --max-lifetime <sec>
+#        ollama-runner-term.sh <pid> --model <model> --max-lifetime <sec> [--ignore-busy]
 # Exit codes:
 #   0   runner terminated (or already gone — idempotent)
 #   1   runner still alive after SIGTERM + grace window
@@ -50,6 +60,7 @@
 #   66  runner --model does not match — REFUSED
 #   67  max-lifetime: runner age < knob — SKIP (no kill, too young)
 #   68  max-lifetime: runner busy (CPU active) — SKIP — under-load guard
+#       (unreachable with --ignore-busy: the CPU comparison is skipped)
 # ============================================================================
 set -euo pipefail
 
@@ -71,6 +82,8 @@ usage() {
 # ---- arg parse --------------------------------------------------------------
 # Shape 1: 3 args  → <pid> --model <model>          (wedge-recovery mode)
 # Shape 2: 5 args  → <pid> --model <model> --max-lifetime <sec>  (D-2)
+# Shape 3: 6 args  → ... --max-lifetime <sec> --ignore-busy      (E-1 window)
+ignore_busy=0
 case "$#" in
   3) max_lifetime=0 ;;            # 0 = wedge mode (skip the D-2 gate)
   5)
@@ -80,6 +93,16 @@ case "$#" in
       ''|*[!0-9]*) usage ;;
     esac
     [ "${max_lifetime}" -gt 0 ] || usage
+    ;;
+  6)
+    [ "$4" = "--max-lifetime" ] || usage
+    [ "$6" = "--ignore-busy" ] || usage
+    max_lifetime="$5"
+    case "${max_lifetime}" in
+      ''|*[!0-9]*) usage ;;
+    esac
+    [ "${max_lifetime}" -gt 0 ] || usage
+    ignore_busy=1
     ;;
   *) usage ;;
 esac
@@ -207,11 +230,19 @@ if [ "${max_lifetime}" -gt 0 ]; then
   idle_int="${IDLE_CPU_MAX%%.*}"
   idle_int="${idle_int// /}"
   idle_int="${idle_int:-5}"
-  if [ "${cpu_int}" -ge "${idle_int}" ]; then
+  if [ "${ignore_busy}" -eq 0 ] && [ "${cpu_int}" -ge "${idle_int}" ]; then
     echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw} >= ${IDLE_CPU_MAX} — busy, skip"
     exit 68
   fi
-  echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw} <= ${IDLE_CPU_MAX} — recycling"
+  if [ "${ignore_busy}" -eq 1 ]; then
+    # NFM-5219 E-1: busy-guard suppressed for the in-window unconditional
+    # recycle — the hang's signature IS eternal busy, so this guard would
+    # exempt the wedged runner forever. CPU is still read and recorded for
+    # the operator; the age gate above has already run.
+    echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw:-unknown} busy-guard=suppressed — recycling (E-1 window)"
+  else
+    echo "max-lifetime pid=${pid} model=${model} age=${age_secs}s cpu=${cpu_raw} <= ${IDLE_CPU_MAX} — recycling"
+  fi
 fi
 
 if ! "${KILL_BIN}" -TERM "${pid}" 2>/dev/null; then
