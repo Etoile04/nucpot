@@ -59,6 +59,21 @@
 # wedge was detected. Exit 67 = under threshold, exit 68 = busy (under-
 # load guard) — both are no-ops and not worth a per-probe log entry.
 #
+# NFM-5219 Option E-1: burst-window deterministic lifecycle, 03:25-05:00Z
+# daily, window-scoped ONLY. Deployed D-2 was a GLOBAL 1500s knob on a
+# 5-min cadence, and the nvfp4 hang PRESENTS as eternal busy — so inside
+# the nightly burst window the eval never recycled the burst runner
+# (2026-09-24T04:00:10Z wedge: ZERO d2= events bracketing it). In-window
+# the watchdog (a) recycles the runner once at window entry (pre-burst,
+# unconditional, so the 03:30Z burst starts cold), (b) applies the
+# in-window max-lifetime knob with the busy-guard DISABLED, (c) logs a
+# d2= decision line for EVERY eval (d2=recycled | d2=skip reason=... |
+# d2=error) so the E-gate can distinguish 'policy inactive' from 'policy
+# active but insufficient', and (d) re-execs the single-probe body every
+# E1 tick (<=60s) for the whole window. Outside the window, every
+# behavior — cadence, knob, busy-guard, silent 67/68 — is byte-identical
+# to NFM-5083.
+#
 # Exit codes:
 #   0  clean (no wedge, or cooldown suppressed)
 #   2  wedge detected AND sanctioned restart issued
@@ -91,6 +106,42 @@ TERM_CMD="${NFM_LIGHTRAG_WATCHDOG_TERM:-sudo -n /usr/local/lib/nfm-g2/ollama-run
 # via NFM-4925). Set to 0 to disable D-2 (the wedge-recovery path below
 # is untouched regardless).
 MLX_RUNNER_MAX_LIFETIME_S="${NFM_LIGHTRAG_WATCHDOG_MLX_MAX_LIFETIME_S:-1500}"
+
+# NFM-5219 Option E-1 knobs (all env-overridable for hermetic tests; the
+# launchd environment never sets them, so script defaults ARE the policy).
+# Bounds are minutes-of-day UTC and must not cross UTC midnight
+# (03:25Z=205, 05:00Z=300). The in-window lifetime knob carries a hard
+# SRE floor of 300s. E1_STATE is derived from STATE so hermetic tests
+# isolating STATE isolate the preburst marker too.
+E1_ENABLED="${NFM_LIGHTRAG_WATCHDOG_E1_ENABLED:-1}"
+E1_START_MIN="${NFM_LIGHTRAG_WATCHDOG_E1_START_MIN:-205}"
+E1_END_MIN="${NFM_LIGHTRAG_WATCHDOG_E1_END_MIN:-300}"
+E1_MAX_LIFETIME_S="${NFM_LIGHTRAG_WATCHDOG_E1_MAX_LIFETIME_S:-600}"
+E1_TICK_S="${NFM_LIGHTRAG_WATCHDOG_E1_TICK_S:-60}"
+E1_STATE="${NFM_LIGHTRAG_WATCHDOG_E1_STATE:-${STATE}.e1}"
+# Hermetic-test hooks only (launchd env never carries them): E1_TICKS_MAX
+# caps child re-execs per window — a mis-set cap degrades in-window
+# cadence back toward the 5-min launchd fires, never correctness.
+E1_TICKS_MAX="${NFM_LIGHTRAG_WATCHDOG_E1_TICKS_MAX:-0}"
+# Fail-safe validation: any malformed knob disables the window policy
+# entirely (daytime D-2 semantics) rather than aborting the probe.
+case "x${E1_START_MIN}x${E1_END_MIN}x${E1_MAX_LIFETIME_S}x${E1_TICK_S}x${E1_TICKS_MAX}x" in
+  *xx*|*[!0-9x]*) E1_ENABLED=0 ;;
+esac
+# SRE-tunable floor (NFM-5219 scope 2): never below 300s in-window.
+if [ "${E1_MAX_LIFETIME_S}" -lt 300 ] 2>/dev/null; then
+  E1_MAX_LIFETIME_S=300
+fi
+E1_IN_WINDOW=0
+# NFM-5122: `date -u +%H` / `%M` are zero-padded ("09") and bash 3.2 treats
+# leading-zero tokens as OCTAL — 08/09 abort with "value too great for
+# base" under set -e. Force base-10 on both fields.
+_e1_mod=$(( 10#$(date -u +%H) * 60 + 10#$(date -u +%M) ))
+if [ "${E1_ENABLED}" = "1" ] \
+   && [ "${_e1_mod}" -ge "${E1_START_MIN}" ] 2>/dev/null \
+   && [ "${_e1_mod}" -lt "${E1_END_MIN}" ] 2>/dev/null; then
+  E1_IN_WINDOW=1
+fi
 
 # Under launchd (UserName=nfmdeploy) PATH is the secure path and no docker
 # context/DOCKER_HOST is set, so the CLI would target the walled default
@@ -138,6 +189,38 @@ find_runner() {
 }
 
 # ---------------------------------------------------------------------------
+# 0b. NFM-5219 E-1 burst-window wrapper. When a fire lands inside the
+#     window, HOLD the job: re-exec the single-probe body every E1 tick
+#     (<=60s) until window close, then exit 0 — in-window lifecycle eval
+#     runs at burst cadence instead of the 5-min daytime cadence. launchd
+#     never co-runs the same label, so the skipped interval fires are by
+#     design (AC3: daytime cadence untouched). Children carry E1_CHILD=1
+#     so they run the body exactly once and never re-enter this wrapper;
+#     NFM_LIGHTRAG_WATCHDOG_E1_SELF is a hermetic-test hook (launchd
+#     invokes this file directly, so prod always takes the $0 branch).
+#     A hand-run of this script inside the window also enters the loop —
+#     bounded by the same tick/age gates, so the worst case is a doubled
+#     tick rate, never an unbounded action.
+# ---------------------------------------------------------------------------
+if [ "${NFM_LIGHTRAG_WATCHDOG_E1_CHILD:-0}" != "1" ] && [ "${E1_IN_WINDOW}" = "1" ]; then
+  log_record "e1=window-enter bounds=${E1_START_MIN}-${E1_END_MIN} tick=${E1_TICK_S}s lifetime=${E1_MAX_LIFETIME_S}s busy_guard=off"
+  _e1_ticks=0
+  while :; do
+    NFM_LIGHTRAG_WATCHDOG_E1_CHILD=1 bash "${NFM_LIGHTRAG_WATCHDOG_E1_SELF:-$0}" || true
+    _e1_ticks=$(( _e1_ticks + 1 ))
+    if [ "${E1_TICKS_MAX}" -gt 0 ] 2>/dev/null && [ "${_e1_ticks}" -ge "${E1_TICKS_MAX}" ]; then
+      break
+    fi
+    # NFM-5122: %H/%M are zero-padded — force base-10 (08/09 would abort).
+    _e1_mod=$(( 10#$(date -u +%H) * 60 + 10#$(date -u +%M) ))
+    [ "${_e1_mod}" -lt "${E1_END_MIN}" ] || break
+    sleep "${E1_TICK_S}"
+  done
+  log_record "e1=window-exit ticks=${_e1_ticks}"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Container up? (if not, compose `restart: unless-stopped` owns it)
 # ---------------------------------------------------------------------------
 running="$(docker inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null || true)"
@@ -147,29 +230,86 @@ if [ "${running}" != "true" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1a. NFM-5219 E-1 pre-burst recycle: exactly once per UTC day, on the
+#     first in-window eval, recycle the RAG runner UNCONDITIONALLY (wedge-
+#     mode chokepoint — no age gate, no busy guard) so the 03:30Z burst
+#     starts on a cold runner. The date-keyed marker stops the <=60s
+#     in-window ticks from repeating it; UTC midnight rolls it over
+#     naturally. LightRAG-side recovery of the preempted request is the
+#     proven D-1 90s consumer timeout + lightrag-reprocess path.
+# ---------------------------------------------------------------------------
+e1_preburst() {
+  [ "${E1_IN_WINDOW}" = "1" ] || return 0
+  local today last rc
+  today="$(date -u +%Y-%m-%d)"
+  last="$(cat "${E1_STATE}" 2>/dev/null || true)"
+  [ "${last}" = "${today}" ] && return 0
+  if find_runner; then
+    rc=0
+    ${TERM_CMD} "${RUNNER_PID}" --model "${OLLAMA_MODEL}" || rc=$?
+    case "${rc}" in
+      0) log_record "d2=recycled window=1 phase=preburst model=${OLLAMA_MODEL} pid=${RUNNER_PID}" ;;
+      *) log_record "d2=error window=1 phase=preburst model=${OLLAMA_MODEL} pid=${RUNNER_PID} rc=${rc} (operator attention)" ;;
+    esac
+  else
+    log_record "d2=skip window=1 phase=preburst reason=no-runner model=${OLLAMA_MODEL}"
+  fi
+  printf '%s\n' "${today}" >"${E1_STATE}" || true
+}
+e1_preburst || log_record "d2=infra-error window=1 phase=preburst (failed open; wedge check proceeds)"
+
+# ---------------------------------------------------------------------------
 # 1b. NFM-5083 D-2 — preventive max-lifetime recycle (always-run stage).
 #     Runs on every probe regardless of wedge status; the point of D-2
 #     is to recycle before wedge probability grows. Failure paths fail
 #     OPEN (logs and proceeds) so the wedge-recovery path below is
 #     never blocked by D-2 infra. Exit 67/68 are no-ops — they signal
 #     "not eligible right now" and the next 5-minute probe will retry.
+#
+#     NFM-5219 E-1: inside the burst window the effective policy is the
+#     in-window knob with the busy-guard DISABLED (the nvfp4 hang
+#     PRESENTS as eternal busy — a busy-exempt eval never recycles the
+#     wedged runner), and EVERY decision leaves a d2= line (recycled /
+#     skip+reason / error) so the E-gate can tell 'policy inactive' from
+#     'policy active but insufficient'. Outside the window the policy,
+#     line formats, and silent 67/68 are byte-identical to NFM-5083.
 # ---------------------------------------------------------------------------
 max_lifetime_check() {
-  if [ "${MLX_RUNNER_MAX_LIFETIME_S}" -le 0 ] 2>/dev/null; then
+  local eff_lifetime="" busy_flag=""
+  if [ "${E1_IN_WINDOW}" = "1" ]; then
+    eff_lifetime="${E1_MAX_LIFETIME_S}"
+    busy_flag="--ignore-busy"
+  else
+    eff_lifetime="${MLX_RUNNER_MAX_LIFETIME_S}"
+  fi
+  if [ "${eff_lifetime}" -le 0 ] 2>/dev/null; then
     return 0
   fi
   if ! find_runner; then
+    if [ "${E1_IN_WINDOW}" = "1" ]; then
+      log_record "d2=skip window=1 reason=no-runner model=${OLLAMA_MODEL}"
+    fi
     return 0
   fi
   rc=0
+  # shellcheck disable=SC2086  # busy_flag word-split is intentional
   ${TERM_CMD} "${RUNNER_PID}" --model "${OLLAMA_MODEL}" \
-    --max-lifetime "${MLX_RUNNER_MAX_LIFETIME_S}" || rc=$?
-  case "${rc}" in
-    0)  log_record "d2=recycled model=${OLLAMA_MODEL} pid=${RUNNER_PID} max_lifetime_s=${MLX_RUNNER_MAX_LIFETIME_S}" ;;
-    67) ;;  # under threshold — common, no log noise
-    68) ;;  # busy — legitimate load, no log noise
-    *)  log_record "d2=error model=${OLLAMA_MODEL} pid=${RUNNER_PID} rc=${rc} (operator attention)" ;;
-  esac
+    --max-lifetime "${eff_lifetime}" ${busy_flag} || rc=$?
+  if [ "${E1_IN_WINDOW}" = "1" ]; then
+    case "${rc}" in
+      0)  log_record "d2=recycled window=1 model=${OLLAMA_MODEL} pid=${RUNNER_PID} max_lifetime_s=${eff_lifetime} busy_guard=off" ;;
+      67) log_record "d2=skip window=1 reason=under-max-lifetime age_lt=${eff_lifetime}s model=${OLLAMA_MODEL} pid=${RUNNER_PID}" ;;
+      68) log_record "d2=skip window=1 reason=busy model=${OLLAMA_MODEL} pid=${RUNNER_PID} busy_guard=on (unexpected in-window — flag not passed?)" ;;
+      *)  log_record "d2=error window=1 model=${OLLAMA_MODEL} pid=${RUNNER_PID} rc=${rc} (operator attention)" ;;
+    esac
+  else
+    case "${rc}" in
+      0)  log_record "d2=recycled model=${OLLAMA_MODEL} pid=${RUNNER_PID} max_lifetime_s=${eff_lifetime}" ;;
+      67) ;;  # under threshold — common, no log noise
+      68) ;;  # busy — legitimate load, no log noise
+      *)  log_record "d2=error model=${OLLAMA_MODEL} pid=${RUNNER_PID} rc=${rc} (operator attention)" ;;
+    esac
+  fi
 }
 max_lifetime_check || log_record "d2=infra-error (D-2 stage failed open; wedge check proceeds)"
 

@@ -554,3 +554,102 @@ def test_max_lifetime_just_below_threshold_is_idle(harness) -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+# ===========================================================================
+# NFM-5219 Option E-1 — additive --ignore-busy flag for the --max-lifetime
+# mode (burst-window unconditional recycle).
+#
+# The 03:30Z reingest-burst wedge of the nvfp4 runner PRESENTS as eternal
+# busy (prefill stall at processed=total-1, upstream #18505 still open) —
+# the D-2 under-load guard therefore exempts the wedged runner FOREVER
+# (prod 2026-09-24T04:00:10Z: zero d2= events bracketed the wedge). Inside
+# the SRE-tuned burst window (03:25-05:00Z) the watchdog passes
+# --ignore-busy so an over-age runner recycles regardless of CPU state.
+# The AGE gate and the chokepoint validation are unchanged, and the flag
+# is never passed outside the window — daytime D-2 behavior stays
+# byte-identical to NFM-5083.
+# ===========================================================================
+
+
+def test_ignore_busy_recycles_busy_old_runner(harness) -> None:
+    """The wedge signature itself: an over-age runner pegging CPU
+    (eternal busy). With --ignore-busy the under-load guard is suppressed
+    — exit 0 and exactly one SIGTERM. This is the whole point of E-1: a
+    busy-exempt eval could never recycle this runner."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "26:00"},  # 1560s — over the 600s in-window knob
+        cpu_table={77444: "99.0"},  # eternal-busy hang signature
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+    assert "busy-guard=suppressed" in proc.stdout, proc.stdout
+
+
+def test_ignore_busy_still_respects_age_gate(harness) -> None:
+    """--ignore-busy suppresses ONLY the CPU comparison: a young runner
+    still skips (exit 67, no signal) — legitimate short generations stay
+    safe inside the burst window too."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "05:00"},  # 300s < 600s — young
+        cpu_table={77444: "99.0"},
+    )
+    assert proc.returncode == 67, proc.stdout + proc.stderr
+    assert harness["kills"]() == [], "young runner must NEVER be signaled"
+
+
+def test_ignore_busy_refuses_non_runner(harness) -> None:
+    """The flag MUST NOT weaken the sudoers security boundary: the
+    chokepoint validation (ollama runner + model match) still runs FIRST
+    — exit 65, no signal, exactly as in both existing modes."""
+    proc = harness["run"](
+        ["4242", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy"],
+        procs_table={4242: FOREIGN_CMD},
+        etime_table={4242: "26:00"},
+    )
+    assert proc.returncode == 65, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
+
+
+def test_ignore_busy_only_valid_as_sixth_token(harness) -> None:
+    """Arg-shape pin: --ignore-busy is valid only as the SIXTH token
+    (after --max-lifetime <sec>). A misplaced flag, an unknown sixth
+    token, or a seventh arg is a usage error (64) before any ps/kill."""
+    for argv in (
+        ["77444", "--ignore-busy", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600"],
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--ignore-busy", "--max-lifetime", "600"],
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--force"],
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy", "x"],
+    ):
+        proc = harness["run"](argv, procs_table={77444: RUNNER_CMD})
+        assert proc.returncode == 64, (argv, proc.stdout + proc.stderr)
+        assert harness["ps_calls"]() == []
+
+
+def test_ignore_busy_cpu_boundary_moot(harness) -> None:
+    """Without the flag a runner at exactly the idle threshold (5.0) is
+    BUSY (the >= guard); with --ignore-busy the CPU comparison never
+    happens, so the over-age boundary case recycles."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy"],
+        procs_table={77444: RUNNER_CMD},
+        etime_table={77444: "10:01"},  # 601s — one second over the knob
+        cpu_table={77444: "5.0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == ["kill -TERM 77444"]
+
+
+def test_ignore_busy_missing_runner_is_success(harness) -> None:
+    """Idempotence carries over: a PID that vanished before the helper
+    runs is the success case in the flagged mode too (no kill issued)."""
+    proc = harness["run"](
+        ["77444", "--model", "qwen3.5:4b-nvfp4", "--max-lifetime", "600", "--ignore-busy"],
+        procs_table={},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert harness["kills"]() == []
