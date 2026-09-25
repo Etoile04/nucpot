@@ -857,8 +857,19 @@ deploy cycles while the lightrag watchdog kept exec'ing the pre-fix host blob
 * **At deploy time** — `scripts/deploy_prod.sh` runs
   `scripts/host-prod-gate/entry-sync.sh --check` after the health gates. A
   release carrying a host-file diff prints a `HOST-ENTRY-DRIFT` block in the
-  deploy log with the exact one-line action below. Non-fatal by design: the
-  docker side of the release is already live.
+  deploy log with the exact one-line action below. Non-fatal inside the script
+  by design: the docker side of the release is already live.
+* **The deploy job hard gate (NFM-5221)** — the in-script banner alone proved
+  insufficient: the `dc11afdd9` deploy detected and printed the drift at
+  17:53:14Z and the workflow still concluded `success` (2nd occurrence of the
+  NFM-5134 class; caught 3h14m later only by the SRE idle-scan canary).
+  `production-deployment.yml` therefore re-runs the **unprivileged** `--check`
+  in the job context, after cutover + manifest recording, and **fails the
+  deploy job** on drift. A release that changed host-tracked entries cannot
+  report green until the operator apply below has propagated them; re-running
+  the failed job after the apply closes the gate. G2 wall preserved: the gate
+  only detects and blocks — no identity but the operator's interactive sudo
+  ever applies bytes.
 * **The single operator action** — from the synced checkout (the deploy flow
   already reset it to the deploying SHA):
 
@@ -891,6 +902,11 @@ cd ~/Projects/nucpot && bash scripts/host-prod-gate/entry-sync.sh --check
 # HOST-ENTRY-DRIFT <name> …  → the operator action above is still pending (exit 1)
 ```
 
+For deploys that ran through GitHub Actions, the hard-gate step (NFM-5221)
+fails the run on the same condition; after the operator apply, **re-run the
+failed gate job** — it goes green once host sha == repo sha, which is the
+release's propagation-complete receipt.
+
 For behavior-carrying fixes, pair the sha check with the fix's own functional
 probe (e.g. the NFM-5134 extracted-function probe for the NFM-5122 base-10
 etime arithmetic) before declaring the propagation complete.
@@ -898,6 +914,9 @@ etime arithmetic) before declaring the propagation complete.
 ### 11.4. References
 
 - [NFM-5149](../../issues/NFM-5149) — the deploy-path gap this section closes.
+- [NFM-5221](../../issues/NFM-5221) — 2nd occurrence of the NFM-5134 class
+  (advisory banner ignored in a green deploy log); added the job-context hard
+  gate in `production-deployment.yml`.
 - [NFM-4297](../../issues/NFM-4297) — CR F7 SHA binding reused by `--apply`.
 - [prod-compose-gate.md](./prod-compose-gate.md) — the G2 wall itself
   (`host_setup.sh` installs `entry-sync.sh` root-side alongside the entries).
