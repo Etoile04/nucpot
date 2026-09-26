@@ -950,6 +950,44 @@ jobs:
                --deploy-sha '${{ github.sha }}' \
                --actor 'gh-runner:${{ github.actor }}'"
 
+      # NFM-5221 — host-entry propagation HARD GATE (2nd occurrence of the
+      # NFM-5134 class). NFM-5149 wired drift detection into deploy_prod.sh
+      # but left it non-fatal: the dc11afdd9 deploy (run 36163632757,
+      # 2026-09-25T17:53:14Z) printed the HOST-ENTRY-DRIFT banner with the
+      # exact remediation and the run still concluded success — the signal
+      # lived and died inside a green Actions log until the SRE idle-scan
+      # canary caught the drift 3h14m later. Same lesson as NFM-3777/#1050:
+      # a defense that lives only inside the deploy body is not a gate. This
+      # job-context step re-runs the UNPRIVILEGED --check after cutover and
+      # fails the deploy job on drift, so a release that changed
+      # host-tracked entries cannot report green until the operator's single
+      # sudo apply (runbook §11.2) has propagated them. G2 wall preserved:
+      # nothing here applies bytes — only the operator's interactive sudo
+      # can (NFM-5149 constraint); this step only detects and blocks.
+      # Closure path: after the operator apply, re-run this failed job — it
+      # goes green once host sha == repo sha.
+      - name: Host-entry sync hard gate (NFM-5221, job-context — deploy fails on drift)
+        run: |
+          set -euo pipefail
+          # Unprivileged by design (NFM-5149: agents/deploy identity may only
+          # ever --check). The lwj04 checkout was reset to github.sha by the
+          # deploy step above, so this compares github.sha entries vs host.
+          HESYNC_RC=0
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "cd ~/Projects/nucpot && bash scripts/host-prod-gate/entry-sync.sh --check" || HESYNC_RC=$?
+          case "${HESYNC_RC}" in
+            0) echo "HOST-ENTRY-GATE: all host G2 entries in sync with ${{ github.sha }}" ;;
+            2) echo "::warning::HOST-ENTRY-GATE: host gate dir not present/readable — drift check skipped (NFM-5149 exit-2 semantics, never an alarm)" ;;
+            *)
+              echo "::error::HOST-ENTRY-DRIFT persists after deploy of ${{ github.sha }} — host consumers still run the OLD bytes."
+              echo "::error::Docker side is live, but the release is NOT complete until host entries propagate."
+              echo "::error::One operator action closes it (deploy runbook §11.2):"
+              echo "::error::  cd ~/Projects/nucpot && sudo bash scripts/host-prod-gate/entry-sync.sh --apply"
+              echo "::error::Then re-run this failed job — it goes green once host sha == repo sha."
+              exit 1
+              ;;
+          esac
+
       - name: External smoke tests
         id: external-smoke-tests
         # ADR-018 / NFM-4762: no proxy bypass needed — the job no longer

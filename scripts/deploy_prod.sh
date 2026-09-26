@@ -431,7 +431,10 @@ fi
 # that carries a host-file diff surface it AT deploy time, with the exact
 # one-line action that closes it. Deliberately NOT fatal: the docker side of
 # the release is already live and verified; the host apply is a separate,
-# operator-gated propagation step (the SRE canary tracks it to closure).
+# operator-gated propagation step. NFM-5221: enforcement lives in the JOB
+# context — production-deployment.yml re-runs this check after cutover and
+# fails the deploy job on drift (the advisory-only banner was ignored on the
+# dc11afdd9 deploy, 2nd occurrence of the NFM-5134 class).
 echo "==> Checking host-tracked G2 entries (NFM-5149)"
 if [ -x scripts/host-prod-gate/entry-sync.sh ] && [ -d scripts/host-prod-gate/entries ]; then
   HESYNC_RC=0
