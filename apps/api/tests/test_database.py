@@ -199,6 +199,91 @@ class TestLoadAgeExtension:
         _load_age_extension(self._pg_conn(retried), MagicMock())
         retried.execute.assert_any_call("LOAD 'age';")
 
+    # ------------------------------------------------------------------
+    # NFM-5223: never hand a fresh connection an aborted transaction
+    # ------------------------------------------------------------------
+
+    def test_absent_age_rolls_back_aborted_transaction(self) -> None:
+        """The 58P01 that trips the breaker also aborts THIS connection's
+        implicit transaction; the listener must roll it back or the first
+        statement of the requesting session dies with
+        InFailedSQLTransactionError (boot-window 500s on /api/v1/health,
+        one per uvicorn worker, NFM-5223)."""
+        failing = MagicMock()
+        failing.execute.side_effect = [None, self._age_undefined_file_error()]
+        conn = self._pg_conn(failing)
+
+        _load_age_extension(conn, MagicMock())
+
+        conn.rollback.assert_called_once_with()
+
+    def test_transient_failure_rolls_back_aborted_transaction(self) -> None:
+        """Unknown/transient failures abort the implicit transaction the
+        same way — the rollback must cover that exit too, not only the
+        breaker-tripping path."""
+        flaky = MagicMock()
+        flaky.execute.side_effect = [None, Exception("connection reset")]
+        conn = self._pg_conn(flaky)
+
+        _load_age_extension(conn, MagicMock())
+
+        conn.rollback.assert_called_once_with()
+
+    def test_rollback_failure_does_not_propagate(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A rollback that itself fails must not raise out of the connect
+        listener — raising there fails connection creation outright and
+        turns the boot-window 500 into a connect error for every request
+        until pool recycle.  The breaker still trips."""
+        failing = MagicMock()
+        failing.execute.side_effect = [None, self._age_undefined_file_error()]
+        conn = self._pg_conn(failing)
+        conn.rollback.side_effect = Exception("rollback failed")
+
+        with caplog.at_level(logging.WARNING, logger="nfm_db.database"):
+            _load_age_extension(conn, MagicMock())  # must not raise
+
+        assert "AGE listener rollback failed" in caplog.text
+
+        fresh = MagicMock()
+        _load_age_extension(self._pg_conn(fresh), MagicMock())
+        fresh.execute.assert_not_called()
+
+    def test_silent_concurrent_loser_rolls_back_own_connection(self) -> None:
+        """The concurrent-loser branch (breaker already tripped by a sibling
+        while this connection queued on the lock) returns silently — but its
+        own LOAD still failed, so its connection needs the rollback just as
+        much.  Simulated by flipping the flag on lock entry."""
+        failing = MagicMock()
+        failing.execute.side_effect = [None, self._age_undefined_file_error()]
+        conn = self._pg_conn(failing)
+
+        class _RacedLock:
+            """Stand-in for _age_state_lock: a sibling trips the breaker
+            while this connection waits to acquire."""
+
+            def __enter__(self) -> None:
+                database._age_absent = True
+
+            def __exit__(self, *exc: object) -> bool:
+                return False
+
+        with patch.object(database, "_age_state_lock", _RacedLock()):
+            _load_age_extension(conn, MagicMock())
+
+        conn.rollback.assert_called_once_with()
+
+    def test_success_path_does_not_rollback(self) -> None:
+        """Healthy connections keep the historical no-rollback contract:
+        ``SET search_path`` is transactional, so an unconditional rollback
+        would undo the listener's own work."""
+        healthy = MagicMock()
+        conn = self._pg_conn(healthy)
+
+        _load_age_extension(conn, MagicMock())
+
+        healthy.execute.assert_any_call('SET search_path TO ag_catalog, "$current_schema";')
+        conn.rollback.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # get_db

@@ -74,6 +74,29 @@ def _is_age_absent_error(exc: BaseException) -> bool:
     return _AGE_ABSENT_MESSAGE_MARKER in str(exc)
 
 
+def _rollback_fresh_connection(dbapi_conn: object) -> None:
+    """Best-effort rollback of the connect listener's aborted transaction.
+
+    A failed statement (e.g. ``LOAD 'age'`` → 58P01) aborts the fresh
+    connection's implicit transaction; the next statement on it fails with
+    ``InFailedSQLTransactionError``, so the request that triggered the
+    connect gets a 500 that does not reflect actual health (NFM-5223).
+    Guarded: a rollback that itself fails must not raise out of the
+    connect event — that would fail connection creation outright.
+    """
+    rollback = getattr(dbapi_conn, "rollback", None)
+    if rollback is None:
+        return
+    try:
+        rollback()
+    except Exception:
+        logger.warning(
+            "AGE listener rollback failed; pooled connection stays poisoned "
+            "until pool recycle (NFM-5223)",
+            exc_info=True,
+        )
+
+
 def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
     """Load Apache AGE extension on PostgreSQL connections.
 
@@ -100,6 +123,12 @@ def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
         cursor.execute("LOAD 'age';")
         cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
     except Exception as exc:
+        # NFM-5223: the failing statement left this connection's implicit
+        # transaction aborted.  Roll it back BEFORE any return path (breaker
+        # trip, silent concurrent loser, transient warning) hands the
+        # connection to the requesting session — every exit below must
+        # return a connection whose transaction is usable.
+        _rollback_fresh_connection(dbapi_conn)
         if not _is_age_absent_error(exc):
             # Unknown/transient failure — stays observable per connection.
             logger.warning(
