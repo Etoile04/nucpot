@@ -14,8 +14,7 @@ import path from "path"
 // and therefore bypasses the loop-detection below).
 const API_SERVER_URL = process.env.API_SERVER_URL
 const DISABLE_API_REWRITE =
-  process.env.DISABLE_API_REWRITE === "true" ||
-  process.env.DISABLE_API_REWRITE === "1"
+  process.env.DISABLE_API_REWRITE === "true" || process.env.DISABLE_API_REWRITE === "1"
 
 // Default to the Docker-internal service DNS (resolves inside any
 // `nucpot-*` network) so the rewrite is correct in prod and staging
@@ -35,17 +34,25 @@ const API_SERVER_FALLBACK = API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 // to localhost:9621.  The rewrite is independent of DISABLE_API_REWRITE
 // (which only gates the /api/* catch-all) so the LightRAG WebUI remains
 // accessible even in production where nginx handles /api/* routing.
-const LIGHTRAG_WEBUI_URL =
-  process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
+const LIGHTRAG_WEBUI_URL = process.env.LIGHTRAG_WEBUI_URL ?? "http://localhost:9621"
 
 // NFM-4990 (IA-REFACTOR P1, supersedes NFM-4987): the potential-function
 // library is a first-level path family, literature lives at /publications,
 // and search is a secondary route under /potentials. Legacy URLs
 // permanently redirect (308) to the new routes; Next.js appends the
-// original query string to redirect destinations, so /browse filter
-// params, /compare?ids=, and /search?q= survive the hop.
+// original query string to redirect destinations, so /compare?ids= and
+// /search?q= survive the hop.
+//
+// NFM-5228: /browse is EXEMPTED from the redirect table and served as an
+// afterFiles alias rewrite instead. Every legacy URL paid a full extra
+// round trip through Cloudflare for the 308 hop before the real page
+// render; on /browse — the sentinel-monitored legacy entry point — that
+// chain measured 3.0–5.3s and intermittently breached the site monitor's
+// 5s P1 budget. Serving /potentials content directly at /browse (query
+// string preserved by the rewrite) removes the extra hop entirely. SEO
+// stays consolidated via the canonical link on the potentials page
+// metadata; the remaining legacy routes keep their 308s.
 const LEGACY_ROUTE_REDIRECTS = [
-  { source: "/browse", destination: "/potentials" },
   // :id* matches zero or more segments, so bare /potential redirects to
   // /potentials and /potential/<id> to /potentials/<id>.
   { source: "/potential/:id*", destination: "/potentials/:id*" },
@@ -53,6 +60,12 @@ const LEGACY_ROUTE_REDIRECTS = [
   { source: "/literature/:path*", destination: "/publications/:path*" },
   { source: "/search", destination: "/potentials/search" },
 ]
+
+// NFM-5228: alias-serve the legacy browse entry point. afterFiles (not
+// beforeFiles) so the alias never shadows filesystem or dynamic routes —
+// there is no /browse route on disk, and afterFiles is the same phase the
+// other proxied rewrites live in.
+const LEGACY_ALIAS_REWRITES = [{ source: "/browse", destination: "/potentials" }]
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -171,22 +184,28 @@ const nextConfig: NextConfig = {
     // Without this, the rewrite below would proxy /api/* back through
     // Next.js and either hang or fail (NFM-1407).
     if (DISABLE_API_REWRITE) {
-      return { ...corpusIndexRewrites, afterFiles: [...lightragRewrites, ...apiDocsRewrites] }
+      return {
+        ...corpusIndexRewrites,
+        afterFiles: [...LEGACY_ALIAS_REWRITES, ...lightragRewrites, ...apiDocsRewrites],
+      }
     }
 
     // Skip rewrite when API_SERVER_URL matches the public domain — nginx
     // already handles /api/* routing in that case.
     const publicUrl = process.env.NEXT_PUBLIC_APP_URL
-    const wouldLoop = API_SERVER_URL && publicUrl &&
-      new URL(API_SERVER_URL).host === new URL(publicUrl).host
+    const wouldLoop =
+      API_SERVER_URL && publicUrl && new URL(API_SERVER_URL).host === new URL(publicUrl).host
 
     if (wouldLoop) {
-      return { ...corpusIndexRewrites, afterFiles: [...lightragRewrites, ...apiDocsRewrites] }
+      return {
+        ...corpusIndexRewrites,
+        afterFiles: [...LEGACY_ALIAS_REWRITES, ...lightragRewrites, ...apiDocsRewrites],
+      }
     }
 
     return {
       ...corpusIndexRewrites,
-      afterFiles: [...lightragRewrites, ...apiDocsRewrites],
+      afterFiles: [...LEGACY_ALIAS_REWRITES, ...lightragRewrites, ...apiDocsRewrites],
       // NFM-3317: the /api/* proxy must be a FALLBACK rewrite, not
       // afterFiles. afterFiles rewrites run BEFORE dynamic routes match, so
       // the catch-all hijacked every dynamic BFF route (/api/potentials/[id],

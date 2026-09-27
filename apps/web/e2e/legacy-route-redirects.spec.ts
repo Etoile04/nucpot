@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test"
 
 /**
- * Legacy route redirects (NFM-4990 IA-REFACTOR P1, supersedes NFM-4987).
+ * Legacy route handling (NFM-4990 IA-REFACTOR P1, supersedes NFM-4987;
+ * /browse amended by NFM-5228).
  *
  * The potential-function library moved to a first-level path family,
  * literature moved to /publications, and search became a secondary
  * route under /potentials:
- *   /browse         → /potentials
+ *   /browse         →  alias-served /potentials content (NFM-5228, was 308)
  *   /potential/:id  → /potentials/:id   (bare /potential → /potentials)
  *   /compare        → /potentials/compare
  *   /literature/*   → /publications/*
@@ -16,6 +17,12 @@ import { expect, test } from "@playwright/test"
  * so every legacy URL must answer 308 with the new Location, and the
  * original query string must survive the hop (Next.js appends it to the
  * redirect destination automatically).
+ *
+ * NFM-5228 EXEMPTION: /browse is an afterFiles REWRITE, not a redirect.
+ * The 308 chain (redirect hop + page render, both through Cloudflare)
+ * measured 3.0–5.3s on the sentinel and intermittently breached the 5s
+ * P1 budget, so /browse now answers 200 directly with the /potentials
+ * content and a canonical link back to /potentials.
  *
  * Status/Location assertions use Node's global fetch with
  * `redirect: "manual"` — undici returns the raw redirect response with
@@ -44,20 +51,20 @@ async function getRedirect(path: string): Promise<Response> {
 }
 
 test.describe("Legacy route permanent redirects (NFM-4990)", { tag: "@smoke" }, () => {
-  test("/browse → /potentials is a 308 with Location", async () => {
+  // NFM-5228: /browse serves the /potentials page directly via an
+  // afterFiles rewrite — 200, no Location header, no redirect hop. This
+  // is the arm of the fix that removes the extra Cloudflare round trip.
+  test("/browse serves the potentials page directly (200, no redirect) — NFM-5228", async () => {
     const res = await getRedirect("/browse")
-    expect(res.status).toBe(308)
-    expect(res.headers.get("location")).toBe("/potentials")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("location")).toBeNull()
+    expect(res.headers.get("content-type")).toContain("text/html")
   })
 
-  test("/browse query params survive the redirect", async () => {
+  test("/browse with filter params answers 200 directly (NFM-5228)", async () => {
     const res = await getRedirect("/browse?element=Fe&sort=updated&page=2")
-    expect(res.status).toBe(308)
-    const loc = new URL(res.headers.get("location")!, BASE_URL)
-    expect(loc.pathname).toBe("/potentials")
-    expect(loc.searchParams.get("element")).toBe("Fe")
-    expect(loc.searchParams.get("sort")).toBe("updated")
-    expect(loc.searchParams.get("page")).toBe("2")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("location")).toBeNull()
   })
 
   test("/potential/<id> → /potentials/<id> is a 308 with Location", async () => {
@@ -91,9 +98,7 @@ test.describe("Legacy route permanent redirects (NFM-4990)", { tag: "@smoke" }, 
   test("/literature/<id> deep link → /publications/<id> is a 308", async () => {
     const res = await getRedirect("/literature/e50dbbb2-0e14-4afb-88cb-33537bfd96f1")
     expect(res.status).toBe(308)
-    expect(res.headers.get("location")).toBe(
-      "/publications/e50dbbb2-0e14-4afb-88cb-33537bfd96f1"
-    )
+    expect(res.headers.get("location")).toBe("/publications/e50dbbb2-0e14-4afb-88cb-33537bfd96f1")
   })
 
   test("/literature query params survive the redirect", async () => {
@@ -114,9 +119,16 @@ test.describe("Legacy route permanent redirects (NFM-4990)", { tag: "@smoke" }, 
     expect(loc.searchParams.get("mode")).toBe("text")
   })
 
-  test("browser follows /browse?filters to the functional page", async ({ page }) => {
+  // NFM-5228: the browser must stay on /browse (no client-visible
+  // redirect) while the potentials content renders, and the canonical
+  // link keeps SEO consolidated on /potentials now that both paths
+  // serve the same 200 document.
+  test("browser renders the functional page at /browse without a redirect hop — NFM-5228", async ({
+    page,
+  }) => {
     await page.goto("/browse?element=Fe", { waitUntil: "domcontentloaded" })
-    await expect(page).toHaveURL(/\/potentials\?element=Fe/)
+    await expect(page).toHaveURL(/\/browse\?element=Fe/)
     await expect(page.locator("nav").first()).toBeVisible()
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", /\/potentials\/?$/)
   })
 })
