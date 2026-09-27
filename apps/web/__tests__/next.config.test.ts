@@ -78,9 +78,21 @@ function apiDocsRewrites(baseUrl = "http://nucpot-prod-api:8000") {
   ]
 }
 
-/** Convenience composer for the full afterFiles payload (LightRAG + /api-docs). */
+/**
+ * NFM-5228: /browse is served as an afterFiles ALIAS rewrite to
+ * /potentials, not a 308 redirect. The sentinel-measured redirect chain
+ * (308 hop + /potentials render through Cloudflare) ran 3.0–5.3s and
+ * intermittently breached the 5s P1 budget; serving the content directly
+ * at /browse removes the extra round trip entirely.
+ */
+const browseAliasRewrite = {
+  source: "/browse",
+  destination: "/potentials",
+}
+
+/** Convenience composer for the full afterFiles payload (alias + LightRAG + /api-docs). */
 function afterFilesWith(lightragBase: string, apiBase = "http://nucpot-prod-api:8000") {
-  return [...lightragRewrites(lightragBase), ...apiDocsRewrites(apiBase)]
+  return [browseAliasRewrite, ...lightragRewrites(lightragBase), ...apiDocsRewrites(apiBase)]
 }
 
 /** NFM-3303: the corpus index rewrite, always in beforeFiles. */
@@ -235,7 +247,10 @@ describe("next.config.ts rewrites", () => {
     const rewrites = await config.rewrites!()
     expect(rewrites).toEqual({
       beforeFiles: [corpusIndexRewrite],
-      afterFiles: afterFilesWith("http://nucpot-staging-lightrag:9621", "http://nucpot-staging-api:8000"),
+      afterFiles: afterFilesWith(
+        "http://nucpot-staging-lightrag:9621",
+        "http://nucpot-staging-api:8000",
+      ),
       fallback: [
         {
           source: "/api/:path*",
@@ -251,7 +266,10 @@ describe("next.config.ts rewrites", () => {
   it("always mounts the corpus index rewrite in beforeFiles, in every env scenario", async () => {
     for (const env of [
       { DISABLE_API_REWRITE: "true" },
-      { API_SERVER_URL: "https://nucpot.dpdns.org", NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org" },
+      {
+        API_SERVER_URL: "https://nucpot.dpdns.org",
+        NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
+      },
       {},
     ]) {
       const config = await loadConfig(env)
@@ -316,9 +334,7 @@ describe("next.config.ts rewrites", () => {
     const rewrites = (await config.rewrites!()) as {
       afterFiles: Array<{ source: string; destination: string }>
     }
-    const openapiIdx = rewrites.afterFiles.findIndex(
-      (r) => r.source === "/openapi.json",
-    )
+    const openapiIdx = rewrites.afterFiles.findIndex((r) => r.source === "/openapi.json")
     expect(openapiIdx, "bare /openapi.json rewrite must be present").toBeGreaterThanOrEqual(0)
     expect(
       rewrites.afterFiles[openapiIdx]?.destination,
@@ -335,6 +351,58 @@ describe("next.config.ts rewrites", () => {
         openapiIdx < catchAllIdx,
         "bare /openapi.json must come before /api-docs/swagger/:path*",
       ).toBe(true)
+    }
+  })
+
+  // NFM-5228 regression guard: /browse MUST be an afterFiles rewrite
+  // (alias serve) in every environment — the legacy 308 redirect doubled
+  // the user-facing chain through Cloudflare (redirect hop + page render,
+  // 3.0–5.3s total, intermittently breaching the 5s P1 sentinel budget).
+  // It must NOT be a beforeFiles rewrite either: afterFiles keeps the
+  // alias behind filesystem/dynamic-route resolution, same phase as the
+  // other proxied rewrites.
+  it("serves /browse via afterFiles alias rewrite to /potentials in every env scenario (NFM-5228)", async () => {
+    for (const env of [
+      { DISABLE_API_REWRITE: "true" },
+      {
+        API_SERVER_URL: "https://nucpot.dpdns.org",
+        NEXT_PUBLIC_APP_URL: "https://nucpot.dpdns.org",
+      },
+      {},
+    ]) {
+      const config = await loadConfig(env)
+      const rewrites = (await config.rewrites!()) as {
+        beforeFiles: Array<{ source: string }>
+        afterFiles: Array<{ source: string; destination: string }>
+      }
+      const browse = rewrites.afterFiles.find((r) => r.source === "/browse")
+      expect(browse, `scenario ${JSON.stringify(env)}: /browse alias rewrite missing`).toBeDefined()
+      expect(browse!.destination).toBe("/potentials")
+      expect(
+        rewrites.beforeFiles.some((r) => r.source === "/browse"),
+        `scenario ${JSON.stringify(env)}: /browse must NOT shadow filesystem routes`,
+      ).toBe(false)
+    }
+  })
+
+  // NFM-5228 companion guard: only /browse lost its redirect. The other
+  // legacy routes (NFM-4990) keep their permanent 308s — they have no
+  // sentinel-monitored latency budget and consolidate SEO on the new IA.
+  it("keeps the non-browse legacy routes as permanent redirects (NFM-5228 scope guard)", async () => {
+    const config = await loadConfig({})
+    const redirects = (await config.redirects!()) as Array<{
+      source: string
+      destination: string
+      permanent: boolean
+    }>
+    expect(
+      redirects.find((r) => r.source === "/browse"),
+      "/browse must not 308 anymore (NFM-5228)",
+    ).toBeUndefined()
+    for (const source of ["/potential/:id*", "/compare", "/literature/:path*", "/search"]) {
+      const r = redirects.find((x) => x.source === source)
+      expect(r, `${source} must stay redirected`).toBeDefined()
+      expect(r!.permanent, `${source} must stay permanent`).toBe(true)
     }
   })
 })
