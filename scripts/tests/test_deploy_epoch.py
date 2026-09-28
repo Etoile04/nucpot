@@ -765,8 +765,10 @@ def test_full_deploy_enforced_refusal_exits_80_before_cutover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     host = DeployHost(tmp_path, monkeypatch)
-    # A fresh lock, live pid (this pytest process), epoch >= the baseline the
-    # next mint would compare against — the conflict the CAS exists for.
+    # A fresh lock held by a live pid (this pytest process) — an in-flight
+    # deploy, which the refusal rule keys on regardless of the holder's
+    # epoch (the seeded epoch values are incidental after the round-1 fix:
+    # the baseline includes mints from runs that never took the lock).
     host.epoch_file.write_text("5\n", encoding="utf-8")
     host.lock_file.write_text(
         json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
