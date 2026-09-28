@@ -68,6 +68,11 @@ TARGETS: list[CheckTarget] = [
         url="https://nucpot.dpdns.org/api/v1/health",
         expected_status=200,
         expected_contains='"ok"',
+        # P0 signals availability only: budget == hard socket timeout, so the
+        # chronic CN↔edge RTT tail (1-3.3s baseline) cannot escalate slowness
+        # to CRITICAL while the origin is healthy (NFM-5263 flap cluster).
+        # Latency regression stays visible via the 5s-default P1 probes.
+        max_response_ms=TIMEOUT_SECONDS * 1000,
         severity="P0",
     ),
     CheckTarget(
