@@ -736,6 +736,11 @@ jobs:
           # prod (including its stub-Paperclip end-to-end filing path)
           # before any of it ships.
           python3 -m pytest scripts/tests/test_check_deploy_drift.py -v
+          # NFM-5253: deploy-epoch fencing primitive (NFM-4848 T1/T4/T5,
+          # shadow mode). Hermetic coverage for the epoch helper, the
+          # lockfile CAS, the epoch-fenced health-marker attestation and
+          # record_rollback — all before any of it ships to prod.
+          python3 -m pytest scripts/tests/test_deploy_epoch.py -v
 
       # ===================================================================
       # NFM-2564 fix (2026-08-08): buildkit's default creds helper is
@@ -883,8 +888,28 @@ jobs:
           # deploy's path is the GH runner (a manual deploy_prod.sh run keeps
           # the deploy_prod.sh:<user> default inside the script).
           # ADR-018 / NFM-4762: PROXY_PORT dropped from the sudo invocation.
+          # NFM-5253 (NFM-4848 T1): tee the deploy body's stdout so the
+          # minted deploy-epoch anchor (DEPLOY_EPOCH_MINTED=N) survives into
+          # a step output; the emit step's FIRST_POLL gate requires the
+          # health marker to carry EXACTLY this epoch. The tee wrapper keeps
+          # the ssh exit code authoritative via PIPESTATUS[0] — deploy
+          # failure semantics are unchanged, and a deploy that dies before
+          # minting simply leaves the output unset (emit → first-poll=false,
+          # conservative).
+          set +e
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "DEPLOY_SHA='${{ github.sha }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh"
+            "DEPLOY_SHA='${{ github.sha }}' DEPLOY_ACTOR='gh-runner:${{ github.actor }}' sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-deploy.sh" \
+            | tee "$RUNNER_TEMP/deploy-prod-stdout.log"
+          DEPLOY_RC=${PIPESTATUS[0]}
+          set -e
+          DEPLOY_EPOCH="$(sed -n 's/^DEPLOY_EPOCH_MINTED=//p' "$RUNNER_TEMP/deploy-prod-stdout.log" | tail -n 1)"
+          if [ -n "$DEPLOY_EPOCH" ]; then
+            echo "epoch=${DEPLOY_EPOCH}" >> "$GITHUB_OUTPUT"
+            echo "NFM-5253: this run minted deploy-epoch ${DEPLOY_EPOCH}"
+          else
+            echo "::warning::NFM-5253: no DEPLOY_EPOCH_MINTED anchor in deploy output — emit step will report first-poll=false (conservative)"
+          fi
+          exit "$DEPLOY_RC"
 
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
@@ -1086,9 +1111,27 @@ jobs:
           # read by the runner). nfmdeploy's $HOME is /var/lib/nfmdeploy,
           # mode 755 group-readable (lwj04 in staff), so the runner can read
           # the marker nfmdeploy wrote without EACCES.
+          #
+          # NFM-5253 (NFM-4848 T1): existence alone no longer attests. The
+          # deploy body writes the marker as {"epoch": N, "sha": ...} where
+          # N is the epoch THIS run minted (steps.deploy.outputs.epoch,
+          # extracted from the DEPLOY_EPOCH_MINTED anchor on ssh stdout).
+          # deploy_event_marker_attests prints "true" only on
+          # marker.epoch == run epoch — a stale/poisoned marker (2026-08-18,
+          # NFM-3845 UPDATE 4) fails the comparison structurally. Unknown
+          # run epoch (deploy died before minting) or a pre-fencing marker
+          # also yield false — conservative by construction.
+          . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh" || true
+          RUN_EPOCH="${{ steps.deploy.outputs.epoch }}"
           FIRST_POLL="false"
-          if [ -f /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed ]; then
-            FIRST_POLL="true"
+          if command -v deploy_event_marker_attests >/dev/null 2>&1; then
+            FIRST_POLL="$(deploy_event_marker_attests \
+              /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed "$RUN_EPOCH")"
+          elif [ -f /var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed ] && [ -n "$RUN_EPOCH" ]; then
+            # Library missing from this checkout (should not happen — same
+            # commit ships both) — refuse to attest without the comparison.
+            echo "::warning::NFM-5253: deploy_event.sh marker predicate unavailable — first-poll=false (conservative)"
+            FIRST_POLL="false"
           fi
 
           _prod_emit() {
@@ -1096,7 +1139,9 @@ jobs:
             # Override NFMD_DEPLOY_EVENTS_PATH so the write lands in the fragment
             # dir, not the default repo-relative path. The library strips
             # control chars from environment names — "production" passes through
-            # untouched.
+            # untouched. NFM-5253: --deploy-epoch rides along ADDITIVELY (the
+            # collector checks only for missing §3.1 fields) so the SRE shadow
+            # week can watch minted epochs in the event stream.
             . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh" || return 0
             NFMD_DEPLOY_EVENTS_PATH="$FRAGMENT_PATH" deploy_event_emit \
               --environment production \
@@ -1107,6 +1152,7 @@ jobs:
               --rollback-triggered false \
               --skip-flag-used false \
               --duration-ms 0 \
+              --deploy-epoch "${RUN_EPOCH:-}" \
               || return 0
             return 0
           }

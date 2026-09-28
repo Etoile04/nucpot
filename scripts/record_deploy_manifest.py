@@ -25,7 +25,10 @@ rename without coordinating in the NFM-4268 thread:
       "image_digests":     {"<service>": "<immutable digest>"},
       "service_containers":{"<service>": "<container name>"},
       "timestamp":         "<UTC ISO-8601>",
-      "actor":             "<deploy path + execution identity>"
+      "actor":             "<deploy path + execution identity>",
+      "deploy_epoch":      <int, ADDITIVE (NFM-5253) — omitted when no
+                            epoch exists yet; readers treat missing as
+                            "unknown">
     }
 
 Digest precedence (the G4b alarm must recompute the same way):
@@ -83,6 +86,29 @@ from pathlib import Path
 DEFAULT_COMPOSE_PROJECT = "nucpot-prod"
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
+
+# NFM-5253: canonical G2 state dir, shared with deploy_prod.sh /
+# check_deploy_drift.py. Kept local (not imported from deploy_epoch.py) so
+# this recorder stays a standalone stdlib script — hermetic tests and the
+# host gate execute copies of it in isolation.
+_CANONICAL_G2_DIR = Path("/usr/local/var/nfm-g2")
+
+
+def _read_current_epoch() -> int | None:
+    """Best-effort read of the current deploy-epoch (NFM-5253). Resolution
+    chain mirrors deploy_epoch.py: $NFM_DEPLOY_EPOCH > G2 dir > ~/.nfmd.
+    None when absent/unparseable — callers omit the manifest field then."""
+    override = os.environ.get("NFM_DEPLOY_EPOCH")
+    if override:
+        path = Path(override)
+    else:
+        g2 = os.environ.get("NFM_G2_VAR_DIR") or str(_CANONICAL_G2_DIR)
+        path = Path(g2) / "prod-deploy.epoch" if Path(g2).is_dir() else Path.home() / ".nfmd" / "prod-deploy.epoch"
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return int(raw) if raw.isascii() and raw.isdigit() else None
 
 # NFM-4884: ONE actor charset contract, TWO enforcers. The gate entry
 # (scripts/host-prod-gate/entries/run-record-manifest.sh) validates the
@@ -179,6 +205,7 @@ def build_manifest(
     actor: str,
     project: str,
     partial_reason: str | None = None,
+    deploy_epoch: int | None = None,
 ) -> dict:
     """Collect live state and assemble the contract-shaped manifest."""
     containers = running_service_containers(project)
@@ -196,6 +223,13 @@ def build_manifest(
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "actor": actor,
     }
+    # NFM-5253: epoch of the recorded state transition. ADDITIVE field —
+    # the frozen contract names are untouched. None (epoch helper never ran,
+    # pre-fencing host) omits the key entirely, preserving the legacy shape
+    # exactly; readers treat a missing epoch as "unknown".
+    resolved_epoch = deploy_epoch if deploy_epoch is not None else _read_current_epoch()
+    if resolved_epoch is not None:
+        manifest["deploy_epoch"] = resolved_epoch
     for info in sorted(containers, key=_service_name):
         service = _service_name(info)
         container = _container_ref(info)
@@ -299,6 +333,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="mark the manifest as an explicit partial state with this reason "
         "(AC-G4a.5); by default failures leave the previous manifest intact.",
     )
+    parser.add_argument(
+        "--deploy-epoch",
+        type=int,
+        default=None,
+        help="NFM-5253: epoch of the state transition being recorded (the "
+        "minter's value). When omitted, the current epoch FILE value is used "
+        "best-effort; when no epoch exists the field is left out (legacy shape).",
+    )
     args = parser.parse_args(argv)
     if not args.deploy_sha.strip():
         parser.error("--deploy-sha must not be empty")
@@ -323,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             actor=args.actor,
             project=args.compose_project,
             partial_reason=args.partial,
+            deploy_epoch=args.deploy_epoch,
         )
         write_atomic(manifest_path, manifest)
     except CollectError as exc:

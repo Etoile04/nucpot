@@ -17,7 +17,8 @@
 #       --rollback-triggered false \
 #       --skip-flag-used false \
 #       --duration-ms 41230 \
-#       --health-status ok
+#       --health-status ok \
+#       --deploy-epoch 7        # NFM-5253: optional, additive JSON field
 #
 # Event schema is fixed by the NFM-2035 spec, section 3.1: one JSON object per
 # line, appended, never rewritten.
@@ -128,7 +129,7 @@ _deploy_event_emit_impl() {
   local environment="unknown" triggered_by="unknown" commit_sha="unknown"
   local first_pass_success="false" health_gate_first_poll_passed="false"
   local rollback_triggered="false" skip_flag_used="false" duration_ms="0"
-  local health_status="error"
+  local health_status="error" deploy_epoch=""
 
   while [ "$#" -gt 0 ]; do
     local key="$1"; shift
@@ -143,10 +144,22 @@ _deploy_event_emit_impl() {
       --skip-flag-used)                 skip_flag_used="$val" ;;
       --duration-ms)                    duration_ms="$val" ;;
       --health-status)                  health_status="$val" ;;
+      --deploy-epoch)                   deploy_epoch="$val" ;;
       *) deploy_event_warn "ignoring unknown argument: $key" ;;
     esac
     [ "$#" -gt 0 ] && shift
   done
+
+  # NFM-5253 (NFM-4848): deploy_epoch is ADDITIVE — appended after the
+  # frozen §3.1 fields, never reordering them, so existing consumers
+  # (prod_event_collector.validate_fragment checks only for MISSING §3.1
+  # fields) and the sha256(event_json) idempotency ledger keep working.
+  # Absent or non-numeric → omitted entirely (legacy line shape).
+  local epoch_suffix=""
+  case "${deploy_epoch:-}" in
+    ''|*[!0-9]*) epoch_suffix="" ;;
+    *) epoch_suffix=",\"deploy_epoch\":${deploy_epoch}" ;;
+  esac
 
   local path parent
   path="$(deploy_event_path)"
@@ -162,7 +175,7 @@ _deploy_event_emit_impl() {
   fi
 
   local line
-  line="$(printf '{"event_id":"%s","ts":"%s","environment":"%s","triggered_by":"%s","commit_sha":"%s","first_pass_success":%s,"health_gate_first_poll_passed":%s,"rollback_triggered":%s,"skip_flag_used":%s,"duration_ms":%s,"health_status":"%s"}' \
+  line="$(printf '{"event_id":"%s","ts":"%s","environment":"%s","triggered_by":"%s","commit_sha":"%s","first_pass_success":%s,"health_gate_first_poll_passed":%s,"rollback_triggered":%s,"skip_flag_used":%s,"duration_ms":%s,"health_status":"%s"%s}' \
     "$(_deploy_event_uuid4)" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "$(_deploy_event_json_escape "$environment")" \
@@ -173,7 +186,8 @@ _deploy_event_emit_impl() {
     "$(_deploy_event_bool "$rollback_triggered")" \
     "$(_deploy_event_bool "$skip_flag_used")" \
     "$(_deploy_event_int "$duration_ms")" \
-    "$(_deploy_event_health_status "$health_status")")"
+    "$(_deploy_event_health_status "$health_status")" \
+    "$epoch_suffix")"
 
   # Single write of a short line to an O_APPEND fd: atomic against concurrent
   # appends, so a staging and a production deploy cannot interleave a line.
@@ -204,6 +218,49 @@ deploy_event_emit() {
   if [ "$rc" -ne 0 ]; then
     deploy_event_warn "event writer failed unexpectedly (rc=$rc) — event not recorded."
   fi
+  return 0
+}
+
+# NFM-5253 (NFM-4848 T1) — epoch-fenced health-marker attestation.
+#   deploy_event_marker_attests <marker-path> [run-epoch]
+# Prints exactly "true" or "false". TRUE iff the marker file is the JSON
+# written by THIS run's health gate — i.e. its "epoch" member equals the
+# run's minted deploy-epoch (surfaced by the workflow's deploy step from
+# the DEPLOY_EPOCH_MINTED ssh-stdout anchor). Everything else — marker
+# absent/unreadable, no parseable epoch (pre-fencing marker), unparseable
+# content, or an UNKNOWN run epoch — prints "false": a marker that cannot
+# be proven to be THIS run's can never attest first-poll (the structural
+# fix for the 2026-08-18 / NFM-3845-UPDATE-4 stale-marker poisonings; the
+# scrub-at-top in deploy_prod.sh stays as hygiene, not defense).
+# Never fails its caller; always prints one boolean word.
+deploy_event_marker_attests() {
+  local marker_path="${1:-}" run_epoch="${2:-}" marker_epoch=""
+  if [ -z "${run_epoch}" ]; then
+    deploy_event_warn "run epoch unknown (deploy step emitted no DEPLOY_EPOCH_MINTED) — first-poll=false (conservative)"
+    printf 'false'
+    return 0
+  fi
+  if [ -z "${marker_path}" ] || [ ! -f "${marker_path}" ] || [ ! -r "${marker_path}" ]; then
+    deploy_event_warn "health marker absent/unreadable (${marker_path:-<unset>}) — first-poll=false"
+    printf 'false'
+    return 0
+  fi
+  # The marker is a single-line JSON object machine-written by this repo;
+  # a sed extract is adequate, and anything it cannot parse yields no match
+  # → "false" (conservative), which is exactly the desired failure mode.
+  marker_epoch="$(sed -n 's/^.*"epoch"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*$/\1/p' "${marker_path}" | head -n 1)"
+  if [ -z "${marker_epoch}" ]; then
+    deploy_event_warn "health marker carries no parseable epoch (pre-fencing marker at ${marker_path}) — first-poll=false (conservative)"
+    printf 'false'
+    return 0
+  fi
+  if [ "${marker_epoch}" = "${run_epoch}" ]; then
+    deploy_event_warn "marker epoch ${marker_epoch} == run epoch ${run_epoch} — first-poll attested"
+    printf 'true'
+    return 0
+  fi
+  deploy_event_warn "STALE MARKER: marker epoch ${marker_epoch} != run epoch ${run_epoch} — first-poll=false (NFM-5253: a stale marker can structurally never attest)"
+  printf 'false'
   return 0
 }
 

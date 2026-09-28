@@ -809,6 +809,53 @@ def _lock_is_fresh(path: Path, max_lock_age: int) -> bool:
     return age <= max_lock_age
 
 
+def _lock_epoch(path: Path) -> int | None:
+    """Epoch recorded in the deploy lock (NFM-5253), or None when the lock
+    is absent/unparseable/pre-fencing (no epoch member). Never raises."""
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get("epoch")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _log_epoch_stand_down_evaluation(lock_path: Path, manifest: dict | None) -> None:
+    """NFM-5253 (NFM-4848 T4) — shadow-mode observability for the epoch-aware
+    stand-down rule. The FUTURE rule: stand down only while
+    ``lock.epoch > manifest epoch`` (a lock at-or-behind the last recorded
+    manifest is leftover/stale, not an in-flight deploy). SHADOW MODE: this
+    logs what the rule WOULD say and changes nothing — the checker keeps
+    standing down on any fresh lock until the separately-dispatched
+    enforcement flip. AC6: the evaluation rides the existing cron log."""
+    lock_ep = _lock_epoch(lock_path)
+    manifest_ep = None
+    if isinstance(manifest, dict):
+        value = manifest.get("deploy_epoch")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            manifest_ep = value
+    fmt = lambda v: "unknown" if v is None else str(v)  # noqa: E731
+    if lock_ep is None or manifest_ep is None:
+        verdict = "indeterminate"
+        detail = "epoch binding unavailable (pre-fencing lock or manifest)"
+    elif lock_ep > manifest_ep:
+        verdict = "true"
+        detail = f"lock epoch {lock_ep} is ahead of manifest epoch {manifest_ep}"
+    else:
+        verdict = "false"
+        detail = f"lock epoch {lock_ep} is not ahead of manifest epoch {manifest_ep} (leftover lock)"
+    print(
+        f"==> epoch fencing (NFM-5253 shadow): lock.epoch={fmt(lock_ep)} "
+        f"manifest.epoch={fmt(manifest_ep)} → would_stand_down={verdict} "
+        f"({detail}); NOT enforced — standing down per the fresh-lock rule "
+        "(current behavior) as before."
+    )
+
+
 def _acquire_runlock(state_path: Path) -> tuple[object | None, Path | None]:
     """Exclusive per-run lock against overlapping cron instances (CR F8).
 
@@ -963,6 +1010,7 @@ def _run_check_locked(
 
     # ADR-013 §4: a sanctioned deploy in progress must not file.
     if _lock_is_fresh(lock_path, args.max_lock_age):
+        _log_epoch_stand_down_evaluation(lock_path, manifest)
         print(
             f"==> divergence present but deploy lock is fresh "
             f"({lock_path}) — sanctioned deploy in progress, not filing."
@@ -977,6 +1025,7 @@ def _run_check_locked(
         )
         time.sleep(args.recheck_seconds)
         if _lock_is_fresh(lock_path, args.max_lock_age):
+            _log_epoch_stand_down_evaluation(lock_path, manifest)
             print(
                 "==> deploy lock appeared during re-check — sanctioned deploy "
                 "in progress, not filing."

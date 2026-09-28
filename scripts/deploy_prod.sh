@@ -22,7 +22,8 @@
 # Requires (validated up front): DEPLOY_SHA.
 # Optional: PROXY_PORT (ADR-018 / NFM-4762) — when set, applies HTTP_PROXY/
 # HTTPS_PROXY for the deploy session. Default unset = direct egress everywhere.
-# Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert.
+# Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert;
+# 80 = NFM-5253 enforced deploy-lock refusal (NFM_DEPLOY_LOCK_ENFORCE=1 only).
 # ============================================================================
 set -euo pipefail
 
@@ -84,8 +85,52 @@ if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
   fi
 fi
 mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
-printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
+
+# NFM-5253 (NFM-4848 T4, deploy-epoch fencing — SHADOW MODE): the lockfile
+# acquire is now an epoch-aware CAS instead of a blind `>` overwrite. One
+# primitive: scripts/deploy_epoch.py mints the next epoch (monotonic int at
+# ${G2_VAR_DIR}/prod-deploy.epoch, fcntl-serialized) and, inside that same
+# critical section, decides whether THIS run may take the lock — refuse iff
+# a fresh lock (age <= 7200s) with a live pid holds an epoch >= our
+# pre-mint baseline. Shadow semantics: the decision (EPOCH_MINTED /
+# LOCK_DECISION / deploy_epoch_lock JSON) is logged for the SRE week, but a
+# "refuse" still proceeds exactly like today's blind overwrite; the actual
+# refusal is gated behind NFM_DEPLOY_LOCK_ENFORCE=1 (default OFF — the
+# enforcement flip is a separate CPO-dispatched follow-up). AC6: the
+# minted epoch + lock decision ride the deploy log (ssh stdout → Actions
+# log) with no new infrastructure.
+DEPLOY_EPOCH_MINTED=""
+NFM5253_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NFM5253_ENFORCE_FLAG=""
+[ "${NFM_DEPLOY_LOCK_ENFORCE:-0}" = "1" ] && NFM5253_ENFORCE_FLAG="--enforce"
+NFM5253_ACQUIRE_RC=0
+NFM5253_ACQUIRE_OUT="$(python3 "${NFM5253_SCRIPT_DIR}/deploy_epoch.py" lock-acquire \
+  --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} 2>&1)" \
+  || NFM5253_ACQUIRE_RC=$?
+if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
+  printf '%s\n' "${NFM5253_ACQUIRE_OUT}"
+  DEPLOY_EPOCH_MINTED="$(printf '%s\n' "${NFM5253_ACQUIRE_OUT}" | sed -n 's/^EPOCH_MINTED=//p' | tail -n 1)"
+  DEPLOY_LOCK_DECISION="$(printf '%s\n' "${NFM5253_ACQUIRE_OUT}" | sed -n 's/^LOCK_DECISION=//p' | tail -n 1)"
+  # Machine anchor: the workflow's deploy step greps this out of ssh stdout
+  # into GITHUB_OUTPUT; the emit step's FIRST_POLL gate then requires the
+  # health marker to carry THIS epoch (T1 — a stale marker can structurally
+  # never attest).
+  echo "DEPLOY_EPOCH_MINTED=${DEPLOY_EPOCH_MINTED}"
+  echo "==> deploy epoch ${DEPLOY_EPOCH_MINTED} minted; lock decision: ${DEPLOY_LOCK_DECISION:-unknown} (NFM-5253 shadow)"
+  if [ "${DEPLOY_LOCK_DECISION}" = "refuse" ]; then
+    echo "WARNING (NFM-5253 shadow): lock conflict detected but NOT enforced — proceeding (NFM_DEPLOY_LOCK_ENFORCE=1 refuses; flip only after the SRE shadow week)."
+  fi
+elif [ "${NFM5253_ACQUIRE_RC}" -eq 80 ]; then
+  printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
+  echo "FATAL (NFM-5253): deploy REFUSED — the deploy lock is held by a live concurrent deploy (fresh lock, live pid, epoch >= ours). Not overwriting." >&2
+  exit 80
+else
+  # Shadow-mode tolerance: a missing/broken helper must not block deploys
+  # (pre-fencing hosts, partial checkouts). Legacy blind write, no epoch.
+  echo "WARNING (NFM-5253): epoch mint/lock-acquire unavailable (rc=${NFM5253_ACQUIRE_RC}) — falling back to the legacy lock write: ${NFM5253_ACQUIRE_OUT}"
+  printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
+fi
 trap 'rm -f "$NFM_DEPLOY_LOCK"' EXIT
 
 # NFM-3328: fail-fast semantics. Prior deploys slid past failed steps (build
@@ -139,6 +184,14 @@ printf '{}' > "${DOCKER_CONFIG}/config.json"
 # the emit fragment report "health-gate-first-poll-passed true" for a deploy
 # that never cut over. Scrub it at the top of every deploy so the marker can
 # only ever attest to THIS run's health gate.
+#
+# NFM-5253 (NFM-4848 T1): the scrub is now HYGIENE, not the defense. The
+# marker written after the health gate carries {"epoch", "sha"} where epoch
+# is THIS run's minted deploy-epoch; the workflow's emit step reports
+# FIRST_POLL only when marker.epoch == the run's minted epoch (surfaced via
+# the DEPLOY_EPOCH_MINTED ssh-stdout anchor). A stale marker now fails the
+# comparison structurally — poisoning it can no longer produce a false
+# attest even if the scrub were skipped.
 #
 # NFM-4333 RC8: marker must live under $HOME, NOT /tmp. /tmp is mode 1777
 # sticky; a marker left over from a prior lwj04-as-runner run (e.g. an
@@ -379,7 +432,19 @@ health_first_poll() {
 echo "Checking API health..."
 rm -f "${NFMD_HEALTH_MARKER}"
 if health_first_poll http://localhost:8001/api/v1/health 12 5; then
-  touch "${NFMD_HEALTH_MARKER}"
+  # NFM-5253 (T1): the marker carries THIS run's minted epoch + sha. The
+  # emit step's epoch comparison (not the scrub) is the defense: a marker
+  # from any other run — stale, overlapping, or poisoned — fails
+  # marker.epoch == run epoch and can never attest FIRST_POLL. The
+  # epoch-less touch is the shadow-mode fallback when the epoch helper was
+  # unavailable (the emit step then reports FIRST_POLL=false, conservative).
+  if [ -n "${DEPLOY_EPOCH_MINTED}" ]; then
+    printf '{"epoch": %s, "sha": "%s"}\n' "${DEPLOY_EPOCH_MINTED}" "${DEPLOY_SHA}" \
+      > "${NFMD_HEALTH_MARKER}"
+    echo "==> health marker written with epoch ${DEPLOY_EPOCH_MINTED} (NFM-5253)"
+  else
+    touch "${NFMD_HEALTH_MARKER}"
+  fi
 else
   exit 1
 fi

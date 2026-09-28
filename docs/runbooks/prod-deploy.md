@@ -811,6 +811,29 @@ git describe --match 'released/*' --abbrev=8 origin/main~1   # nearest anchor
 sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <that-sha>
 ```
 
+**Record the rollback (NFM-5253 / NFM-4848 T5 — mandatory):** a rollback
+is a state transition and must leave its message. After ANY rollback —
+the gated `run-recovery.sh rollback` above, or the manual compose path
+(`PROD_IMAGE_TAG=<prev-sha> docker compose -f docker-compose.prod.yml
+--env-file docker/.env.prod up -d`) — run:
+
+```bash
+sudo -n -u nfmdeploy bash -c 'cd ~nfmdeploy/Projects/nucpot && \
+  python3 scripts/record_rollback.sh --tag <that-sha> --reason "<why>"'
+```
+
+`record_rollback.sh` mints the next deploy-epoch
+(`/usr/local/var/nfm-g2/prod-deploy.epoch`), re-records the G4a manifest
+with that epoch, and appends a `rollback_triggered=true` deploy-event
+line (epoch rides as the additive `deploy_epoch` field). Without it the
+next drift-cron interval false-alarms the rollback and the KR event
+stream never learns it happened. It must run as an identity that can
+write the canonical G2 dir (the deploy identity via the sudo form above;
+running it as the desktop user against a gated host fails loudly at the
+epoch mint — on purpose). Wiring the gated `run-recovery.sh rollback`
+entry to call it automatically rides the host-entry propagation step
+(§11).
+
 Anchors (`released/<UTC-date>-<sha8>`) are pushed by the `tag-released` CI
 job after deploy + smoke pass; if CI could not push (egress flake), the
 host-side reconciler catches up on its next cron tick, or run it once:
