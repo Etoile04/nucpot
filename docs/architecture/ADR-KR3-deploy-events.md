@@ -374,6 +374,16 @@ budget** — poll 1 or poll 12. Prod's field therefore no longer means "literal
 first attempt". The operator-facing distinction survives in the deploy log
 (`health OK on poll N/12 for <url>`), not in the event stream.
 
+NFM-5253 (2026-09-28) tightened the prod derivation further: the marker is
+no longer merely touched — `health_first_poll` writes
+`{"epoch": <N>, "sha": <sha>}` where N is the run's minted deploy-epoch,
+and the workflow's emit step reports the field as `true` only when
+`deploy_event.sh::deploy_event_marker_attests` proves
+`marker.epoch == run epoch` (the run epoch surfaced from the
+`DEPLOY_EPOCH_MINTED` ssh-stdout anchor). A stale, overlapping, or
+pre-fencing marker — or an unknown run epoch — yields `false`
+(conservative); marker existence alone no longer attests.
+
 ### C6.4.2 — Rename rejected; name frozen, semantics documented per environment
 
 NFM-5208 AC2 allowed "renamed (or documented)". Rename is rejected on three
