@@ -141,10 +141,10 @@ class _EpochFileLock:
         self._path = path
         self._file: object | None = None
 
-    def __enter__(self) -> "_EpochFileLock":
+    def __enter__(self) -> _EpochFileLock:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # "a+" never truncates: a concurrent holder's value stays readable.
-        file = open(self._path, "a+")  # noqa: SIM115 — closed in __exit__
+        file = open(self._path, "a+")  # closed in __exit__
         try:
             fcntl.flock(file, fcntl.LOCK_EX)
         except BaseException:
@@ -180,7 +180,7 @@ class _EpochFileLock:
         fd = file.fileno()
         os.lseek(fd, 0, os.SEEK_SET)
         os.ftruncate(fd, 0)
-        os.write(fd, f"{value}\n".encode("utf-8"))
+        os.write(fd, f"{value}\n".encode())
         os.fsync(fd)
 
 
