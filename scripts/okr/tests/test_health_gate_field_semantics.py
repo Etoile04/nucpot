@@ -31,7 +31,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BASH_LIB = REPO_ROOT / "scripts" / "lib" / "deploy_event.sh"
 EMITTER = REPO_ROOT / "scripts" / "lib" / "deploy_event_emitter.py"
-COLLECTOR = REPO_ROOT / "scripts" / "lib" / "collect_prod_events.py"
+# NFM-5261: the legacy strict collector was retired per the NFM-5260 CTO
+# ruling (ADR-KR3 amendment C6.5); the surviving collector authority is the
+# master collector.
+COLLECTOR = REPO_ROOT / "scripts" / "okr" / "prod_event_collector.py"
 STAGING = REPO_ROOT / "scripts" / "staging_deploy.sh"
 DEPLOY_PROD = REPO_ROOT / "scripts" / "deploy_prod.sh"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
@@ -79,12 +82,15 @@ def test_python_emitter_schema_field_is_frozen() -> None:
 
 
 def test_collector_schema_field_is_frozen() -> None:
-    sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib"))
+    # NFM-5261: repointed from the retired legacy strict collector to the
+    # master collector (same import pattern as test_prod_event_collector.py —
+    # a plain import is required because the module defines dataclasses).
+    # The frozen-name contract itself is unchanged.
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "okr"))
     try:
-        collector = sys.modules.get("collect_prod_events") or _load_module(
-            COLLECTOR, "collect_prod_events"
-        )
-        assert FIELD in collector.SCHEMA_FIELDS
+        import prod_event_collector  # type: ignore[import-not-found]
+
+        assert FIELD in prod_event_collector.SCHEMA_FIELDS
     finally:
         sys.path.pop(0)
 

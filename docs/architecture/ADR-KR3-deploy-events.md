@@ -420,3 +420,74 @@ permissive since PR #1416: identical underlying warmup behaviour yields
 the deadline loop). KR-3 aggregation (coverage_kr3) already filters by
 environment; it must not sum this field across environments as if the
 predicate were uniform.
+
+## Amendment C6.5 — Legacy strict collector retired (NFM-5260 CTO ruling, 2026-09-28)
+
+Status: **Accepted.** Author: CPO (7095567e), executing the CTO disposition
+recorded on NFM-5260 (2026-09-28 — RETIRE); implementation issue NFM-5261.
+
+> Numbering note: the NFM-5261 charter drafted this amendment as "§C6.4",
+> but §C6.4 above had already been taken by the NFM-5208 amendment
+> (2026-09-24), so this lands as C6.5. Any NFM-5260 cross-reference intended
+> for "§C6.4" resolves here.
+
+### C6.5.1 — What is retired
+
+The legacy strict deploy-event collector path — the first-generation
+production collector built as §C6.1 stage 2 — is retired and deleted:
+
+- `.github/workflows/collect-prod-deploy-events.yml` (*/5 cron, "Collect
+  Production Deploy Events") — removed from `main`, which by itself stops
+  the scheduled runs (GitHub schedules only workflows present on the
+  default branch).
+- `scripts/lib/collect_prod_run.sh` (its orchestrator; the workflow above
+  was its sole caller).
+- `scripts/lib/collect_prod_events.py` (its strict validator).
+- `scripts/okr/tests/test_collect_prod_events.py` and
+  `scripts/okr/tests/test_collect_prod_run_sh.py` (their tests).
+
+The master path is untouched and remains the sole production collector:
+`.github/workflows/prod-deploy-event-collector.yml` →
+`scripts/okr/prod_event_collector.py`, with the producer
+`scripts/lib/deploy_event_emitter.py` and the `~/.nfmd/*` state files.
+`docker/.deploy-events.jsonl` is preserved read-only: it is the sole
+surviving copy of the ten 2026-07-29→07-30 production events (absent from
+the master JSONL and the backfill) and remains the staging-series input for
+`coverage_kr3.py`.
+
+### C6.5.2 — Event-plane schema policy
+
+The retirement removes the last strict-reject consumer. From NFM-5261
+forward the event-plane schema policy is:
+
+- **Closed required core.** Every production event must carry the ten §3.1
+  field names verbatim (`event_id`, `ts`, `environment`, `triggered_by`,
+  `commit_sha`, `first_pass_success`, `health_gate_first_poll_passed`,
+  `rollback_triggered`, `skip_flag_used`, `duration_ms`), with
+  `environment == "production"` and `event_id` a UUIDv4. A missing core
+  field is a validation failure.
+- **Open additive extensions.** Fields beyond the core (e.g. the NFM-5253
+  `deploy_epoch`) are permitted; consumers MUST ignore unknown fields, and
+  no consumer may reject an event solely for carrying extra fields.
+  Extensions must stay additive — never reorder, rename, or repurpose core
+  fields.
+
+**Authority:** `scripts/okr/prod_event_collector.py::validate_fragment` is
+the single normative validator for this policy (missing-core check,
+`environment` check, UUIDv4 `event_id` check, extra-field tolerance). This
+supersedes the C6.4.2 authority reference to
+`collect_prod_events.py::SCHEMA_FIELDS`, which survives above as the
+historical record of the retired strict path.
+
+### C6.5.3 — Consequences
+
+- The NFM-5253 KNOWN GAP (epoch-bearing prod fragments quarantined by the
+  strict path) is closed by removal — the only remaining collector is
+  additive-tolerant, so the gap cannot recur.
+- The C6.4.2 guard test (`test_health_gate_field_semantics.py`) now pins
+  the frozen field name against `prod_event_collector.py::SCHEMA_FIELDS`
+  (the surviving collector authority) instead of the deleted module; the
+  frozen-name contract itself is unchanged.
+- The */5 cron no longer consumes self-hosted runner time; the master
+  collector's `workflow_run` + */15 schedule cadence (ADR §Failure-mode 3)
+  is unchanged.
