@@ -578,7 +578,9 @@ NFM-4264: 6h of attribution with zero audit trail).
   which re-records after re-upping a previous tag (a rollback changes live
   digests; without a re-record the next drift interval would false-alarm a
   sanctioned rollback; `restart` does NOT re-record — it never changes
-  digests). The workflow injects `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
+  digests). NFM-5253 adds `scripts/record_rollback.sh` as a fourth writer
+  for the manual rollback path (see §10). The workflow injects
+  `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
   on-host runs default to `deploy_prod.sh:<user>`; rollback records
   `run-recovery.sh:<sudo-user>`.
 - **Actor charset (NFM-4884, one contract):** `A-Za-z0-9 : . _ [ ] -`,
@@ -622,7 +624,10 @@ NFM-4264: 6h of attribution with zero audit trail).
 - **Schema (field names frozen for the G4b sibling):**
   `{deploy_sha, image_tags, image_digests, service_containers, timestamp,
   actor}` — keyed by compose service of project `nucpot-prod`
-  (db/redis/api/lightrag/worker/web).
+  (db/redis/api/lightrag/worker/web). NFM-5253 adds one ADDITIVE field,
+  `deploy_epoch` (int): the deploy-epoch of the recorded state transition,
+  omitted entirely when no epoch exists yet (pre-fencing host) so the
+  legacy shape is preserved; readers treat a missing epoch as "unknown".
 - **Digest precedence (the drift alarm must recompute identically):**
   `RepoDigests[0]` when non-empty, else the container's image-ID digest
   (`docker inspect --format '{{.Image}}'`). Prod images are built on the host,
@@ -819,7 +824,7 @@ the gated `run-recovery.sh rollback` above, or the manual compose path
 
 ```bash
 sudo -n -u nfmdeploy bash -c 'cd ~nfmdeploy/Projects/nucpot && \
-  python3 scripts/record_rollback.sh --tag <that-sha> --reason "<why>"'
+  bash scripts/record_rollback.sh --tag <that-sha> --reason "<why>"'
 ```
 
 `record_rollback.sh` mints the next deploy-epoch
