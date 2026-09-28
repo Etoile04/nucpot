@@ -91,8 +91,8 @@ mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
 # primitive: scripts/deploy_epoch.py mints the next epoch (monotonic int at
 # ${G2_VAR_DIR}/prod-deploy.epoch, fcntl-serialized) and, inside that same
 # critical section, decides whether THIS run may take the lock — refuse iff
-# a fresh lock (age <= 7200s) with a live pid holds an epoch >= our
-# pre-mint baseline. Shadow semantics: the decision (EPOCH_MINTED /
+# a fresh lock (age <= 7200s) is held by a live pid. Shadow semantics: the
+# decision (EPOCH_MINTED /
 # LOCK_DECISION / deploy_epoch_lock JSON) is logged for the SRE week, but a
 # "refuse" still proceeds exactly like today's blind overwrite; the actual
 # refusal is gated behind NFM_DEPLOY_LOCK_ENFORCE=1 (default OFF — the
@@ -122,7 +122,7 @@ if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
   fi
 elif [ "${NFM5253_ACQUIRE_RC}" -eq 80 ]; then
   printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
-  echo "FATAL (NFM-5253): deploy REFUSED — the deploy lock is held by a live concurrent deploy (fresh lock, live pid, epoch >= ours). Not overwriting." >&2
+  echo "FATAL (NFM-5253): deploy REFUSED — the deploy lock is held by a live concurrent deploy (fresh lock, live pid). Not overwriting." >&2
   exit 80
 else
   # Shadow-mode tolerance: a missing/broken helper must not block deploys

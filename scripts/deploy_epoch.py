@@ -26,10 +26,14 @@ Subcommands
                    file's fcntl lock: mint the next epoch N+1, then decide
                    whether THIS run may take the deploy lock —
                    REFUSE iff the existing lock file is fresh (mtime age
-                   <= --max-age) AND its pid is alive AND its epoch >= N
-                   (a run at-or-after our baseline holds it); otherwise
+                   <= --max-age) AND its pid is alive; otherwise
                    ACQUIRE, writing ``{"epoch": N+1, "pid", "deploy_sha",
-                   "started"}``. Without --enforce a REFUSE decision is
+                   "started"}``. The holder's epoch is logged for the SRE
+                   week but never gates the refusal: the epoch baseline
+                   includes mints from runs that never took the lock
+                   (refused runs, record_rollback.sh), so a fresh lock
+                   held by a live pid is an in-flight deploy regardless
+                   of its epoch. Without --enforce a REFUSE decision is
                    logged and the lock is still taken (today's blind
                    overwrite, now epoch-tagged) — the enforcement flip is
                    a separate CPO-dispatched follow-up gated on the SRE
@@ -189,7 +193,7 @@ def mint_epoch(path: Path | None = None, env: dict[str, str] | None = None) -> i
         current = lock.read()
         if current is None:
             # Absent (first mint) or corrupt: recover from manifest-epoch + 1.
-            current = _manifest_recovery_epoch(environ) if target.exists() else 0
+            current = _manifest_recovery_epoch(environ)
         nxt = current + 1
         lock.write(nxt)
         return nxt
@@ -257,7 +261,7 @@ def lock_acquire(
     with _EpochFileLock(epoch_target) as lock:
         current = lock.read()
         if current is None:
-            current = _manifest_recovery_epoch(environ) if epoch_target.exists() else 0
+            current = _manifest_recovery_epoch(environ)
         minted = current + 1
         lock.write(minted)
 
@@ -271,11 +275,6 @@ def lock_acquire(
         except OSError:
             fresh = False
         live = isinstance(existing_pid, int) and _pid_alive(existing_pid)
-        holder_ge = (
-            isinstance(existing_epoch, int)
-            and isinstance(current, int)
-            and existing_epoch >= current
-        )
         context = {
             "epoch_minted": minted,
             "epoch_before": current,
@@ -288,9 +287,9 @@ def lock_acquire(
             "ts": datetime.now(UTC).isoformat(timespec="seconds"),
         }
 
-        if fresh and live and holder_ge:
+        if fresh and live:
             decision = "enforced-refuse" if enforce else "refuse"
-            reason = "fresh-lock-live-pid-ge-epoch"
+            reason = "fresh-lock-live-pid"
             context["decision"] = decision
             context["reason"] = reason
             if enforce:
@@ -314,8 +313,6 @@ def lock_acquire(
             else "stale-lock"
             if not fresh
             else "dead-pid"
-            if not live
-            else "older-epoch-holder"
         )
         decision = "acquire"
         context["decision"] = decision
@@ -366,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     lock_parser.add_argument(
         "--enforce",
         action="store_true",
-        help="actually refuse on a fresh-lock/live-pid/>=epoch conflict (default: shadow log only)",
+        help="actually refuse on a fresh-lock/live-pid conflict (default: shadow log only)",
     )
 
     args = parser.parse_args(argv)
@@ -395,8 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"deploy_epoch_lock: {json.dumps(context, sort_keys=True)}")
     if code == LOCK_REFUSE_EXIT:
         print(
-            "FATAL (NFM-5253): deploy lock refused — a fresh lock with a live pid "
-            f"holds epoch >= {context['epoch_before']} ({args.lock}); another deploy "
+            "FATAL (NFM-5253): deploy lock refused — a fresh lock is held by live "
+            f"pid {context['lock_pid']} ({args.lock}); another deploy "
             "is in flight. Refusing to overwrite it.",
             file=sys.stderr,
         )

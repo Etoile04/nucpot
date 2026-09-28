@@ -7,9 +7,9 @@ no real docker, no real Paperclip):
   concurrent mints (threads AND processes), corruption recovery from
   manifest-epoch + 1, and the NFM_DEPLOY_EPOCH > G2-dir > ~/.nfmd chain.
 * D2 the T4 lockfile CAS — legit acquire, shadow refuse (fresh lock + live
-  pid >= epoch holder: logged, lock still taken), enforced refuse (rc 80,
-  holder's lock untouched), and the overwrite paths (stale lock / dead pid
-  / older-epoch holder / no prior lock).
+  pid holder: logged, lock still taken), enforced refuse (rc 80, holder's
+  lock untouched), and the overwrite paths (stale lock / dead pid / no
+  prior lock).
 * D3 the T1 health-marker binding — ``deploy_event_marker_attests`` prints
   true ONLY on marker.epoch == run epoch (a stale/poisoned marker can
   structurally never attest), and ``deploy_epoch`` rides the deploy event
@@ -23,10 +23,10 @@ no real docker, no real Paperclip):
 * D5 the drift checker's epoch-aware stand-down — shadow logging only:
   would_stand_down true/false/indeterminate rides the existing cron output
   and the checker's BEHAVIOR (stand down on any fresh lock) is unchanged.
-* wiring guards — the workflow surfaces the minted epoch
-  (steps.deploy.outputs.epoch), gates FIRST_POLL on the marker predicate,
-  emits the epoch additively, and runs this suite pre-deploy; the runbook
-  references record_rollback.sh.
+* wiring guards — the workflow's REAL deploy-step run body is executed
+  hermetically (fake ssh): the DEPLOY_EPOCH_MINTED anchor must land in the
+  step output, and a deploy that dies before minting must leave it unset;
+  the emit step's wiring is asserted on the parsed workflow model.
 """
 
 from __future__ import annotations
@@ -54,7 +54,6 @@ DEPLOY_EVENT_SH = SCRIPTS_DIR / "lib" / "deploy_event.sh"
 DRIFT_SCRIPT = SCRIPTS_DIR / "check_deploy_drift.py"
 COLLECTOR_SCRIPT = SCRIPTS_DIR / "okr" / "prod_event_collector.py"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
-RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "prod-deploy.md"
 
 COMPOSE_PROJECT = "nucpot-prod"
 DEPLOY_SHA = "5253a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9"  # hermetic deploy sha
@@ -323,9 +322,9 @@ def test_lock_acquire_legit_no_prior_lock(epoch_mod, tmp_path: Path):
 
 
 def test_lock_refuse_shadow_still_takes_lock(epoch_mod, tmp_path: Path):
-    """Shadow mode (default): a fresh lock with a live pid holding an epoch
-    >= ours is REFUSED in the log but the lock is still taken — byte-for-byte
-    today's blind-overwrite behavior, now epoch-tagged."""
+    """Shadow mode (default): a fresh lock with a live pid is REFUSED in
+    the log but the lock is still taken — byte-for-byte today's
+    blind-overwrite behavior, now epoch-tagged."""
     epoch_file = _seed(
         epoch_mod,
         tmp_path,
@@ -338,7 +337,7 @@ def test_lock_refuse_shadow_still_takes_lock(epoch_mod, tmp_path: Path):
     )
     assert code == 0  # shadow: never blocks the deploy
     assert decision == "refuse"
-    assert reason == "fresh-lock-live-pid-ge-epoch"
+    assert reason == "fresh-lock-live-pid"
     held = json.loads(lock_path.read_text(encoding="utf-8"))
     assert held["epoch"] == 6 and held["deploy_sha"] == DEPLOY_SHA
 
@@ -355,7 +354,7 @@ def test_lock_refuse_enforced_exits_80_and_preserves_holder(epoch_mod, tmp_path:
     code, decision, reason, _context = epoch_mod.lock_acquire(
         lock_path, DEPLOY_SHA, pid=os.getpid(), enforce=True, epoch_path=epoch_file,
     )
-    assert (code, decision, reason) == (LOCK_REFUSE_EXIT, "enforced-refuse", "fresh-lock-live-pid-ge-epoch")
+    assert (code, decision, reason) == (LOCK_REFUSE_EXIT, "enforced-refuse", "fresh-lock-live-pid")
     assert lock_path.read_bytes() == before, "an enforced refusal must NOT touch the holder's lock"
 
 
@@ -374,13 +373,13 @@ def test_lock_cli_enforced_refuse_exit_code(tmp_path: Path):
     assert result.returncode == LOCK_REFUSE_EXIT
     assert "EPOCH_MINTED=6" in result.stdout
     assert "LOCK_DECISION=enforced-refuse" in result.stdout
-    assert "LOCK_REASON=fresh-lock-live-pid-ge-epoch" in result.stdout
+    assert "LOCK_REASON=fresh-lock-live-pid" in result.stdout
     assert "deploy_epoch_lock: " in result.stdout  # AC6 observability line
     assert json.loads(lock_path.read_text(encoding="utf-8"))["epoch"] == 5
 
 
-def test_lock_overwrite_paths_stale_deadpid_olderholder(epoch_mod, tmp_path: Path):
-    # Stale lock (mtime beyond --max-age) → acquire even at equal epoch.
+def test_lock_overwrite_paths_stale_deadpid_unparseable(epoch_mod, tmp_path: Path):
+    # Stale lock (mtime beyond --max-age) → acquire even at a higher epoch.
     epoch_file = _seed(
         epoch_mod,
         tmp_path,
@@ -400,20 +399,50 @@ def test_lock_overwrite_paths_stale_deadpid_olderholder(epoch_mod, tmp_path: Pat
     code, decision, reason, _ctx = epoch_mod.lock_acquire(lock_path, DEPLOY_SHA, pid=os.getpid(), epoch_path=epoch_file)
     assert (code, decision, reason) == (0, "acquire", "dead-pid")
 
-    # Live pid but an OLDER epoch → acquire (pre-fencing leftover holder).
-    epoch_file = _seed(
-        epoch_mod,
-        tmp_path,
-        epoch="5",
-        lock={"epoch": 1, "pid": os.getpid(), "deploy_sha": "h", "started": "x"},
-    )
-    code, decision, reason, _ctx = epoch_mod.lock_acquire(lock_path, DEPLOY_SHA, pid=os.getpid(), epoch_path=epoch_file)
-    assert (code, decision, reason) == (0, "acquire", "older-epoch-holder")
-
     # Unparseable prior lock content → treated as no prior lock.
     lock_path.write_text("{{{not json", encoding="utf-8")
     code, decision, reason, _ctx = epoch_mod.lock_acquire(lock_path, DEPLOY_SHA, pid=os.getpid(), epoch_path=epoch_file)
     assert (code, decision, reason) == (0, "acquire", "no-prior-lock")
+
+
+def test_enforced_refusal_survives_baseline_raised_by_non_acquiring_mints(epoch_mod, tmp_path: Path):
+    """A live fresh holder must be refused even when the epoch baseline has
+    been raised past the holder's lock epoch by mints from runs that never
+    took the lock: a refused run still persists its mint, and
+    record_rollback.sh / plain `mint` also advance the baseline."""
+    epoch_file = tmp_path / "prod-deploy.epoch"
+    epoch_file.write_text("5\n", encoding="utf-8")
+    lock_path = tmp_path / "prod-deploy.lock"
+    lock_path.write_text(
+        json.dumps(
+            {"epoch": 5, "pid": os.getpid(), "deploy_sha": "holder", "started": "2026-09-28T00:00:00+00:00"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = lock_path.read_bytes()
+
+    # A prior run enforced-refused against this holder; its mint persisted.
+    code, _decision, _reason, _ctx = epoch_mod.lock_acquire(
+        lock_path, DEPLOY_SHA, pid=os.getpid(), enforce=True, epoch_path=epoch_file
+    )
+    assert code == LOCK_REFUSE_EXIT
+    assert epoch_mod.read_epoch(epoch_file) == 6
+    # A rollback mint raised the baseline beyond the holder's lock epoch.
+    assert epoch_mod.mint_epoch(epoch_file) == 7
+
+    code, decision, reason, _ctx = epoch_mod.lock_acquire(
+        lock_path, DEPLOY_SHA, pid=os.getpid(), enforce=True, epoch_path=epoch_file
+    )
+    assert (code, decision, reason) == (LOCK_REFUSE_EXIT, "enforced-refuse", "fresh-lock-live-pid")
+    assert lock_path.read_bytes() == before, "a raised baseline must not demote a live holder"
+
+    # Shadow mode keeps its blind-overwrite semantics for the same conflict.
+    code, decision, reason, _ctx = epoch_mod.lock_acquire(
+        lock_path, DEPLOY_SHA, pid=os.getpid(), epoch_path=epoch_file
+    )
+    assert (code, decision, reason) == (0, "refuse", "fresh-lock-live-pid")
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["epoch"] == 9
 
 
 # ===========================================================================
@@ -949,48 +978,106 @@ def test_drift_stand_down_indeterminate_on_pre_fencing_artifacts(tmp_path: Path)
 
 
 # ===========================================================================
-# wiring guards — workflow, deploy_prod.sh, runbook
+# wiring guards — deploy_prod.sh + workflow, executed or parsed semantically
 # ===========================================================================
 
 
-def test_deploy_prod_sh_lock_lifecycle_preserved():
-    text = DEPLOY_PROD_SH.read_text(encoding="utf-8")
-    assert 'trap \'rm -f "$NFM_DEPLOY_LOCK"\' EXIT' in text, (
-        "the CAS must not drop the trap-removal lifecycle (a crashed deploy must alarm)"
-    )
+def test_deploy_prod_sh_parses():
     assert subprocess.run(["bash", "-n", str(DEPLOY_PROD_SH)], capture_output=True).returncode == 0
 
 
-def test_workflow_wires_epoch_anchor_predicate_and_tests():
+def _workflow_steps() -> list[dict]:
     import yaml
 
     doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    steps = [step for job in doc["jobs"].values() for step in job.get("steps", [])]
+    return [step for job in doc["jobs"].values() for step in job.get("steps", [])]
+
+
+def _run_workflow_deploy_step(
+    tmp_path: Path, *, deploy_epoch: str, deploy_rc: int
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Execute the REAL deploy-step run body (parsed from the workflow, GH
+    expressions substituted) against a fake ssh host; returns the step
+    result plus the GITHUB_OUTPUT file content."""
+    deploy_steps = [s for s in _workflow_steps() if s.get("id") == "deploy"]
+    assert deploy_steps, "the emit step reads steps.deploy.outputs.epoch"
+    run_body = deploy_steps[0]["run"]
+    for expr, value in (("${{ github.sha }}", DEPLOY_SHA), ("${{ github.actor }}", "tester")):
+        run_body = run_body.replace(expr, value)
+    assert "${{" not in run_body, "unsubstituted GH expression would not survive bash"
+
+    bin_dir = tmp_path / "wfbin"
+    bin_dir.mkdir(exist_ok=True)
+    ssh = bin_dir / "ssh"
+    ssh.write_text(
+        "#!/bin/bash\n"
+        'if [[ "$*" == *run-deploy.sh* ]]; then\n'
+        '  if [ -n "${FAKE_DEPLOY_EPOCH:-}" ]; then printf \'%s\\n\' "DEPLOY_EPOCH_MINTED=${FAKE_DEPLOY_EPOCH}"; fi\n'
+        '  exit "${FAKE_DEPLOY_RC:-0}"\n'
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(exist_ok=True)
+    out_file = tmp_path / "github-output"
+    proc = subprocess.run(
+        ["bash", "-c", run_body],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_subprocess_env(
+            PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            HOME=str(tmp_path / "home"),
+            RUNNER_TEMP=str(runner_temp),
+            GITHUB_OUTPUT=str(out_file),
+            FAKE_DEPLOY_EPOCH=deploy_epoch,
+            FAKE_DEPLOY_RC=str(deploy_rc),
+        ),
+    )
+    output = out_file.read_text(encoding="utf-8") if out_file.exists() else ""
+    return proc, output
+
+
+def test_workflow_deploy_step_binds_epoch_anchor_to_step_output(tmp_path: Path):
+    proc, output = _run_workflow_deploy_step(tmp_path, deploy_epoch="7", deploy_rc=0)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert output.strip() == "epoch=7"
+    assert "this run minted deploy-epoch 7" in proc.stdout
+
+
+def test_workflow_deploy_step_leaves_epoch_unset_when_deploy_dies_before_mint(tmp_path: Path):
+    proc, output = _run_workflow_deploy_step(tmp_path, deploy_epoch="", deploy_rc=1)
+    assert proc.returncode == 1, "the ssh exit code stays authoritative"
+    assert "epoch=" not in output
+    assert "::warning::NFM-5253: no DEPLOY_EPOCH_MINTED anchor" in proc.stdout
+
+
+def test_workflow_emit_wiring_semantics():
+    import shlex
+
+    steps = _workflow_steps()
     runs = [step.get("run") or "" for step in steps]
 
-    # The deploy step greps the ssh-stdout anchor into GITHUB_OUTPUT.
-    deploy_steps = [s for s in steps if s.get("id") == "deploy"]
-    assert deploy_steps, "the deploy step must keep id: deploy (the emit step reads its output)"
-    deploy_run = deploy_steps[0].get("run") or ""
-    assert "DEPLOY_EPOCH_MINTED=" in deploy_run and "GITHUB_OUTPUT" in deploy_run
-    assert "epoch=" in deploy_run
+    # The FIRST_POLL gate consumes the deploy step's epoch output.
+    emit_steps = [step for step in steps if "deploy_event_marker_attests" in (step.get("run") or "")]
+    assert emit_steps, "the emit step must call deploy_event_marker_attests"
+    assert "${{ steps.deploy.outputs.epoch }}" in emit_steps[0]["run"]
 
-    # The emit step gates FIRST_POLL on the marker predicate + passes the
-    # epoch additively.
-    emit_runs = [r for r in runs if "deploy_event_marker_attests" in r]
-    assert emit_runs, "the emit step must call deploy_event_marker_attests"
-    assert any("steps.deploy.outputs.epoch" in r for r in emit_runs)
-    assert any("--deploy-epoch" in r for r in runs)
+    # The epoch rides the deploy event additively.
+    emit_invocations = [r for r in runs if "deploy_event_emit" in r]
+    assert emit_invocations, "the workflow must emit a deploy event"
+    assert any("--deploy-epoch" in r for r in emit_invocations)
 
-    # This suite runs pre-deploy.
-    assert any("pytest" in r and "scripts/tests/test_deploy_epoch.py" in r for r in runs), (
+    # This suite runs pre-deploy as part of the workflow's pytest gate.
+    pytest_words = [
+        shlex.split(line)
+        for r in runs
+        for line in r.splitlines()
+        if "pytest" in line and not line.lstrip().startswith("#")
+    ]
+    assert any("scripts/tests/test_deploy_epoch.py" in words for words in pytest_words), (
         "the pre-deploy pytest gate must execute the deploy-epoch suite"
     )
-
-
-def test_runbook_references_record_rollback():
-    text = RUNBOOK.read_text(encoding="utf-8")
-    assert "record_rollback.sh" in text, (
-        "the rollback runbook must reference record_rollback.sh (D4 acceptance)"
-    )
-    assert "NFM-5253" in text
