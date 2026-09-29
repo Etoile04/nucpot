@@ -191,12 +191,18 @@ def clean_epoch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 def _subprocess_env(**overrides: str) -> dict[str, str]:
+    """Subprocess env inheriting the autouse sandbox pins (HOME, the
+    NONEXISTENT NFM_G2_VAR_DIR) plus explicit overrides.
+
+    NFM_G2_VAR_DIR / NFM_DEPLOY_MANIFEST must NOT be popped here (NFM-5268):
+    popping them re-arms the canonical /usr/local/var/nfm-g2 fallback, which
+    EXISTS on the prod host and the CI runner — a subprocess mint with an
+    absent epoch file then recovers from the REAL prod manifest and inherits
+    production epoch state instead of starting at 0."""
     env = {k: v for k, v in os.environ.items()}
     for var in (
         "NFM_DEPLOY_EPOCH",
-        "NFM_G2_VAR_DIR",
         "NFM_DEPLOY_LOCK",
-        "NFM_DEPLOY_MANIFEST",
         "NFM_DEPLOY_LOCK_ENFORCE",
         "NFMD_DEPLOY_EVENTS_PATH",
     ):
