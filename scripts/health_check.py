@@ -90,6 +90,19 @@ TARGETS: list[CheckTarget] = [
         severity="P1",
     ),
     CheckTarget(
+        name="AutoVC API Health",
+        url="https://verify.nucpot.dpdns.org/api/health",
+        expected_status=200,
+        expected_contains='"ok"',
+        # AutoVC serves a headless API: root `/` is an origin-normal 404 —
+        # monitor /api/health only (NFM-5269). P0 with the same availability
+        # budget as Backend API Health (NFM-5263): budget == hard socket
+        # timeout so the CN↔edge RTT tail (observed 2.4s on this route)
+        # cannot escalate slowness to CRITICAL while the origin is healthy.
+        max_response_ms=TIMEOUT_SECONDS * 1000,
+        severity="P0",
+    ),
+    CheckTarget(
         name="Supabase Health",
         url="https://gzhiqyopzlmnkdzammhx.supabase.co/rest/v1/",
         expected_status=401,  # 401 = service is up, requires auth
