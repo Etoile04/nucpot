@@ -105,3 +105,13 @@ jobs:
         env:
           ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
         run: bash tools/post-deploy-cutover-watchdog/watchdog.sh
+
+      # NFM-5269/NFM-5270: restart loops + empty bind sources. Read-only
+      # docker/host checks; exits 81 to fail this job when a violation is
+      # detected, on top of the Feishu alert. Independent of watchdog.sh,
+      # so it runs even when the stale-image check failed first.
+      - name: Run container sanity check (restart loops + bind sources)
+        if: always()
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: bash tools/post-deploy-cutover-watchdog/container_sanity_check.sh
