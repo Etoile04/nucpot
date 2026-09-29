@@ -1,6 +1,7 @@
 # post-deploy-cutover-watchdog
 
-Stale-container watchdog for the NFM-3320 post-deploy cutover system.
+Stale-container watchdog for the NFM-3320 post-deploy cutover system, plus
+the NFM-5269 container sanity check.
 
 ## Purpose
 
@@ -53,10 +54,45 @@ The watchdog runs via `.github/workflows/site-monitor.yml` on the Mac Studio sel
 | `DEPLOY_JSONL` | No | Path to master-deploy-events.jsonl. Defaults to `~/.nfmd/master-deploy-events.jsonl`. |
 | `SERVICES` | No | Comma-separated container names. Defaults to the 4 nucpot-prod-* services. |
 
+## container_sanity_check.sh — NFM-5269 / NFM-5270
+
+Second check in the same 6-hour job, covering the two failure classes the
+2026-09-29 AutoVC outage proved invisible:
+
+1. **Restart loops** — any container in `restarting` state, or with
+   `RestartCount >= 10` while its last start is younger than 600s (a live
+   loop restarts every few seconds). A high-but-stale count on a stable
+   container (the restored NFM-5269 containers carry 125) is **INFO-only**
+   with a recreate hint — it must not page.
+2. **Empty bind sources** — docker auto-creates a deleted bind-mount source
+   as an *empty* directory, so the deletion is invisible until the next
+   daemon restart breaks the stack. Every bind source of every in-scope
+   container is asserted present and non-empty.
+
+Scope defaults to `--filter name=nucpot` (prod + staging + autovc +
+supabase_db_nucpot). User-facing detection of an AutoVC outage is the
+10-minute URL probe (`scripts/health_check.py` AutoVC target); this check
+is host-side defense-in-depth and also sees non-user-visible loops
+(e.g. a celery worker crash-looping while the API serves). Raising its
+cadence means more self-hosted checkouts on the prod host — deliberately
+not done in NFM-5270.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONTAINER_FILTER` | `name=nucpot` | `docker ps` filter defining the container scope. |
+| `RESTART_ALERT_THRESHOLD` | `10` | RestartCount at which the churning check engages. |
+| `RESTART_LOOP_WINDOW_SECONDS` | `600` | Last-start age under which a high count counts as an active loop. |
+| `BIND_EMPTY_ALLOWLIST` | *(empty)* | Comma-separated exact host paths whose emptiness is legitimate. |
+| `ALERT_WEBHOOK` | *(empty)* | As above; unset ⇒ alert to stderr, exit 0. |
+
+Exit codes: `0` clean/operational skip (docker unusable is never an alarm),
+`81` violation(s) detected and alert sent, `2` usage error.
+
 ## Running tests
 
 ```bash
-pytest tools/post-deploy-cutover-watchdog/test_watchdog.py -v
+pytest tools/post-deploy-cutover-watchdog/test_watchdog.py \
+       tools/post-deploy-cutover-watchdog/test_container_sanity_check.py -v
 ```
 
 Tests use a fake `docker` shim (no Docker required).
