@@ -95,4 +95,12 @@ EXPOSE 8000
 
 # Serve only — migration is the deploy workflow's job (NFM-2146). The exact
 # command form is pinned by ADR-NFM-2139 §5 D3 acceptance criterion 1.
-CMD ["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+#
+# NFM-5273/NFM-5274: --timeout-keep-alive 75. nucpot-prod-web proxies /api/*
+# with Node client-side keep-alive socket reuse; uvicorn's default 5s idle
+# close raced that reuse window -> RST mid-reuse -> 'socket hang up' -> the
+# chronic public 500s (~4-5/day since 09-03). The server must never close
+# an idle conn inside the client's reuse window — 75s sits far past any
+# realistic pool-reuse interval. Guarded by
+# apps/api/tests/compose/test_api_keepalive_timeout.py.
+CMD ["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75"]
