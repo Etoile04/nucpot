@@ -19,14 +19,16 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+
 try:  # py3.11+; fallback for the py3.9 CommandLineTools interpreter on the runner
     from datetime import UTC
 except ImportError:  # pragma: no cover
     from datetime import timezone as _tz
+
     UTC = _tz.utc
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,6 +38,15 @@ TIMEOUT_SECONDS = 10
 MAX_RESPONSE_TIME_MS = 5000
 RETRY_COUNT = 2
 RETRY_DELAY_SECONDS = 5
+
+# NFM-5279: opener with proxies explicitly disabled. The prod sentinel host's
+# macOS system proxy (v2cloud 127.0.0.1:7892) applies to bare urlopen() via
+# getproxies(), so every check measures host → proxy → upstream → CF edge.
+# P0 connection-class failures get ONE confirmation attempt through this
+# direct-egress opener: direct egress from the host reaches the real CF edges
+# (calibration 2026-10-01). No-op where no system proxy exists (GHA runners)
+# — the confirmation only runs on a P0 failure path.
+NO_PROXY_OPENER = build_opener(ProxyHandler({}))
 
 
 @dataclass(frozen=True)
@@ -128,9 +139,54 @@ class CheckResult:
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+def _confirm_p0_direct_egress(target: CheckTarget, failure: CheckResult) -> CheckResult:
+    """NFM-5279 — one direct-egress confirmation for a P0 connection-class failure.
+
+    Called only when a P0 target failed without the edge demonstrably
+    answering wrong content (connection errors, timeouts incl.
+    retry-exhausted, latency over budget) — the failure pattern of a local
+    proxy-vantage flap (NFM-5277). Re-probes the same URL through
+    ``NO_PROXY_OPENER`` with status + ``expected_contains`` only (no latency
+    budget on the confirmation). A correct direct answer means the edge is
+    healthy: return success annotated as a vantage flap so the P0
+    streak/latch never sees the failure. Anything else — exception, wrong
+    status, wrong body — returns the original failure unchanged (page path).
+    """
+    try:
+        start = time.monotonic()
+        req = Request(target.url, method="GET")
+        req.add_header("User-Agent", "NucPot-HealthCheck/1.0")
+
+        with NO_PROXY_OPENER.open(req, timeout=TIMEOUT_SECONDS) as resp:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            body = resp.read().decode("utf-8", errors="replace")
+
+            if resp.status != target.expected_status:
+                return failure
+            if target.expected_contains and target.expected_contains not in body:
+                return failure
+
+            return CheckResult(
+                target=target,
+                success=True,
+                status_code=resp.status,
+                response_time_ms=elapsed_ms,
+                error=(
+                    f"proxy-vantage failure ({failure.error}), "
+                    f"direct-egress confirm OK {elapsed_ms / 1000:.1f}s — vantage flap, not edge"
+                ),
+            )
+    except Exception:
+        return failure
+
+
 def check_url(target: CheckTarget) -> CheckResult:
     """Perform a single health check with retry logic."""
     last_error: str | None = None
+    # NFM-5279: True when the latest failure is connection-class (the edge
+    # never answered, or answered too slowly) — eligible for one direct-egress
+    # confirmation on P0 targets once retries are exhausted.
+    vantage_suspect = False
 
     for attempt in range(1, RETRY_COUNT + 1):
         try:
@@ -161,7 +217,7 @@ def check_url(target: CheckTarget) -> CheckResult:
                     )
 
                 if elapsed_ms > target.max_response_ms:
-                    return CheckResult(
+                    latency_failure = CheckResult(
                         target=target,
                         success=False,
                         status_code=resp.status,
@@ -170,6 +226,9 @@ def check_url(target: CheckTarget) -> CheckResult:
                             f"Response time {elapsed_ms}ms exceeds limit {target.max_response_ms}ms"
                         ),
                     )
+                    if target.severity == "P0":
+                        return _confirm_p0_direct_egress(target, latency_failure)
+                    return latency_failure
 
                 return CheckResult(
                     target=target,
@@ -189,21 +248,28 @@ def check_url(target: CheckTarget) -> CheckResult:
                     response_time_ms=elapsed_ms,
                 )
             last_error = f"HTTP {exc.code}: {exc.reason}"
+            vantage_suspect = False  # the edge answered, just wrongly — not a vantage artifact
         except URLError as exc:
             last_error = f"Connection error: {exc.reason}"
+            vantage_suspect = True
         except TimeoutError:
             last_error = f"Timeout after {TIMEOUT_SECONDS}s"
+            vantage_suspect = True
         except Exception as exc:
             last_error = str(exc)
+            vantage_suspect = False
 
         if attempt < RETRY_COUNT:
             time.sleep(RETRY_DELAY_SECONDS)
 
-    return CheckResult(
+    retry_failure = CheckResult(
         target=target,
         success=False,
         error=last_error or "Unknown error after retries",
     )
+    if vantage_suspect and target.severity == "P0":
+        return _confirm_p0_direct_egress(target, retry_failure)
+    return retry_failure
 
 
 def run_all_checks() -> list[CheckResult]:

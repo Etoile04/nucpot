@@ -94,5 +94,13 @@ def test_p0_silence_beyond_the_timeout_still_fails(monkeypatch):
 
     monkeypatch.setattr(hc, "urlopen", raise_timeout)
 
+    class _DirectTimeoutOpener:
+        def open(self, req, timeout):
+            raise TimeoutError()
+
+    # NFM-5279: proxied silence now gets one direct-egress confirmation before
+    # it counts; the hard-timeout floor bites when BOTH vantages are silent.
+    monkeypatch.setattr(hc, "NO_PROXY_OPENER", _DirectTimeoutOpener())
+
     result = hc.check_url(p0)
     assert result.success is False, "the hard timeout floor must still bite"

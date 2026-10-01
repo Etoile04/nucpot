@@ -60,6 +60,10 @@ known-first-party = ["nfm_db"]
 # timezone.utc (UP017), and socket.timeout (UP041). Enforced by
 # scripts/tests/test_nfm_docker_gate_py39_compat.py.
 "scripts/host-prod-gate/nfm_docker_gate/*" = ["UP017", "UP045", "UP041"]
+# NFM-5279: health_check.py may run under the py3.9 CommandLineTools
+# interpreter on the runner, so its try/except UTC import keeps the
+# `timezone.utc` fallback spelling (UP017's autofix would emit `UTC = UTC`).
+"scripts/health_check.py" = ["UP017"]
 
 [tool.mypy]
 python_version = "3.12"
