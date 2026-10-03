@@ -27,7 +27,10 @@ function apiBaseUrl(): string {
 function fetchOptions(): RequestInit {
   return {
     headers: { Accept: "application/json" },
-    cache: "no-store",
+    // NFM-5267: join the page's ISR window (revalidate=300) instead of
+    // opting every fetch out of the data cache — a no-store fetch would
+    // force dynamic rendering and re-emit Cache-Control: no-store on `/`.
+    next: { revalidate: 300 },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   } as RequestInit
 }

@@ -21,9 +21,13 @@ const QUICK_ENTRIES: readonly { href: string; title: string; description: string
   { href: "/potentials/compare", title: "势函数对比", description: "并排比较多条势函数" },
 ]
 
-// Real counts only (统计数据与 API 一致): render per-request so the
-// numbers can never be a stale build-time bake. Sections are fail-soft.
-export const dynamic = "force-dynamic"
+// Real counts (统计数据与 API 一致), ISR-refreshed at most 5 min behind
+// the API (NFM-5267): fresh enough for a stats strip, and the page emits
+// s-maxage=300 so the Cloudflare edge can serve the shell without the
+// cross-region tunnel round trip. Sections stay fail-soft; a build-time
+// prerender with an unreachable API bakes empty sections that self-heal
+// on the first revalidate window after deploy.
+export const revalidate = 300
 
 export default async function HomePage() {
   const [homeData, allPosts] = await Promise.all([getHomeData(), Promise.resolve(getAllPosts())])
