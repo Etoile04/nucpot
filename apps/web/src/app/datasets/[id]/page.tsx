@@ -1,14 +1,12 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { cache } from "react"
-import { Alert, Descriptions, Tag, Typography } from "antd"
-import { formatDate } from "@/lib/format-date"
+import { Alert } from "antd"
 import {
   getDatasetServer,
   type DatasetDetail,
 } from "@/lib/datasets-server"
-
-const { Title, Text } = Typography
+import { DatasetDetailContent } from "./DatasetDetailContent"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -21,6 +19,13 @@ interface PageProps {
 // the no-store fetch across generateMetadata and the page render; the
 // outcome shape keeps the API's specific error message (e.g. 404 →
 // 「数据集不存在」) available to the page body.
+//
+// NFM-5321 hotfix (deploy of d4c33eb6a): the antd-rendering subtree
+// moved into DatasetDetailContent ("use client") — antd Typography
+// statics (.Title/.Text) resolve to undefined in the server-component
+// runtime and SSR-crashed every detail request with HTTP 500. This page
+// stays a Server Component for the cached fetch + metadata; see
+// DatasetDetailContent.tsx for the root-cause notes.
 type DatasetOutcome = { dataset: DatasetDetail; error: null } | { dataset: null; error: string }
 
 const fetchDatasetOutcome = cache(
@@ -74,137 +79,7 @@ export default async function DatasetDetailPage({ params }: PageProps) {
         />
       ) : null}
 
-      {dataset ? (
-        <>
-          <header className="space-y-2 mb-6">
-            <Title level={2} className="!m-0">
-              {dataset.title}
-            </Title>
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <Text type="secondary" className="font-mono text-xs" title={dataset.id}>
-                {dataset.id.slice(0, 8)}
-              </Text>
-              {dataset.is_verified ? (
-                <Tag color="green">已审核</Tag>
-              ) : (
-                <Tag color="default">未审核</Tag>
-              )}
-              <AttributionBadge status={dataset.attribution.status} />
-            </div>
-          </header>
-
-          {/* NFM-4159 §5.2 attribution disclosure: when status is
-              'placeholder' the dataset title already carries the
-              disclosure per CEO §4.2 — this block is a confirmation
-              banner, not the primary disclosure surface. NFM-5321 D1:
-              copy is user-facing; internal ticket refs stay in code
-              comments only. */}
-          {dataset.attribution.status === "placeholder" ? (
-            <Alert
-              type="warning"
-              showIcon
-              className="mb-6"
-              message="占位数据集"
-              description={
-                <span>
-                  此数据集由历史数据复原生成，原始文献归属不完整；标题中的占位标注即为此状态的说明，数据字段仍可正常浏览。
-                </span>
-              }
-            />
-          ) : null}
-
-          <Descriptions
-            column={1}
-            bordered
-            size="middle"
-            items={[
-              {
-                key: "material",
-                label: "材料",
-                // NFM-5321 D2: resolved name via expand=material; the
-                // raw UUID never renders. 「—」 when unresolved.
-                children: dataset.material_name ? (
-                  <Link
-                    href={`/materials/${dataset.material_id}`}
-                    className="text-blue-400 hover:text-blue-300 hover:underline"
-                  >
-                    {dataset.material_name}
-                  </Link>
-                ) : (
-                  <Text type="secondary">—</Text>
-                ),
-              },
-              {
-                key: "source",
-                label: "数据源",
-                // NFM-5321 D2: resolved title via expand=source. 无 = no
-                // linked source; 「—」 = linked but unresolved title.
-                children:
-                  dataset.source_id === null ? (
-                    <Text type="secondary">无</Text>
-                  ) : dataset.source_title ? (
-                    <Link
-                      href={`/publications/${dataset.source_id}`}
-                      className="text-blue-400 hover:text-blue-300 hover:underline"
-                    >
-                      {dataset.source_title}
-                    </Link>
-                  ) : (
-                    <Text type="secondary">—</Text>
-                  ),
-              },
-              {
-                key: "measurement_date",
-                label: "测量日期",
-                children: formatDate(dataset.measurement_date),
-              },
-              {
-                key: "description",
-                label: "描述",
-                children: dataset.description ? (
-                  <span className="whitespace-pre-wrap text-sm">
-                    {dataset.description}
-                  </span>
-                ) : (
-                  <Text type="secondary">无</Text>
-                ),
-              },
-              {
-                key: "created",
-                // NFM-5321 D2: date-only rendering (YYYY-MM-DD), matching
-                // the list view — no raw ISO 8601 wire format.
-                label: "创建时间",
-                children: formatDate(dataset.created_at),
-              },
-              {
-                key: "updated",
-                label: "更新时间",
-                children: formatDate(dataset.updated_at),
-              },
-            ]}
-          />
-        </>
-      ) : null}
+      {dataset ? <DatasetDetailContent dataset={dataset} /> : null}
     </main>
-  )
-}
-
-/** 中文标签 for the §5.2 attribution status enum (NFM-5321 D2). */
-function AttributionBadge({
-  status,
-}: {
-  status: "placeholder" | "intact"
-}) {
-  if (status === "placeholder") {
-    return (
-      <Tag color="orange" title="历史复原数据，归属信息不完整">
-        归属占位
-      </Tag>
-    )
-  }
-  return (
-    <Tag color="blue" title="原始文献归属信息完整">
-      归属完整
-    </Tag>
   )
 }
