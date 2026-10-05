@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nfm_db.models import Dataset, DataSource, Material
@@ -33,6 +33,8 @@ logger = __import__("logging").getLogger(__name__)
 async def get_dataset_with_attribution(
     db: AsyncSession,
     dataset_id: uuid.UUID,
+    expand_material: bool = False,
+    expand_source: bool = False,
 ) -> DatasetWithAttributionResponse | None:
     """Return a single dataset with the §5.2 attribution block.
 
@@ -43,13 +45,43 @@ async def get_dataset_with_attribution(
       set (defaults to ``()`` until CEO publishes the IDs).
     * ``"intact"`` otherwise.
 
+    NFM-5321 (D2): ``expand_material`` / ``expand_source`` LEFT JOIN the
+    ``Material`` / ``DataSource`` tables and populate ``material_name`` /
+    ``source_title`` on the response — the same opt-in contract the list
+    endpoint uses, so the detail page can render human-readable names
+    instead of raw UUIDs without a second round-trip.  Both default to
+    off; the default query stays single-table.
+
     Returns ``None`` if the dataset does not exist; the route handler
     converts that to a 404.
     """
-    stmt = select(Dataset).where(Dataset.id == dataset_id)
-    row = (await db.execute(stmt)).scalar_one_or_none()
-    if row is None:
-        return None
+    material_name: str | None = None
+    source_title: str | None = None
+
+    if expand_material or expand_source:
+        # Mirror the list endpoint's explicit LEFT JOIN projection: one
+        # query resolves the dataset row plus whichever join columns the
+        # caller opted into; un-expanded columns stay NULL.
+        stmt = (
+            select(
+                Dataset,
+                Material.name if expand_material else null().label("material_name"),
+                DataSource.title if expand_source else null().label("source_title"),
+            )
+            .outerjoin(Material, Dataset.material_id == Material.id)
+            .outerjoin(DataSource, Dataset.source_id == DataSource.id)
+            .where(Dataset.id == dataset_id)
+        )
+        result_row = (await db.execute(stmt)).one_or_none()
+        if result_row is None:
+            return None
+        row, raw_material_name, raw_source_title = result_row
+        material_name = raw_material_name
+        source_title = raw_source_title
+    else:
+        row = (await db.execute(select(Dataset).where(Dataset.id == dataset_id))).scalar_one_or_none()
+        if row is None:
+            return None
 
     restored = get_recast_restored_dataset_ids()
     attribution_status = "placeholder" if dataset_id in restored else "intact"
@@ -63,6 +95,8 @@ async def get_dataset_with_attribution(
     return DatasetWithAttributionResponse(
         **base.model_dump(),
         attribution=DatasetAttributionBlock(status=attribution_status),
+        material_name=material_name,
+        source_title=source_title,
     )
 
 
