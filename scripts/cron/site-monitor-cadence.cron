@@ -19,25 +19,52 @@
 #
 # SRE §3 census reuse: the same script with --json emits the census record.
 #
-# >>>>>> INSTALLATION REQUIRED (once, on the host that runs the sentinel) <<<<<
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+# Copy WHOLE blocks — partial copies are dead-on-arrival (NFM-5309 CR F1):
+#   - the PATH line is REQUIRED (cron's default /usr/bin:/bin has no
+#     homebrew gh on Apple Silicon), and
+#   - the definition lines must ride along with the schedule line, or every
+#     variable expands empty and the detector never runs.
 #
-#   macOS (this machine) — per-user crontab; strip the `root` field first:
-#     crontab -l > /tmp/cron.bak          # backup current
-#     # add the line below minus `root`, then: crontab <new>
-#   or launchd per docs/runbooks/latched-error-recovery.md §5 pattern.
+# macOS per-user crontab: extract the 5 marked lines and append to crontab —
 #
-#   Linux (/etc/cron.d):
-#     sudo install -m 0644 scripts/cron/site-monitor-cadence.cron \
-#       /etc/cron.d/nucpot-site-monitor-cadence
+#   awk '/^# >>>macos-per-user$/{f=1;next} /^# <<<macos-per-user$/{f=0} f' \
+#     scripts/cron/site-monitor-cadence.cron | sed 's/^# //' \
+#     > "$TMPDIR/cadence-cron"
+#   (crontab -l 2>/dev/null; cat "$TMPDIR/cadence-cron") | crontab -
 #
-# Verify after install:
-#   python3 scripts/site_monitor_cadence_check.py --json ; echo "rc=$?"
+# or paste them by hand (verbatim, all 5, no `root` field):
+#
+# >>>macos-per-user
+# PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+# REPO_DIR=/Users/lwj04/Projects/nucpot
+# PYTHON=/opt/homebrew/bin/python3.14
+# LOG_DIR=/Users/lwj04/Library/Logs/nucpot-site-monitor-cadence
+# 41 */4 * * * mkdir -p "$LOG_DIR" && cd "$REPO_DIR" && "$PYTHON" scripts/site_monitor_cadence_check.py >> "$LOG_DIR/cadence.log" 2>&1
+# <<<macos-per-user
+#
+# Uninstall: crontab -l | grep -v site_monitor_cadence_check | crontab -
+# (launchd alternative: docs/runbooks/latched-error-recovery.md §5 pattern.)
+#
+# Linux (/etc/cron.d): install the whole file as-is (the `root` user field
+# below is REQUIRED in /etc/cron.d and REJECTED by per-user crontabs — which
+# is why the macOS block above omits it):
+#
+#   sudo install -m 0644 scripts/cron/site-monitor-cadence.cron \
+#     /etc/cron.d/nucpot-site-monitor-cadence
+#
+# Verify after install under cron's environment (not your interactive shell):
+#   env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$HOME" \
+#     "$PYTHON" scripts/site_monitor_cadence_check.py --json
 #   → expect rc=0 and delivered ≈ 6-10 under current starvation baseline.
 # =============================================================================
 
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 REPO_DIR=/Users/lwj04/Projects/nucpot
 PYTHON=/opt/homebrew/bin/python3.14
-LOG_DIR=$HOME/Library/Logs/nucpot-site-monitor-cadence
+LOG_DIR=/Users/lwj04/Library/Logs/nucpot-site-monitor-cadence
 
 # Every 4h at :41 (off the start-of-hour drop window; 6 checks/day is ample
 # for a 24h evaluation window). One invocation; every verdict line lands in

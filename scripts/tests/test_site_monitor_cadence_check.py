@@ -223,3 +223,20 @@ def test_fetch_runs_raises_gherror_on_failure(monkeypatch) -> None:
     )
     with pytest.raises(smcc.GhError, match="no default remote"):
         smcc.fetch_runs(workflow="site-monitor.yml", limit=10)
+
+
+def test_missing_gh_binary_yields_error_json_exit_1(monkeypatch, capsys) -> None:
+    """CR NFM-5309 F2: a missing `gh` binary (cron PATH without homebrew)
+    raised uncaught FileNotFoundError — a traceback instead of the documented
+    error contract. main() --json must emit {"verdict": "ERROR"} and rc=1,
+    preserving the SRE §3 census contract in degraded environments."""
+
+    def no_gh(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(smcc.subprocess, "run", no_gh)
+    rc = smcc.main(["--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["verdict"] == "ERROR"
+    assert "gh" in out["error"]
