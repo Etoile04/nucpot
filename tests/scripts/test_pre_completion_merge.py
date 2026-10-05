@@ -377,3 +377,56 @@ def test_render_block_lists_chain_and_rollback() -> None:
     text = pcm.render_block(verdict)
     assert "NFM-5257" in text and "NFM-5259 [in_review]" in text
     assert "DENIED" in text and "PCMR_ENFORCE" in text and pcm.CARRY_MARKER in text
+
+
+# --- soak audit log (AC3) ---------------------------------------------------------
+
+
+def test_enforce_decisions_are_audited(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "soak.log"
+    issue = _issue(identifier="NFM-5257", blocked=[{"identifier": "NFM-5259", "status": "in_review"}])
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(issue))
+    env = {"PCMR_ENFORCE": "1", "PCMR_LOG": str(log)}
+    blocked = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-5257", "status": "done"},
+        },
+        env=env,
+    )
+    assert blocked == 2
+    line = log.read_text().splitlines()[-1]
+    assert line.startswith("BLOCK\tNFM-5257\t") and "NFM-5259[in_review]" in line
+
+
+def test_advisory_mode_never_audits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "soak.log"
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(_issue()))
+    code = pcm.run_hook(
+        {"tool_name": "TaskUpdate", "tool_input": {"taskId": "NFM-1", "status": "done"}},
+        env={"PCMR_LOG": str(log)},  # flag absent
+    )
+    assert code == 0
+    assert not log.exists()
+
+
+def test_audit_failure_never_breaks_the_hook(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Unwritable log target must degrade silently, not deny or crash.
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(_issue()))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1", "PCMR_LOG": str(tmp_path / "no" / "such" / "dir" / "x.log")},
+    )
+    assert code == 0
+    assert "write allowed" in capsys.readouterr().err
