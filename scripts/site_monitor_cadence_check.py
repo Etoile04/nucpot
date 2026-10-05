@@ -142,7 +142,18 @@ def fetch_runs(*, workflow: str, limit: int) -> list[dict]:
         "--json", "createdAt,conclusion",
         "--limit", str(limit),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        # cron installs: PATH=/usr/bin:/bin has no gh (homebrew lives in
+        # /opt/homebrew/bin) — see the PATH line in
+        # scripts/cron/site-monitor-cadence.cron. Must surface as the
+        # documented execution-error contract, not a traceback (NFM-5309 F2).
+        raise GhError(
+            f"gh executable not found on PATH ({exc.filename!r}) — set PATH "
+            "to include /opt/homebrew/bin (see "
+            "scripts/cron/site-monitor-cadence.cron header)"
+        ) from exc
     if proc.returncode != 0:
         raise GhError(
             f"gh run list failed (rc={proc.returncode}): {proc.stderr.strip()[:300]}"
