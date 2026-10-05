@@ -109,8 +109,14 @@ mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
 # log) with no new infrastructure.
 DEPLOY_EPOCH_MINTED=""
 NFM5253_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NFM5253_ENFORCE_FLAG=""
-[ "${NFM_DEPLOY_LOCK_ENFORCE:-1}" = "1" ] && NFM5253_ENFORCE_FLAG="--enforce"
+NFM5253_ENFORCE_FLAG="--enforce"
+case "${NFM_DEPLOY_LOCK_ENFORCE:-1}" in
+  1|"") ;;
+  0) NFM5253_ENFORCE_FLAG="" ;;
+  *)
+    echo "WARNING (NFM-5259): unrecognized NFM_DEPLOY_LOCK_ENFORCE='${NFM_DEPLOY_LOCK_ENFORCE}' — treating as ENFORCED; only the exact value 0 is the emergency-disable." >&2
+    ;;
+esac
 NFM5253_ACQUIRE_RC=0
 NFM5253_ACQUIRE_OUT="$(python3 "${NFM5253_SCRIPT_DIR}/deploy_epoch.py" lock-acquire \
   --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} 2>&1)" \

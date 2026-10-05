@@ -33,7 +33,9 @@ build must be pushed without waiting on CI.
 >   semantics (conflict logged but proceeds; helper failure falls back to
 >   the legacy lock). Use ONLY as a deliberate, documented emergency measure:
 >   it disables both the refusal and the drift checker's epoch stand-down
->   classification for that deploy.
+>   classification for that deploy. The knob fails CLOSED: any other value
+>   (`true`, `yes`, `on`, a typo) is treated as enforced with a warning —
+>   only the exact value `0` disables.
 
 **Source of truth for the contract:** the Production Deployment
 workflow at `.github/workflows/production-deployment.yml`. Anything in

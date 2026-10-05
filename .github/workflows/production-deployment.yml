@@ -736,8 +736,9 @@ jobs:
           # prod (including its stub-Paperclip end-to-end filing path)
           # before any of it ships.
           python3 -m pytest scripts/tests/test_check_deploy_drift.py -v
-          # NFM-5253: deploy-epoch fencing primitive (NFM-4848 T1/T4/T5,
-          # shadow mode). Hermetic coverage for the epoch helper, the
+          # NFM-5253 / NFM-5259: deploy-epoch fencing primitive
+          # (NFM-4848 T1/T4/T5; enforced by default since 2026-10-05).
+          # Hermetic coverage for the epoch helper, the
           # lockfile CAS, the epoch-fenced health-marker attestation and
           # record_rollback — all before any of it ships to prod.
           python3 -m pytest scripts/tests/test_deploy_epoch.py -v

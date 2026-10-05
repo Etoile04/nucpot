@@ -704,6 +704,7 @@ class DeployHost:
         *,
         enforce: bool = False,
         shadow: bool = False,
+        enforce_value: str | None = None,
         actor: str | None = "gh-runner:lwj04",
     ) -> subprocess.CompletedProcess[str]:
         env = _subprocess_env(
@@ -718,6 +719,9 @@ class DeployHost:
         )
         if actor is not None:
             env["DEPLOY_ACTOR"] = actor
+        if enforce_value is not None:
+            assert not enforce and not shadow, "enforce_value sets the knob directly"
+            env["NFM_DEPLOY_LOCK_ENFORCE"] = enforce_value
         if enforce:
             env["NFM_DEPLOY_LOCK_ENFORCE"] = "1"
         if shadow:
@@ -860,14 +864,29 @@ def test_full_deploy_default_enforced_refusal_exits_80_before_cutover(
         )
 
 
-def test_deploy_prod_sh_enforce_default_on_source_guard():
-    """Wiring guard (NFM-5259): the flag default in the source must be ON —
-    a behavioral test proves the outcome; this pins the literal default so an
-    accidental revert to :-0 fails with an obvious cause."""
-    source = DEPLOY_PROD_SH.read_text(encoding="utf-8")
-    assert "${NFM_DEPLOY_LOCK_ENFORCE:-1}" in source, (
-        "NFM-5259: NFM_DEPLOY_LOCK_ENFORCE must default to 1 (enforced) in deploy_prod.sh"
-    )
+def test_full_deploy_unrecognized_enforce_value_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """NFM-5259 review fix: the enforcement knob fails CLOSED — only the
+    exact emergency-disable value 0 turns it off. An operator exporting a
+    truthy-but-unrecognized spelling (true/yes/on, or a typo of 0) must get
+    the ENFORCED refusal, not a silent drop to shadow mode."""
+    for index, bad_value in enumerate(("true", "yes", "00 ", "off-typo")):
+        host = DeployHost(tmp_path / f"host-{index}", monkeypatch)
+        host.epoch_file.write_text("5\n", encoding="utf-8")
+        host.lock_file.write_text(
+            json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
+            encoding="utf-8",
+        )
+        result = host.run(enforce_value=bad_value)
+        assert result.returncode == LOCK_REFUSE_EXIT, (
+            f"NFM_DEPLOY_LOCK_ENFORCE='{bad_value}' must fail closed to enforcement"
+        )
+        assert "unrecognized NFM_DEPLOY_LOCK_ENFORCE" in result.stdout + result.stderr
+        assert (
+            json.loads(host.lock_file.read_text(encoding="utf-8"))["deploy_sha"]
+            == "concurrent-run"
+        )
 
 
 def test_full_deploy_helper_unavailable_is_fatal_under_default_enforce(
