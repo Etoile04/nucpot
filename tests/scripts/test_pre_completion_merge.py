@@ -1,8 +1,10 @@
-"""Unit tests for the PreCompletionMerge advisory hook (NFM-4847 / KR-WF-3).
+"""Unit tests for the PreCompletionMerge hook (NFM-4847 advisory / NFM-5314 blocking).
 
 All lookups are monkeypatched — these tests are offline and exercise exactly
 the surfaces that must not regress: done-ward write detection, blocker-chain
-verdicts, and the advisory exit-code policy (warn, never crash, never block).
+verdicts, the advisory exit-code policy (warn, never crash, never block), and
+the flag-gated blocking gate (PCMR_ENFORCE: deny only verified unresolved
+chains, fail-open, silent no-op when off).
 """
 
 from __future__ import annotations
@@ -182,3 +184,196 @@ def test_render_warning_lists_both_sections() -> None:
     )
     text = pcm.render_warning(verdict)
     assert "NFM-2 [in_progress]" in text and "NFM-3" in text and "NFM-4847" in text
+
+
+# --- blocking mode (NFM-5314 / PCMR_ENFORCE) -------------------------------------
+
+
+def test_enforce_flag_default_off() -> None:
+    assert not pcm.enforce_enabled({})  # unset
+    assert not pcm.enforce_enabled({"PCMR_ENFORCE": ""})
+    assert not pcm.enforce_enabled({"PCMR_ENFORCE": "0"})
+    assert not pcm.enforce_enabled({"PCMR_ENFORCE": "off"})
+
+
+def test_enforce_flag_truthy_values() -> None:
+    for raw in ("1", "true", "YES", "On", " 1 "):
+        assert pcm.enforce_enabled({"PCMR_ENFORCE": raw})
+
+
+def test_pretooluse_flag_off_is_silent_noop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _boom(ident: str) -> None:
+        raise AssertionError("flag off must not touch the API")
+
+    monkeypatch.setattr(pcm, "lookup_issue", _boom)
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={},
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out == "" and captured.err == ""
+
+
+def test_pretooluse_enforce_denies_unresolved_chain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    issue = _issue(blocked=[{"identifier": "NFM-5259", "status": "in_review"}])
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(issue))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-5257", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "DENIED" in err and "NFM-5259 [in_review]" in err and "NFM-5314" in err
+
+
+def test_pretooluse_enforce_allows_clean_chain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(_issue()))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "write allowed" in err
+
+
+def test_pretooluse_enforce_terminal_only_does_not_hold(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # terminalBlockers alone is not an unresolved chain — blocking never fires.
+    issue = _issue(terminal=[{"identifier": "NFM-8", "status": "cancelled"}])
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(issue))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "terminal-only" in err and "write allowed" in err
+
+
+def test_pretooluse_enforce_failopen_on_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _raise(ident: str) -> None:
+        raise RuntimeError("auth boundary moved")
+
+    monkeypatch.setattr(pcm, "lookup_issue", _raise)
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    assert code == 0
+    assert "fail-open" in capsys.readouterr().err
+
+
+def test_pretooluse_enforce_failopen_on_notfound(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: NotFound(identifier=ident))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-4040", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    assert code == 0
+    assert "fail-open" in capsys.readouterr().err
+
+
+def test_pretooluse_carry_marker_allows_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _boom(ident: str) -> None:
+        raise AssertionError("carry hatch must not need a chain read")
+
+    monkeypatch.setattr(pcm, "lookup_issue", _boom)
+    command = (
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-5257" '
+        "-d '{\"status\": \"done\"}' # pcmr-carry"
+    )
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "intentional carry" in err
+
+
+def test_posttooluse_unaffected_by_flag_on(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Flag on must not change the PostToolUse advisory contract (AC2).
+    issue = _issue(blocked=[{"identifier": "NFM-4829", "status": "in_progress"}])
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(issue))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-4749", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "Advisory only" in err and "NFM-4847" in err and "DENIED" not in err
+
+
+def test_legacy_payload_without_event_is_advisory(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Older runtimes omit hook_event_name — must stay advisory, never block.
+    issue = _issue(blocked=[{"identifier": "NFM-4829", "status": "in_progress"}])
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(issue))
+    code = pcm.run_hook(
+        {"tool_name": "TaskUpdate", "tool_input": {"taskId": "NFM-4749", "status": "done"}},
+        env={"PCMR_ENFORCE": "1"},
+    )
+    assert code == 2
+    assert "Advisory only" in capsys.readouterr().err
+
+
+def test_render_block_lists_chain_and_rollback() -> None:
+    verdict = pcm.Verdict(
+        identifier="NFM-5257",
+        status="blocked",
+        unresolved=(("NFM-5259", "in_review"),),
+        terminal=(),
+    )
+    text = pcm.render_block(verdict)
+    assert "NFM-5257" in text and "NFM-5259 [in_review]" in text
+    assert "DENIED" in text and "PCMR_ENFORCE" in text and pcm.CARRY_MARKER in text
