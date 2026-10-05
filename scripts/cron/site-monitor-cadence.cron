@@ -1,0 +1,49 @@
+# =============================================================================
+# Site-monitor cadence watchdog cron (NFM-5309)
+# =============================================================================
+# Host-side detector for GitHub scheduled-event starvation. The GH scheduler
+# chronically delivers ~8 events/day to site-monitor.yml regardless of the
+# nominal cron (NFM-5226 root cause; NFM-5309 W40 census: 5.5% of */10
+# nominal, ~9% of the 17 */6 watchdog nominal). Nothing inside GitHub
+# Actions can detect that — a starved scheduler cannot be its own watchdog —
+# so this check runs HERE, next to the NFM-5226 on-host sentinel.
+#
+# Script: scripts/site_monitor_cadence_check.py (pure logic unit-tested in
+# scripts/tests/test_site_monitor_cadence_check.py; `gh` is the only dep).
+#
+# Exit-code semantics (cron mails / logs non-zero output):
+#   0 OK (≥ warn-below runs delivered in window)
+#   1 execution error (gh missing/failed — do NOT page as cadence)
+#   2 WARN    — delivered < 4 runs / 24h (half the census baseline)
+#   3 CRITICAL— zero runs / 24h OR newest run older than 18h (blackout)
+#
+# SRE §3 census reuse: the same script with --json emits the census record.
+#
+# >>>>>> INSTALLATION REQUIRED (once, on the host that runs the sentinel) <<<<<
+#
+#   macOS (this machine) — per-user crontab; strip the `root` field first:
+#     crontab -l > /tmp/cron.bak          # backup current
+#     # add the line below minus `root`, then: crontab <new>
+#   or launchd per docs/runbooks/latched-error-recovery.md §5 pattern.
+#
+#   Linux (/etc/cron.d):
+#     sudo install -m 0644 scripts/cron/site-monitor-cadence.cron \
+#       /etc/cron.d/nucpot-site-monitor-cadence
+#
+# Verify after install:
+#   python3 scripts/site_monitor_cadence_check.py --json ; echo "rc=$?"
+#   → expect rc=0 and delivered ≈ 6-10 under current starvation baseline.
+# =============================================================================
+
+REPO_DIR=/Users/lwj04/Projects/nucpot
+PYTHON=/opt/homebrew/bin/python3.14
+LOG_DIR=$HOME/Library/Logs/nucpot-site-monitor-cadence
+
+# Every 4h at :41 (off the start-of-hour drop window; 6 checks/day is ample
+# for a 24h evaluation window). One invocation; every verdict line lands in
+# cadence.log — SRE's heartbeat greps that log exactly like the NFM-5226
+# sentinel log. (Do NOT add an `||` re-run: it would double-count gh calls
+# and treat exit-1 execution errors as cadence alerts.)
+41 */4 * * * root mkdir -p "$LOG_DIR" && cd "$REPO_DIR" && \
+    "$PYTHON" scripts/site_monitor_cadence_check.py \
+    >> "$LOG_DIR/cadence.log" 2>&1
