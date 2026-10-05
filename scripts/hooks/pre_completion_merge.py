@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""PreCompletionMerge — advisory PostToolUse hook (NFM-4847 / KR-WF-3).
+"""PreCompletionMerge — advisory + flag-gated blocking hook (NFM-4847 / NFM-5314 / KR-WF-3).
 
-After a successful issue-status write toward ``done``, re-read the issue's
-expanded blocker chain and warn when unresolved blockers remain.
+Advisory mode (default, out-of-the-box): after a successful issue-status
+write toward ``done``, re-read the issue's expanded blocker chain and warn
+when unresolved blockers remain.
+
+Blocking mode (opt-in per environment, NFM-5314): when ``PCMR_ENFORCE`` is
+truthy, the SAME script is wired as a PreToolUse hook and denies the done-ward
+write outright while the chain is unresolved.
 
 Why (KR-WF-3)
 --------------
@@ -10,6 +15,7 @@ W35/W36 lockout recurrences came from ``done``/merge PATCHes issued while
 ``blockedByIssueIds`` chains were unresolved (auth-boundary 403 playbook:
 18+ instances; comment-drop/auth-flip cluster: 11 cases).  Surfacing the
 chain at the moment of the write prevents the *class*, not the instance.
+Advisory can only annotate after the fact; blocking prevents the write.
 
 Design constraints
 ------------------
@@ -17,29 +23,56 @@ Design constraints
   re-fetches the bare ``GET /api/issues/{uuid}`` payload.  The collection
   read strips ``blockedBy`` / ``terminalBlockers`` (trap-3, ADR-008 /
   NFM-2036) and would report a false "no blockers".
-* Advisory in v1 (spec item 2): the warning goes to stderr with exit code 2,
-  which feeds it back to the agent without blocking anything — a PostToolUse
-  hook runs *after* the write landed, so exit 2 cannot un-write it.  A
-  genuinely blocking variant (PreToolUse matcher gated behind
-  ``PCMR_ENFORCE=1``) ships only after one clean cycle, per spec.
+* Advisory (PostToolUse, always on): the warning goes to stderr with exit
+  code 2, which feeds it back to the agent — a PostToolUse hook runs
+  *after* the write landed, so exit 2 cannot un-write it.  This path is
+  byte-identical to the W38 advisory v1 regardless of the flag.
+* Blocking (PreToolUse, gated): with ``PCMR_ENFORCE`` on, a done-ward write
+  with an unresolved chain is denied (stderr + exit 2 BEFORE the tool
+  runs).  Blocking fires ONLY on genuine unresolved chains — a
+  ``terminalBlockers``-only chain does not hold the write.  Fail-open:
+  lookup failures and unknown identifiers never deny a write (the hook
+  must not become the lockout class it guards against).
 * Never raises into the write path: any internal failure degrades to a
   one-line stderr note and exit 0.
 
+Flag / rollback (spec item 3)
+-----------------------------
+* ``PCMR_ENFORCE`` — default **OFF**.  Truthy: ``1``/``true``/``yes``/``on``
+  (case-insensitive).  Declared ``"0"`` in the tracked
+  ``.claude/settings.json`` ``env`` block; an environment opts in by
+  setting ``PCMR_ENFORCE=1`` in ``.claude/settings.local.json`` (untracked,
+  per-environment) or its session env.
+* **Rollback = flag off**: unset ``PCMR_ENFORCE`` (or set ``0``) and the
+  PreToolUse invocation returns to a silent exit-0 no-op — advisory
+  behavior only, byte-identical to before the flag existed.  No code
+  rollback needed.
+* Intentional-carry hatch: in blocking mode, a Bash write whose command
+  carries the literal marker ``# pcmr-carry`` is allowed through (the
+  PostToolUse advisory still annotates).  Record the carry in a comment on
+  the issue FIRST, then mark the write.
+
 Modes
 -----
-* hook mode (default): a PostToolUse payload on stdin.  Relevant when the
-  tool was ``TaskUpdate`` with a done-ward status, or ``Bash`` running a
-  curl PATCH against ``/api/issues/...`` with a done-ward status body.
+* hook mode (default): a hook payload on stdin.  ``hook_event_name``
+  selects the path: ``PreToolUse`` → pre-write gate (blocking when the
+  flag is on, silent no-op when off); anything else (``PostToolUse`` or
+  absent, for older runtimes) → the advisory path.  Relevant tools:
+  ``TaskUpdate`` with a done-ward status, or ``Bash`` running a curl PATCH
+  against ``/api/issues/...`` with a done-ward status body.
 * ``--dry-run ID [ID...]``: replay the evaluation for live issues and print
   the verdict each write would have produced (AC1 evidence), including the
-  collection-path contrast that demonstrates trap-3.
+  collection-path contrast that demonstrates trap-3 and the blocking-mode
+  verdict under ``PCMR_ENFORCE=1``.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +91,12 @@ from paperclip_issue_lookup import (  # noqa: E402  (path bootstrap above)
 DONE_STATUSES = frozenset({"done", "completed"})
 # A blocker in a terminal state no longer holds the chain open.
 RESOLVED_STATUSES = frozenset({"done", "cancelled"})
+
+# Blocking-mode flag (NFM-5314). Default OFF; rollback = unset it.
+ENFORCE_ENV = "PCMR_ENFORCE"
+ENFORCE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+# Intentional-carry hatch for blocking mode (see module docstring).
+CARRY_MARKER = "# pcmr-carry"
 
 # A Bash write counts only when it PATCHes an issue URL with a done-ward body.
 _PATCH_VERB = re.compile(r"\bPATCH\b")
@@ -154,6 +193,32 @@ def render_warning(verdict: Verdict) -> str:
     return "\n".join(lines)
 
 
+def render_block(verdict: Verdict) -> str:
+    """The blocking denial fed back to the agent BEFORE a done-ward write."""
+    lines = [
+        f"⛔ PreCompletionMerge (enforce): done-ward write to {verdict.identifier} "
+        "DENIED — blocker chain unresolved (KR-WF-3 / NFM-5314).",
+        f"  unresolved blockers ({len(verdict.unresolved)}):",
+    ]
+    lines.extend(f"    - {ident} [{status}]" for ident, status in verdict.unresolved)
+    lines.extend(
+        [
+            "  Resolve the chain first, then re-issue the write.",
+            "  Intentional carry: comment the carry on the issue, then re-issue "
+            f"with `{CARRY_MARKER}` in the command.",
+            "  Rollback: unset PCMR_ENFORCE (default OFF) — see memory: "
+            "nfm-5314-pcmr-enforce-blocking-variant.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def enforce_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """PCMR_ENFORCE gate — default OFF; advisory stays the out-of-box behavior."""
+    source = os.environ if env is None else env
+    return str(source.get(ENFORCE_ENV, "")).strip().lower() in ENFORCE_TRUTHY
+
+
 def collection_blocked_by(identifier: str) -> str:
     """Contrast read: what the collection path would have reported (trap-3)."""
     result = lookup_issues(identifier=identifier)
@@ -163,8 +228,54 @@ def collection_blocked_by(identifier: str) -> str:
     return f"unavailable ({type(result).__name__})"
 
 
-def run_hook(payload: dict[str, Any]) -> int:
-    """Hook-mode entry: warn on unresolved chains, never block, never crash."""
+def run_hook(payload: dict[str, Any], env: Mapping[str, str] | None = None) -> int:
+    """Hook-mode entry: PreToolUse → gate (flag-gated), else advisory."""
+    event = str(payload.get("hook_event_name") or "")
+    if event == "PreToolUse":
+        if enforce_enabled(env):
+            return run_pre_write(payload)
+        return 0  # flag off — silent no-op; advisory lives on PostToolUse only
+    return run_post_write(payload)
+
+
+def run_pre_write(payload: dict[str, Any]) -> int:
+    """Blocking gate (PCMR_ENFORCE on): deny done-ward writes with open chains.
+
+    Fail-open everywhere: only a verified unresolved chain denies the write.
+    """
+    tool_input = payload.get("tool_input")
+    identifier = target_issue(str(payload.get("tool_name") or ""), tool_input or {})
+    if identifier is None:
+        return 0
+
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if isinstance(command, str) and CARRY_MARKER in command:
+        print(
+            f"[pcmr] {identifier}: intentional carry ({CARRY_MARKER.strip()}) — "
+            "write allowed; PostToolUse advisory will annotate",
+            file=sys.stderr,
+        )
+        return 0
+
+    try:
+        verdict = evaluate(identifier)
+    except Exception as exc:
+        print(f"[pcmr] pre-write evaluation failed for {identifier}: {exc} — fail-open", file=sys.stderr)
+        return 0
+
+    if verdict.note:
+        print(f"[pcmr] {verdict.identifier}: {verdict.note} — fail-open", file=sys.stderr)
+        return 0
+    if verdict.unresolved:
+        print(render_block(verdict), file=sys.stderr)
+        return 2
+    terminal_note = " (+ terminal-only, does not hold)" if verdict.terminal else ""
+    print(f"[pcmr] {verdict.identifier}: chain clean — done-ward write allowed{terminal_note}", file=sys.stderr)
+    return 0
+
+
+def run_post_write(payload: dict[str, Any]) -> int:
+    """Advisory path (PostToolUse or legacy payloads): warn, never block, never crash."""
     tool_input = payload.get("tool_input")
     identifier = target_issue(str(payload.get("tool_name") or ""), tool_input or {})
     if identifier is None:
@@ -201,9 +312,11 @@ def run_dry_run(identifiers: list[str]) -> int:
         chain = ", ".join(f"{i}[{s}]" for i, s in verdict.unresolved) or "-"
         term = ", ".join(verdict.terminal) or "-"
         would_warn = "WARN (exit 2)" if not verdict.clean else "clean (exit 0)"
+        would_block = "BLOCK (exit 2, write denied)" if verdict.unresolved else "allow"
         print(
             f"{verdict.identifier} status={verdict.status} | unresolved=[{chain}] "
-            f"| terminal=[{term}] | collection-path blockedBy: {contrast} | verdict: {would_warn}"
+            f"| terminal=[{term}] | collection-path blockedBy: {contrast} "
+            f"| advisory: {would_warn} | enforce: {would_block}"
         )
     return 0
 
