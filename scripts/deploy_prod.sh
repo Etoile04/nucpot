@@ -23,7 +23,11 @@
 # Optional: PROXY_PORT (ADR-018 / NFM-4762) — when set, applies HTTP_PROXY/
 # HTTPS_PROXY for the deploy session. Default unset = direct egress everywhere.
 # Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert;
-# 80 = NFM-5253 enforced deploy-lock refusal (NFM_DEPLOY_LOCK_ENFORCE=1 only).
+# 80 = NFM-5253 enforced deploy-lock refusal — DEFAULT since NFM-5259 (flip
+#      2026-10-05, gated on the NFM-5258 SRE shadow-week sign-off); explicit
+#      NFM_DEPLOY_LOCK_ENFORCE=0 is the emergency-disable back to shadow;
+# 81 = NFM-5259 epoch mint/lock-acquire unavailable under enforcement
+#      (helper-fatal, no legacy lock fallback — CTO condition 1, 2026-09-28).
 # ============================================================================
 set -euo pipefail
 
@@ -86,23 +90,27 @@ if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
 fi
 mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
 
-# NFM-5253 (NFM-4848 T4, deploy-epoch fencing — SHADOW MODE): the lockfile
-# acquire is now an epoch-aware CAS instead of a blind `>` overwrite. One
+# NFM-5253 (NFM-4848 T4, deploy-epoch fencing) / NFM-5259 (enforcement flip,
+# 2026-10-05, gated on the NFM-5258 SRE shadow-week sign-off — week clean,
+# epochs 1→7 strict +1): the lockfile acquire is an epoch-aware CAS instead
+# of a blind `>` overwrite, and the refusal is now ENFORCED BY DEFAULT. One
 # primitive: scripts/deploy_epoch.py mints the next epoch (monotonic int at
 # ${G2_VAR_DIR}/prod-deploy.epoch, fcntl-serialized) and, inside that same
 # critical section, decides whether THIS run may take the lock — refuse iff
-# a fresh lock (age <= 7200s) is held by a live pid. Shadow semantics: the
-# decision (EPOCH_MINTED /
-# LOCK_DECISION / deploy_epoch_lock JSON) is logged for the SRE week, but a
-# "refuse" still proceeds exactly like today's blind overwrite; the actual
-# refusal is gated behind NFM_DEPLOY_LOCK_ENFORCE=1 (default OFF — the
-# enforcement flip is a separate CPO-dispatched follow-up). AC6: the
+# a fresh lock (age <= 7200s) is held by a live pid. Under enforcement a
+# refusal exits 80 WITHOUT touching the holder's lock (before cutover).
+# NFM_DEPLOY_LOCK_ENFORCE defaults to 1; the explicit emergency-disable is
+# NFM_DEPLOY_LOCK_ENFORCE=0 (shadow semantics: the decision — EPOCH_MINTED /
+# LOCK_DECISION / deploy_epoch_lock JSON — is logged, but a "refuse" still
+# proceeds like the old blind overwrite). NFM-5259 / CTO condition 1: under
+# enforcement a missing/broken helper is FATAL (rc 81) — the legacy blind
+# lock write would mint no epoch and silently bypass the fence. AC6: the
 # minted epoch + lock decision ride the deploy log (ssh stdout → Actions
 # log) with no new infrastructure.
 DEPLOY_EPOCH_MINTED=""
 NFM5253_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NFM5253_ENFORCE_FLAG=""
-[ "${NFM_DEPLOY_LOCK_ENFORCE:-0}" = "1" ] && NFM5253_ENFORCE_FLAG="--enforce"
+[ "${NFM_DEPLOY_LOCK_ENFORCE:-1}" = "1" ] && NFM5253_ENFORCE_FLAG="--enforce"
 NFM5253_ACQUIRE_RC=0
 NFM5253_ACQUIRE_OUT="$(python3 "${NFM5253_SCRIPT_DIR}/deploy_epoch.py" lock-acquire \
   --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} 2>&1)" \
@@ -116,17 +124,27 @@ if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
   # health marker to carry THIS epoch (T1 — a stale marker can structurally
   # never attest).
   echo "DEPLOY_EPOCH_MINTED=${DEPLOY_EPOCH_MINTED}"
-  echo "==> deploy epoch ${DEPLOY_EPOCH_MINTED} minted; lock decision: ${DEPLOY_LOCK_DECISION:-unknown} (NFM-5253 shadow)"
+  echo "==> deploy epoch ${DEPLOY_EPOCH_MINTED} minted; lock decision: ${DEPLOY_LOCK_DECISION:-unknown} (NFM-5253 enforced)"
   if [ "${DEPLOY_LOCK_DECISION}" = "refuse" ]; then
-    echo "WARNING (NFM-5253 shadow): lock conflict detected but NOT enforced — proceeding (NFM_DEPLOY_LOCK_ENFORCE=1 refuses; flip only after the SRE shadow week)."
+    echo "WARNING (NFM-5253 shadow): lock conflict detected but NOT enforced — proceeding (explicit NFM_DEPLOY_LOCK_ENFORCE=0 emergency-disable; the NFM-5259 default is enforced)."
   fi
 elif [ "${NFM5253_ACQUIRE_RC}" -eq 80 ]; then
   printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
   echo "FATAL (NFM-5253): deploy REFUSED — the deploy lock is held by a live concurrent deploy (fresh lock, live pid). Not overwriting." >&2
   exit 80
 else
-  # Shadow-mode tolerance: a missing/broken helper must not block deploys
-  # (pre-fencing hosts, partial checkouts). Legacy blind write, no epoch.
+  if [ -n "${NFM5253_ENFORCE_FLAG}" ]; then
+    # NFM-5259 / CTO condition 1 (2026-09-28): under enforcement the legacy
+    # blind lock write is a silent-bypass vector — a lock with no epoch
+    # would also blind the drift checker's activated epoch stand-down
+    # comparison. A missing/broken helper REFUSES the deploy (rc 81).
+    printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
+    echo "FATAL (NFM-5259): epoch mint/lock-acquire unavailable under enforcement (rc=${NFM5253_ACQUIRE_RC}) — refusing to deploy; no legacy fallback while NFM_DEPLOY_LOCK_ENFORCE=1. Restore scripts/deploy_epoch.py, or set NFM_DEPLOY_LOCK_ENFORCE=0 ONLY as a deliberate emergency-disable." >&2
+    exit 81
+  fi
+  # NFM_DEPLOY_LOCK_ENFORCE=0 (explicit emergency-disable) — shadow-mode
+  # tolerance: a missing/broken helper must not block deploys (pre-fencing
+  # hosts, partial checkouts). Legacy blind write, no epoch.
   echo "WARNING (NFM-5253): epoch mint/lock-acquire unavailable (rc=${NFM5253_ACQUIRE_RC}) — falling back to the legacy lock write: ${NFM5253_ACQUIRE_OUT}"
   printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"

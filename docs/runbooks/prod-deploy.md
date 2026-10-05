@@ -14,6 +14,27 @@
 `.github/workflows/production-deployment.yml` is blocked or a hot
 build must be pushed without waiting on CI.
 
+> **Deploy-lock enforcement is ON by default (NFM-5259, 2026-10-05).**
+> The NFM-5253 deploy-epoch fence flipped from shadow to ENFORCED after the
+> clean NFM-5258 shadow week (epochs 1→7 strict +1, zero anomalies). What
+> this means for an operator:
+>
+> - **Exit 80** — the deploy was REFUSED because a fresh deploy lock is held
+>   by a live pid: another deploy is genuinely in flight. Do NOT retry
+>   immediately; confirm the other run finished (`gh run list --workflow
+>   production-deployment.yml`, then `sudo -n -u nfmdeploy cat
+>   /usr/local/var/nfm-g2/prod-deploy.lock`) and re-run the deploy job only
+>   after it is gone. The holder's lock is never overwritten.
+> - **Exit 81** — `scripts/deploy_epoch.py` was missing/broken at deploy
+>   time. This is FATAL on purpose (the legacy blind lock write would
+>   silently bypass the fence). Fix the checkout/helper and re-run; do not
+>   paper over it.
+> - **Emergency-disable** — `NFM_DEPLOY_LOCK_ENFORCE=0` restores shadow
+>   semantics (conflict logged but proceeds; helper failure falls back to
+>   the legacy lock). Use ONLY as a deliberate, documented emergency measure:
+>   it disables both the refusal and the drift checker's epoch stand-down
+>   classification for that deploy.
+
 **Source of truth for the contract:** the Production Deployment
 workflow at `.github/workflows/production-deployment.yml`. Anything in
 this runbook that drifts from the workflow is a bug — fix the runbook,
@@ -676,7 +697,19 @@ zero audit trail).
 - **No-noise during sanctioned deploys (AC-G4b.2):** (1) `deploy_prod.sh`
   holds the deploy lock for the whole deploy (trap-removed on ANY exit — a
   crashed deploy must alarm); the checker stands down while the lock is
-  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build). Lock location
+  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build) **AND the
+  activated epoch rule classifies it an in-flight deploy (NFM-5259,
+  2026-10-05)**: stand down iff `lock.epoch > manifest epoch` — the lock's
+  mint is ahead of the last recorded state transition. A fresh lock
+  at-or-behind the manifest epoch is LEFTOVER (crashed pre-trap host,
+  hand-placed lock) and no longer suppresses the alarm — the checker files.
+  `indeterminate` artifacts (a pre-fencing lock without an epoch member, or
+  a pre-fencing manifest without `deploy_epoch` — e.g. the first post-flip
+  in-flight deploy) still stand down: the only fresh no-epoch locks are
+  explicit `NFM_DEPLOY_LOCK_ENFORCE=0` emergency deploys and pre-flip
+  residue, both freshness-bounded. The evaluation line
+  (`epoch fencing (NFM-5259 active): … stand_down=true|false|indeterminate`)
+  rides the cron log. Lock location
   mirrors the manifest (NFM-4273): `/usr/local/var/nfm-g2/prod-deploy.lock`
   when the canonical gate dir exists, else `~/.nfmd/prod-deploy.lock` —
   same env > canonical > `~/.nfmd` resolution as the writer, so the cron
@@ -838,6 +871,21 @@ running it as the desktop user against a gated host fails loudly at the
 epoch mint — on purpose). Wiring the gated `run-recovery.sh rollback`
 entry to call it automatically rides the host-entry propagation step
 (§11).
+
+**Epoch cross-check under the activated stand-down (NFM-5259, §8):** the
+drift alarm backstop survives — and is sharpened by — the enforcement
+flip. A recorded rollback mints epoch N+1 and re-records the manifest at
+N+1, so the epoch chain stays ordered: the next deploy mints N+2 > N+1
+and the activated `lock.epoch > manifest.epoch` comparison can never
+mistake a recorded rollback's aftermath for an in-flight deploy (a
+rollback holds no deploy lock; the §8 recheck window covers the
+`compose up -d` → re-record gap exactly as before). Skipping the record
+is now DOUBLY visible: the drift-cron false-alarm (unchanged backstop)
+PLUS the manifest epoch left behind the epoch file — the divergence the
+activated rule files on. `record_rollback.sh` mint-failure stays FATAL
+(rc 2): a manifest whose epoch does not correspond to a real state
+transition would poison the epoch comparison the activated rule relies
+on.
 
 Anchors (`released/<UTC-date>-<sha8>`) are pushed by the `tag-released` CI
 job after deploy + smoke pass; if CI could not push (egress flake), the
