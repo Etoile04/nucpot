@@ -51,6 +51,9 @@ Flag / rollback (spec item 3)
   carries the literal marker ``# pcmr-carry`` is allowed through (the
   PostToolUse advisory still annotates).  Record the carry in a comment on
   the issue FIRST, then mark the write.
+* Soak audit (AC3): every enforce-mode decision on a done-ward write
+  appends one tab-separated line to ``.pcmr_enforce.log`` at the repo root
+  (override with ``PCMR_LOG``; gitignored).  Advisory mode never writes it.
 
 Modes
 -----
@@ -97,6 +100,24 @@ ENFORCE_ENV = "PCMR_ENFORCE"
 ENFORCE_TRUTHY = frozenset({"1", "true", "yes", "on"})
 # Intentional-carry hatch for blocking mode (see module docstring).
 CARRY_MARKER = "# pcmr-carry"
+# Soak audit log (AC3): enforce-mode decisions only, one line per done-ward
+# write. Override location with PCMR_LOG; default sits at the repo root and
+# is gitignored. Advisory mode never writes it.
+DEFAULT_LOG = Path(__file__).resolve().parents[2] / ".pcmr_enforce.log"
+
+
+def audit_log_path(env: Mapping[str, str] | None = None) -> Path:
+    source = os.environ if env is None else env
+    return Path(str(source.get("PCMR_LOG") or DEFAULT_LOG))
+
+
+def audit(env: Mapping[str, str], line: str) -> None:
+    """Append one enforce-mode decision line; never break the hook for logging."""
+    try:
+        with audit_log_path(env).open("a", encoding="utf-8") as handle:
+            handle.write(line.rstrip("\n") + "\n")
+    except OSError:
+        pass  # audit is best-effort by construction
 
 # A Bash write counts only when it PATCHes an issue URL with a done-ward body.
 _PATCH_VERB = re.compile(r"\bPATCH\b")
@@ -233,16 +254,17 @@ def run_hook(payload: dict[str, Any], env: Mapping[str, str] | None = None) -> i
     event = str(payload.get("hook_event_name") or "")
     if event == "PreToolUse":
         if enforce_enabled(env):
-            return run_pre_write(payload)
+            return run_pre_write(payload, env)
         return 0  # flag off — silent no-op; advisory lives on PostToolUse only
     return run_post_write(payload)
 
 
-def run_pre_write(payload: dict[str, Any]) -> int:
+def run_pre_write(payload: dict[str, Any], env: Mapping[str, str] | None = None) -> int:
     """Blocking gate (PCMR_ENFORCE on): deny done-ward writes with open chains.
 
     Fail-open everywhere: only a verified unresolved chain denies the write.
     """
+    source = os.environ if env is None else env
     tool_input = payload.get("tool_input")
     identifier = target_issue(str(payload.get("tool_name") or ""), tool_input or {})
     if identifier is None:
@@ -255,22 +277,27 @@ def run_pre_write(payload: dict[str, Any]) -> int:
             "write allowed; PostToolUse advisory will annotate",
             file=sys.stderr,
         )
+        audit(source, f"carry\t{identifier}\twrite allowed (intentional carry)")
         return 0
 
     try:
         verdict = evaluate(identifier)
     except Exception as exc:
         print(f"[pcmr] pre-write evaluation failed for {identifier}: {exc} — fail-open", file=sys.stderr)
+        audit(source, f"fail-open\t{identifier}\tevaluation error: {exc}")
         return 0
 
     if verdict.note:
         print(f"[pcmr] {verdict.identifier}: {verdict.note} — fail-open", file=sys.stderr)
+        audit(source, f"fail-open\t{verdict.identifier}\t{verdict.note}")
         return 0
     if verdict.unresolved:
         print(render_block(verdict), file=sys.stderr)
+        audit(source, f"BLOCK\t{verdict.identifier}\tunresolved: " + ", ".join(f"{i}[{s}]" for i, s in verdict.unresolved))
         return 2
     terminal_note = " (+ terminal-only, does not hold)" if verdict.terminal else ""
     print(f"[pcmr] {verdict.identifier}: chain clean — done-ward write allowed{terminal_note}", file=sys.stderr)
+    audit(source, f"allow\t{verdict.identifier}\tchain clean{terminal_note}")
     return 0
 
 

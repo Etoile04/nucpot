@@ -70,3 +70,7 @@ apps/web/qa-artifacts/lighthouse/
 
 # gstack browse-daemon runtime state (tokens/pids) — never commit
 .gstack/
+
+# NFM-5314: PreCompletionMerge enforce-mode soak audit log (AC3 evidence,
+# written by the hook at runtime — never repo content)
+.pcmr_enforce.log
