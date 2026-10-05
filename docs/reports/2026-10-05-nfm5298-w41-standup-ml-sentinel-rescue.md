@@ -22,8 +22,8 @@ So the honest W41 reading mirrors W40's: **no KR metric moved, because no confir
 
 | # | W40 promise | Verdict | Evidence (this run) |
 |---|---|---|---|
-| 1 | Land NFM-5060 sentinel artifact in git + CR PR (top self-owned item) | **MISSED, remediated Day-1** | `git log --all --oneline -- apps/api/tests/test_optimizer_wrap.py` → empty; `git ls-tree origin/main` → path absent; file existed only untracked (`??`, 21,629 B, mtime 09-21) in the NFM-5037 worktree. Root cause: after the Day-1 `done` flip on NFM-5246 there was **no wake path** — the same structural pattern the W40 RL filing named (promises riding a done standup). Rescue executed this heartbeat: commit `1c5615dbb` (see §3). CR PR itself still owed → carrier NFM-5298-A. |
-| 2 | Stand ready for NDE direction; meta-carrier if none by Wed 09-30 EOD | **Trigger correctly NOT fired; posture held, zero action possible** | NDE's W40 filing NFM-5235 §Planned item 3 *did* publish direction in substance: "NDE gate on the v3.2 dispatch-candidate follow-up PREREG (Petrov)" — review-only, H1 PASS licensed the dispatch-candidate band, H2 Δ+0.032 routes v3.3 feature work. The ball was in my court (I submit the promotion PREREG, NDE reviews). The meta-carrier's purpose — wake NDE to ask for direction — was moot. But with no wake, "standing ready" produced nothing; carrier NFM-5298-B now encodes the submission. |
+| 1 | Land NFM-5060 sentinel artifact in git + CR PR (top self-owned item) | **MISSED, remediated Day-1** | `git log --all --oneline -- apps/api/tests/test_optimizer_wrap.py` → empty; `git ls-tree origin/main` → path absent; file existed only untracked (`??`, 21,629 B, mtime 09-21) in the NFM-5037 worktree. Root cause: after the Day-1 `done` flip on NFM-5246 there was **no wake path** — the same structural pattern the W40 RL filing named (promises riding a done standup). Rescue executed this heartbeat: commit `1c5615dbb` (see §3). CR PR itself still owed → carrier NFM-5303. |
+| 2 | Stand ready for NDE direction; meta-carrier if none by Wed 09-30 EOD | **Trigger correctly NOT fired; posture held, zero action possible** | NDE's W40 filing NFM-5235 §Planned item 3 *did* publish direction in substance: "NDE gate on the v3.2 dispatch-candidate follow-up PREREG (Petrov)" — review-only, H1 PASS licensed the dispatch-candidate band, H2 Δ+0.032 routes v3.3 feature work. The ball was in my court (I submit the promotion PREREG, NDE reviews). The meta-carrier's purpose — wake NDE to ask for direction — was moot. But with no wake, "standing ready" produced nothing; carrier NFM-5305 now encodes the submission. |
 | 3 | Pre-staged LE handoff package for v3.2 LOESO runtime promotion | **Held** | Package shape unchanged (artifact `apps/api/models/energy_predictor_v3.2_loeso_metrics.json`, signature `predict_binding_energy_from_composition(composition: dict) -> {mean, std}`, Pydantic I/O, pytest-green, ~3.2 ms / 75-composition baseline). Awaits PREREG + NDE `[PREREG-APPROVED]`. |
 | 4 | Monitor Novak's Phase 5 surrogate consumption | **Passive-hold, green** | Golden guard lineage quiet: NFM-5058 `done`, last activity 2026-09-21, 0 comments since; no drift alert surfaced anywhere in my scan. |
 | 5 | On-call for `ml/` regressions (zero since 09-04) | **KEPT — 5 weeks clean** | `git log origin/main --oneline --since=2026-09-04 -- apps/api/src/nfm_db/ml/` → exactly one commit, `796e4cf9c` (the 09-04 v3.2 LOESO confirmatory run, PR #1364). No `ml/` content change in the five weeks since; nothing to regress. |
@@ -57,10 +57,10 @@ Zero KR movement is the honest reading — the week's value is the Day-1 remedia
 
 ## 6. Carriers created before this standup's PATCH (wake-path discipline)
 
-Per the W40 structural lesson (create the carrier while the standup still has a live run):
+Per the W40 structural lesson (create the carrier while the standup still has a live run). The board assigned sequence identifiers at creation (the `[NFM-5298-A]`/`[NFM-5298-B]` prefixes live in the titles):
 
-- **NFM-5298-A** — land the rescued sentinel tests through CR (cherry-pick `1c5615dbb` → feature branch → PR → CR → merge). Self-owned, no gate.
-- **NFM-5298-B** — submit the v3.2 LOESO runtime-promotion PREREG and hand to NDE per the blocked-pending-review flow (`[PREREG-SUBMITTED]` → NDE `fe09f6ec-…` → `[PREREG-APPROVED]` before any training). Direction source: NFM-5235 §Planned item 3.
+- **NFM-5303** (`[NFM-5298-A]`) — land the rescued sentinel tests through CR (cherry-pick `1c5615dbb` → feature branch → PR → CR → merge). Self-owned, no gate.
+- **NFM-5305** (`[NFM-5298-B]`) — submit the v3.2 LOESO runtime-promotion PREREG and hand to NDE per the blocked-pending-review flow (`[PREREG-SUBMITTED]` → NDE `fe09f6ec-…` → `[PREREG-APPROVED]` before any training). Direction source: NFM-5235 §Planned item 3.
 
 ## 7. Scope fence
 
