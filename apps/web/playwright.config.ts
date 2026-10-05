@@ -36,9 +36,14 @@ const useChromeChannel = !isCI && process.env.USE_CHROME === "1"
  * mock fixtures, so on the ubuntu-Live runner they died with
  * ERR_CONNECTION_REFUSED before asserting anything. Same mock-based class
  * as `data-loss-notice` — permanent local/CI-only residents, not hotfixes.
+ *
+ * `datasets-list-responsive` was added by NFM-5330 (2026-10-05): the spec
+ * intercepts the /api/datasets list route with a mock fixture to pin the
+ * 390px horizontal-scroll/ellipsis contract, so it can never exercise live
+ * data. Same mock-based class — permanent local/CI-only resident.
  */
 export const NFMD_SPEC_PATTERN =
-  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review|data-loss-notice|nfm-?455[34]-(?:five-actions-contract|skip-ux-failure|layout-b-visual-qa|review-queue-visual-qa))\.spec\.ts$/
+  /(?:review-queue-auth|review-conflicts|rag-chat|md-verification(?:-workflow|-hpc)?|ontology-record-ref|ontology|ontology-management-list|ontology-management-detail|ontology-management-edit|verification-linkage|review-api-smoke|nfm625-v4-visual-qa|design-workspace|design-responsive|nav-tablet-wrap|reauth-return-to|search|gap-review|data-loss-notice|datasets-list-responsive|nfm-?455[34]-(?:five-actions-contract|skip-ux-failure|layout-b-visual-qa|review-queue-visual-qa))\.spec\.ts$/
 
 // Local webServer port. Configurable so concurrent worktrees (each with
 // their own `next dev`) don't collide on the default — a squatting dev
