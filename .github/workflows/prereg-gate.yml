@@ -1,0 +1,130 @@
+name: Prereg Scope Guard
+
+# NFM-5320 (NFM-5312 Phase 2, per the NDE [PREREG-GATE-RECONFIRMED] review):
+# CI wiring for scripts/check_prereg.py — Check 2 (artifact scope guard) of
+# the dual-check pre-registration gate. Check 1 (the [PREREG-APPROVED]
+# presence marker on the Paperclip carrier thread) is procedural and lives
+# outside CI; this job never approves anything.
+#
+# Exit-code contract (must stay in lock-step with scripts/check_prereg.py):
+#   0 — pass, or WARN-only. WARN never fails CI: it routes the artifact to
+#       NDE sign-off, which happens in the carrier thread, not here.
+#   1 — hard-fail: a [CONFIRMATORY-RUN] artifact with no parseable prereg
+#       block ⇒ this job fails.
+#   2 — configuration error ⇒ this job fails.
+#
+# Offline by design: --verify (Paperclip carrier-thread lookup) and --strict
+# (NDE burn-in mode) are local-only flags and must never appear in a run
+# step — CI holds no Paperclip credentials. tests/scripts/test_prereg_ci_workflow.py
+# pins this file's shape so such a regression cannot land silently.
+#
+# Triggers:
+#   pull_request — the five path filters specified in NFM-5320, identical to
+#     SCAN_GLOBS in scripts/check_prereg.py.
+#   push — the same path filters. Two reasons, both precedented in
+#     commit-ref-gate.yml (NFM-2191): a PR-only gate is bypassed entirely by
+#     direct pushes to main, and branch pushes let the acceptance
+#     demonstrating runs (WARN does not fail / hard-fail does fail) execute
+#     in real CI before this workflow reaches the default branch.
+# merge_group is deliberately absent: it becomes necessary only if this
+# check is promoted to a required status check (NFM-3265), and merge_group
+# events do not support paths filters.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/api/src/nfm_db/ml/**"
+      - "apps/api/tests/**"
+      - "experiments/**"
+      - "docs/analysis/**"
+      - "docs/reports/**"
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/api/src/nfm_db/ml/**"
+      - "apps/api/tests/**"
+      - "experiments/**"
+      - "docs/analysis/**"
+      - "docs/reports/**"
+
+permissions:
+  contents: read
+
+jobs:
+  prereg-scope-guard:
+    name: check_prereg — dual-check scope guard (WARN never fails CI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout event head with full history
+        uses: actions/checkout@v7
+        with:
+          # pull_request: check out the PR head (not GitHub's test merge
+          # commit) so the scanned diff is exactly what a reviewer sees;
+          # push: the pushed commit. Full history so merge-base can resolve
+          # even when the base has advanced (NFM-2256).
+          ref: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Merge-base resolution mirrors commit-ref-gate.yml: pin the range to
+      # the real fork point instead of a snapshot, so an advanced base or a
+      # rebase cannot silently change what gets scanned.
+      - name: Resolve merge-base (pull_request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${BASE_REF}"
+          BASE_SHA="$(git rev-parse "origin/${BASE_REF}")"
+          MERGE_BASE="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
+          echo "base ref: ${BASE_REF}  base sha: ${BASE_SHA}"
+          echo "merge-base: ${MERGE_BASE}  head: ${HEAD_SHA}"
+          echo "MERGE_BASE=${MERGE_BASE}" >> "${GITHUB_ENV}"
+
+      - name: Resolve merge-base (push)
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            # Direct push to main: diff before→after. The PR run already
+            # validated these commits; this re-check closes the NFM-2191
+            # bypass. 'before' is the zero sentinel on a first push and can
+            # be unreachable after a force-push — fall back to after^.
+            ZERO="0000000000000000000000000000000000000000"
+            if [[ -n "${BEFORE_SHA}" && "${BEFORE_SHA}" != "${ZERO}" ]] \
+               && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+              BASE_SHA="${BEFORE_SHA}"
+            else
+              BASE_SHA="$(git rev-parse "${HEAD_SHA}^")"
+            fi
+          else
+            # Feature-branch push: diff against main at the fork point — the
+            # same range a PR against main would scan.
+            git fetch --no-tags origin main
+            BASE_SHA="$(git rev-parse origin/main)"
+          fi
+          MERGE_BASE="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
+          echo "base sha: ${BASE_SHA}"
+          echo "merge-base: ${MERGE_BASE}  head: ${HEAD_SHA}"
+          echo "MERGE_BASE=${MERGE_BASE}" >> "${GITHUB_ENV}"
+
+      # Offline scope guard only — the local-only flags must stay out of CI
+      # run steps entirely (see file header). The script's exit code is this
+      # step's verdict, unchanged: 0 pass/WARN-only → job passes; 1 hard-fail
+      # → job fails; 2 config error → job fails.
+      - name: Run check_prereg over the event diff
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "event: ${{ github.event_name }}  merge-base: ${MERGE_BASE}  head: ${HEAD_SHA}"
+          if [[ "${MERGE_BASE}" == "${HEAD_SHA}" ]]; then
+            echo "HEAD equals merge-base — empty diff, nothing to scan."
+            exit 0
+          fi
+          python3 scripts/check_prereg.py --base "${MERGE_BASE}"
