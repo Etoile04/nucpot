@@ -1,10 +1,44 @@
 name: NucPot Site Monitor
 
+# =============================================================================
+# Cadence contract (NFM-5309) — READ BEFORE TOUCHING THE SCHEDULE
+# =============================================================================
+# GitHub's scheduler chronically starves this repo's scheduled events
+# (NFM-5226 root cause; NFM-5309 W40 census): delivered runs are ~8/day
+# REGARDLESS of nominal cron frequency — the pre-NFM-5309 `*/10` entry
+# (144/day nominal) delivered 7.9/day (5.5%), and the `17 */6` entry
+# (4/day nominal) delivered ~0.36/day (~9%). All delivered runs succeed;
+# events are dropped upstream of run creation, so a higher-frequency cron
+# buys nothing. Asking for 144/day only advertises a cadence that never
+# existed.
+#
+# This workflow is therefore the SUPPLEMENTARY detection lane, not the
+# primary one:
+#   - PRIMARY: on-host sentinel (NFM-5226 remediation) — `~/bin/nfm-site-monitor.sh`
+#     launchd agent, 5-min cadence, ≤10-min detection contract, runs the same
+#     `scripts/health_check.py` targets.
+#   - THIS WORKFLOW: (a) public-edge probes from GitHub's vantage (a network
+#     position the host sentinel cannot cover), (b) GitHub-issue alerting
+#     (issues:write), (c) the 6h stale-container/container-sanity pass
+#     (NFM-3337 AC-3, NFM-5269/5270) on the self-hosted runner.
+#
+# Expect ~8 delivered events/day here under chronic starvation; do NOT file
+# "monitor is down" on cadence alone — under-firing is detected by
+# scripts/site_monitor_cadence_check.py (host-side, outside GitHub Actions,
+# per scripts/cron/site-monitor-cadence.cron) which pages WARN <4 runs/24h
+# and CRITICAL on silence >18h or zero runs/24h.
+#
+# Cron offset: :23 avoids the start-of-hour slot GitHub documents as its
+# highest-load drop window. The `17 */6` entry MUST keep its exact literal —
+# the watchdog job's `if:` gates on `github.event.schedule == '17 */6 * * *'`.
+# =============================================================================
+
 on:
   schedule:
-    # Every 10 minutes
-    - cron: '*/10 * * * *'
-    # Stale-container watchdog (NFM-3337) — every 6h, offset 17min
+    # Hourly public-edge probe (honest since NFM-5309; was */10 — see header)
+    - cron: '23 * * * *'
+    # Stale-container watchdog (NFM-3337) — every 6h, offset 17min.
+    # LITERAL IS LOAD-BEARING: watchdog job's `if:` string-matches this.
     - cron: '17 */6 * * *'
   workflow_dispatch:
 
