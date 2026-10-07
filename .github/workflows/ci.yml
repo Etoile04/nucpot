@@ -99,6 +99,19 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests
 
+      # NFM-5348: scripts/ has no wholesale lint/format gate (pre-existing
+      # findings across unrelated py3.9 launchd scripts block adding it
+      # wholesale), so the ci-throttle files are gated file-scoped, matching
+      # the batch2/batch3 `ruff format --check` pattern. Runs from the
+      # workspace root: the py3.9 per-file-ignores for these scripts live in
+      # the root pyproject.toml, and ruff does not match them against
+      # ../-prefixed paths (this backend job's default cwd is apps/api).
+      - name: Lint and format (ruff, scripts)
+        working-directory: ${{ github.workspace }}
+        run: |
+          uv run --extra dev --frozen ruff check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py
+          uv run --extra dev --frozen ruff format --check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py
+
 # NFM-2491 / NFM-2234 AC: AST-based silent-exception guard. Walks
       # apps/api/src/**/*.py and classifies ast.Pass, lone ast.Expr(...),
       # and bare ast.Continue in except handlers. Emits ::error::

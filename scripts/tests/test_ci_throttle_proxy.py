@@ -156,23 +156,17 @@ class TestRateParsing:
 
 class TestRequestRewrite:
     def test_absolute_uri_becomes_origin_form(self) -> None:
-        path, host = rewrite_absolute_uri(
-            "GET", "http://pypi.tuna.tsinghua.edu.cn/simple/nfm-db/"
-        )
+        path, host = rewrite_absolute_uri("GET", "http://pypi.tuna.tsinghua.edu.cn/simple/nfm-db/")
         assert path == "/simple/nfm-db/"
         assert host == "pypi.tuna.tsinghua.edu.cn"
 
     def test_port_preserved_in_host_header(self) -> None:
-        path, host = rewrite_absolute_uri(
-            "GET", "http://mirrors.aliyun.com:8080/pypi/simple/"
-        )
+        path, host = rewrite_absolute_uri("GET", "http://mirrors.aliyun.com:8080/pypi/simple/")
         assert path == "/pypi/simple/"
         assert host == "mirrors.aliyun.com:8080"
 
     def test_query_string_kept(self) -> None:
-        path, _ = rewrite_absolute_uri(
-            "GET", "http://registry.npmmirror.com/pkg?tab=dist"
-        )
+        path, _ = rewrite_absolute_uri("GET", "http://registry.npmmirror.com/pkg?tab=dist")
         assert path == "/pkg?tab=dist"
 
     def test_bare_path_has_no_host(self) -> None:
@@ -200,7 +194,10 @@ class TestHealthDetection:
 class TestHealthResponse:
     def test_shape(self) -> None:
         payload = build_health_response(
-            rate_mbps=40.0, port=7899, bytes_relayed=5, connections=1,
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=5,
+            connections=1,
             started_iso="2026-10-07T09:31:48.300575+00:00",
         )
         head, _, body = payload.partition(b"\r\n\r\n")
@@ -220,7 +217,10 @@ class TestHealthResponse:
         """
         boot = "2026-10-07T09:31:48.300575+00:00"
         later = build_health_response(
-            rate_mbps=40.0, port=7899, bytes_relayed=987, connections=3,
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=987,
+            connections=3,
             started_iso=boot,
         )
         doc = json.loads(later.partition(b"\r\n\r\n")[2])
@@ -245,9 +245,7 @@ class TestHealthStartedStability:
             try:
                 docs: list[str] = []
                 for _ in range(2):
-                    reader, writer = await asyncio.open_connection(
-                        "127.0.0.1", proxy.port
-                    )
+                    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
                     writer.write(
                         f"GET {HEALTH_PATH} HTTP/1.1\r\n"
                         f"Host: 127.0.0.1:{proxy.port}\r\n"
@@ -291,8 +289,13 @@ class TestUtcLogTimestamps:
         # 2026-10-07T09:31:48Z — the first post-reboot proxy start.
         fixed_epoch = 1791365508.0
         record = logging.LogRecord(
-            name="nfmd-ci-throttle", level=logging.INFO, pathname=__file__,
-            lineno=1, msg="starting", args=(), exc_info=None,
+            name="nfmd-ci-throttle",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="starting",
+            args=(),
+            exc_info=None,
         )
         record.created = fixed_epoch
         record.msecs = 0.0
@@ -311,8 +314,7 @@ class TestRaiseFdLimit:
     def test_soft_limit_raised_toward_target(self, monkeypatch) -> None:
         import scripts.ci_throttle_proxy as proxy_mod
 
-        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
-                            lambda _which: (256, 10240))
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 10240))
         set_calls: list[tuple[int, int]] = []
 
         def fake_setrlimit(_which, limits):
@@ -326,18 +328,15 @@ class TestRaiseFdLimit:
     def test_target_capped_at_hard_limit(self, monkeypatch) -> None:
         import scripts.ci_throttle_proxy as proxy_mod
 
-        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
-                            lambda _which: (256, 1024))
-        monkeypatch.setattr(proxy_mod.resource, "setrlimit",
-                            lambda _which, limits: None)
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 1024))
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", lambda _which, limits: None)
         old, new = proxy_mod.raise_fd_limit(target_soft=4096)
         assert (old, new) == (256, 1024)
 
     def test_setrlimit_failure_is_nonfatal(self, monkeypatch) -> None:
         import scripts.ci_throttle_proxy as proxy_mod
 
-        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
-                            lambda _which: (256, 10240))
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 10240))
 
         def boom(_which, _limits):
             raise OSError("not permitted")
@@ -349,11 +348,12 @@ class TestRaiseFdLimit:
     def test_already_high_is_noop(self, monkeypatch) -> None:
         import scripts.ci_throttle_proxy as proxy_mod
 
-        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
-                            lambda _which: (8192, 65536))
-        monkeypatch.setattr(proxy_mod.resource, "setrlimit",
-                            lambda _which, limits: (_ for _ in ()).throw(
-                                AssertionError("must not call setrlimit")))
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (8192, 65536))
+        monkeypatch.setattr(
+            proxy_mod.resource,
+            "setrlimit",
+            lambda _which, limits: (_ for _ in ()).throw(AssertionError("must not call setrlimit")),
+        )
         old, new = proxy_mod.raise_fd_limit(target_soft=4096)
         assert (old, new) == (8192, 8192)
 
@@ -453,9 +453,7 @@ class TestRelayTeardown:
             await proxy.start()
             try:
                 reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
-                writer.write(
-                    f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode()
-                )
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
                 await writer.drain()
                 await reader.readuntil(b"\r\n\r\n")
                 writer.close()
@@ -481,17 +479,13 @@ class TestRelayTeardown:
         monkeypatch.setattr(ci_throttle_proxy, "IDLE_TIMEOUT_SECONDS", 0.5)
 
         async def scenario() -> None:
-            origin = await asyncio.start_server(
-                self._stalled_origin, "127.0.0.1", 0
-            )
+            origin = await asyncio.start_server(self._stalled_origin, "127.0.0.1", 0)
             origin_port = origin.sockets[0].getsockname()[1]
             proxy = ci_throttle_proxy.ThrottleProxy(rate_mbps=40.0, port=0)
             await proxy.start()
             try:
                 reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
-                writer.write(
-                    f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode()
-                )
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
                 await writer.drain()
                 await reader.readuntil(b"\r\n\r\n")
 
@@ -531,14 +525,12 @@ class TestBuildPathWiring:
         assert "HTTP_PROXY=" in script and "HTTPS_PROXY=" in script
         assert "pre-NFM-5333 / NFM-2502 behavior" in script
         # the builds must live INSIDE the health-gated subshell
-        gated = script[script.index("nfmd_ci_throttle_ready()"):]
+        gated = script[script.index("nfmd_ci_throttle_ready()") :]
         for image in ("prod-api.Dockerfile", "lightrag.Dockerfile", "web.Dockerfile"):
             assert image in gated, f"{image} build must be inside the gated subshell"
 
     def test_workflow_candidate_build_is_health_gated(self) -> None:
-        wf = (
-            REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
-        ).read_text()
+        wf = (REPO_ROOT / ".github" / "workflows" / "production-deployment.yml").read_text()
         # candidate build caps through the same loopback proxy, with the
         # uncapped NFM-2502 leg as the fallback when the proxy is down.
         assert "__nfmd_ci_throttle_health" in wf
