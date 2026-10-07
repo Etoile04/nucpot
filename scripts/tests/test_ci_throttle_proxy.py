@@ -227,6 +227,48 @@ class TestHealthResponse:
         assert doc["started"] == boot
 
 
+class TestHealthStartedStability:
+    """`started` must be byte-stable across separate live health answers.
+
+    The pre-hardening proxy stamped answer-time into `started`, so two
+    GETs a quarter-second apart disagreed — which reads as mystery
+    restarts during an incident (2026-10-07 EMFILE diagnosis). NFM-5348
+    deliverable #2's live form, complementing the pass-through unit test.
+    """
+
+    def test_started_identical_across_two_live_gets(self) -> None:
+        from scripts.ci_throttle_proxy import ThrottleProxy
+
+        async def scenario() -> tuple[str, str, str]:
+            proxy = ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            try:
+                docs: list[str] = []
+                for _ in range(2):
+                    reader, writer = await asyncio.open_connection(
+                        "127.0.0.1", proxy.port
+                    )
+                    writer.write(
+                        f"GET {HEALTH_PATH} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{proxy.port}\r\n"
+                        "Connection: close\r\n\r\n".encode()
+                    )
+                    await writer.drain()
+                    raw = await reader.read()
+                    writer.close()
+                    docs.append(json.loads(raw.partition(b"\r\n\r\n")[2])["started"])
+                    await asyncio.sleep(0.25)
+                return docs[0], docs[1], proxy._started_iso
+            finally:
+                await proxy.close()
+
+        first, second, boot = asyncio.run(scenario())
+        assert first == second == boot, (
+            f"health `started` drifted across answers: {first!r} vs {second!r} "
+            f"(proxy boot {boot!r})"
+        )
+
+
 class TestUtcLogTimestamps:
     """Log prefixes must be true UTC, not local-time-with-a-Z-suffix.
 
