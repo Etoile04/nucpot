@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-5333: LaunchAgent for the CI download throttle proxy.
+     Rendered by scripts/install_ci_throttle.sh, which substitutes
+     __HOME__ and __PYTHON3__ before installing into
+     ~/Library/LaunchAgents/. A user agent (not a root daemon): the proxy
+     is loopback-only user-space shaping and must never need the operator
+     sudo lane. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.nfmd.ci-throttle</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON3__</string>
+        <string>__HOME__/.nfmd/ci-throttle/ci_throttle_proxy.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Tunable: cap for the AGGREGATE CI build-download throughput.
+             40 Mbit/s leaves the tunnel leg its headroom on the shared
+             broadband while keeping a full deploy's pip+pnpm legs inside
+             a few minutes. Adjust + `launchctl kickstart -k` to retune. -->
+        <key>NFMD_CI_THROTTLE_RATE_MBPS</key>
+        <string>40</string>
+        <key>NFMD_CI_THROTTLE_PORT</key>
+        <string>7899</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/nfmd-ci-throttle.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/nfmd-ci-throttle.log</string>
+</dict>
+</plist>

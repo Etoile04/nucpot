@@ -288,27 +288,70 @@ python3 scripts/check_prod_image_tag.py \
 # pre-deploy-assert (D2, NFM-2149) has already validated the DB↔code alembic
 # match against the candidate image before this point.
 # --no-cache on all builds (NFM-2376 root cause: stale layer cache).
-echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
-# NFM-2502: clear proxy for Docker build (apt/pip use CN mirrors directly)
-# NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
-# ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
-# it as deploy_sha and the CI smoke identity assertion compares it to the
-# green tree (NFM-3835 class: hot-patched image passing grep-style checks).
-HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
-  docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
-    -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+#
+# --- NFM-5333: cap CI build-download throughput -----------------------------
+# NFM-5273 RCA (owner-accepted via NFM-5262 card a109200b): the three
+# --no-cache builds below re-download the full pip + pnpm dependency trees
+# every deploy at line rate, saturating the shared broadband and stalling
+# the host↔CF-edge leg past the sentinel 5s public-edge P0 budget (P0s
+# 2026-09-28 07:30Z, 2026-09-29 15:59:44Z). Mitigation (a): route the
+# build-time downloads through the loopback rate-limiting proxy
+# (scripts/ci_throttle_proxy.py, LaunchAgent io.nfmd.ci-throttle).
+#
+# Build containers reach the host listener via host.docker.internal
+# (Docker Desktop resolves it to the host's loopback) — 127.0.0.1 inside
+# a build container is the container itself, so the URL differs by
+# client. The legacy (DOCKER_BUILDKIT=0) builder forwards HTTP(S)_PROXY
+# env as predefined build args into every RUN step, which pip/pnpm/
+# corepack all honor.
+#
+# NFM-2502 interplay: that fix cleared proxy env because the SYSTEM
+# v2cloud proxy tunneled the CN mirrors abroad. This proxy egresses
+# DIRECT — tuna/aliyun/npmmirror keep their fast domestic route, only
+# rate-capped. On any proxy failure we fall back to the exact NFM-2502
+# behavior (cleared env, uncapped), and each Dockerfile keeps an
+# unproxied last-resort leg so a proxy that dies MID-build cannot fail
+# the deploy. The subshell overrides the legacy PROXY_PORT export for
+# the builds only.
+NFMD_CI_THROTTLE_HOST_URL="http://127.0.0.1:7899"
+NFMD_CI_THROTTLE_BUILD_URL="http://host.docker.internal:7899"
+nfmd_ci_throttle_ready() {
+  curl -fsS --max-time 4 -x "$NFMD_CI_THROTTLE_HOST_URL" \
+    "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1
+}
 
-echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
-DOCKER_BUILDKIT=0 \
-  docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
-    -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
+(
+  if nfmd_ci_throttle_ready; then
+    echo "==> NFM-5333: ci-throttle healthy — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
+    export HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL" HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+    export http_proxy="$NFMD_CI_THROTTLE_BUILD_URL" https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+    export NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+  else
+    echo "==> NFM-5333: ci-throttle NOT reachable — building uncapped (pre-NFM-5333 / NFM-2502 behavior)"
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
+  fi
 
-echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
-DOCKER_BUILDKIT=0 \
-  docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
-    -f docker/web.Dockerfile \
-    --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
-    --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
+  echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
+  # NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
+  # ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
+  # it as deploy_sha and the CI smoke identity assertion compares it to the
+  # green tree (NFM-3835 class: hot-patched image passing grep-style checks).
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
+      -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+
+  echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
+      -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
+
+  echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
+      -f docker/web.Dockerfile \
+      --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
+      --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
+)
 
 # NFM-2146 / ADR-NFM-2139 §5 D3 (revised by NFM-2196): deploy-time migration
 # runs BEFORE the new containers come up. The Postgres advisory lock
