@@ -301,6 +301,13 @@ def run_deploy_prod(
             # the deploy script's documented test hook).
             "NFMD_DOCKER_CONFIG": str(home.parent / "dc-config"),
             "NFM_G2_VAR_DIR": str(home.parent / "gate-var"),
+            # NFM-5259: the deploy-epoch lock now defaults to ENFORCED, and
+            # this sandbox ships no scripts/deploy_epoch.py — the gate would
+            # fail-closed (exit 81) before the SHA-pin abort under test.
+            # This helper pins the NFM-4265 pin-abort path only; epoch lock
+            # semantics have their own suites (test_deploy_epoch.py,
+            # test_record_deploy_manifest.py).
+            "NFM_DEPLOY_LOCK_ENFORCE": "0",
         }
     )
     script = home / "Projects" / "nucpot" / "scripts" / "deploy_prod.sh"
