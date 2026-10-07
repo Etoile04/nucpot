@@ -60,6 +60,10 @@ known-first-party = ["nfm_db"]
 # timezone.utc (UP017), and socket.timeout (UP041). Enforced by
 # scripts/tests/test_nfm_docker_gate_py39_compat.py.
 "scripts/host-prod-gate/nfm_docker_gate/*" = ["UP017", "UP045", "UP041"]
+# NFM-5333: same NFM-4320 class — ci_throttle_proxy.py is a launchd agent
+# under /usr/bin/python3 = 3.9 (scripts/install_ci_throttle.sh), so the
+# pyupgrade autofixes for these rules would emit py3.10+/3.11+-only forms.
+"scripts/ci_throttle_proxy.py" = ["UP017", "UP045", "UP041"]
 # NFM-5279: health_check.py may run under the py3.9 CommandLineTools
 # interpreter on the runner, so its try/except UTC import keeps the
 # `timezone.utc` fallback spelling (UP017's autofix would emit `UTC = UTC`).

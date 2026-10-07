@@ -23,14 +23,23 @@ WORKDIR /app
 ARG COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 ENV COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY}
 
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# NFM-5333: corepack's shim download also traverses the ci-throttle proxy
+# (deploy_prod.sh build env); the fallback strip keeps a dead proxy from
+# failing the web build at this 5 MB step.
+RUN corepack enable && \
+    { corepack prepare pnpm@9 --activate || \
+      env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+        corepack prepare pnpm@9 --activate; }
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/ ./packages/
 
 RUN pnpm config set registry https://registry.npmmirror.com && \
-    pnpm install --frozen-lockfile
+    { pnpm install --frozen-lockfile || \
+      (echo "NFM-5333: proxy-capped pnpm install failed — retrying DIRECT/UNCAPPED" 1>&2 && \
+       env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+         pnpm install --frozen-lockfile); }
 
 COPY apps/web/ ./apps/web/
 
