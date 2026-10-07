@@ -42,6 +42,7 @@ import json
 import logging
 import math
 import os
+import resource
 import socket
 import sys
 import time
@@ -177,7 +178,12 @@ def is_health_request(method: str, url: str, host_header: str, port: int) -> boo
 
 
 def build_health_response(
-    *, rate_mbps: float, port: int, bytes_relayed: int, connections: int
+    *,
+    rate_mbps: float,
+    port: int,
+    bytes_relayed: int,
+    connections: int,
+    started_iso: str,
 ) -> bytes:
     doc = {
         "status": "ok",
@@ -186,7 +192,9 @@ def build_health_response(
         "port": port,
         "bytes_relayed": bytes_relayed,
         "connections": connections,
-        "started": datetime.now(timezone.utc).isoformat(),
+        # Process start, NOT answer time: health telemetry must be literal
+        # or restart-vs-wedge diagnosis reads phantom restarts (2026-10-07).
+        "started": started_iso,
     }
     body = json.dumps(doc).encode()
     head = (
@@ -346,6 +354,7 @@ class ThrottleProxy:
                     port=self.port,
                     bytes_relayed=self.bytes_relayed,
                     connections=self._active,
+                    started_iso=self._started_iso,
                 )
             )
             await writer.drain()
@@ -459,6 +468,29 @@ def _rate_from_env() -> float:
         ) from exc
 
 
+def raise_fd_limit(target_soft: int = 4096) -> tuple[int, int]:
+    """Raise this process's soft RLIMIT_NOFILE toward ``target_soft``.
+
+    A pip download burst opens 200+ concurrent upstream sockets; launchd's
+    default 256 soft limit EMFILE-killed the relay mid-burst on
+    2026-10-07 08:45Z (the proxy stayed alive but wedged — KeepAlive only
+    restarts on exit, so the wedge persisted until a manual kickstart).
+    Doing this in-process (not via a plist LimitNOFILE reload) keeps the
+    fix effective even while gui/501 launchd refuses plist reloads during
+    a hung-logout wedge. Never fatal: on refusal the limit stays as-is.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    new_soft = min(target_soft, hard)
+    if new_soft <= soft:
+        return soft, soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+    except OSError:
+        LOG.warning("RLIMIT_NOFILE raise to %d refused; staying at %d", new_soft, soft)
+        return soft, soft
+    return soft, new_soft
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NFM-5333 CI download throttle proxy")
     parser.add_argument("--port", type=int, default=int(
@@ -484,9 +516,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     proxy = ThrottleProxy(
         rate_mbps=rate, port=args.port, burst_seconds=args.burst_seconds, bind=args.bind
     )
+    old_soft, new_soft = raise_fd_limit()
     LOG.info(
-        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s",
-        __version__, os.getpid(), rate, proxy._started_iso,
+        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s "
+        "fd_soft_limit=%d->%d",
+        __version__, os.getpid(), rate, proxy._started_iso, old_soft, new_soft,
     )
 
     async def run() -> None:

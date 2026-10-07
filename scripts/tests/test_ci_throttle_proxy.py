@@ -19,7 +19,10 @@ These tests pin the contract the deploy script relies on:
   authority preserved in the Host header (plain-HTTP mirrors, apt);
 * rate config parsing rejects non-positive garbage instead of silently
   running uncapped — an unparseable cap must never mean "no cap" silently;
-* an end-to-end CONNECT tunnel relays bytes and honors the pace.
+* an end-to-end CONNECT tunnel relays bytes and honors the pace;
+* health `started` reports the proxy's actual start (not answer time) and
+  the proxy raises its own soft RLIMIT_NOFILE so a ~200-connection pip
+  burst cannot EMFILE-wedge the relay (2026-10-07 postmortem hardening).
 """
 
 from __future__ import annotations
@@ -195,7 +198,10 @@ class TestHealthDetection:
 
 class TestHealthResponse:
     def test_shape(self) -> None:
-        payload = build_health_response(rate_mbps=40.0, port=7899, bytes_relayed=5, connections=1)
+        payload = build_health_response(
+            rate_mbps=40.0, port=7899, bytes_relayed=5, connections=1,
+            started_iso="2026-10-07T09:31:48.300575+00:00",
+        )
         head, _, body = payload.partition(b"\r\n\r\n")
         assert head.startswith(b"HTTP/1.1 200 OK")
         assert b"connection: close" in head.lower()
@@ -203,6 +209,77 @@ class TestHealthResponse:
         assert doc["status"] == "ok"
         assert doc["rate_mbps"] == 40.0
         assert doc["port"] == 7899
+
+    def test_started_reports_proxy_start_not_response_time(self) -> None:
+        """`started` must be the process start, not `now()` at answer time.
+
+        2026-10-07: the first EMFILE diagnosis burned a cycle misreading a
+        health `started` of "now" as evidence of a mystery restart while
+        launchd showed pid never exited. Health telemetry must be literal.
+        """
+        boot = "2026-10-07T09:31:48.300575+00:00"
+        later = build_health_response(
+            rate_mbps=40.0, port=7899, bytes_relayed=987, connections=3,
+            started_iso=boot,
+        )
+        doc = json.loads(later.partition(b"\r\n\r\n")[2])
+        assert doc["started"] == boot
+
+
+class TestRaiseFdLimit:
+    """A pip download burst opens 200+ concurrent upstream sockets; launchd's
+    default 256 soft RLIMIT_NOFILE EMFILE-killed the relay mid-burst on
+    2026-10-07 08:45Z. The proxy must raise its own soft limit at startup,
+    wedge-proof (works regardless of launchd plist reload state)."""
+
+    def test_soft_limit_raised_toward_target(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
+                            lambda _which: (256, 10240))
+        set_calls: list[tuple[int, int]] = []
+
+        def fake_setrlimit(_which, limits):
+            set_calls.append(limits)
+
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", fake_setrlimit)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 4096)
+        assert set_calls == [(4096, 10240)]  # (new_soft, hard)
+
+    def test_target_capped_at_hard_limit(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
+                            lambda _which: (256, 1024))
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit",
+                            lambda _which, limits: None)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 1024)
+
+    def test_setrlimit_failure_is_nonfatal(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
+                            lambda _which: (256, 10240))
+
+        def boom(_which, _limits):
+            raise OSError("not permitted")
+
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", boom)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 256)
+
+    def test_already_high_is_noop(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit",
+                            lambda _which: (8192, 65536))
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit",
+                            lambda _which, limits: (_ for _ in ()).throw(
+                                AssertionError("must not call setrlimit")))
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (8192, 8192)
 
 
 class TestEndToEnd:
