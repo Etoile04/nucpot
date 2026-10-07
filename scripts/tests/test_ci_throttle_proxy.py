@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import pathlib
 import time
 
@@ -224,6 +225,39 @@ class TestHealthResponse:
         )
         doc = json.loads(later.partition(b"\r\n\r\n")[2])
         assert doc["started"] == boot
+
+
+class TestUtcLogTimestamps:
+    """Log prefixes must be true UTC, not local-time-with-a-Z-suffix.
+
+    2026-10-07: the proxy's stderr log printed `17:31:48Z` for true
+    09:31:48Z (host tz +0800) — the `%(asctime)s` default is local time
+    and the format string appended a literal "Z". The mislabel nearly
+    misdirected the EMFILE/reboot-window diagnosis (same trap class as
+    the NFM-5346 RCA's local-time DiagnosticReports filenames).
+    """
+
+    def test_formatter_renders_utc_timestamp(self) -> None:
+        import time as time_mod
+
+        from scripts.ci_throttle_proxy import utc_log_formatter
+
+        fmt = utc_log_formatter()
+        assert fmt.converter is time_mod.gmtime, (
+            "log formatter must convert via time.gmtime, not local time"
+        )
+        # 2026-10-07T09:31:48Z — the first post-reboot proxy start.
+        fixed_epoch = 1791365508.0
+        record = logging.LogRecord(
+            name="nfmd-ci-throttle", level=logging.INFO, pathname=__file__,
+            lineno=1, msg="starting", args=(), exc_info=None,
+        )
+        record.created = fixed_epoch
+        record.msecs = 0.0
+        rendered = fmt.format(record)
+        assert rendered.startswith("2026-10-07T09:31:48Z "), (
+            f"log prefix must be true UTC even on a +0800 host, got {rendered!r}"
+        )
 
 
 class TestRaiseFdLimit:

@@ -491,6 +491,24 @@ def raise_fd_limit(target_soft: int = 4096) -> tuple[int, int]:
     return soft, new_soft
 
 
+def utc_log_formatter() -> logging.Formatter:
+    """Stderr log formatter whose ``%(asctime)s`` is true UTC.
+
+    2026-10-07: the previous ``format="%(asctime)sZ ..."`` rendered LOCAL
+    time with a literal Z suffix — on this +0800 host the log claimed
+    ``17:31:48Z`` for true ``09:31:48Z`` and nearly misdirected the
+    EMFILE/reboot-window diagnosis (same trap class as NFM-5346's
+    local-time DiagnosticReports filenames). ``converter = time.gmtime``
+    is the stdlib's supported way to make a Formatter render UTC.
+    """
+    fmt = logging.Formatter(
+        "%(asctime)sZ %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    fmt.converter = time.gmtime  # type: ignore[method-assign]
+    return fmt
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NFM-5333 CI download throttle proxy")
     parser.add_argument("--port", type=int, default=int(
@@ -507,11 +525,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             "relay by design and must stay loopback-only"
         )
 
+    _stderr_handler = logging.StreamHandler(sys.stderr)
+    _stderr_handler.setFormatter(utc_log_formatter())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)sZ %(levelname)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
-        stream=sys.stderr,
+        handlers=[_stderr_handler],
     )
     proxy = ThrottleProxy(
         rate_mbps=rate, port=args.port, burst_seconds=args.burst_seconds, bind=args.bind
