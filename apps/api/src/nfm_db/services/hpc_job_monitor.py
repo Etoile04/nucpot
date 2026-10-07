@@ -4,7 +4,6 @@ Handles SLURM job status polling, database status updates,
 completion checks, and periodic sync of all active jobs.
 """
 
-import contextlib
 import logging
 
 from sqlalchemy import select
@@ -136,6 +135,12 @@ async def update_job_status(
 ) -> None:
     """Update job status in database.
 
+    Runs on the Celery worker path, i.e. inside a fresh ``asyncio.run``
+    loop per beat, so it must take its session from the task-scoped
+    NullPool engine (NFM-5331 / BUG-22 / ADR-NFM-4076 D3) — never from
+    the shared pooled ``get_db`` engine, whose asyncpg connections are
+    bound to the loop that first used them.
+
     Args:
         ssh_manager: SSHConnectionManager instance
         task_id: MD verification job ID
@@ -146,35 +151,30 @@ async def update_job_status(
     """
     import uuid as uuid_module
 
-    from nfm_db.database import get_db
+    from nfm_db.database import task_session_factory
 
     try:
         status = await poll_job_status(ssh_manager, hpc_job_id)
 
-        db_gen = get_db()
-        db = await db_gen.__anext__()
+        async with task_session_factory() as factory, factory() as db:
+            try:
+                hpc_result = await db.execute(select(HpcJob).where(HpcJob.hpc_job_id == hpc_job_id))
+                hpc_job = hpc_result.scalar_one_or_none()
 
-        try:
-            hpc_result = await db.execute(select(HpcJob).where(HpcJob.hpc_job_id == hpc_job_id))
-            hpc_job = hpc_result.scalar_one_or_none()
+                if hpc_job:
+                    hpc_job.status = HpcJobStatus[status]
+                    await db.commit()
 
-            if hpc_job:
-                hpc_job.status = HpcJobStatus[status]
-                await db.commit()
+                verification_job = await db.get(MDVerificationJob, uuid_module.UUID(task_id))
+                if verification_job:
+                    verification_job.status = status
+                    await db.commit()
 
-            verification_job = await db.get(MDVerificationJob, uuid_module.UUID(task_id))
-            if verification_job:
-                verification_job.status = status
-                await db.commit()
+                logger.info(f"Updated job status: {task_id} -> {status}")
 
-            logger.info(f"Updated job status: {task_id} -> {status}")
-
-        except Exception:
-            await db.rollback()
-            raise
-        finally:
-            with contextlib.suppress(StopAsyncIteration):
-                await db_gen.__anext__()
+            except Exception:
+                await db.rollback()
+                raise
 
     except Exception as e:
         logger.error(f"Failed to update job status: {e}")
@@ -184,40 +184,42 @@ async def update_job_status(
 async def get_active_jobs() -> list[HpcJob]:
     """Get all active HPC jobs from database.
 
+    Runs on the Celery worker path (fresh ``asyncio.run`` loop per
+    beat), so sessions come from the task-scoped NullPool engine —
+    see :func:`update_job_status` (NFM-5331 / BUG-22).
+
     Returns:
         List of active HpcJob objects (PENDING or RUNNING)
     """
-    from nfm_db.database import get_db
+    from nfm_db.database import task_session_factory
 
-    db_gen = get_db()
-    db = await db_gen.__anext__()
-
-    try:
+    async with task_session_factory() as factory, factory() as db:
         result = await db.execute(
             select(HpcJob).where(HpcJob.status.in_([HpcJobStatus.PENDING, HpcJobStatus.RUNNING]))
         )
         return result.scalars().all()
-    finally:
-        with contextlib.suppress(StopAsyncIteration):
-            await db_gen.__anext__()
 
 
 async def sync_all_active_jobs(ssh_manager) -> None:
     """Sync status for all active HPC jobs (called by Celery beat).
 
+    Listing failures propagate (NFM-5331 monitoring hole: the previous
+    catch-and-log kept a 100%-failure beat loop invisible to every
+    watchdog); per-job failures are still isolated and logged so one
+    bad job cannot abort the sweep.
+
     Args:
         ssh_manager: SSHConnectionManager instance for SSH operations
+
+    Raises:
+        Exception: If listing the active jobs itself fails
     """
-    try:
-        active_jobs = await get_active_jobs()
+    active_jobs = await get_active_jobs()
 
-        for job in active_jobs:
-            try:
-                await update_job_status(ssh_manager, str(job.verification_job_id), job.hpc_job_id)
-            except Exception as e:
-                logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
+    for job in active_jobs:
+        try:
+            await update_job_status(ssh_manager, str(job.verification_job_id), job.hpc_job_id)
+        except Exception as e:
+            logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
 
-        logger.info(f"Synced {len(active_jobs)} active jobs")
-
-    except Exception as e:
-        logger.error(f"Failed to sync active jobs: {e}")
+    logger.info(f"Synced {len(active_jobs)} active jobs")

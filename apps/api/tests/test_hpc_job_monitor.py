@@ -9,6 +9,7 @@ Tests cover all public functions in hpc_job_monitor.py:
 - sync_all_active_jobs
 """
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,8 +26,10 @@ from nfm_db.services.hpc_job_monitor import (
     update_job_status,
 )
 
-# get_db is imported lazily inside functions, so we patch at the source module
-_DB_PATCH_TARGET = "nfm_db.database.get_db"
+# task_session_factory is imported lazily inside the functions under test, so
+# we patch at the source module.  NFM-5331: the celery worker path must use
+# the task-scoped NullPool engine, never the shared pooled get_db engine.
+_SESSION_FACTORY_PATCH_TARGET = "nfm_db.database.task_session_factory"
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -97,11 +100,24 @@ def sample_hpc_job() -> HpcJob:
     return job
 
 
-def _mock_db_gen(session: AsyncMock) -> AsyncMock:
-    """Create a mock async generator that yields *session* once."""
-    gen = AsyncMock()
-    gen.__anext__ = AsyncMock(side_effect=[session, StopAsyncIteration()])
-    return gen
+def _mock_task_session_factory(session: AsyncMock):
+    """Build an async CM standing in for ``task_session_factory``.
+
+    Mirrors the real adapter's shape: an async context manager that yields
+    a sessionmaker whose own context manager yields *session*.
+    """
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield session
+
+    factory = MagicMock(return_value=_session_cm())
+
+    @asynccontextmanager
+    async def _factory_cm():
+        yield factory
+
+    return _factory_cm
 
 
 # ---------------------------------------------------------------------------
@@ -524,8 +540,6 @@ class TestUpdateJobStatus:
         )
         mock_db_session.get = AsyncMock(return_value=verification_job)
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with (
             patch(
                 "nfm_db.services.hpc_job_monitor.poll_job_status",
@@ -533,8 +547,8 @@ class TestUpdateJobStatus:
                 return_value="RUNNING",
             ),
             patch(
-                _DB_PATCH_TARGET,
-                return_value=db_gen,
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
             ),
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
@@ -557,8 +571,6 @@ class TestUpdateJobStatus:
         verification_job = MagicMock()
         mock_db_session.get = AsyncMock(return_value=verification_job)
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with (
             patch(
                 "nfm_db.services.hpc_job_monitor.poll_job_status",
@@ -566,8 +578,8 @@ class TestUpdateJobStatus:
                 return_value="COMPLETED",
             ),
             patch(
-                _DB_PATCH_TARGET,
-                return_value=db_gen,
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
             ),
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
@@ -585,8 +597,6 @@ class TestUpdateJobStatus:
 
         mock_db_session.execute = AsyncMock(side_effect=RuntimeError("DB error"))
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with (
             patch(
                 "nfm_db.services.hpc_job_monitor.poll_job_status",
@@ -594,8 +604,8 @@ class TestUpdateJobStatus:
                 return_value="FAILED",
             ),
             patch(
-                _DB_PATCH_TARGET,
-                return_value=db_gen,
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
             ),
             pytest.raises(RuntimeError, match="DB error"),
         ):
@@ -621,9 +631,18 @@ class TestUpdateJobStatus:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_db_generator_is_exhausted_after_use(
+    async def test_uses_task_scoped_engine_not_shared_get_db(
         self, ssh_manager: MagicMock, mock_db_session: AsyncMock
     ) -> None:
+        """NFM-5331 regression pin: the worker path must never touch get_db.
+
+        get_active_jobs/update_job_status used to pull sessions from the
+        shared pooled async engine while the celery task ran a fresh
+        asyncio.run loop per beat — pooled asyncpg connections are
+        loop-bound, so beat 2 onwards died with ``Future attached to a
+        different loop`` masked by ``InterfaceError`` on COMMIT.  If this
+        test fails, someone reintroduced the shared engine on this path.
+        """
         task_id = "a0000000-0000-0000-0000-000000000001"
         hpc_job_id = "slurm-12345"
 
@@ -632,8 +651,6 @@ class TestUpdateJobStatus:
         )
         mock_db_session.get = AsyncMock(return_value=None)
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with (
             patch(
                 "nfm_db.services.hpc_job_monitor.poll_job_status",
@@ -641,13 +658,17 @@ class TestUpdateJobStatus:
                 return_value="RUNNING",
             ),
             patch(
-                _DB_PATCH_TARGET,
-                return_value=db_gen,
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
             ),
+            patch(
+                "nfm_db.database.get_db",
+                side_effect=AssertionError("shared get_db engine used on worker path"),
+            ) as mock_get_db,
         ):
             await update_job_status(ssh_manager, task_id, hpc_job_id)
 
-        assert db_gen.__anext__.call_count >= 2
+        mock_get_db.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -669,11 +690,9 @@ class TestGetActiveJobs:
             )
         )
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+            _SESSION_FACTORY_PATCH_TARGET,
+            new=_mock_task_session_factory(mock_db_session),
         ):
             result = await get_active_jobs()
 
@@ -687,11 +706,9 @@ class TestGetActiveJobs:
             return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
         )
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+            _SESSION_FACTORY_PATCH_TARGET,
+            new=_mock_task_session_factory(mock_db_session),
         ):
             result = await get_active_jobs()
 
@@ -702,12 +719,10 @@ class TestGetActiveJobs:
     async def test_database_error_is_propagated(self, mock_db_session: AsyncMock) -> None:
         mock_db_session.execute = AsyncMock(side_effect=RuntimeError("connection lost"))
 
-        db_gen = _mock_db_gen(mock_db_session)
-
         with (
             patch(
-                _DB_PATCH_TARGET,
-                return_value=db_gen,
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
             ),
             pytest.raises(RuntimeError, match="connection lost"),
         ):
@@ -715,20 +730,27 @@ class TestGetActiveJobs:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_db_generator_is_exhausted(self, mock_db_session: AsyncMock) -> None:
+    async def test_uses_task_scoped_engine_not_shared_get_db(
+        self, mock_db_session: AsyncMock
+    ) -> None:
+        """NFM-5331 regression pin — see TestUpdateJobStatus namesake."""
         mock_db_session.execute = AsyncMock(
             return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
         )
 
-        db_gen = _mock_db_gen(mock_db_session)
-
-        with patch(
-            _DB_PATCH_TARGET,
-            return_value=db_gen,
+        with (
+            patch(
+                _SESSION_FACTORY_PATCH_TARGET,
+                new=_mock_task_session_factory(mock_db_session),
+            ),
+            patch(
+                "nfm_db.database.get_db",
+                side_effect=AssertionError("shared get_db engine used on worker path"),
+            ) as mock_get_db,
         ):
             await get_active_jobs()
 
-        assert db_gen.__anext__.call_count >= 2
+        mock_get_db.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -824,11 +846,20 @@ class TestSyncAllActiveJobs:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_handles_general_error_in_get_active_jobs(self, ssh_manager: MagicMock) -> None:
-        with patch(
-            "nfm_db.services.hpc_job_monitor.get_active_jobs",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("DB connection failed"),
+    async def test_get_active_jobs_failure_propagates(self, ssh_manager: MagicMock) -> None:
+        """NFM-5331 monitoring hole: listing failures must not be swallowed.
+
+        The old catch-and-log kept a 100%-failure beat loop invisible to
+        every watchdog; the exception now propagates so the celery task
+        records a FAILURE state.
+        """
+        with (
+            patch(
+                "nfm_db.services.hpc_job_monitor.get_active_jobs",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("DB connection failed"),
+            ),
+            pytest.raises(RuntimeError, match="DB connection failed"),
         ):
             await sync_all_active_jobs(ssh_manager)
 

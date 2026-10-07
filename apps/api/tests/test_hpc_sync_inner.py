@@ -109,8 +109,13 @@ class TestSyncJobsInnerCoroutine:
         mock_manager.cleanup.assert_called_once()
 
     @pytest.mark.unit
-    def test_sync_jobs_returns_error_on_sync_failure(self) -> None:
-        """_sync_jobs should return error dict when sync_all_active_jobs raises."""
+    def test_sync_jobs_raises_loudly_on_sync_failure(self) -> None:
+        """_sync_jobs must raise when sync_all_active_jobs fails (NFM-5331).
+
+        The old catch-and-return-error-dict kept the task in celery's
+        SUCCESS state, hiding a 100%-failure beat loop from every
+        watchdog for four generations.  Cleanup still runs.
+        """
         from nfm_db.services.hpc_sync import sync_hpc_job_status
 
         mock_config = _make_mock_config()
@@ -126,16 +131,14 @@ class TestSyncJobsInnerCoroutine:
                     side_effect=RuntimeError("sync failed"),
                 ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
-                        result = sync_hpc_job_status()
+                        with pytest.raises(RuntimeError, match="sync failed"):
+                            sync_hpc_job_status()
 
-        assert result["status"] == "error"
-        assert "sync failed" in result["message"]
-        assert result["jobs_processed"] == 0
         mock_manager.cleanup.assert_called_once()
 
     @pytest.mark.unit
-    def test_sync_jobs_returns_error_on_generic_exception(self) -> None:
-        """_sync_jobs should return error dict for any exception."""
+    def test_sync_jobs_raises_on_generic_exception(self) -> None:
+        """_sync_jobs must let any exception escape to celery (NFM-5331)."""
         from nfm_db.services.hpc_sync import sync_hpc_job_status
 
         mock_config = _make_mock_config()
@@ -151,11 +154,8 @@ class TestSyncJobsInnerCoroutine:
                     side_effect=ValueError("bad data"),
                 ):
                     with patch("nfm_db.services.hpc_sync.os.getenv", side_effect=_make_getenv()):
-                        result = sync_hpc_job_status()
-
-        assert result["status"] == "error"
-        assert "bad data" in result["message"]
-        assert result["jobs_processed"] == 0
+                        with pytest.raises(ValueError, match="bad data"):
+                            sync_hpc_job_status()
 
     @pytest.mark.unit
     def test_sync_jobs_calls_ssh_config_from_lists(self) -> None:

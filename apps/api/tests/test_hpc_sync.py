@@ -104,33 +104,31 @@ class TestSyncHpcJobStatusErrors:
 
     @pytest.mark.unit
     @patch("nfm_db.services.hpc_sync.asyncio.run")
-    def test_returns_error_dict_when_asyncio_run_fails(
+    def test_raises_when_asyncio_run_fails(
         self,
         mock_asyncio_run: MagicMock,
     ) -> None:
-        """sync_hpc_job_status should return error dict when asyncio.run itself fails."""
+        """sync_hpc_job_status must raise when asyncio.run itself fails (NFM-5331).
+
+        The old catch-and-return-error-dict left the task in celery's
+        SUCCESS state, hiding a 100%-failure beat loop from watchdogs.
+        """
         mock_asyncio_run.side_effect = RuntimeError("Event loop is already running")
 
-        result = sync_hpc_job_status()
-
-        assert result["status"] == "error"
-        assert "Event loop is already running" in result["message"]
-        assert result["jobs_processed"] == 0
+        with pytest.raises(RuntimeError, match="Event loop is already running"):
+            sync_hpc_job_status()
 
     @pytest.mark.unit
     @patch("nfm_db.services.hpc_sync.asyncio.run")
-    def test_returns_error_dict_on_generic_exception(
+    def test_raises_on_generic_exception(
         self,
         mock_asyncio_run: MagicMock,
     ) -> None:
-        """sync_hpc_job_status should handle any exception from asyncio.run."""
+        """sync_hpc_job_status must let any exception escape to celery (NFM-5331)."""
         mock_asyncio_run.side_effect = ValueError("Unexpected value error")
 
-        result = sync_hpc_job_status()
-
-        assert result["status"] == "error"
-        assert "Unexpected value error" in result["message"]
-        assert result["jobs_processed"] == 0
+        with pytest.raises(ValueError, match="Unexpected value error"):
+            sync_hpc_job_status()
 
 
 # ---------------------------------------------------------------------------
