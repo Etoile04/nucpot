@@ -38,6 +38,17 @@
     <key>ThrottleInterval</key>
     <integer>5</integer>
 
+    <!-- 2026-10-07: launchd's default 256 soft RLIMIT_NOFILE EMFILE-killed
+         the relay under a ~200-connection pip burst (wedge, not exit —
+         KeepAlive never fired). Belt: plist limit. Braces: the proxy also
+         raises its own soft limit in-process at startup, which stays
+         effective even when a hung-logout wedge blocks plist reloads. -->
+    <key>LimitNOFILE</key>
+    <array>
+        <integer>4096</integer>
+        <integer>65536</integer>
+    </array>
+
     <key>StandardOutPath</key>
     <string>__HOME__/Library/Logs/nfmd-ci-throttle.log</string>
     <key>StandardErrorPath</key>

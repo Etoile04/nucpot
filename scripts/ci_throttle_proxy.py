@@ -21,7 +21,15 @@ of exactly those fetches:
   * answers ``GET /__nfmd_ci_throttle_health`` both in proxy form
     (absolute-URI via ``curl -x``) and direct form, so ``deploy_prod.sh``
     can gate its wiring on a live probe and fall back to the exact
-    pre-NFM-5333 uncapped behavior when the proxy is down.
+    pre-NFM-5333 uncapped behavior when the proxy is down. The health
+    ``started`` field is the process start (stable across answers), and
+    stderr log timestamps are true UTC — both 2026-10-07 NFM-5348
+    hardening so restart-vs-wedge diagnosis reads literal telemetry;
+  * raises its own soft RLIMIT_NOFILE at startup (belt) on top of the
+    plist's ``LimitNOFILE`` (braces): a ~200-connection pip burst
+    EMFILE-killed the relay under launchd's default 256 soft limit, and
+    KeepAlive only restarts on exit — the in-process raise stays
+    effective even when plist reloads are blocked (2026-10-07 NFM-5348).
 
 Wired in ``scripts/deploy_prod.sh``: build containers reach the host via
 ``host.docker.internal:7899`` (Docker Desktop resolves it to the host's
@@ -42,6 +50,7 @@ import json
 import logging
 import math
 import os
+import resource
 import socket
 import sys
 import time
@@ -177,7 +186,12 @@ def is_health_request(method: str, url: str, host_header: str, port: int) -> boo
 
 
 def build_health_response(
-    *, rate_mbps: float, port: int, bytes_relayed: int, connections: int
+    *,
+    rate_mbps: float,
+    port: int,
+    bytes_relayed: int,
+    connections: int,
+    started_iso: str,
 ) -> bytes:
     doc = {
         "status": "ok",
@@ -186,7 +200,9 @@ def build_health_response(
         "port": port,
         "bytes_relayed": bytes_relayed,
         "connections": connections,
-        "started": datetime.now(timezone.utc).isoformat(),
+        # Process start, NOT answer time: health telemetry must be literal
+        # or restart-vs-wedge diagnosis reads phantom restarts (2026-10-07).
+        "started": started_iso,
     }
     body = json.dumps(doc).encode()
     head = (
@@ -222,9 +238,7 @@ async def _pump(
         if idle_timeout is None:
             data = await reader.read(CHUNK_BYTES)
         else:
-            data = await asyncio.wait_for(
-                reader.read(CHUNK_BYTES), timeout=idle_timeout
-            )
+            data = await asyncio.wait_for(reader.read(CHUNK_BYTES), timeout=idle_timeout)
         if not data:
             return
         counter(len(data))
@@ -267,7 +281,10 @@ class ThrottleProxy:
         self.port = sock.getsockname()[1]
         LOG.info(
             "listening on %s:%d rate=%.1fMbit/s burst=%.0fKiB",
-            self.bind, self.port, self.rate_mbps, self.bucket.burst / 1024,
+            self.bind,
+            self.port,
+            self.rate_mbps,
+            self.bucket.burst / 1024,
         )
 
     async def serve_forever(self) -> None:
@@ -304,9 +321,7 @@ class ThrottleProxy:
             self._active -= 1
             writer.close()
 
-    async def _dispatch(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _dispatch(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         # Guard: loopback-only by design; an accidental non-loopback bind
         # (config typo) must refuse relaying rather than become a LAN-open
         # proxy.
@@ -326,9 +341,7 @@ class ThrottleProxy:
         method, url, _version = parts
         headers: dict[str, str] = {}
         while True:
-            hline = await asyncio.wait_for(
-                reader.readline(), timeout=IDLE_TIMEOUT_SECONDS
-            )
+            hline = await asyncio.wait_for(reader.readline(), timeout=IDLE_TIMEOUT_SECONDS)
             if hline in (b"\r\n", b"\n", b""):
                 break
             name, _, value = hline.decode("latin-1").partition(":")
@@ -346,6 +359,7 @@ class ThrottleProxy:
                     port=self.port,
                     bytes_relayed=self.bytes_relayed,
                     connections=self._active,
+                    started_iso=self._started_iso,
                 )
             )
             await writer.drain()
@@ -377,13 +391,14 @@ class ThrottleProxy:
         # error, or the upstream idle timeout — cancels the other.
         downstream = asyncio.ensure_future(
             _pump(
-                upstream_reader, writer, self.bucket, self._count,
+                upstream_reader,
+                writer,
+                self.bucket,
+                self._count,
                 idle_timeout=IDLE_TIMEOUT_SECONDS,
             )
         )
-        upstream = asyncio.ensure_future(
-            _pump(reader, upstream_writer, None, lambda _n: None)
-        )
+        upstream = asyncio.ensure_future(_pump(reader, upstream_writer, None, lambda _n: None))
         try:
             done, _pending = await asyncio.wait(
                 {downstream, upstream}, return_when=asyncio.FIRST_COMPLETED
@@ -428,9 +443,7 @@ class ThrottleProxy:
         ]
         out_headers.append(f"Host: {authority}")
         out_headers.append("Connection: close")
-        request = (
-            f"{method} {path} HTTP/1.1\r\n" + "\r\n".join(out_headers) + "\r\n\r\n"
-        )
+        request = f"{method} {path} HTTP/1.1\r\n" + "\r\n".join(out_headers) + "\r\n\r\n"
         upstream_writer.write(request.encode("latin-1"))
 
         # Request bodies (pip PUTs, none today) are small; forward uncapped.
@@ -441,7 +454,10 @@ class ThrottleProxy:
         await upstream_writer.drain()
 
         await _pump(
-            upstream_reader, writer, self.bucket, self._count,
+            upstream_reader,
+            writer,
+            self.bucket,
+            self._count,
             idle_timeout=IDLE_TIMEOUT_SECONDS,
         )
         upstream_writer.close()
@@ -454,15 +470,55 @@ def _rate_from_env() -> float:
     try:
         return parse_rate_mbps(raw)
     except ValueError as exc:
-        raise SystemExit(
-            f"NFMD_CI_THROTTLE_RATE_MBPS={raw!r} is not a usable rate: {exc}"
-        ) from exc
+        raise SystemExit(f"NFMD_CI_THROTTLE_RATE_MBPS={raw!r} is not a usable rate: {exc}") from exc
+
+
+def raise_fd_limit(target_soft: int = 4096) -> tuple[int, int]:
+    """Raise this process's soft RLIMIT_NOFILE toward ``target_soft``.
+
+    A pip download burst opens 200+ concurrent upstream sockets; launchd's
+    default 256 soft limit EMFILE-killed the relay mid-burst on
+    2026-10-07 08:45Z (the proxy stayed alive but wedged — KeepAlive only
+    restarts on exit, so the wedge persisted until a manual kickstart).
+    Doing this in-process (not via a plist LimitNOFILE reload) keeps the
+    fix effective even while gui/501 launchd refuses plist reloads during
+    a hung-logout wedge. Never fatal: on refusal the limit stays as-is.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    new_soft = min(target_soft, hard)
+    if new_soft <= soft:
+        return soft, soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+    except OSError:
+        LOG.warning("RLIMIT_NOFILE raise to %d refused; staying at %d", new_soft, soft)
+        return soft, soft
+    return soft, new_soft
+
+
+def utc_log_formatter() -> logging.Formatter:
+    """Stderr log formatter whose ``%(asctime)s`` is true UTC.
+
+    2026-10-07: the previous ``format="%(asctime)sZ ..."`` rendered LOCAL
+    time with a literal Z suffix — on this +0800 host the log claimed
+    ``17:31:48Z`` for true ``09:31:48Z`` and nearly misdirected the
+    EMFILE/reboot-window diagnosis (same trap class as NFM-5346's
+    local-time DiagnosticReports filenames). ``converter = time.gmtime``
+    is the stdlib's supported way to make a Formatter render UTC.
+    """
+    fmt = logging.Formatter(
+        "%(asctime)sZ %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    fmt.converter = time.gmtime  # type: ignore[method-assign]
+    return fmt
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="NFM-5333 CI download throttle proxy")
-    parser.add_argument("--port", type=int, default=int(
-        os.environ.get("NFMD_CI_THROTTLE_PORT", DEFAULT_PORT)))
+    parser.add_argument(
+        "--port", type=int, default=int(os.environ.get("NFMD_CI_THROTTLE_PORT", DEFAULT_PORT))
+    )
     parser.add_argument("--rate-mbps", type=parse_rate_mbps, default=None)
     parser.add_argument("--burst-seconds", type=float, default=DEFAULT_BURST_SECONDS)
     parser.add_argument("--bind", default=DEFAULT_BIND)
@@ -475,18 +531,26 @@ def main(argv: Optional[list[str]] = None) -> int:
             "relay by design and must stay loopback-only"
         )
 
+    _stderr_handler = logging.StreamHandler(sys.stderr)
+    _stderr_handler.setFormatter(utc_log_formatter())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)sZ %(levelname)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
-        stream=sys.stderr,
+        handlers=[_stderr_handler],
     )
     proxy = ThrottleProxy(
         rate_mbps=rate, port=args.port, burst_seconds=args.burst_seconds, bind=args.bind
     )
+    old_soft, new_soft = raise_fd_limit()
     LOG.info(
-        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s",
-        __version__, os.getpid(), rate, proxy._started_iso,
+        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s fd_soft_limit=%d->%d",
+        __version__,
+        os.getpid(),
+        rate,
+        proxy._started_iso,
+        old_soft,
+        new_soft,
     )
 
     async def run() -> None:
@@ -502,9 +566,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                     LOG.info(
                         "conns=%d total_conns=%d window=%.1fs moved=%.2fMiB "
                         "window_rate=%.1fMbit/s cap=%.1fMbit/s total=%.2fMiB",
-                        proxy._active, proxy.connections_total, now - last_at,
-                        moved / 1048576, moved * 8 / (now - last_at) / 1e6,
-                        rate, proxy.bytes_relayed / 1048576,
+                        proxy._active,
+                        proxy.connections_total,
+                        now - last_at,
+                        moved / 1048576,
+                        moved * 8 / (now - last_at) / 1e6,
+                        rate,
+                        proxy.bytes_relayed / 1048576,
                     )
                 last_bytes = proxy.bytes_relayed
                 last_at = now

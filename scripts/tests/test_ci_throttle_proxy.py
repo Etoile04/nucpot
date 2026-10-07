@@ -19,13 +19,17 @@ These tests pin the contract the deploy script relies on:
   authority preserved in the Host header (plain-HTTP mirrors, apt);
 * rate config parsing rejects non-positive garbage instead of silently
   running uncapped — an unparseable cap must never mean "no cap" silently;
-* an end-to-end CONNECT tunnel relays bytes and honors the pace.
+* an end-to-end CONNECT tunnel relays bytes and honors the pace;
+* health `started` reports the proxy's actual start (not answer time) and
+  the proxy raises its own soft RLIMIT_NOFILE so a ~200-connection pip
+  burst cannot EMFILE-wedge the relay (2026-10-07 postmortem hardening).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import pathlib
 import time
 
@@ -152,23 +156,17 @@ class TestRateParsing:
 
 class TestRequestRewrite:
     def test_absolute_uri_becomes_origin_form(self) -> None:
-        path, host = rewrite_absolute_uri(
-            "GET", "http://pypi.tuna.tsinghua.edu.cn/simple/nfm-db/"
-        )
+        path, host = rewrite_absolute_uri("GET", "http://pypi.tuna.tsinghua.edu.cn/simple/nfm-db/")
         assert path == "/simple/nfm-db/"
         assert host == "pypi.tuna.tsinghua.edu.cn"
 
     def test_port_preserved_in_host_header(self) -> None:
-        path, host = rewrite_absolute_uri(
-            "GET", "http://mirrors.aliyun.com:8080/pypi/simple/"
-        )
+        path, host = rewrite_absolute_uri("GET", "http://mirrors.aliyun.com:8080/pypi/simple/")
         assert path == "/pypi/simple/"
         assert host == "mirrors.aliyun.com:8080"
 
     def test_query_string_kept(self) -> None:
-        path, _ = rewrite_absolute_uri(
-            "GET", "http://registry.npmmirror.com/pkg?tab=dist"
-        )
+        path, _ = rewrite_absolute_uri("GET", "http://registry.npmmirror.com/pkg?tab=dist")
         assert path == "/pkg?tab=dist"
 
     def test_bare_path_has_no_host(self) -> None:
@@ -195,7 +193,13 @@ class TestHealthDetection:
 
 class TestHealthResponse:
     def test_shape(self) -> None:
-        payload = build_health_response(rate_mbps=40.0, port=7899, bytes_relayed=5, connections=1)
+        payload = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=5,
+            connections=1,
+            started_iso="2026-10-07T09:31:48.300575+00:00",
+        )
         head, _, body = payload.partition(b"\r\n\r\n")
         assert head.startswith(b"HTTP/1.1 200 OK")
         assert b"connection: close" in head.lower()
@@ -203,6 +207,155 @@ class TestHealthResponse:
         assert doc["status"] == "ok"
         assert doc["rate_mbps"] == 40.0
         assert doc["port"] == 7899
+
+    def test_started_reports_proxy_start_not_response_time(self) -> None:
+        """`started` must be the process start, not `now()` at answer time.
+
+        2026-10-07: the first EMFILE diagnosis burned a cycle misreading a
+        health `started` of "now" as evidence of a mystery restart while
+        launchd showed pid never exited. Health telemetry must be literal.
+        """
+        boot = "2026-10-07T09:31:48.300575+00:00"
+        later = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=987,
+            connections=3,
+            started_iso=boot,
+        )
+        doc = json.loads(later.partition(b"\r\n\r\n")[2])
+        assert doc["started"] == boot
+
+
+class TestHealthStartedStability:
+    """`started` must be byte-stable across separate live health answers.
+
+    The pre-hardening proxy stamped answer-time into `started`, so two
+    GETs a quarter-second apart disagreed — which reads as mystery
+    restarts during an incident (2026-10-07 EMFILE diagnosis). NFM-5348
+    deliverable #2's live form, complementing the pass-through unit test.
+    """
+
+    def test_started_identical_across_two_live_gets(self) -> None:
+        from scripts.ci_throttle_proxy import ThrottleProxy
+
+        async def scenario() -> tuple[str, str, str]:
+            proxy = ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            try:
+                docs: list[str] = []
+                for _ in range(2):
+                    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                    writer.write(
+                        f"GET {HEALTH_PATH} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{proxy.port}\r\n"
+                        "Connection: close\r\n\r\n".encode()
+                    )
+                    await writer.drain()
+                    raw = await reader.read()
+                    writer.close()
+                    docs.append(json.loads(raw.partition(b"\r\n\r\n")[2])["started"])
+                    await asyncio.sleep(0.25)
+                return docs[0], docs[1], proxy._started_iso
+            finally:
+                await proxy.close()
+
+        first, second, boot = asyncio.run(scenario())
+        assert first == second == boot, (
+            f"health `started` drifted across answers: {first!r} vs {second!r} "
+            f"(proxy boot {boot!r})"
+        )
+
+
+class TestUtcLogTimestamps:
+    """Log prefixes must be true UTC, not local-time-with-a-Z-suffix.
+
+    2026-10-07: the proxy's stderr log printed `17:31:48Z` for true
+    09:31:48Z (host tz +0800) — the `%(asctime)s` default is local time
+    and the format string appended a literal "Z". The mislabel nearly
+    misdirected the EMFILE/reboot-window diagnosis (same trap class as
+    the NFM-5346 RCA's local-time DiagnosticReports filenames).
+    """
+
+    def test_formatter_renders_utc_timestamp(self) -> None:
+        import time as time_mod
+
+        from scripts.ci_throttle_proxy import utc_log_formatter
+
+        fmt = utc_log_formatter()
+        assert fmt.converter is time_mod.gmtime, (
+            "log formatter must convert via time.gmtime, not local time"
+        )
+        # 2026-10-07T09:31:48Z — the first post-reboot proxy start.
+        fixed_epoch = 1791365508.0
+        record = logging.LogRecord(
+            name="nfmd-ci-throttle",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="starting",
+            args=(),
+            exc_info=None,
+        )
+        record.created = fixed_epoch
+        record.msecs = 0.0
+        rendered = fmt.format(record)
+        assert rendered.startswith("2026-10-07T09:31:48Z "), (
+            f"log prefix must be true UTC even on a +0800 host, got {rendered!r}"
+        )
+
+
+class TestRaiseFdLimit:
+    """A pip download burst opens 200+ concurrent upstream sockets; launchd's
+    default 256 soft RLIMIT_NOFILE EMFILE-killed the relay mid-burst on
+    2026-10-07 08:45Z. The proxy must raise its own soft limit at startup,
+    wedge-proof (works regardless of launchd plist reload state)."""
+
+    def test_soft_limit_raised_toward_target(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 10240))
+        set_calls: list[tuple[int, int]] = []
+
+        def fake_setrlimit(_which, limits):
+            set_calls.append(limits)
+
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", fake_setrlimit)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 4096)
+        assert set_calls == [(4096, 10240)]  # (new_soft, hard)
+
+    def test_target_capped_at_hard_limit(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 1024))
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", lambda _which, limits: None)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 1024)
+
+    def test_setrlimit_failure_is_nonfatal(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (256, 10240))
+
+        def boom(_which, _limits):
+            raise OSError("not permitted")
+
+        monkeypatch.setattr(proxy_mod.resource, "setrlimit", boom)
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (256, 256)
+
+    def test_already_high_is_noop(self, monkeypatch) -> None:
+        import scripts.ci_throttle_proxy as proxy_mod
+
+        monkeypatch.setattr(proxy_mod.resource, "getrlimit", lambda _which: (8192, 65536))
+        monkeypatch.setattr(
+            proxy_mod.resource,
+            "setrlimit",
+            lambda _which, limits: (_ for _ in ()).throw(AssertionError("must not call setrlimit")),
+        )
+        old, new = proxy_mod.raise_fd_limit(target_soft=4096)
+        assert (old, new) == (8192, 8192)
 
 
 class TestEndToEnd:
@@ -300,9 +453,7 @@ class TestRelayTeardown:
             await proxy.start()
             try:
                 reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
-                writer.write(
-                    f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode()
-                )
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
                 await writer.drain()
                 await reader.readuntil(b"\r\n\r\n")
                 writer.close()
@@ -328,17 +479,13 @@ class TestRelayTeardown:
         monkeypatch.setattr(ci_throttle_proxy, "IDLE_TIMEOUT_SECONDS", 0.5)
 
         async def scenario() -> None:
-            origin = await asyncio.start_server(
-                self._stalled_origin, "127.0.0.1", 0
-            )
+            origin = await asyncio.start_server(self._stalled_origin, "127.0.0.1", 0)
             origin_port = origin.sockets[0].getsockname()[1]
             proxy = ci_throttle_proxy.ThrottleProxy(rate_mbps=40.0, port=0)
             await proxy.start()
             try:
                 reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
-                writer.write(
-                    f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode()
-                )
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
                 await writer.drain()
                 await reader.readuntil(b"\r\n\r\n")
 
@@ -378,14 +525,12 @@ class TestBuildPathWiring:
         assert "HTTP_PROXY=" in script and "HTTPS_PROXY=" in script
         assert "pre-NFM-5333 / NFM-2502 behavior" in script
         # the builds must live INSIDE the health-gated subshell
-        gated = script[script.index("nfmd_ci_throttle_ready()"):]
+        gated = script[script.index("nfmd_ci_throttle_ready()") :]
         for image in ("prod-api.Dockerfile", "lightrag.Dockerfile", "web.Dockerfile"):
             assert image in gated, f"{image} build must be inside the gated subshell"
 
     def test_workflow_candidate_build_is_health_gated(self) -> None:
-        wf = (
-            REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
-        ).read_text()
+        wf = (REPO_ROOT / ".github" / "workflows" / "production-deployment.yml").read_text()
         # candidate build caps through the same loopback proxy, with the
         # uncapped NFM-2502 leg as the fallback when the proxy is down.
         assert "__nfmd_ci_throttle_health" in wf
