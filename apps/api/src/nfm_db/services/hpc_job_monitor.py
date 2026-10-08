@@ -8,7 +8,7 @@ import logging
 
 from sqlalchemy import select
 
-from nfm_db.models.md_verification import HpcJob, HpcJobStatus, MDVerificationJob
+from nfm_db.models.md_verification import HpcJob, HpcJobStatus, JobStatus, MDVerificationJob
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,14 @@ async def update_job_status(
 
                 verification_job = await db.get(MDVerificationJob, uuid_module.UUID(task_id))
                 if verification_job:
-                    verification_job.status = status
+                    # NFM-5379: poll_job_status() returns the RAW UPPERCASE
+                    # SLURM vocabulary, but md_verification_jobs.status is
+                    # check-constrained to the lowercase JobStatus values —
+                    # the raw string died with CheckViolationError on every
+                    # active-job COMMIT.  Map through the enum (mirroring the
+                    # hpc_jobs write above); an unmappable status raises
+                    # KeyError here rather than corrupting the write.
+                    verification_job.status = JobStatus[status]
                     await db.commit()
 
                 logger.info(f"Updated job status: {task_id} -> {status}")
