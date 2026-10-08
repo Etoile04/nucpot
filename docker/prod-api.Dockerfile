@@ -40,11 +40,19 @@ COPY apps/api/migrations/ ./migrations/
 # the setuptools>=75.0 wheel (run 36003157519) and the pypi.org-direct leg
 # cannot carry a CN-egress build (files.pythonhosted.org read-timeout, run
 # 35991349533). Ladder: tuna -> aliyun -> pypi.org, every leg bounded.
+# NFM-5333: legs 1-2 run through the ci-throttle rate-limiting proxy
+# (build-arg proxy env set by deploy_prod.sh). The final pypi.org-direct
+# leg strips the proxy env, so a proxy that dies mid-build costs deploy
+# SPEED, never deploy SUCCESS — and reaching this leg is loud (stderr
+# marker) so the throttle log and the deploy log can be reconciled per
+# window.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://mirrors.aliyun.com/pypi/simple/ .) || \
-    pip install --no-cache-dir --default-timeout=180 --retries=15 .
+    (echo "NFM-5333: proxy-capped legs failed — final leg runs DIRECT/UNCAPPED" 1>&2 && \
+     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+       pip install --no-cache-dir --default-timeout=180 --retries=15 .)
 
 # Explicitly install xgboost as a defensive layer. The dependency is also
 # declared in apps/api/pyproject.toml, but pinning here ensures the package
@@ -57,7 +65,9 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,
       -i https://pypi.tuna.tsinghua.edu.cn/simple || \
     (sleep 5 && pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,<4' \
       -i https://mirrors.aliyun.com/pypi/simple/) || \
-    pip install --no-cache-dir --default-timeout=180 --retries=15 'xgboost>=3.0,<4'
+    (echo "NFM-5333: xgboost proxy-capped legs failed — final leg runs DIRECT/UNCAPPED" 1>&2 && \
+     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+       pip install --no-cache-dir --default-timeout=180 --retries=15 'xgboost>=3.0,<4')
 
 # NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
 # so the deploy-time migration step (scripts/prod_migrate.sh) can invoke

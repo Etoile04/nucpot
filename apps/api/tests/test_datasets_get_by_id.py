@@ -184,3 +184,98 @@ async def test_get_dataset_response_envelope_contract(
     assert set(body.keys()) >= {"success", "data"}
     if "error" in body:
         assert body["error"] is None or body["error"] == ""
+
+
+# ---------------------------------------------------------------------------
+# NFM-5321 (D2) — ``expand=material,source`` on the detail endpoint.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_expand_returns_material_name_and_source_title(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``?expand=material,source`` resolves human-readable names (NFM-5321 D2)."""
+    material = await _seed_material(db_session)
+    src = DataSource(title="Tokar et al., 1973", source_type="article")
+    db_session.add(src)
+    await db_session.flush()
+    ds = Dataset(material_id=material.id, source_id=src.id, title="Expand dataset")
+    db_session.add(ds)
+    await db_session.commit()
+    await db_session.refresh(ds)
+
+    resp = await async_client.get(
+        f"/api/v1/datasets/{ds.id}?expand=material,source"
+    )
+    assert resp.status_code == 200, resp.text
+
+    dataset = resp.json()["data"]
+    assert dataset["material_name"] == material.name
+    assert dataset["source_title"] == "Tokar et al., 1973"
+    # The §5.2 attribution block is untouched by expand.
+    assert dataset["attribution"] == {"status": "intact"}
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_without_expand_keeps_names_null(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Default detail response keeps expand columns null (single-table query)."""
+    material = await _seed_material(db_session)
+    src = DataSource(title="Unexpanded source", source_type="article")
+    db_session.add(src)
+    await db_session.flush()
+    ds = Dataset(material_id=material.id, source_id=src.id, title="Plain dataset")
+    db_session.add(ds)
+    await db_session.commit()
+    await db_session.refresh(ds)
+
+    resp = await async_client.get(f"/api/v1/datasets/{ds.id}")
+    assert resp.status_code == 200
+
+    dataset = resp.json()["data"]
+    assert dataset["material_name"] is None
+    assert dataset["source_title"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_expand_partial_returns_only_requested_join(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``?expand=material`` populates the name but leaves source_title null."""
+    material = await _seed_material(db_session)
+    src = DataSource(title="Partial source", source_type="article")
+    db_session.add(src)
+    await db_session.flush()
+    ds = Dataset(material_id=material.id, source_id=src.id, title="Partial dataset")
+    db_session.add(ds)
+    await db_session.commit()
+    await db_session.refresh(ds)
+
+    resp = await async_client.get(f"/api/v1/datasets/{ds.id}?expand=material")
+    assert resp.status_code == 200
+
+    dataset = resp.json()["data"]
+    assert dataset["material_name"] == material.name
+    assert dataset["source_title"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_expand_source_without_source_row(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``expand=source`` on a dataset with no source yields a null title, not 500."""
+    material = await _seed_material(db_session)
+    ds = Dataset(material_id=material.id, source_id=None, title="Orphan dataset")
+    db_session.add(ds)
+    await db_session.commit()
+    await db_session.refresh(ds)
+
+    resp = await async_client.get(f"/api/v1/datasets/{ds.id}?expand=source")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["source_title"] is None

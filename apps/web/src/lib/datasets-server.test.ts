@@ -99,6 +99,19 @@ describe("getDatasetServer", () => {
     )
   })
 
+  // NFM-5321 (D2): the detail page opts into name/title joins so the UI
+  // renders material_name / source_title instead of raw UUIDs.
+  it("appends expand=material,source when the option is set", async () => {
+    process.env.API_SERVER_URL = "http://api-test"
+    fetchMock.mockResolvedValueOnce(okJson(detailPayload))
+
+    await getDatasetServer("id-1", { expand: "material,source" })
+
+    expect(callUrl(fetchMock.mock.calls[0])).toBe(
+      "http://api-test/api/v1/datasets/id-1?expand=material%2Csource",
+    )
+  })
+
   it("returns the unwrapped data envelope", async () => {
     process.env.API_SERVER_URL = "http://api-test"
     fetchMock.mockResolvedValueOnce(okJson(detailPayload))

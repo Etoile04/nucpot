@@ -100,15 +100,31 @@ async def list_datasets_endpoint(
         "(status ∈ ``{'placeholder', 'intact'}``)。\n\n"
         "``placeholder`` 在 10 recast-restored 数据集上命中；其他均返回 "
         "``intact``。This endpoint exists so the frontend can assert the "
-        "negative; no UI affordance is attached to the field."
+        "negative; no UI affordance is attached to the field.\n\n"
+        "``expand`` 支持 ``material``（返回 material_name）和 ``source``"
+        "（返回 source_title），多个值用逗号分隔 —— 与列表端点同一契约。"
     ),
 )
 async def get_dataset_endpoint(
     dataset_id: UUID,
     db: AsyncSession = Depends(get_db),
+    expand: str | None = Query(
+        default=None,
+        description="可选扩展:material,source(逗号分隔) — NFM-5321 D2",
+    ),
 ) -> ApiResponse[DatasetWithAttributionResponse]:
     """Return a single dataset with its §5.2 attribution block, or 404."""
-    dataset = await get_dataset_with_attribution(db, dataset_id)
+    expand_set = (
+        {token.strip() for token in expand.split(",") if token.strip()}
+        if expand
+        else frozenset()
+    )
+    dataset = await get_dataset_with_attribution(
+        db,
+        dataset_id,
+        expand_material="material" in expand_set,
+        expand_source="source" in expand_set,
+    )
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return ApiResponse(success=True, data=dataset)

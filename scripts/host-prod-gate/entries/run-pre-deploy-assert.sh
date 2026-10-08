@@ -65,6 +65,42 @@ case "${DISTINCT_EXIT}" in
   ""|*[!0-9]*) echo "--distinct-exit must be numeric" >&2; exit 64 ;;
 esac
 
+# ============================================================================
+# NFM-5397: LOG_DIR perms preflight (recurrence guard).
+# /var/log/nfm-g2 drifted 0744 root:wheel via out-of-band chmod (window
+# 10-05..10-08), and the lightrag watchdog — root-owned dir, daemon runs as
+# nfmdeploy — could no longer traverse it: launchd spawn rc=78 EX_CONFIG on
+# every 5-min tick, silently, for days. Deploying on top of a dead watchdog
+# is the NFM-5346 wedge-then-deploy trap, so refuse here. Canonical shape is
+# host_setup.sh §6: dir 0755, the three pre-created watchdog files 0644
+# (ownership nfmdeploy:wheel is chown'd at install time; mode drift is the
+# observed regression class, and mode-only also keeps hermetic tests honest).
+# NFM_G2_LOG_DIR is a test hook in the NFM_G2_REPO family; sudo env_reset
+# never passes it in production.
+# ============================================================================
+LOG_DIR="${NFM_G2_LOG_DIR:-/var/log/nfm-g2}"
+_mode_of() {
+  case "$(uname)" in
+    Darwin*) stat -f '%Lp' "$1" 2>/dev/null || true ;;
+    *)       stat -c '%a'  "$1" 2>/dev/null || true ;;
+  esac
+}
+dir_mode="$(_mode_of "${LOG_DIR}")"
+if [ "${dir_mode}" != "755" ]; then
+  echo "FATAL (NFM-5397): ${LOG_DIR} mode is '${dir_mode:-<missing>}' — canonical is 0755 (host_setup.sh §6)." >&2
+  echo "  A non-0755 dir kills the lightrag watchdog (spawn rc=78 EX_CONFIG every tick)." >&2
+  echo "  Root fix: sudo chmod 0755 ${LOG_DIR} && sudo launchctl kickstart -k system/com.nfm.g2.lightrag-watchdog" >&2
+  exit 78
+fi
+for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log; do
+  f_mode="$(_mode_of "${LOG_DIR}/${WD_FILE}")"
+  if [ "${f_mode}" != "644" ]; then
+    echo "FATAL (NFM-5397): ${LOG_DIR}/${WD_FILE} mode is '${f_mode:-<missing>}' — canonical is 0644 nfmdeploy:wheel (host_setup.sh §6)." >&2
+    echo "  Root fix: sudo chmod 0644 ${LOG_DIR}/${WD_FILE}" >&2
+    exit 78
+  fi
+done
+
 # Inherited PATH first: under sudo env_reset it is the secure path, so this
 # changes nothing in production — but hermetic tests can prepend a fake
 # docker/git. Then the pinned dirs guarantee docker is findable.

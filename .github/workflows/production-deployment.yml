@@ -513,8 +513,51 @@ jobs:
             # NFM-848: BUILDKIT=0 keeps metadata resolution inside the daemon
             # (anonymous pull) instead of the buildx host-side credential
             # helper path, which needs the (locked) keychain in sshd sessions.
-            HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
-            docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+            # NFM-5333: this candidate build performs the same bulk pip
+            # downloads in the same deploy window as the deploy_prod.sh
+            # builds, so it gets the same health-gated ci-throttle cap
+            # (ADR-022 D4 2026-10-07 amendment): when the loopback proxy
+            # answers, downloads pace through host.docker.internal:7899;
+            # when it does not, the exact NFM-2502 direct-egress behavior.
+            # (NFM-5389 correction, 2026-10-08: the legacy builder does NOT
+            # forward proxy env prefixes into RUN containers on this docker
+            # CLI — the historical capped traffic rode Docker Desktop's
+            # daemon-side proxy-env injection, which the 2026-10-07
+            # manual-proxy clearance + daemon restart silently killed while
+            # the host.docker.internal:7899 alias itself kept forwarding.
+            # So the cap is passed as explicit predefined --build-args, and
+            # the gate probes the health endpoint FROM a container through
+            # the build URL; host-OK + path-BROKEN gets a loud NFM-5389
+            # uncapped line instead of a false-green cap.)
+            # The proxy egresses direct, so the CN-mirror fast routes
+            # survive and NFM-2502's 502 concern does not apply; the
+            # Dockerfile's final pip leg strips proxy env, so a proxy that
+            # dies mid-build costs speed, never the deploy.
+            if curl -fsS --max-time 4 -x http://127.0.0.1:7899 \
+                 http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1; then
+              if docker run --rm ghcr.io/etoile04/nucpot-build-base:stable \
+                   curl -fsS --max-time 6 -x http://host.docker.internal:7899 \
+                   http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1; then
+                echo "NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — candidate build downloads capped via host.docker.internal:7899"
+                DOCKER_BUILDKIT=0 \
+                  docker build --no-cache -f docker/prod-api.Dockerfile \
+                  --build-arg HTTP_PROXY=http://host.docker.internal:7899 \
+                  --build-arg HTTPS_PROXY=http://host.docker.internal:7899 \
+                  --build-arg http_proxy=http://host.docker.internal:7899 \
+                  --build-arg https_proxy=http://host.docker.internal:7899 \
+                  --build-arg NO_PROXY=localhost,127.0.0.1,::1 \
+                  --build-arg no_proxy=localhost,127.0.0.1,::1 \
+                  -t "${CANDIDATE_TAG}" .
+              else
+                echo "NFM-5389: ci-throttle healthy on host BUT container path http://host.docker.internal:7899 BROKEN — candidate build UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
+                DOCKER_BUILDKIT=0 \
+                  docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+              fi
+            else
+              echo "NFM-5333: ci-throttle NOT reachable — candidate build uncapped (pre-NFM-5333 / NFM-2502 behavior)"
+              DOCKER_BUILDKIT=0 \
+                docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+            fi
 
             # NFM-4333 RC6: do NOT `docker tag ... :latest` here. The
             # RO gate (ADR-013 G2) denies re-tagging prod-named images
