@@ -107,7 +107,7 @@ do_install() {
 
     # bootstrap fails with 537ERRINPROGRESS-style noise if the old
     # instance is still registered; bootout first, best-effort.
-    launchctl bootout "gui/$UID_N/$PLIST_DST" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$UID_N/$LABEL" >/dev/null 2>&1 || true
     launchctl bootstrap "gui/$UID_N" "$PLIST_DST"
 
     sleep 1
