@@ -173,7 +173,7 @@ def _run_workflow_candidate_gate(
 
 
 def _build_calls(result: subprocess.CompletedProcess[str]) -> list[str]:
-    return [l for l in result.calls.splitlines() if l.startswith("build ")]  # type: ignore[attr-defined]
+    return [line for line in result.calls.splitlines() if line.startswith("build ")]  # type: ignore[attr-defined]
 
 
 def _assert_no_proxy_build_args(builds: list[str]) -> None:
@@ -192,7 +192,7 @@ def _assert_no_proxy_build_args(builds: list[str]) -> None:
 
 def test_path_probe_runs_health_check_from_a_container(tmp_path: Path) -> None:
     result = _run_deploy_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
-    probe_lines = [l for l in result.calls.splitlines() if l.startswith("run --rm")]
+    probe_lines = [line for line in result.calls.splitlines() if line.startswith("run --rm")]
     assert probe_lines, (
         "gate must probe the throttle through `docker run` — a host-shell "
         "curl cannot see the host.docker.internal alias breakage (NFM-5389)"
@@ -275,8 +275,7 @@ def test_all_build_sites_expand_throttle_args_bash32_safe(tmp_path: Path) -> Non
     assert uncapped.returncode == 0, (
         "every build site must expand THROTTLE_BUILD_ARGS with the bash-3.2 "
         "set-u-safe idiom (empty-array expansion under set -u is an "
-        "unbound-variable error on /bin/bash 3.2) — the block aborted:\n"
-        + uncapped.stderr
+        "unbound-variable error on /bin/bash 3.2) — the block aborted:\n" + uncapped.stderr
     )
 
     dockerfiles = (
@@ -305,7 +304,7 @@ def test_workflow_candidate_step_dual_probes_and_explicit_args(tmp_path: Path) -
     result = _run_workflow_candidate_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
     assert result.returncode == 0, result.stderr
     assert "capped" in result.stdout
-    probe_lines = [l for l in result.calls.splitlines() if l.startswith("run --rm")]
+    probe_lines = [line for line in result.calls.splitlines() if line.startswith("run --rm")]
     assert probe_lines, (
         "candidate gate must probe the throttle through `docker run` — a "
         "host-shell curl cannot see the alias breakage (NFM-5389)"
@@ -323,9 +322,7 @@ def test_workflow_candidate_step_dual_probes_and_explicit_args(tmp_path: Path) -
 
 
 def test_workflow_candidate_step_fallbacks_are_uncapped(tmp_path: Path) -> None:
-    broken = _run_workflow_candidate_gate(
-        tmp_path / "broken", curl_plan=["0|"], docker_run_rc=1
-    )
+    broken = _run_workflow_candidate_gate(tmp_path / "broken", curl_plan=["0|"], docker_run_rc=1)
     assert broken.returncode == 0, broken.stderr
     assert "NFM-5389" in broken.stdout, (
         "host-OK + path-BROKEN must name NFM-5389 in the candidate log "
@@ -340,8 +337,7 @@ def test_workflow_candidate_step_fallbacks_are_uncapped(tmp_path: Path) -> None:
     assert down.returncode == 0, down.stderr
     assert "NOT reachable" in down.stdout
     assert "run --rm" not in down.calls, (
-        "candidate path probe must not spin a container when the host probe "
-        "already failed"
+        "candidate path probe must not spin a container when the host probe already failed"
     )
     builds = _build_calls(down)
     assert len(builds) == 1

@@ -33,8 +33,15 @@ of exactly those fetches:
 
 Wired in ``scripts/deploy_prod.sh``: build containers reach the host via
 ``host.docker.internal:7899`` (Docker Desktop resolves it to the host's
-loopback). pip/pnpm/corepack honor HTTP(S)_PROXY; the legacy (non-BuildKit)
-builder forwards those as predefined build args into every RUN step.
+loopback). pip/pnpm/corepack honor HTTP(S)_PROXY, and the cap reaches RUN
+steps only as explicit predefined ``--build-arg`` forms (NFM-5389
+correction, 2026-10-08: the legacy non-BuildKit builder does NOT forward
+env-prefix proxy exports into RUN containers on this docker CLI — the
+historical capped traffic rode Docker Desktop's daemon-side proxy-env
+injection, which the 2026-10-07 manual-proxy clearance killed). The gate
+probes the health endpoint from a container through the build URL before
+claiming a cap, so a broken ``host.docker.internal`` path builds uncapped
+with a loud NFM-5389 log line instead of a false-green cap.
 
 Stdlib only — runs under the host python3 as a LaunchAgent rendered from
 ``scripts/host/ci-throttle/io.nfmd.ci-throttle.plist.template`` (label
