@@ -427,9 +427,7 @@ class TestEndToEnd:
         assert elapsed >= 0.4, f"cap not enforced: {len(body)} bytes in {elapsed:.3f}s"
 
         _, control = asyncio.run(
-            asyncio.wait_for(
-                self._run_fetch(rate_bytes_per_sec=2 * 1024 * 1024), timeout=60.0
-            )
+            asyncio.wait_for(self._run_fetch(rate_bytes_per_sec=2 * 1024 * 1024), timeout=60.0)
         )
         assert elapsed > control, "capped fetch should be slower than the 8x-faster control"
 
@@ -469,9 +467,7 @@ class TestRelayTeardown:
         """
         release = asyncio.Event()
 
-        async def stalled(
-            _reader: asyncio.StreamReader, _writer: asyncio.StreamWriter
-        ) -> None:
+        async def stalled(_reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
             await release.wait()
 
         server = await asyncio.start_server(stalled, "127.0.0.1", 0)
@@ -512,9 +508,7 @@ class TestRelayTeardown:
 
         asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
-    def test_client_hangup_tears_down_even_if_request_pump_never_wakes(
-        self, monkeypatch
-    ) -> None:
+    def test_client_hangup_tears_down_even_if_request_pump_never_wakes(self, monkeypatch) -> None:
         """NFM-5401 regression pin: teardown must not need the request pump.
 
         The Linux-runner race cancelled every Batch1 since NFM-5333: after
@@ -542,9 +536,7 @@ class TestRelayTeardown:
                 await asyncio.Event().wait()  # never completes inside this test
             await real_pump(reader, writer, bucket, counter, idle_timeout=idle_timeout)
 
-        monkeypatch.setattr(
-            ci_throttle_proxy, "_pump", pump_that_never_wakes_on_the_request_side
-        )
+        monkeypatch.setattr(ci_throttle_proxy, "_pump", pump_that_never_wakes_on_the_request_side)
 
         async def scenario() -> None:
             origin, release = await self._start_stalled_origin()
