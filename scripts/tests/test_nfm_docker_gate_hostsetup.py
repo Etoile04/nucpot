@@ -88,7 +88,8 @@ def test_sudoers_every_grant_is_an_enumerated_g2_entry():
     grants = [line for line in _sudoers_lines() if "NOPASSWD" in line]
     assert len(grants) == len(SANCTIONED) + len(ROOT_RUNAS_SANCTIONED)
     root_runas = [
-        line for line in grants
+        line
+        for line in grants
         if line.startswith("nfmdeploy ALL=(root) NOPASSWD: /usr/local/lib/nfm-g2/")
     ]
     # NFM-4887: exactly ONE root-runas grant — the validating runner-term
@@ -175,6 +176,20 @@ class EntryHarness:
         (self.repo / "tools" / "pre-deploy-assert-smoke").mkdir(parents=True)
         self.docker_calls = tmp_path / "docker-calls.txt"
         self.entry_lock = tmp_path / "entry.lock"
+        # NFM-5397: canonical LOG_DIR fixture (host_setup.sh §6 shape) so the
+        # pre-deploy-assert perms preflight stays hermetic — the REAL
+        # /var/log/nfm-g2 drifts with live host state and must never gate tests.
+        self.log_dir = tmp_path / "logdir"
+        self.log_dir.mkdir()
+        self.log_dir.chmod(0o755)
+        for wd_file in (
+            "lightrag-watchdog.log",
+            "lightrag-watchdog.state",
+            "lightrag-watchdog-launchd.log",
+        ):
+            fixture = self.log_dir / wd_file
+            fixture.write_text("")
+            fixture.chmod(0o644)
         self._write_executable("id", 'printf "nfmdeploy\\n"')
         self._write_executable(
             "docker",
@@ -207,6 +222,7 @@ class EntryHarness:
         env = dict(os.environ)
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         env.setdefault("NFM_G2_REPO", str(self.repo))  # test hook; env_reset kills it in prod
+        env.setdefault("NFM_G2_LOG_DIR", str(self.log_dir))  # NFM-5397: same class of hook
         # NFM-4297 CR F7: entries pin interpreters/lock to absolute paths
         # via NFM_G2_* hooks. Wire any fake present in fakebin to its hook
         # so fakes stay exercised; env_extra (applied last) overrides.
@@ -289,7 +305,7 @@ def test_run_recovery_lightrag_reprocess_invokes_docker_exec_post(entry):
     assert "exec nucpot-prod-lightrag python3" in recorded
     assert "http://localhost:9621/documents/reprocess_failed" in recorded
     # the POST verb is explicit — not an accidental GET
-    assert "method=\"POST\"" in recorded or "method='POST'" in recorded
+    assert 'method="POST"' in recorded or "method='POST'" in recorded
 
 
 def test_run_recovery_lightrag_reprocess_takes_no_arguments(entry):
@@ -378,7 +394,58 @@ def test_run_pre_deploy_assert_accepts_candidate_tag(entry):
     assert result.returncode == 0, result.stderr
     recorded = entry.docker_calls.read_text()
     assert "--image nucpot-prod-api:candidate-abc1234" in recorded
-    assert "--db-container nucpot-prod-db" in recorded
+
+
+# ---- NFM-5397: LOG_DIR perms preflight (recurrence guard) -----------------------
+
+
+def _assert_args() -> list[str]:
+    return [
+        "run-pre-deploy-assert.sh",
+        "--image",
+        "nucpot-prod-api:candidate-abc1234",
+        "--db-container",
+        "nucpot-prod-db",
+        "--distinct-exit",
+        "64",
+    ]
+
+
+def test_pre_deploy_assert_blocks_drifted_log_dir_mode(entry):
+    """The observed regression: out-of-band chmod 0744 on /var/log/nfm-g2.
+    The dir is root-owned and the watchdog runs as nfmdeploy — 0744 denies
+    traverse, so the daemon spawn-fails rc=78 every 5-min tick. The deploy
+    gate must refuse (same EX_CONFIG class) instead of shipping on top."""
+    entry.log_dir.chmod(0o744)
+    result = entry.run(*_assert_args())
+    assert result.returncode == 78
+    assert "0755" in result.stderr
+    assert "chmod 0755" in result.stderr  # canonical fix hint
+    assert not entry.docker_calls.exists()  # refused BEFORE any docker reach
+
+
+def test_pre_deploy_assert_blocks_missing_log_dir(entry):
+    result = entry.run(*_assert_args(), env_extra={"NFM_G2_LOG_DIR": str(entry.tmp / "gone")})
+    assert result.returncode == 78
+    assert "missing" in result.stderr
+
+
+def test_pre_deploy_assert_blocks_drifted_watchdog_file_mode(entry):
+    """File-mode drift is the same out-of-band chmod class: canonical §6
+    pre-creates the three watchdog files 0644 nfmdeploy:wheel."""
+    (entry.log_dir / "lightrag-watchdog.state").chmod(0o600)
+    result = entry.run(*_assert_args())
+    assert result.returncode == 78
+    assert "lightrag-watchdog.state" in result.stderr
+    assert "0644" in result.stderr
+
+
+def test_pre_deploy_assert_canonical_log_dir_proceeds_to_assert(entry):
+    """Canonical 0755 + 0644x3 passes the preflight and reaches assert.sh."""
+    result = entry.run(*_assert_args())
+    assert result.returncode == 0, result.stderr
+    assert "--image nucpot-prod-api:candidate-abc1234" in entry.docker_calls.read_text()
+    assert "--db-container nucpot-prod-db" in entry.docker_calls.read_text()
 
 
 def test_run_worker_inspect_takes_no_arguments(entry):
@@ -896,7 +963,7 @@ def _backup_dest(tmp_path: Path) -> Path:
     return dest
 
 
-def _backup_harness(tmp_path: Path) -> "EntryHarness":
+def _backup_harness(tmp_path: Path) -> EntryHarness:
     h = EntryHarness(tmp_path)
     h._write_executable(
         "id",
@@ -1029,7 +1096,7 @@ def _install_failing_docker(entry, fail_substr: str) -> None:
     body = (
         "#!/bin/bash\n"
         f"printf '%s\\n' \"$*\" >> {entry.docker_calls}\n"
-        f"case \" $* \" in\n"
+        f'case " $* " in\n'
         f'  *"{fail_substr}"*) echo "fake-docker: forced fail on {fail_substr}" >&2; exit 1 ;;\n'
         "esac\n"
         "exit 0\n"
@@ -1064,9 +1131,7 @@ def test_run_backup_pg_dump_failure_skips_manifest_and_current(entry, tmp_path):
     _install_failing_docker(entry, "pg_dump")
 
     result = entry.run("run-backup.sh", "--dest", str(dest))
-    assert result.returncode == 1, (
-        f"pg_dump failure must exit 1; stderr: {result.stderr}"
-    )
+    assert result.returncode == 1, f"pg_dump failure must exit 1; stderr: {result.stderr}"
     # Fail-closed message reaches stderr (operator can read it in cron alert)
     assert "fail=1" in result.stderr or "manifest/current SKIPPED" in result.stderr, (
         f"expected fail-closed marker in stderr; got: {result.stderr}"
@@ -1208,8 +1273,6 @@ def test_run_backup_default_dest_backup_root_env_still_wins(entry, tmp_path):
     assert not (operator_home / "nucpot-backups").exists()
 
 
-
-
 # ---- NFM-4802: cleanup-daily plist + run-cleanup --until / staging ----------------
 
 
@@ -1253,24 +1316,22 @@ def _install_inventory_docker(entry):
     from datetime import datetime, timedelta
 
     old_ts = "2026-08-01 00:00:00 +0800 CST"
-    fresh_ts = (datetime.now() - timedelta(hours=1)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    ) + " +0800 CST"
+    fresh_ts = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S") + " +0800 CST"
     old_sha, fresh_sha = "a" * 40, "b" * 40
     st_old_sha, st_fresh_sha = "c" * 40, "d" * 40
     inuse64 = "e" * 64
     rows_no_trunc = "\n".join(
         [
-            "nucpot-prod-api|%s|sha256:%s|%s" % (old_sha, "f" * 64, old_ts),  # prune
-            "nucpot-prod-api|%s|sha256:%s|%s" % (fresh_sha, "1" * 64, fresh_ts),
-            "nucpot-prod-api|latest|sha256:%s|%s" % (inuse64, old_ts),  # protected + in use
-            "nucpot-prod-api|restore-deadbeef|sha256:%s|%s" % ("2" * 64, old_ts),
-            "nucpot-staging-api|%s|sha256:%s|%s" % (st_old_sha, "3" * 64, old_ts),  # prune
-            "nucpot-staging-api|%s|sha256:%s|%s" % (st_fresh_sha, "4" * 64, fresh_ts),
-            "nucpot-staging-api|preview-1|sha256:%s|%s" % ("5" * 64, old_ts),
-            "nucpot-prod-web|%s|sha256:%s|%s" % ("9" * 40, inuse64, old_ts),  # in use
-            "nucpot-prod-web|test-9|sha256:%s|%s" % ("6" * 64, old_ts),
-            "nucpot-staging-web|frozen-2|sha256:%s|%s" % ("7" * 64, old_ts),
+            "nucpot-prod-api|{}|sha256:{}|{}".format(old_sha, "f" * 64, old_ts),  # prune
+            "nucpot-prod-api|{}|sha256:{}|{}".format(fresh_sha, "1" * 64, fresh_ts),
+            f"nucpot-prod-api|latest|sha256:{inuse64}|{old_ts}",  # protected + in use
+            "nucpot-prod-api|restore-deadbeef|sha256:{}|{}".format("2" * 64, old_ts),
+            "nucpot-staging-api|{}|sha256:{}|{}".format(st_old_sha, "3" * 64, old_ts),  # prune
+            "nucpot-staging-api|{}|sha256:{}|{}".format(st_fresh_sha, "4" * 64, fresh_ts),
+            "nucpot-staging-api|preview-1|sha256:{}|{}".format("5" * 64, old_ts),
+            "nucpot-prod-web|{}|sha256:{}|{}".format("9" * 40, inuse64, old_ts),  # in use
+            "nucpot-prod-web|test-9|sha256:{}|{}".format("6" * 64, old_ts),
+            "nucpot-staging-web|frozen-2|sha256:{}|{}".format("7" * 64, old_ts),
         ]
     )
     # Truncated-ID form (retention loop): same rows, 12-char ids. Per-repo
@@ -1289,7 +1350,7 @@ def _install_inventory_docker(entry):
     )
     body = (
         "#!/bin/bash\n"
-        'printf \'%s\\n\' "$*" >> ' + str(entry.docker_calls) + "\n"
+        "printf '%s\\n' \"$*\" >> " + str(entry.docker_calls) + "\n"
         'case " $* " in\n'
         '  *"system df"*) echo "10.0GB"; exit 0 ;;\n'
         '  *"volume ls"*) exit 0 ;;\n'
@@ -1317,7 +1378,7 @@ def _install_inventory_docker(entry):
         "#!/bin/bash\n"
         'case "$*" in\n'
         '  *"-j -f"*)\n'
-        '    python3 - "$4" <<\'PYDATE\'\n'
+        "    python3 - \"$4\" <<'PYDATE'\n"
         "import sys, datetime\n"
         "s = sys.argv[1][:19].replace('T', ' ')\n"
         "dt = datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')\n"
@@ -1325,7 +1386,7 @@ def _install_inventory_docker(entry):
         "PYDATE\n"
         "    ;;\n"
         '  *" -r "*)\n'
-        '    python3 - "$2" <<\'PYDATE\'\n'
+        "    python3 - \"$2\" <<'PYDATE'\n"
         "import sys, datetime\n"
         "print(datetime.datetime.fromtimestamp(int(sys.argv[1])).strftime('%Y-%m-%d %H:%M:%S %z'))\n"
         "PYDATE\n"
@@ -1363,7 +1424,7 @@ def test_run_cleanup_until_age_prunes_only_old_unused_tags(entry):
     assert targets == [
         "nucpot-prod-api:" + "a" * 40,
         "nucpot-staging-api:" + "c" * 40,
-    ], "unexpected rmi set: %s" % targets
+    ], f"unexpected rmi set: {targets}"
     assert "until 72" in result.stdout
     assert "age-pruned 2" in result.stdout
 
@@ -1385,9 +1446,7 @@ def test_run_cleanup_candidate_loop_covers_staging(entry):
     prune_stub = entry.repo / "tools" / "prod-tag-retention" / "prune.sh"
     prune_stub.parent.mkdir(parents=True, exist_ok=True)
     prune_stub.write_text(
-        "#!/bin/bash\nprintf 'prune %s\\n' \"$*\" >> "
-        + str(entry.docker_calls)
-        + "\nexit 0\n"
+        "#!/bin/bash\nprintf 'prune %s\\n' \"$*\" >> " + str(entry.docker_calls) + "\nexit 0\n"
     )
     prune_stub.chmod(0o755)
     result = entry.run("run-cleanup.sh", env_extra=env)
@@ -1404,4 +1463,4 @@ def test_run_cleanup_candidate_loop_covers_staging(entry):
         "nucpot-staging-api",
         "nucpot-staging-lightrag",
         "nucpot-staging-web",
-    ], "candidate loop repo set wrong: %s" % pruned_repos
+    ], f"candidate loop repo set wrong: {pruned_repos}"
