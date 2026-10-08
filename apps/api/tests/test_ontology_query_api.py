@@ -1,10 +1,9 @@
 """Tests for Phase 2 Ontology Query API Endpoints (NFM-820).
 
-Tests for the 4 new AGE-backed ontology endpoints:
+Tests for the 3 graph-query ontology endpoints (relational reads):
 - GET /api/v1/ontology/node/{id} - node + neighbors
 - GET /api/v1/ontology/search - fuzzy search
 - GET /api/v1/ontology/path - shortest path
-- POST /api/v1/ontology/sync - graph rebuild
 
 Coverage target: ≥80% for NFM-820 acceptance criteria.
 """
@@ -263,74 +262,6 @@ class TestGetShortestPath:
 
             assert response.status_code == 404
             assert "not found" in response.json()["detail"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Sync Corpus Graph
-# ---------------------------------------------------------------------------
-
-
-class TestSyncCorpusGraph:
-    """Tests for POST /ontology/sync endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_sync_graph_success(self) -> None:
-        """Test successful graph sync."""
-        corpus_id = "test-corpus"
-
-        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
-            from nfm_db.services.ontology_sync import SyncResult
-
-            mock_rebuild.return_value = SyncResult(
-                nodes_synced=150,
-                edges_synced=320,
-                duration_ms=450.0,
-            )
-
-            mock_session = AsyncMock(spec=AsyncSession)
-            client = _make_client(lambda: mock_session)
-            response = client.post(f"/ontology/sync?corpus_id={corpus_id}")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert data["corpus_id"] == corpus_id
-            assert data["nodes_synced"] == 150
-            assert data["edges_synced"] == 320
-            assert data["duration_ms"] == 450.0
-
-    @pytest.mark.asyncio
-    async def test_sync_graph_not_found(self) -> None:
-        """Test 404 when graph doesn't exist."""
-        from nfm_db.services.ontology_sync import GraphNotFoundError
-
-        corpus_id = "test-corpus"
-
-        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
-            mock_rebuild.side_effect = GraphNotFoundError("graph not found")
-
-            mock_session = AsyncMock(spec=AsyncSession)
-            client = _make_client(lambda: mock_session)
-            response = client.post(f"/ontology/sync?corpus_id={corpus_id}")
-
-            assert response.status_code == 404
-            assert "graph not found" in response.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_sync_graph_sync_error(self) -> None:
-        """Test 500 when sync fails."""
-        from nfm_db.services.ontology_sync import OntologySyncError
-
-        corpus_id = "test-corpus"
-
-        with patch("nfm_db.api.v1.ontology.rebuild_graph", new_callable=AsyncMock) as mock_rebuild:
-            mock_rebuild.side_effect = OntologySyncError("sync failed")
-
-            mock_session = AsyncMock(spec=AsyncSession)
-            client = _make_client(lambda: mock_session)
-            response = client.post(f"/ontology/sync?corpus_id={corpus_id}")
-
-            assert response.status_code == 500
-            assert "sync failed" in response.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

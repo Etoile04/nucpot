@@ -7,12 +7,12 @@ Verifies that GraphBuilder correctly:
 - Stores new KG nodes/edges on BuildResult for post-commit LightRAG ingest
   (NFM-2871: ingest deferred to extraction_pipeline after session.commit())
 - Assigns concrete UUIDs to nodes and edges BEFORE any downstream consumer
-  (review queue, AGE sync, edge FK) reads the ID, so transactions don't
+  (review queue, edge FK) reads the ID, so transactions don't
   fail with NOT NULL / IntegrityError on the final flush.
 
 External side effects are mocked where required; the UUID-assignment
 regression uses the real ``db_session`` fixture (SQLite in-memory with FK
-enforcement enabled) and patches only EntityLinker, AGE sync, and LightRAG.
+enforcement enabled) and patches only EntityLinker and LightRAG.
 """
 
 from __future__ import annotations
@@ -115,7 +115,6 @@ class TestGraphBuilderIngestDataOnResult:
         builder = GraphBuilder(
             session=session,  # type: ignore[arg-type]
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -151,7 +150,6 @@ class TestGraphBuilderIngestDataOnResult:
         builder = GraphBuilder(
             session=session,  # type: ignore[arg-type]
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -191,7 +189,6 @@ class TestGraphBuilderIngestDataOnResult:
         builder = GraphBuilder(
             session=session,  # type: ignore[arg-type]
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         existing_node = _make_fake_node(label="UO2")
@@ -227,7 +224,6 @@ class TestGraphBuilderIngestDataOnResult:
         builder = GraphBuilder(
             session=session,  # type: ignore[arg-type]
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -268,8 +264,8 @@ class TestGraphBuilderUUIDAssignment:
     Pre-fix behaviour: ``KGNode``/``KGEdge`` rely on the SQLAlchemy
     ``default=uuid.uuid4`` Python-side default, which only fires at flush
     time. ``_create_node`` adds the new node to the session and returns it
-    immediately. Downstream consumers (``_queue_for_review``, ``sync_node``,
-    and ``_create_edge`` reading ``source_node.id``/``target_node.id``) all
+    immediately. Downstream consumers (``_queue_for_review`` and
+    ``_create_edge`` reading ``source_node.id``/``target_node.id``) all
     see ``None`` until the final flush, which then raises ``IntegrityError``
     on the ``NOT NULL`` constraints of ``kg_review_queue.item_id`` and
     ``kg_edges.source_node_id`` / ``target_node_id``.
@@ -290,7 +286,6 @@ class TestGraphBuilderUUIDAssignment:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
         entity = ExtractedEntity(
             label="UO2",
@@ -300,7 +295,7 @@ class TestGraphBuilderUUIDAssignment:
         node = await builder._create_node(entity)
 
         # Pre-flush invariant: the returned node MUST carry a concrete UUID
-        # so downstream consumers (_queue_for_review, sync_node, _create_edge
+        # so downstream consumers (_queue_for_review, _create_edge
         # reading source_node.id/target_node.id) never see None.
         assert node.id is not None, (
             "_create_node returned a node with id=None; downstream "
@@ -319,7 +314,6 @@ class TestGraphBuilderUUIDAssignment:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
         relation = ExtractedRelation(
             source_label="UO2",
@@ -337,8 +331,8 @@ class TestGraphBuilderUUIDAssignment:
 
         assert edge.id is not None, (
             "_create_edge returned an edge with id=None; downstream "
-            "consumers (_queue_for_review for low-confidence relations, "
-            "sync_edge) would persist None."
+            "consumers (_queue_for_review for low-confidence relations) "
+            "would persist None."
         )
         assert isinstance(edge.id, uuid.UUID)
 
@@ -366,7 +360,7 @@ class TestGraphBuilderUUIDAssignment:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,  # patch external AGE side effect only
+
         )
 
         # 3 entities: 1 Material + 2 Property (one low-confidence).
@@ -453,7 +447,6 @@ class TestGraphBuilderUUIDAssignment:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         # Build two lightweight fake-node stand-ins with id=None to
@@ -518,7 +511,6 @@ class TestGraphBuilderEdgeDedup:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         source_id = uuid.uuid4()
@@ -578,7 +570,6 @@ class TestGraphBuilderEdgeDedup:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -713,7 +704,6 @@ class TestBuildResultNodeLabels:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -759,7 +749,6 @@ class TestBuildResultNodeLabels:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
 
         extracted = [
@@ -894,7 +883,6 @@ class TestCreateEdgeDedupRegistersEndpointLabels:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
         relation = ExtractedRelation(
             source_label="UO2",
@@ -963,7 +951,6 @@ class TestCreateEdgeDedupRegistersEndpointLabels:
         builder = GraphBuilder(
             session=db_session,
             corpus_id="test-corpus",
-            sync_to_age=False,
         )
         relation = ExtractedRelation(
             source_label="UO2",
@@ -1002,7 +989,7 @@ class TestCreateEdgeDedupRegistersEndpointLabels:
             }
         ]
         builder1 = GraphBuilder(
-            session=db_session, corpus_id="test-corpus", sync_to_age=False
+            session=db_session, corpus_id="test-corpus"
         )
         await builder1.build_from_extraction(props)
         await db_session.flush()
@@ -1011,7 +998,7 @@ class TestCreateEdgeDedupRegistersEndpointLabels:
         # edge is a dedup hit — the classic re-extract shape that leaked
         # UUID endpoints in prod.
         builder2 = GraphBuilder(
-            session=db_session, corpus_id="test-corpus", sync_to_age=False
+            session=db_session, corpus_id="test-corpus"
         )
         result2 = await builder2.build_from_extraction(props)
 

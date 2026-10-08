@@ -228,8 +228,8 @@ GET  /ontology/corpora/{corpus_id}/graph
 GET  /ontology/node/{node_id}
 GET  /ontology/search
 GET  /ontology/path
-POST /ontology/sync          # 同步到 AGE，非编辑
 ```
+（`POST /ontology/sync` 已随 Apache AGE 镜像退役而移除，2026-10，NFM-5215。）
 **零个写入端点。** 唯一来源是前端静态文件 `apps/web/public/ontology-viewer/data/nvl_ontology_data.json`——改本体要改代码、重新部署、跑 seed。
 
 > 2026-07-24 那次"本体颜色不更新"事故正是此架构的症状：本体是编译期资产，不是运行时数据。
