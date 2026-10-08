@@ -92,6 +92,12 @@ IDLE_TIMEOUT_SECONDS = 600.0
 # (see _peer_gone): frequent enough that a lost-wakeup teardown costs one
 # interval, rare enough that ~200 concurrent tunnels add trivial load.
 PEER_GONE_POLL_SECONDS = 1.0
+# Bound on Server.wait_closed() at shutdown: Python 3.12's implementation
+# never returns when a handler task is still active at close() time (fixed
+# in 3.13; repro'd 2026-10-09: 3.12.12 hangs in both close/handler
+# orderings) — without this bound, shutting the LaunchAgent down with a
+# live tunnel wedges the process forever (NFM-5401).
+CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 
 LOG = logging.getLogger("nfmd-ci-throttle")
 
@@ -349,7 +355,20 @@ class ThrottleProxy:
     async def close(self) -> None:
         if self.server is not None:
             self.server.close()
-            await self.server.wait_closed()
+            # Bounded drain, not a bare wait_closed(): py3.12's
+            # wait_closed() hangs forever when a handler is still active
+            # at close() (see CLOSE_DRAIN_TIMEOUT_SECONDS). The listeners
+            # are already down; handlers have their own total teardown,
+            # so proceeding past a wedged drain leaks nothing permanent.
+            try:
+                await asyncio.wait_for(
+                    self.server.wait_closed(), timeout=CLOSE_DRAIN_TIMEOUT_SECONDS
+                )
+            except TimeoutError:
+                LOG.warning(
+                    "server drain did not settle in %.1fs; closing anyway",
+                    CLOSE_DRAIN_TIMEOUT_SECONDS,
+                )
             self.server = None
 
     # -- connection handling ----------------------------------------------

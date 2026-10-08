@@ -442,14 +442,20 @@ class TestRelayTeardown:
     gauge's ``connections`` climbs permanently and fds run out. These tests
     reproduce the stall shapes against live sockets.
 
-    NFM-5401 hardening (2026-10-09): the Linux-runner teardown race exposed
-    here hung the whole Batch1 lane for the job's 20-minute timeout — the
-    failing test's ``proxy.close()`` parked inside ``Server.wait_closed()``
-    (Python 3.12 waits for every handler task) behind a handler whose
-    request-direction pump never woke after the client hung up. Every
-    scenario in this file is now wall-clock bounded end to end (outer
-    ``wait_for`` + bounded teardowns), so a regression of that shape FAILS
-    in seconds instead of cancelling the lane.
+    NFM-5401 hardening (2026-10-09): two stacked 3.12-only traps took the
+    whole Batch1 lane down for the job's 20-minute timeout on every PR
+    since NFM-5333. (1) A client hangup left the request-direction pump
+    parked forever — the handler never finished (fixed in the proxy:
+    state-polled peer watchdog + transport-close teardown). (2) Python
+    3.12's ``Server.wait_closed()`` then never returned even once handlers
+    finished: it hangs whenever a handler task was active at ``close()``
+    (repro'd 2026-10-09: 3.12.12 hangs in both close/handler orderings,
+    3.13+ returns — the authors' macOS interpreters never saw it). Every
+    scenario here is therefore wall-clock bounded end to end (outer
+    ``wait_for`` + bounded teardowns) and origin teardown releases
+    handlers by Event instead of awaiting ``wait_closed()`` — a
+    regression of either shape now FAILS in seconds, not one 20-minute
+    CANCELLED per PR.
     """
 
     @staticmethod
@@ -496,9 +502,13 @@ class TestRelayTeardown:
                 )
             finally:
                 await asyncio.wait_for(proxy.close(), timeout=10.0)
+                # Release the origin handler by Event and DO NOT await
+                # origin.wait_closed(): py3.12's Server.wait_closed()
+                # hangs forever when a handler was active at close()
+                # (fixed in 3.13; repro'd 2026-10-09 both orderings).
+                # The released handler drains during loop shutdown.
                 release.set()
                 origin.close()
-                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
 
         asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
@@ -559,9 +569,13 @@ class TestRelayTeardown:
                 )
             finally:
                 await asyncio.wait_for(proxy.close(), timeout=10.0)
+                # Release the origin handler by Event and DO NOT await
+                # origin.wait_closed(): py3.12's Server.wait_closed()
+                # hangs forever when a handler was active at close()
+                # (fixed in 3.13; repro'd 2026-10-09 both orderings).
+                # The released handler drains during loop shutdown.
                 release.set()
                 origin.close()
-                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
 
         asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
@@ -593,9 +607,13 @@ class TestRelayTeardown:
             finally:
                 writer.close()
                 await asyncio.wait_for(proxy.close(), timeout=10.0)
+                # Release the origin handler by Event and DO NOT await
+                # origin.wait_closed(): py3.12's Server.wait_closed()
+                # hangs forever when a handler was active at close()
+                # (fixed in 3.13; repro'd 2026-10-09 both orderings).
+                # The released handler drains during loop shutdown.
                 release.set()
                 origin.close()
-                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
 
         asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
