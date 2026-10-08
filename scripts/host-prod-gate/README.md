@@ -53,7 +53,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat) |
 | `nfm_docker_gate_proxy.py` | launchd entry for either proxy mode |
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
-| `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion |
+| `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion; NFM-5397 preflight first refuses rc=78 (EX_CONFIG, before any docker reach) when `/var/log/nfm-g2` deviates from the host_setup.sh §6 shape — dir `0755`, the three lightrag-watchdog files `0644` — since a non-0755 dir kills the watchdog's daemon spawn |
 | `entries/run-record-manifest.sh` | G4a deploy-manifest record as the deploy identity at the canonical G4 state dir (NFM-4273) |
 | `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` / `lightrag-reprocess` (NFM-4816: re-enqueue FAILED/PENDING docs via the sidecar's `/documents/reprocess_failed`) |
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
