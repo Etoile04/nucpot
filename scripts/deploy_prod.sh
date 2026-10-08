@@ -303,7 +303,9 @@ python3 scripts/check_prod_image_tag.py \
 # a build container is the container itself, so the URL differs by
 # client. The legacy (DOCKER_BUILDKIT=0) builder forwards HTTP(S)_PROXY
 # env as predefined build args into every RUN step, which pip/pnpm/
-# corepack all honor.
+# corepack all honor. (NFM-5389 correction, 2026-10-08: that forwarding
+# does NOT happen on the current docker CLI — only explicit predefined
+# --build-arg forms reach legacy RUN containers; see the gate below.)
 #
 # NFM-2502 interplay: that fix cleared proxy env because the SYSTEM
 # v2cloud proxy tunneled the CN mirrors abroad. This proxy egresses
@@ -315,17 +317,56 @@ python3 scripts/check_prod_image_tag.py \
 # the builds only.
 NFMD_CI_THROTTLE_HOST_URL="http://127.0.0.1:7899"
 NFMD_CI_THROTTLE_BUILD_URL="http://host.docker.internal:7899"
+NFMD_CI_THROTTLE_PROBE_IMAGE="ghcr.io/etoile04/nucpot-build-base:stable"
 nfmd_ci_throttle_ready() {
   curl -fsS --max-time 4 -x "$NFMD_CI_THROTTLE_HOST_URL" \
     "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1
 }
+# NFM-5389: the host probe above only proves the proxy answers on loopback.
+# Build containers reach it via host.docker.internal, a Docker-Desktop
+# gateway alias that can silently stop forwarding (and whose breakage a
+# host-shell probe cannot see). What failed on 2026-10-07 was subtler:
+# Docker Desktop stopped INJECTING proxy env into legacy-build RUN
+# containers after the manual-proxy clearance + daemon restart, so every
+# "capped" deploy from then on downloaded UNCAPPED with green gates
+# while the alias path itself kept working (verified 2026-10-08: an
+# HTTPS relay through host.docker.internal:7899 from a container moves
+# capped bytes; the earlier "alias dead" reads were artifacts of
+# requesting host.docker.internal as an upstream URL, which the
+# host-side proxy cannot resolve). Probe the exact container path so a
+# cap claim always proves builds can reach the proxy: proxy-form GET
+# with Host pinned to 127.0.0.1 so the proxy answers health instead of
+# relaying host.docker.internal (which does not resolve on the host).
+nfmd_ci_throttle_path_ready() {
+  docker run --rm "$NFMD_CI_THROTTLE_PROBE_IMAGE" \
+    curl -fsS --max-time 6 -x "$NFMD_CI_THROTTLE_BUILD_URL" \
+    "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1
+}
 
 (
-  if nfmd_ci_throttle_ready; then
-    echo "==> NFM-5333: ci-throttle healthy — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
+  # NFM-5389: env-prefix proxy exports do NOT reach legacy RUN containers
+  # on this docker CLI (verified 2026-10-08: `HTTP_PROXY=… docker build`
+  # yields NO-PROXY-ENV inside RUN; only explicit predefined --build-arg
+  # forms do). The historical capped traffic rode Docker Desktop's
+  # daemon-side proxy injection, which the 2026-10-07 proxy clearance
+  # killed. The cap is therefore passed explicitly, and only when the
+  # container-path probe proves builds can actually reach the proxy.
+  if nfmd_ci_throttle_ready && nfmd_ci_throttle_path_ready; then
+    echo "==> NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
     export HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL" HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
     export http_proxy="$NFMD_CI_THROTTLE_BUILD_URL" https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
     export NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+    THROTTLE_BUILD_ARGS=(
+      --build-arg HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+      --build-arg HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+      --build-arg http_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+      --build-arg https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+      --build-arg NO_PROXY="localhost,127.0.0.1,::1"
+      --build-arg no_proxy="localhost,127.0.0.1,::1"
+    )
+  elif nfmd_ci_throttle_ready; then
+    echo "==> NFM-5389: ci-throttle healthy on host BUT container path ${NFMD_CI_THROTTLE_BUILD_URL} BROKEN — building UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
   else
     echo "==> NFM-5333: ci-throttle NOT reachable — building uncapped (pre-NFM-5333 / NFM-2502 behavior)"
     unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
@@ -336,18 +377,22 @@ nfmd_ci_throttle_ready() {
   # ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
   # it as deploy_sha and the CI smoke identity assertion compares it to the
   # green tree (NFM-3835 class: hot-patched image passing grep-style checks).
+  # THROTTLE_BUILD_ARGS uses the bash-3.2 set-u-safe empty-array idiom.
   DOCKER_BUILDKIT=0 \
     docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
+      ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
       -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
 
   echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
   DOCKER_BUILDKIT=0 \
-    docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
+    docker build --no-cache ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
+      -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
       -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
 
   echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
   DOCKER_BUILDKIT=0 \
-    docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
+    docker build --no-cache ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
+      -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
       -f docker/web.Dockerfile \
       --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
       --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
