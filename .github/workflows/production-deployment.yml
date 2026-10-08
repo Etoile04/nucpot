@@ -534,25 +534,25 @@ jobs:
             # Dockerfile's final pip leg strips proxy env, so a proxy that
             # dies mid-build costs speed, never the deploy.
             if curl -fsS --max-time 4 -x http://127.0.0.1:7899 \
-                 http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1 \
-               && docker run --rm ghcr.io/etoile04/nucpot-build-base:stable \
-                    curl -fsS --max-time 6 -x http://host.docker.internal:7899 \
-                    http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1; then
-              echo "NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — candidate build downloads capped via host.docker.internal:7899"
-              DOCKER_BUILDKIT=0 \
-                docker build --no-cache -f docker/prod-api.Dockerfile \
-                --build-arg HTTP_PROXY=http://host.docker.internal:7899 \
-                --build-arg HTTPS_PROXY=http://host.docker.internal:7899 \
-                --build-arg http_proxy=http://host.docker.internal:7899 \
-                --build-arg https_proxy=http://host.docker.internal:7899 \
-                --build-arg NO_PROXY=localhost,127.0.0.1,::1 \
-                --build-arg no_proxy=localhost,127.0.0.1,::1 \
-                -t "${CANDIDATE_TAG}" .
-            elif curl -fsS --max-time 4 -x http://127.0.0.1:7899 \
                  http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1; then
-              echo "NFM-5389: ci-throttle healthy on host BUT container path http://host.docker.internal:7899 BROKEN — candidate build UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
-              DOCKER_BUILDKIT=0 \
-                docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+              if docker run --rm ghcr.io/etoile04/nucpot-build-base:stable \
+                   curl -fsS --max-time 6 -x http://host.docker.internal:7899 \
+                   http://127.0.0.1:7899/__nfmd_ci_throttle_health >/dev/null 2>&1; then
+                echo "NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — candidate build downloads capped via host.docker.internal:7899"
+                DOCKER_BUILDKIT=0 \
+                  docker build --no-cache -f docker/prod-api.Dockerfile \
+                  --build-arg HTTP_PROXY=http://host.docker.internal:7899 \
+                  --build-arg HTTPS_PROXY=http://host.docker.internal:7899 \
+                  --build-arg http_proxy=http://host.docker.internal:7899 \
+                  --build-arg https_proxy=http://host.docker.internal:7899 \
+                  --build-arg NO_PROXY=localhost,127.0.0.1,::1 \
+                  --build-arg no_proxy=localhost,127.0.0.1,::1 \
+                  -t "${CANDIDATE_TAG}" .
+              else
+                echo "NFM-5389: ci-throttle healthy on host BUT container path http://host.docker.internal:7899 BROKEN — candidate build UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
+                DOCKER_BUILDKIT=0 \
+                  docker build --no-cache -f docker/prod-api.Dockerfile -t "${CANDIDATE_TAG}" .
+              fi
             else
               echo "NFM-5333: ci-throttle NOT reachable — candidate build uncapped (pre-NFM-5333 / NFM-2502 behavior)"
               DOCKER_BUILDKIT=0 \

@@ -351,22 +351,24 @@ nfmd_ci_throttle_path_ready() {
   # daemon-side proxy injection, which the 2026-10-07 proxy clearance
   # killed. The cap is therefore passed explicitly, and only when the
   # container-path probe proves builds can actually reach the proxy.
-  if nfmd_ci_throttle_ready && nfmd_ci_throttle_path_ready; then
-    echo "==> NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
-    export HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL" HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
-    export http_proxy="$NFMD_CI_THROTTLE_BUILD_URL" https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
-    export NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
-    THROTTLE_BUILD_ARGS=(
-      --build-arg HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
-      --build-arg HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
-      --build-arg http_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
-      --build-arg https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
-      --build-arg NO_PROXY="localhost,127.0.0.1,::1"
-      --build-arg no_proxy="localhost,127.0.0.1,::1"
-    )
-  elif nfmd_ci_throttle_ready; then
-    echo "==> NFM-5389: ci-throttle healthy on host BUT container path ${NFMD_CI_THROTTLE_BUILD_URL} BROKEN — building UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
-    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
+  if nfmd_ci_throttle_ready; then
+    if nfmd_ci_throttle_path_ready; then
+      echo "==> NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
+      export HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL" HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+      export http_proxy="$NFMD_CI_THROTTLE_BUILD_URL" https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+      export NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+      THROTTLE_BUILD_ARGS=(
+        --build-arg HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg http_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg NO_PROXY="localhost,127.0.0.1,::1"
+        --build-arg no_proxy="localhost,127.0.0.1,::1"
+      )
+    else
+      echo "==> NFM-5389: ci-throttle healthy on host BUT container path ${NFMD_CI_THROTTLE_BUILD_URL} BROKEN — building UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
+      unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
+    fi
   else
     echo "==> NFM-5333: ci-throttle NOT reachable — building uncapped (pre-NFM-5333 / NFM-2502 behavior)"
     unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true

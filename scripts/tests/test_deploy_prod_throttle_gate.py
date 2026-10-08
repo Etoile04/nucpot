@@ -16,7 +16,9 @@ proxy cannot resolve.)
 
 These tests pin the honest gate (``nfmd_ci_throttle_path_ready`` +
 three-branch gate in ``scripts/deploy_prod.sh`` and the candidate step in
-``.github/workflows/production-deployment.yml``):
+``.github/workflows/production-deployment.yml``) by EXECUTING the real
+shell blocks with stubbed curl/docker and asserting recorded argv and
+log output:
 
 * the path probe must run the health check FROM a container through the
   build URL (proxy-form GET, Host pinned to 127.0.0.1 so the proxy
@@ -29,10 +31,14 @@ three-branch gate in ``scripts/deploy_prod.sh`` and the candidate step in
   readable in the deploy log instead of false-green;
 * the path probe must not run when the host probe already failed (no
   useless container spin);
-* all three ``docker build`` sites in deploy_prod.sh expand
-  ``THROTTLE_BUILD_ARGS`` with the bash-3.2 ``set -u``-safe idiom;
-* the workflow candidate step carries the same dual probe and explicit
-  ``--build-arg`` lines.
+* all three ``docker build`` sites in deploy_prod.sh execute under
+  ``set -u`` in every branch and receive the expanded
+  ``THROTTLE_BUILD_ARGS`` proxy build args only in the capped branch —
+  an unsafe empty-array expansion aborts /bin/bash 3.2 before any build
+  is recorded;
+* the workflow candidate step's shell block runs the same dual probe
+  and passes the explicit ``--build-arg`` lines only when both probes
+  pass.
 """
 
 from __future__ import annotations
@@ -50,6 +56,14 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-deployment.yml"
 HOST_URL = "http://127.0.0.1:7899"
 BUILD_URL = "http://host.docker.internal:7899"
 PROBE_IMAGE = "ghcr.io/etoile04/nucpot-build-base:stable"
+PROXY_BUILD_ARGS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
 
 # Records every invocation to <tmp>/calls (one line, space-joined); probe
 # runs exit with NFM5389_DOCKER_RUN_RC, every other subcommand exits 0.
@@ -87,15 +101,11 @@ def _extract(name: str, source: Path, pattern: str) -> str:
     return match.group(0)
 
 
-def _run_gate(tmp_path: Path, curl_plan: list[str], docker_run_rc: int) -> subprocess.CompletedProcess[str]:
-    """Execute deploy_prod.sh's gate block with stubbed curl/docker.
-
-    Builds (docker build …) are stubbed to no-ops so the gate block runs to
-    completion in isolation; the harness appends the expanded
-    THROTTLE_BUILD_ARGS after each build site marker.
-    """
+def _run_script(
+    tmp_path: Path, script: str, curl_plan: list[str], docker_run_rc: int
+) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
     _write_stub(bin_dir, "docker", STUB_DOCKER)
     _write_stub(bin_dir, "curl", STUB_CURL)
 
@@ -106,31 +116,8 @@ def _run_gate(tmp_path: Path, curl_plan: list[str], docker_run_rc: int) -> subpr
     calls = tmp_path / "calls"
     calls.write_text("", encoding="utf-8")
 
-    gate = _extract(
-        "gate block",
-        DEPLOY_PROD,
-        r"^  if nfmd_ci_throttle_ready.*?; then.*?\n  fi\n",
-    )
-    fn_file = tmp_path / "gate.sh"
-    fn_file.write_text(
-        'NFMD_CI_THROTTLE_HOST_URL="http://127.0.0.1:7899"\n'
-        'NFMD_CI_THROTTLE_BUILD_URL="http://host.docker.internal:7899"\n'
-        'NFMD_CI_THROTTLE_PROBE_IMAGE="ghcr.io/etoile04/nucpot-build-base:stable"\n'
-        "nfmd_ci_throttle_ready() {\n"
-        '  curl -fsS --max-time 4 -x "$NFMD_CI_THROTTLE_HOST_URL" \\\n'
-        '    "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1\n'
-        "}\n"
-        + _extract(
-            "nfmd_ci_throttle_path_ready()",
-            DEPLOY_PROD,
-            r"^nfmd_ci_throttle_path_ready\(\) \{.*?\n\}\n",
-        )
-        + "\nset -uo pipefail\n"
-        + gate
-        + "\nprintf 'ARGS:'; printf ' %s'"
-        + ' ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"}; printf "\\n"\n',
-        encoding="utf-8",
-    )
+    script_file = tmp_path / "gate.sh"
+    script_file.write_text(script, encoding="utf-8")
 
     env = {
         **os.environ,
@@ -141,7 +128,7 @@ def _run_gate(tmp_path: Path, curl_plan: list[str], docker_run_rc: int) -> subpr
         "NFM5389_DOCKER_RUN_RC": str(docker_run_rc),
     }
     result = subprocess.run(
-        ["/bin/bash", "-c", f'. "{fn_file}"'],
+        ["/bin/bash", "-c", f'. "{script_file}"'],
         capture_output=True,
         text=True,
         env=env,
@@ -151,13 +138,60 @@ def _run_gate(tmp_path: Path, curl_plan: list[str], docker_run_rc: int) -> subpr
     return result
 
 
+def _run_deploy_gate(
+    tmp_path: Path, curl_plan: list[str], docker_run_rc: int
+) -> subprocess.CompletedProcess[str]:
+    """Execute deploy_prod.sh's throttle vars, both probe functions, the
+    three-branch gate, and all three ``docker build`` sites with stubbed
+    curl/docker (builds are stubbed to no-ops; every docker invocation's
+    argv is recorded to <tmp>/calls)."""
+    script = (
+        "set -uo pipefail\n"
+        "DEPLOY_SHA=0123456789abcdef\n"
+        "PROD_IMAGE_TAG=nfm5389test\n"
+        + _extract(
+            "ci-throttle gate and build sites",
+            DEPLOY_PROD,
+            r"^NFMD_CI_THROTTLE_HOST_URL=.*?^\)\n",
+        )
+    )
+    return _run_script(tmp_path, script, curl_plan, docker_run_rc)
+
+
+def _run_workflow_candidate_gate(
+    tmp_path: Path, curl_plan: list[str], docker_run_rc: int
+) -> subprocess.CompletedProcess[str]:
+    """Execute the workflow's candidate-gate shell block (extracted from the
+    YAML run block verbatim) with the same stubbed curl/docker."""
+    gate = _extract(
+        "candidate gate",
+        WORKFLOW,
+        r"if curl -fsS --max-time 4 -x http://127\.0\.0\.1:7899.*?\n[ ]*fi\n\n",
+    )
+    script = "set -u\nCANDIDATE_TAG=nfm5389-cand\n" + gate
+    return _run_script(tmp_path, script, curl_plan, docker_run_rc)
+
+
+def _build_calls(result: subprocess.CompletedProcess[str]) -> list[str]:
+    return [l for l in result.calls.splitlines() if l.startswith("build ")]  # type: ignore[attr-defined]
+
+
+def _assert_no_proxy_build_args(builds: list[str]) -> None:
+    for call in builds:
+        for var in PROXY_BUILD_ARGS:
+            assert f"--build-arg {var}=" not in call, (
+                f"uncapped branch must not pass {var} — pip would burn "
+                f"retries against the dead alias: {call}"
+            )
+
+
 # --------------------------------------------------------------------------
 # Path probe shape
 # --------------------------------------------------------------------------
 
 
 def test_path_probe_runs_health_check_from_a_container(tmp_path: Path) -> None:
-    result = _run_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
+    result = _run_deploy_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
     probe_lines = [l for l in result.calls.splitlines() if l.startswith("run --rm")]
     assert probe_lines, (
         "gate must probe the throttle through `docker run` — a host-shell "
@@ -175,7 +209,7 @@ def test_path_probe_runs_health_check_from_a_container(tmp_path: Path) -> None:
 
 
 def test_path_probe_skipped_when_host_probe_fails(tmp_path: Path) -> None:
-    result = _run_gate(tmp_path, curl_plan=["7|"], docker_run_rc=0)
+    result = _run_deploy_gate(tmp_path, curl_plan=["7|"], docker_run_rc=0)
     assert "run --rm" not in result.calls, (
         "path probe must not spin a container when the host probe already "
         "failed — the proxy is down and the uncapped branch is correct"
@@ -188,20 +222,24 @@ def test_path_probe_skipped_when_host_probe_fails(tmp_path: Path) -> None:
 
 
 def test_both_probes_ok_caps_with_explicit_build_args(tmp_path: Path) -> None:
-    result = _run_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
+    result = _run_deploy_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
+    assert result.returncode == 0, result.stderr
     assert "capped" in result.stdout
     assert "NFM-5389" not in result.stdout or "host + container path" in result.stdout
-    args = [l for l in result.stdout.splitlines() if l.startswith("ARGS:")][0]
-    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"):
-        assert f"--build-arg {var}=" in args, (
-            f"capped branch must pass {var} as an explicit predefined build "
-            f"arg (env prefixes do not reach legacy RUN containers), got: {args}"
-        )
-    assert f"--build-arg HTTP_PROXY={BUILD_URL}" in args
+    builds = _build_calls(result)
+    assert len(builds) == 3, f"expected the 3 deploy build sites, got: {result.calls}"
+    for call in builds:
+        for var in PROXY_BUILD_ARGS:
+            assert f"--build-arg {var}=" in call, (
+                f"capped branch must pass {var} as an explicit predefined build "
+                f"arg (env prefixes do not reach legacy RUN containers), got: {call}"
+            )
+    assert f"--build-arg HTTP_PROXY={BUILD_URL}" in builds[0]
 
 
 def test_host_ok_path_broken_is_loud_and_uncapped(tmp_path: Path) -> None:
-    result = _run_gate(tmp_path, curl_plan=["0|"], docker_run_rc=1)
+    result = _run_deploy_gate(tmp_path, curl_plan=["0|"], docker_run_rc=1)
+    assert result.returncode == 0, result.stderr
     assert "NFM-5389" in result.stdout, (
         "host-OK + container-path-BROKEN must name NFM-5389 in the deploy "
         "log — the old 'healthy — capped' line was false-green for 4 deploys"
@@ -210,19 +248,19 @@ def test_host_ok_path_broken_is_loud_and_uncapped(tmp_path: Path) -> None:
     assert "capped via" not in result.stdout, (
         "must not claim the cap is active when the container path is broken"
     )
-    args_lines = [l for l in result.stdout.splitlines() if l.startswith("ARGS:")]
-    assert args_lines == ["ARGS: "], (
-        "path-broken branch must not pass proxy build args — pip would burn "
-        f"retries against the dead alias: {args_lines}"
-    )
+    builds = _build_calls(result)
+    assert len(builds) == 3
+    _assert_no_proxy_build_args(builds)
 
 
 def test_host_down_is_plain_uncapped(tmp_path: Path) -> None:
-    result = _run_gate(tmp_path, curl_plan=["7|"], docker_run_rc=1)
+    result = _run_deploy_gate(tmp_path, curl_plan=["7|"], docker_run_rc=1)
+    assert result.returncode == 0, result.stderr
     assert "NOT reachable" in result.stdout
     assert "uncapped" in result.stdout.lower()
-    args_lines = [l for l in result.stdout.splitlines() if l.startswith("ARGS:")]
-    assert args_lines == ["ARGS: "]
+    builds = _build_calls(result)
+    assert len(builds) == 3
+    _assert_no_proxy_build_args(builds)
 
 
 # --------------------------------------------------------------------------
@@ -230,32 +268,81 @@ def test_host_down_is_plain_uncapped(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_all_build_sites_expand_throttle_args_bash32_safe() -> None:
-    text = DEPLOY_PROD.read_text(encoding="utf-8")
-    build_sites = re.findall(r"docker build[^\n]*\\\n(?:[^\n]*\\\n)*[^\n]*\.", text)
-    assert len(build_sites) >= 3, "expected the 3 deploy build sites (api/lightrag/web)"
-    safe = '${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"}'
-    for site in build_sites:
-        assert safe in site, (
-            "every deploy build must expand THROTTLE_BUILD_ARGS with the "
-            "bash-3.2 set-u-safe idiom (empty-array expansion under set -u "
-            "is an unbound-variable error on /bin/bash 3.2):\n" + site[:200]
+def test_all_build_sites_expand_throttle_args_bash32_safe(tmp_path: Path) -> None:
+    capped = _run_deploy_gate(tmp_path / "capped", curl_plan=["0|"], docker_run_rc=0)
+    assert capped.returncode == 0, capped.stderr
+    uncapped = _run_deploy_gate(tmp_path / "uncapped", curl_plan=["7|"], docker_run_rc=1)
+    assert uncapped.returncode == 0, (
+        "every build site must expand THROTTLE_BUILD_ARGS with the bash-3.2 "
+        "set-u-safe idiom (empty-array expansion under set -u is an "
+        "unbound-variable error on /bin/bash 3.2) — the block aborted:\n"
+        + uncapped.stderr
+    )
+
+    dockerfiles = (
+        "docker/prod-api.Dockerfile",
+        "docker/lightrag.Dockerfile",
+        "docker/web.Dockerfile",
+    )
+    capped_builds = _build_calls(capped)
+    uncapped_builds = _build_calls(uncapped)
+    for dockerfile in dockerfiles:
+        capped_site = [c for c in capped_builds if dockerfile in c]
+        uncapped_site = [c for c in uncapped_builds if dockerfile in c]
+        assert capped_site, f"no docker build executed for {dockerfile} in the capped run"
+        assert uncapped_site, (
+            f"no docker build executed for {dockerfile} in the uncapped run — "
+            "the site was skipped or aborted"
         )
+        for var in PROXY_BUILD_ARGS:
+            assert f"--build-arg {var}=" in capped_site[0], (
+                f"capped build for {dockerfile} is missing {var}: {capped_site[0]}"
+            )
+        _assert_no_proxy_build_args(uncapped_site)
 
 
-def test_workflow_candidate_step_dual_probes_and_explicit_args() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
-    candidate = _extract(
-        "candidate gate",
-        WORKFLOW,
-        r"if curl -fsS --max-time 4 -x http://127\.0\.0\.1:7899.*?fi\n",
+def test_workflow_candidate_step_dual_probes_and_explicit_args(tmp_path: Path) -> None:
+    result = _run_workflow_candidate_gate(tmp_path, curl_plan=["0|"], docker_run_rc=0)
+    assert result.returncode == 0, result.stderr
+    assert "capped" in result.stdout
+    probe_lines = [l for l in result.calls.splitlines() if l.startswith("run --rm")]
+    assert probe_lines, (
+        "candidate gate must probe the throttle through `docker run` — a "
+        "host-shell curl cannot see the alias breakage (NFM-5389)"
     )
-    assert "docker run --rm" in candidate and BUILD_URL in candidate, (
-        "candidate gate must include a container-path probe through the "
-        "build URL (NFM-5389)"
+    assert PROBE_IMAGE in probe_lines[0]
+    assert f"-x {BUILD_URL}" in probe_lines[0]
+    builds = _build_calls(result)
+    assert len(builds) == 1, f"expected one candidate build, got: {result.calls}"
+    for var in PROXY_BUILD_ARGS:
+        assert f"--build-arg {var}=" in builds[0], (
+            f"candidate capped branch must pass {var} as an explicit predefined "
+            f"build arg, got: {builds[0]}"
+        )
+    assert f"--build-arg HTTP_PROXY={BUILD_URL}" in builds[0]
+
+
+def test_workflow_candidate_step_fallbacks_are_uncapped(tmp_path: Path) -> None:
+    broken = _run_workflow_candidate_gate(
+        tmp_path / "broken", curl_plan=["0|"], docker_run_rc=1
     )
-    assert f"--build-arg HTTP_PROXY={BUILD_URL}" in candidate, (
-        "candidate capped branch must pass explicit predefined --build-arg "
-        "proxy args, not env prefixes alone"
+    assert broken.returncode == 0, broken.stderr
+    assert "NFM-5389" in broken.stdout, (
+        "host-OK + path-BROKEN must name NFM-5389 in the candidate log "
+        "instead of the old false-green cap line"
     )
-    assert "NFM-5389" in candidate, "candidate gate needs the path-broken branch marker"
+    assert "UNCAPPED" in broken.stdout.upper()
+    builds = _build_calls(broken)
+    assert len(builds) == 1
+    _assert_no_proxy_build_args(builds)
+
+    down = _run_workflow_candidate_gate(tmp_path / "down", curl_plan=["7|"], docker_run_rc=1)
+    assert down.returncode == 0, down.stderr
+    assert "NOT reachable" in down.stdout
+    assert "run --rm" not in down.calls, (
+        "candidate path probe must not spin a container when the host probe "
+        "already failed"
+    )
+    builds = _build_calls(down)
+    assert len(builds) == 1
+    _assert_no_proxy_build_args(builds)
