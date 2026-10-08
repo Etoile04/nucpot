@@ -1,4 +1,5 @@
-"""Deploy-epoch fencing token — hermetic suite (NFM-5253 / NFM-4848 shadow).
+"""Deploy-epoch fencing token — hermetic suite (NFM-5253 / NFM-4848 shadow;
+NFM-5259 enforcement flip: default-ON refusal, helper-fatal, active stand-down).
 
 Covers the single primitive end-to-end, all inside sandboxes (no live prod,
 no real docker, no real Paperclip):
@@ -16,13 +17,20 @@ no real docker, no real Paperclip):
   ADDITIVELY (frozen §3.1 field order untouched, collector-validated).
 * D2/D3 integration — the REAL deploy_prod.sh runs hermetically: mints +
   logs the epoch, writes the epoch-tagged marker, the manifest carries the
-  epoch, the drift checker still accepts the baseline (AC1), a rerun mints
-  N+1, and NFM_DEPLOY_LOCK_ENFORCE=1 refuses loudly under conflict.
+  epoch, the drift checker still accepts the baseline (AC1), and a rerun
+  mints N+1. NFM-5259 enforcement flip: enforcement defaults ON — a
+  fresh-lock/live-pid conflict refuses with NO flag set (rc 80, holder
+  preserved, pre-cutover), a broken epoch helper is FATAL (rc 81, NO legacy
+  lock fallback), and only an explicit NFM_DEPLOY_LOCK_ENFORCE=0 keeps the
+  shadow behaviors (logged conflict that proceeds; legacy fallback lock).
 * D4 ``scripts/record_rollback.sh`` — epoch + manifest + event line (rc/0),
   usage validation, and the fatal mint-failure path (rc 2).
-* D5 the drift checker's epoch-aware stand-down — shadow logging only:
-  would_stand_down true/false/indeterminate rides the existing cron output
-  and the checker's BEHAVIOR (stand down on any fresh lock) is unchanged.
+* D5 the drift checker's epoch-aware stand-down — ACTIVATED (NFM-5259): a
+  fresh deploy lock stands the checker down only while
+  ``lock.epoch > manifest epoch`` (in-flight deploy); a lock at-or-behind
+  the manifest epoch is leftover and FILES; ``indeterminate`` (pre-fencing
+  lock or manifest, no epoch binding) stands down — legacy-equivalent,
+  freshness-bounded, never cry wolf on an unclassifiable sanctioned deploy.
 * wiring guards — the workflow's REAL deploy-step run body is executed
   hermetically (fake ssh): the DEPLOY_EPOCH_MINTED anchor must land in the
   step output, and a deploy that dies before minting must leave it unset;
@@ -593,7 +601,13 @@ def _prod_state() -> dict:
 class DeployHost:
     """Fake host + gate dir + PATH shims for a full deploy_prod.sh run."""
 
-    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def __init__(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        break_epoch_helper: bool = False,
+    ):
         self.tmp = tmp_path
         self.home = tmp_path / "home"
         self.repo = self.home / "Projects" / "nucpot"
@@ -637,6 +651,25 @@ class DeployHost:
         shim("id", 'printf "nfmdeploy\\n"')  # the gated deploy-identity branch
         shim("curl", "exit 0")
         shim("sleep", "exit 0")
+        if break_epoch_helper:
+            # NFM-5259 helper-fatal fixture: a python3 that DIES (rc 3) for
+            # deploy_epoch.py invocations only — every other python3 call
+            # (manifest recorder, image-tag check) execs the REAL interpreter
+            # via the hardcoded shebang, so only the epoch helper is broken.
+            # Shebang/passthrough use sys.executable (the real interpreter),
+            # never a PATH lookup — the shim would shadow itself.
+            py_shim = bin_dir / "python3"
+            py_shim.write_text(
+                f"#!{sys.executable}\n"
+                "import os\n"
+                "import sys\n"
+                "if any('deploy_epoch.py' in arg for arg in sys.argv[1:]):\n"
+                "    sys.stderr.write('nfm5259-shim: simulated epoch-helper failure\\n')\n"
+                "    sys.exit(3)\n"
+                "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+                encoding="utf-8",
+            )
+            py_shim.chmod(0o755)
 
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
         monkeypatch.setenv("FAKE_DOCKER_STATE", str(self.state_path))
@@ -666,7 +699,14 @@ class DeployHost:
     def marker_file(self) -> Path:
         return self.home / ".nfmd" / "nfmd_prod_health_passed"
 
-    def run(self, *, enforce: bool = False, actor: str | None = "gh-runner:lwj04") -> subprocess.CompletedProcess[str]:
+    def run(
+        self,
+        *,
+        enforce: bool = False,
+        shadow: bool = False,
+        enforce_value: str | None = None,
+        actor: str | None = "gh-runner:lwj04",
+    ) -> subprocess.CompletedProcess[str]:
         env = _subprocess_env(
             HOME=str(self.home),
             FAKE_DOCKER_STATE=str(self.state_path),
@@ -679,8 +719,16 @@ class DeployHost:
         )
         if actor is not None:
             env["DEPLOY_ACTOR"] = actor
+        if enforce_value is not None:
+            assert not enforce and not shadow, "enforce_value sets the knob directly"
+            env["NFM_DEPLOY_LOCK_ENFORCE"] = enforce_value
         if enforce:
             env["NFM_DEPLOY_LOCK_ENFORCE"] = "1"
+        if shadow:
+            # Explicit emergency-disable (NFM-5259): the ONLY way post-flip to
+            # reach the shadow behaviors (logged conflict, legacy fallback).
+            assert not enforce, "enforce and shadow are mutually exclusive"
+            env["NFM_DEPLOY_LOCK_ENFORCE"] = "0"
         return subprocess.run(
             ["bash", str(DEPLOY_PROD_SH)],
             capture_output=True,
@@ -793,18 +841,110 @@ def test_full_deploy_enforced_refusal_exits_80_before_cutover(
         )
 
 
-def test_full_deploy_shadow_conflict_still_completes(
+def test_full_deploy_default_enforced_refusal_exits_80_before_cutover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Shadow mode default: same fresh-lock/live-pid conflict, no enforce
-    flag → the deploy logs the refusal warning and completes as today."""
+    """NFM-5259 flip: with NO NFM_DEPLOY_LOCK_ENFORCE in the environment the
+    default itself must be ON — the same fresh-lock/live-pid conflict that
+    shadow-mode tolerated now refuses (rc 80) before any cutover mutation."""
     host = DeployHost(tmp_path, monkeypatch)
     host.epoch_file.write_text("5\n", encoding="utf-8")
     host.lock_file.write_text(
         json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
         encoding="utf-8",
     )
-    result = host.run()
+    result = host.run()  # no enforce flag — the DEFAULT refuses
+    assert result.returncode == LOCK_REFUSE_EXIT
+    assert "FATAL (NFM-5253): deploy REFUSED" in result.stdout + result.stderr
+    assert json.loads(host.lock_file.read_text(encoding="utf-8"))["deploy_sha"] == "concurrent-run"
+    assert host.epoch_file.read_text(encoding="utf-8").strip() == "6"
+    if host.calls_log.exists():
+        assert "docker compose" not in host.calls_log.read_text(encoding="utf-8"), (
+            "the default-on refusal happens at the lock, BEFORE any compose mutation"
+        )
+
+
+def test_full_deploy_unrecognized_enforce_value_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """NFM-5259 review fix: the enforcement knob fails CLOSED — only the
+    exact emergency-disable value 0 turns it off. An operator exporting a
+    truthy-but-unrecognized spelling (true/yes/on, or a typo of 0) must get
+    the ENFORCED refusal, not a silent drop to shadow mode."""
+    for index, bad_value in enumerate(("true", "yes", "00 ", "off-typo")):
+        host = DeployHost(tmp_path / f"host-{index}", monkeypatch)
+        host.epoch_file.write_text("5\n", encoding="utf-8")
+        host.lock_file.write_text(
+            json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
+            encoding="utf-8",
+        )
+        result = host.run(enforce_value=bad_value)
+        assert result.returncode == LOCK_REFUSE_EXIT, (
+            f"NFM_DEPLOY_LOCK_ENFORCE='{bad_value}' must fail closed to enforcement"
+        )
+        assert "unrecognized NFM_DEPLOY_LOCK_ENFORCE" in result.stdout + result.stderr
+        assert (
+            json.loads(host.lock_file.read_text(encoding="utf-8"))["deploy_sha"]
+            == "concurrent-run"
+        )
+
+
+def test_full_deploy_helper_unavailable_is_fatal_under_default_enforce(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """NFM-5259 / CTO condition 1 (2026-09-28): under enforcement a
+    missing/broken epoch helper is a silent-bypass vector — the legacy blind
+    lock write would mint NO epoch and blind the drift checker's epoch
+    comparison. rc∉{0,80} + enforce ⇒ refuse the deploy (rc 81), no fallback."""
+    host = DeployHost(tmp_path, monkeypatch, break_epoch_helper=True)
+    result = host.run()  # default enforce ON, helper dies with rc 3
+    assert result.returncode == 81, result.stdout + result.stderr
+    assert "FATAL (NFM-5259)" in result.stdout + result.stderr
+    assert "no legacy fallback" in result.stdout + result.stderr
+    assert "nfm5259-shim: simulated epoch-helper failure" in result.stdout + result.stderr
+    assert not host.lock_file.exists(), "helper-fatal must NOT write a lock"
+    assert not host.epoch_file.exists(), "helper-fatal must NOT mint"
+    if host.calls_log.exists():
+        assert "docker compose" not in host.calls_log.read_text(encoding="utf-8"), (
+            "the helper-fatal refusal happens before any compose mutation"
+        )
+
+
+def test_full_deploy_shadow_disable_helper_unavailable_keeps_legacy_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The emergency-disable path survives the flip: explicit
+    NFM_DEPLOY_LOCK_ENFORCE=0 + broken helper → legacy blind lock write, the
+    deploy completes exactly as pre-fencing hosts did (shadow tolerance)."""
+    host = DeployHost(tmp_path, monkeypatch, break_epoch_helper=True)
+    result = host.run(shadow=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARNING (NFM-5253)" in result.stdout
+    assert "falling back to the legacy lock write" in result.stdout
+    assert f"DEPLOY_SCRIPT_COMPLETED_OK sha={DEPLOY_SHA}" in result.stdout
+    # No mint happened; the legacy lock (no epoch) was held across the
+    # cutover and trap-removed at exit.
+    assert not host.epoch_file.exists()
+    assert "lock_present=True" in host.calls_log.read_text(encoding="utf-8")
+    assert not host.lock_file.exists(), "lock must be trap-removed on clean exit"
+    # Pre-fencing manifest shape preserved: no deploy_epoch without a mint.
+    manifest = json.loads(host.manifest_file.read_text(encoding="utf-8"))
+    assert "deploy_epoch" not in manifest
+
+
+def test_full_deploy_shadow_conflict_still_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Explicit NFM_DEPLOY_LOCK_ENFORCE=0 (emergency-disable): same
+    fresh-lock/live-pid conflict → the deploy logs the refusal warning and
+    completes, exactly as the shadow week did."""
+    host = DeployHost(tmp_path, monkeypatch)
+    host.epoch_file.write_text("5\n", encoding="utf-8")
+    host.lock_file.write_text(
+        json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
+        encoding="utf-8",
+    )
+    result = host.run(shadow=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "DEPLOY_EPOCH_MINTED=6" in result.stdout
     assert "lock decision: refuse" in result.stdout
@@ -895,7 +1035,7 @@ def test_record_rollback_mint_failure_is_fatal(tmp_path: Path):
 
 
 # ===========================================================================
-# D5 — drift checker epoch-aware stand-down (shadow logging only)
+# D5 — drift checker epoch-aware stand-down (ACTIVATED — NFM-5259)
 # ===========================================================================
 
 
@@ -953,36 +1093,48 @@ def _run_drift(tmp_path: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_drift_stand_down_logs_would_stand_down_true(tmp_path: Path):
-    """lock.epoch > manifest.epoch → the FUTURE rule agrees with today's
-    fresh-lock stand-down; shadow log says true."""
+def test_drift_stand_down_active_true_lock_ahead(tmp_path: Path):
+    """ACTIVATED (NFM-5259): lock.epoch > manifest.epoch = in-flight deploy —
+    the checker stands down and does not file."""
     _drift_env(tmp_path, manifest_epoch=7, lock={"epoch": 9, "pid": 1})
     result = _run_drift(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "==> epoch fencing (NFM-5253 shadow): lock.epoch=9 manifest.epoch=7" in result.stdout
-    assert "would_stand_down=true (lock epoch 9 is ahead of manifest epoch 7)" in result.stdout
-    assert "NOT enforced — standing down per the fresh-lock rule" in result.stdout
+    assert "==> epoch fencing (NFM-5259 active): lock.epoch=9 manifest.epoch=7" in result.stdout
+    assert "stand_down=true (lock epoch 9 is ahead of manifest epoch 7" in result.stdout
+    assert "sanctioned deploy in progress, not filing" in result.stdout
 
 
-def test_drift_stand_down_logs_would_stand_down_false_but_behavior_unchanged(tmp_path: Path):
-    """A lock at-or-behind the manifest epoch is leftover/stale — the future
-    rule would NOT stand down. Shadow mode: logged, and the checker still
-    stands down (current behavior) until the enforcement flip."""
+def test_drift_stand_down_active_false_leftover_lock_files(tmp_path: Path):
+    """ACTIVATED (NFM-5259): a fresh lock at-or-behind the manifest epoch is
+    leftover/stale, NOT an in-flight deploy — the checker must NOT stand down
+    on it anymore; the divergence files (dry-run renders the filing)."""
     _drift_env(tmp_path, manifest_epoch=7, lock={"epoch": 7, "pid": 1})
     result = _run_drift(tmp_path)
-    assert result.returncode == 0, "shadow mode must not change checker behavior"
-    assert "would_stand_down=false" in result.stdout
+    assert result.returncode == 1, "a leftover fresh lock must not suppress the alarm post-activation"
+    assert "==> epoch fencing (NFM-5259 active): lock.epoch=7 manifest.epoch=7" in result.stdout
+    assert "stand_down=false" in result.stdout
     assert "leftover lock" in result.stdout
-    assert "NOT enforced — standing down per the fresh-lock rule" in result.stdout
+    assert "[DRY-RUN] would file" in result.stdout
 
 
-def test_drift_stand_down_indeterminate_on_pre_fencing_artifacts(tmp_path: Path):
+def test_drift_stand_down_indeterminate_pre_fencing_stands_down(tmp_path: Path):
+    """ACTIVATED (NFM-5259) indeterminate handling: artifacts with no epoch
+    binding (pre-fencing lock, or pre-fencing manifest vs an epoch-carrying
+    lock — the first post-flip in-flight deploy) still stand down: the only
+    fresh no-epoch locks are explicit NFM_DEPLOY_LOCK_ENFORCE=0 emergency
+    deploys and pre-flip residue, and the alarm must not cry wolf on a
+    sanctioned deploy it cannot classify (freshness-bounded either way)."""
     # Pre-fencing lock (no epoch member) + epoch-carrying manifest.
     _drift_env(tmp_path, manifest_epoch=7, lock={"pid": 1, "deploy_sha": "old"})
-    assert "would_stand_down=indeterminate" in _run_drift(tmp_path).stdout
+    result = _run_drift(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "stand_down=indeterminate" in result.stdout
+    assert "sanctioned deploy in progress, not filing" in result.stdout
     # Epoch-carrying lock + pre-fencing manifest (no deploy_epoch key).
     _drift_env(tmp_path, manifest_epoch=None, lock={"epoch": 9, "pid": 1})
-    assert "would_stand_down=indeterminate" in _run_drift(tmp_path).stdout
+    result = _run_drift(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "stand_down=indeterminate" in result.stdout
 
 
 # ===========================================================================

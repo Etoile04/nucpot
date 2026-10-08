@@ -29,7 +29,16 @@ of exactly those fetches:
     plist's ``LimitNOFILE`` (braces): a ~200-connection pip burst
     EMFILE-killed the relay under launchd's default 256 soft limit, and
     KeepAlive only restarts on exit — the in-process raise stays
-    effective even when plist reloads are blocked (2026-10-07 NFM-5348).
+    effective even when plist reloads are blocked (2026-10-07 NFM-5348);
+  * tunnel teardown is total: the request-direction pump deliberately has
+    no idle deadline (a client legitimately stays silent for a whole
+    download), so a client-transport watchdog (``_peer_gone``) is raced
+    against both pumps and teardown closes both transports before
+    awaiting them. The 2026-10-07 Linux-runner race (NFM-5401) where a
+    client hangup left that pump parked forever turned every Batch1 run
+    since NFM-5333 into a 20-minute CANCELLED — and the same shape on the
+    LaunchAgent host would leak one handler task + fds per occurrence
+    (2026-10-09 NFM-5401).
 
 Wired in ``scripts/deploy_prod.sh``: build containers reach the host via
 ``host.docker.internal:7899`` (Docker Desktop resolves it to the host's
@@ -79,6 +88,16 @@ CHUNK_BYTES = 16 * 1024
 # window and the cap leaks by rcvbuf x connections.
 UPSTREAM_RCVBUF = 64 * 1024
 IDLE_TIMEOUT_SECONDS = 600.0
+# How often the client-transport watchdog wakes to re-check peer state
+# (see _peer_gone): frequent enough that a lost-wakeup teardown costs one
+# interval, rare enough that ~200 concurrent tunnels add trivial load.
+PEER_GONE_POLL_SECONDS = 1.0
+# Bound on Server.wait_closed() at shutdown: Python 3.12's implementation
+# never returns when a handler task is still active at close() time (fixed
+# in 3.13; repro'd 2026-10-09: 3.12.12 hangs in both close/handler
+# orderings) — without this bound, shutting the LaunchAgent down with a
+# live tunnel wedges the process forever (NFM-5401).
+CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 
 LOG = logging.getLogger("nfmd-ci-throttle")
 
@@ -253,6 +272,38 @@ async def _pump(
         await writer.drain()
 
 
+async def _peer_gone(
+    writer: asyncio.StreamWriter,
+    reader: Optional[asyncio.StreamReader] = None,
+    poll_seconds: float = PEER_GONE_POLL_SECONDS,
+) -> None:
+    """Resolve once the peer is gone: transport closed (RST/abort), or —
+    when ``reader`` is given — the peer closed its sending side.
+
+    This polls loop STATE (``at_eof``/``is_closing``), not events. The
+    NFM-5401 Linux-runner race was a lost wakeup: the client's FIN was
+    processed into the reader's EOF state, but the request pump's pending
+    ``read()`` never resolved, leaving the loop idle in
+    ``selectors.select`` for 9+ minutes with no fd event and no timer
+    pending — the handler (and, on the LaunchAgent host, a handler task +
+    fds) leaked until the process died. A timer-driven state poll
+    sidesteps event delivery entirely: either flag is observable within
+    one interval of the peer dying no matter which wakeup was lost.
+
+    Note the FIN asymmetry: ``is_closing()`` does NOT flip on a graceful
+    peer FIN — ``StreamReaderProtocol.eof_received()`` returns True for
+    plain TCP (half-close support) and the transport stays open — only
+    ``reader.at_eof()`` reflects it. ``reader`` is therefore passed for
+    CONNECT tunnels, where a client FIN already means teardown (the pump
+    race treats request-side EOF exactly so). The plain-HTTP response leg
+    passes no reader: a client that half-closes its request side still
+    deserves its full response, and a fully-closed peer surfaces as a
+    write-side RST → ``is_closing()`` anyway.
+    """
+    while not (writer.is_closing() or (reader is not None and reader.at_eof())):
+        await asyncio.sleep(poll_seconds)
+
+
 class ThrottleProxy:
     """The server. One global bucket; every client connection shares it."""
 
@@ -304,13 +355,46 @@ class ThrottleProxy:
     async def close(self) -> None:
         if self.server is not None:
             self.server.close()
-            await self.server.wait_closed()
+            # Bounded drain, not a bare wait_closed(): py3.12's
+            # wait_closed() hangs forever when a handler is still active
+            # at close() (see CLOSE_DRAIN_TIMEOUT_SECONDS). The listeners
+            # are already down; handlers have their own total teardown,
+            # so proceeding past a wedged drain leaks nothing permanent.
+            try:
+                await asyncio.wait_for(
+                    self.server.wait_closed(), timeout=CLOSE_DRAIN_TIMEOUT_SECONDS
+                )
+            except TimeoutError:
+                LOG.warning(
+                    "server drain did not settle in %.1fs; closing anyway",
+                    CLOSE_DRAIN_TIMEOUT_SECONDS,
+                )
             self.server = None
 
     # -- connection handling ----------------------------------------------
 
     def _count(self, n: int) -> None:
         self.bytes_relayed += n
+
+    @staticmethod
+    async def _settle(
+        tasks: set[asyncio.Task[None]], writers: tuple[asyncio.StreamWriter, ...]
+    ) -> None:
+        """Cancel ``tasks`` and close ``writers`` so every pump resolves.
+
+        Transport close comes BEFORE the gather: closing a transport feeds
+        EOF (or a connection-lost error) into its paired reader and fails
+        any pending ``drain()``, so even a pump that ignored or swallowed
+        its cancellation has a bounded exit. Awaiting the bare tasks first
+        (the pre-NFM-5401 shape) let one wedged pump park the whole
+        handler forever — and ``Server.wait_closed()`` then hung the test
+        lane for the job's 20-minute timeout on the Linux runners.
+        """
+        for task in tasks:
+            task.cancel()
+        for stream_writer in writers:
+            stream_writer.close()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -394,8 +478,11 @@ class ThrottleProxy:
         # Downloads flow upstream→client (capped); requests/ACKs flow the
         # other way and are tiny — uncapped. The request direction gets no
         # idle deadline (a client legitimately stays silent for the whole
-        # download), so the pair is raced: whichever pump ends first — EOF,
-        # error, or the upstream idle timeout — cancels the other.
+        # download), so the race is three-way: whichever ends first — a
+        # pump hitting EOF, an error, or the upstream idle timeout, or the
+        # client transport closing (NFM-5401: the request pump's own EOF
+        # wake cannot be the tunnel's only other exit — on the Linux
+        # runners it never fired) — tears down the whole tunnel.
         downstream = asyncio.ensure_future(
             _pump(
                 upstream_reader,
@@ -406,17 +493,15 @@ class ThrottleProxy:
             )
         )
         upstream = asyncio.ensure_future(_pump(reader, upstream_writer, None, lambda _n: None))
+        client_gone = asyncio.ensure_future(_peer_gone(writer, reader))
         try:
             done, _pending = await asyncio.wait(
-                {downstream, upstream}, return_when=asyncio.FIRST_COMPLETED
+                {downstream, upstream, client_gone}, return_when=asyncio.FIRST_COMPLETED
             )
             for task in done:
                 task.result()
         finally:
-            for task in (downstream, upstream):
-                task.cancel()
-            await asyncio.gather(downstream, upstream, return_exceptions=True)
-            upstream_writer.close()
+            await self._settle({downstream, upstream, client_gone}, (writer, upstream_writer))
 
     async def _forward_http(
         self,
@@ -460,14 +545,28 @@ class ThrottleProxy:
             upstream_writer.write(body)
         await upstream_writer.drain()
 
-        await _pump(
-            upstream_reader,
-            writer,
-            self.bucket,
-            self._count,
-            idle_timeout=IDLE_TIMEOUT_SECONDS,
+        # The response leg races the same client-transport watchdog as the
+        # CONNECT tunnel: a client that hangs up mid-download must not park
+        # the handler until the upstream idle timeout (NFM-5401 invariant —
+        # a relay must never outlive either peer).
+        response = asyncio.ensure_future(
+            _pump(
+                upstream_reader,
+                writer,
+                self.bucket,
+                self._count,
+                idle_timeout=IDLE_TIMEOUT_SECONDS,
+            )
         )
-        upstream_writer.close()
+        client_gone = asyncio.ensure_future(_peer_gone(writer))
+        try:
+            done, _pending = await asyncio.wait(
+                {response, client_gone}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                task.result()
+        finally:
+            await self._settle({response, client_gone}, (writer, upstream_writer))
 
 
 def _rate_from_env() -> float:

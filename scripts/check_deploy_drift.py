@@ -824,14 +824,19 @@ def _lock_epoch(path: Path) -> int | None:
     return None
 
 
-def _log_epoch_stand_down_evaluation(lock_path: Path, manifest: dict | None) -> None:
-    """NFM-5253 (NFM-4848 T4) — shadow-mode observability for the epoch-aware
-    stand-down rule. The FUTURE rule: stand down only while
-    ``lock.epoch > manifest epoch`` (a lock at-or-behind the last recorded
-    manifest is leftover/stale, not an in-flight deploy). SHADOW MODE: this
-    logs what the rule WOULD say and changes nothing — the checker keeps
-    standing down on any fresh lock until the separately-dispatched
-    enforcement flip. AC6: the evaluation rides the existing cron log."""
+def _epoch_stand_down(lock_path: Path, manifest: dict | None) -> bool:
+    """NFM-5259 (activated 2026-10-05, gated on the NFM-5258 SRE shadow-week
+    sign-off; was NFM-5253 shadow logging) — the epoch-aware stand-down rule:
+    a fresh deploy lock stands the checker down only while
+    ``lock.epoch > manifest epoch`` (the lock's mint is ahead of the last
+    recorded state transition = an in-flight deploy). A lock at-or-behind
+    the manifest epoch is leftover/stale — the checker must NOT stand down
+    on it anymore. ``indeterminate`` (a pre-fencing lock or manifest with no
+    epoch binding) STANDS DOWN: the only fresh no-epoch locks are explicit
+    NFM_DEPLOY_LOCK_ENFORCE=0 emergency deploys and pre-flip residue (both
+    bounded by --max-lock-age), and the alarm must not cry wolf on a
+    sanctioned deploy it cannot classify. AC6: the evaluation rides the
+    existing cron log. Returns whether to stand down."""
     lock_ep = _lock_epoch(lock_path)
     manifest_ep = None
     if isinstance(manifest, dict):
@@ -841,19 +846,27 @@ def _log_epoch_stand_down_evaluation(lock_path: Path, manifest: dict | None) -> 
     fmt = lambda v: "unknown" if v is None else str(v)  # noqa: E731
     if lock_ep is None or manifest_ep is None:
         verdict = "indeterminate"
-        detail = "epoch binding unavailable (pre-fencing lock or manifest)"
+        detail = (
+            "epoch binding unavailable (pre-fencing lock or manifest) — "
+            "standing down, legacy-equivalent, freshness-bounded"
+        )
+        stand_down = True
     elif lock_ep > manifest_ep:
         verdict = "true"
-        detail = f"lock epoch {lock_ep} is ahead of manifest epoch {manifest_ep}"
+        detail = f"lock epoch {lock_ep} is ahead of manifest epoch {manifest_ep} — in-flight deploy"
+        stand_down = True
     else:
         verdict = "false"
-        detail = f"lock epoch {lock_ep} is not ahead of manifest epoch {manifest_ep} (leftover lock)"
+        detail = (
+            f"lock epoch {lock_ep} is not ahead of manifest epoch {manifest_ep} "
+            "(leftover lock) — not standing down"
+        )
+        stand_down = False
     print(
-        f"==> epoch fencing (NFM-5253 shadow): lock.epoch={fmt(lock_ep)} "
-        f"manifest.epoch={fmt(manifest_ep)} → would_stand_down={verdict} "
-        f"({detail}); NOT enforced — standing down per the fresh-lock rule "
-        "(current behavior) as before."
+        f"==> epoch fencing (NFM-5259 active): lock.epoch={fmt(lock_ep)} "
+        f"manifest.epoch={fmt(manifest_ep)} → stand_down={verdict} ({detail})."
     )
+    return stand_down
 
 
 def _acquire_runlock(state_path: Path) -> tuple[object | None, Path | None]:
@@ -1009,14 +1022,23 @@ def _run_check_locked(
         return 0
 
     # ADR-013 §4: a sanctioned deploy in progress must not file.
+    # NFM-5259: a fresh lock alone no longer suffices — the activated epoch
+    # rule must classify it as an in-flight deploy (lock.epoch ahead of the
+    # manifest, or indeterminate pre-fencing artifacts). A leftover fresh
+    # lock at-or-behind the manifest epoch falls through and files.
     if _lock_is_fresh(lock_path, args.max_lock_age):
-        _log_epoch_stand_down_evaluation(lock_path, manifest)
+        if _epoch_stand_down(lock_path, manifest):
+            print(
+                f"==> divergence present but deploy lock is fresh "
+                f"({lock_path}) — sanctioned deploy in progress, not filing."
+            )
+            _clear_ops_failures(state_path)
+            return 0
         print(
-            f"==> divergence present but deploy lock is fresh "
-            f"({lock_path}) — sanctioned deploy in progress, not filing."
+            "==> fresh deploy lock is NOT an in-flight deploy per epoch "
+            "fencing (NFM-5259) — leftover lock does not stand the checker "
+            "down; continuing."
         )
-        _clear_ops_failures(state_path)
-        return 0
 
     if args.recheck_seconds > 0:
         print(
@@ -1025,13 +1047,17 @@ def _run_check_locked(
         )
         time.sleep(args.recheck_seconds)
         if _lock_is_fresh(lock_path, args.max_lock_age):
-            _log_epoch_stand_down_evaluation(lock_path, manifest)
+            if _epoch_stand_down(lock_path, manifest):
+                print(
+                    "==> deploy lock appeared during re-check — sanctioned deploy "
+                    "in progress, not filing."
+                )
+                _clear_ops_failures(state_path)
+                return 0
             print(
-                "==> deploy lock appeared during re-check — sanctioned deploy "
-                "in progress, not filing."
+                "==> deploy lock appeared during re-check but epoch fencing "
+                "(NFM-5259) classifies it leftover — continuing."
             )
-            _clear_ops_failures(state_path)
-            return 0
         try:
             manifest2, entries2 = one_pass()
         except OpsError as exc:

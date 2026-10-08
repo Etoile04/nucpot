@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Deploy-epoch fencing token (NFM-5253 / NFM-4848 T1+T4+T5, shadow mode).
+"""Deploy-epoch fencing token (NFM-5253 / NFM-4848 T1+T4+T5; NFM-5259 —
+deploy_prod.sh enforces by default since 2026-10-05).
 
 SHA is not monotonic across redeploys/rollbacks of the same commit, so the
 deploy layer needs an ORDERED token binding each state transition to the
@@ -22,7 +23,7 @@ Subcommands
                    manifest-epoch + 1 (manifest resolved through the same
                    env > G2-dir > ~/.nfmd chain); no readable manifest
                    means re-mint from 0.
-    lock-acquire   The T4 lockfile CAS (shadow mode). Under the epoch
+    lock-acquire   The T4 lockfile CAS. Under the epoch
                    file's fcntl lock: mint the next epoch N+1, then decide
                    whether THIS run may take the deploy lock —
                    REFUSE iff the existing lock file is fresh (mtime age
@@ -34,11 +35,12 @@ Subcommands
                    (refused runs, record_rollback.sh), so a fresh lock
                    held by a live pid is an in-flight deploy regardless
                    of its epoch. Without --enforce a REFUSE decision is
-                   logged and the lock is still taken (today's blind
-                   overwrite, now epoch-tagged) — the enforcement flip is
-                   a separate CPO-dispatched follow-up gated on the SRE
-                   shadow week. With --enforce a REFUSE exits 80 WITHOUT
-                   touching the holder's lock.
+                   logged and the lock is still taken (the shadow
+                   semantics retained for the explicit
+                   NFM_DEPLOY_LOCK_ENFORCE=0 emergency-disable;
+                   deploy_prod.sh passes --enforce by default since the
+                   NFM-5259 flip, 2026-10-05). With --enforce a REFUSE
+                   exits 80 WITHOUT touching the holder's lock.
 
 Output contract (lock-acquire, one per line, grep-friendly for SRE):
     EPOCH_MINTED=<int>
