@@ -102,7 +102,7 @@ jobs:
             apps/api/tests/test_table_extractor.py \
             scripts/tests/ \
             -m 'not e2e and not integration and not rate_limit' \
-            --tb=short -vv -o faulthandler_timeout=540
+            --tb=short -q
 
       # -----------------------------------------------------------------
       # Step 3: Extraction accuracy evaluation (B1.6)
