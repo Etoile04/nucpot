@@ -439,9 +439,14 @@ class TestRelayTeardown:
     STALL_SECONDS = 30.0
 
     @staticmethod
-    async def _stalled_origin(_reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
+    async def _stalled_origin(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         # Accept the TCP connection, then never send a byte.
         await asyncio.sleep(TestRelayTeardown.STALL_SECONDS)
+        # Close our side when the stall is over: Server.wait_closed() on
+        # Python 3.12 waits for handler transports to actually close, so an
+        # abandoned writer parks the test teardown forever (the Batch1
+        # suite-hang outage this guards against).
+        writer.close()
 
     def test_client_abort_frees_the_tunnel(self) -> None:
         async def scenario() -> None:
@@ -469,7 +474,9 @@ class TestRelayTeardown:
             finally:
                 await proxy.close()
                 origin.close()
-                await origin.wait_closed()
+                await asyncio.wait_for(
+                    origin.wait_closed(), timeout=TestRelayTeardown.STALL_SECONDS + 15.0
+                )
 
         asyncio.run(scenario())
 
@@ -502,7 +509,9 @@ class TestRelayTeardown:
                 writer.close()
                 await proxy.close()
                 origin.close()
-                await origin.wait_closed()
+                await asyncio.wait_for(
+                    origin.wait_closed(), timeout=TestRelayTeardown.STALL_SECONDS + 15.0
+                )
 
         asyncio.run(scenario())
 
