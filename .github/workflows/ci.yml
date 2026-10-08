@@ -109,8 +109,8 @@ jobs:
       - name: Lint and format (ruff, scripts)
         working-directory: ${{ github.workspace }}
         run: |
-          uv run --extra dev --frozen ruff check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py
-          uv run --extra dev --frozen ruff format --check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py
+          uv run --extra dev --frozen ruff check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py scripts/tests/test_deploy_prod_throttle_gate.py
+          uv run --extra dev --frozen ruff format --check scripts/ci_throttle_proxy.py scripts/tests/test_ci_throttle_proxy.py scripts/tests/test_deploy_prod_throttle_gate.py
 
 # NFM-2491 / NFM-2234 AC: AST-based silent-exception guard. Walks
       # apps/api/src/**/*.py and classifies ast.Pass, lone ast.Expr(...),
