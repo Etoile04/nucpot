@@ -32,6 +32,7 @@ import json
 import logging
 import pathlib
 import time
+from collections.abc import Callable
 
 import pytest
 from scripts.ci_throttle_proxy import (
@@ -258,9 +259,9 @@ class TestHealthStartedStability:
                     await asyncio.sleep(0.25)
                 return docs[0], docs[1], proxy._started_iso
             finally:
-                await proxy.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
 
-        first, second, boot = asyncio.run(scenario())
+        first, second, boot = asyncio.run(asyncio.wait_for(scenario(), timeout=15.0))
         assert first == second == boot, (
             f"health `started` drifted across answers: {first!r} vs {second!r} "
             f"(proxy boot {boot!r})"
@@ -409,9 +410,9 @@ class TestEndToEnd:
             elapsed = time.monotonic() - started
         finally:
             writer.close()
-            await proxy.close()
+            await asyncio.wait_for(proxy.close(), timeout=10.0)
             origin.close()
-            await origin.wait_closed()
+            await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
         return body, elapsed
 
     def test_http_fetch_relayed_and_capped(self) -> None:
@@ -419,11 +420,17 @@ class TestEndToEnd:
         # at least ~0.4s; the same fetch through a 8x faster proxy serves
         # as the uncapped-ish control so the assertion cannot pass because
         # relay is merely slow for unrelated reasons.
-        body, elapsed = asyncio.run(self._run_fetch(rate_bytes_per_sec=256 * 1024))
+        body, elapsed = asyncio.run(
+            asyncio.wait_for(self._run_fetch(rate_bytes_per_sec=256 * 1024), timeout=60.0)
+        )
         assert body == self.PAYLOAD
         assert elapsed >= 0.4, f"cap not enforced: {len(body)} bytes in {elapsed:.3f}s"
 
-        _, control = asyncio.run(self._run_fetch(rate_bytes_per_sec=2 * 1024 * 1024))
+        _, control = asyncio.run(
+            asyncio.wait_for(
+                self._run_fetch(rate_bytes_per_sec=2 * 1024 * 1024), timeout=60.0
+            )
+        )
         assert elapsed > control, "capped fetch should be slower than the 8x-faster control"
 
 
@@ -433,21 +440,42 @@ class TestRelayTeardown:
     A long-running KeepAlive LaunchAgent accumulates leaked handler tasks
     and file descriptors if a stalled peer parks a pump forever: the health
     gauge's ``connections`` climbs permanently and fds run out. These tests
-    reproduce the two stall shapes against live sockets.
+    reproduce the stall shapes against live sockets.
+
+    NFM-5401 hardening (2026-10-09): the Linux-runner teardown race exposed
+    here hung the whole Batch1 lane for the job's 20-minute timeout — the
+    failing test's ``proxy.close()`` parked inside ``Server.wait_closed()``
+    (Python 3.12 waits for every handler task) behind a handler whose
+    request-direction pump never woke after the client hung up. Every
+    scenario in this file is now wall-clock bounded end to end (outer
+    ``wait_for`` + bounded teardowns), so a regression of that shape FAILS
+    in seconds instead of cancelling the lane.
     """
 
-    STALL_SECONDS = 30.0
-
     @staticmethod
-    async def _stalled_origin(_reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
-        # Accept the TCP connection, then never send a byte.
-        await asyncio.sleep(TestRelayTeardown.STALL_SECONDS)
+    async def _start_stalled_origin() -> tuple[asyncio.AbstractServer, asyncio.Event]:
+        """Origin that accepts, then never reads or writes until released.
+
+        The stall is Event-driven, not ``sleep(30)``: Python 3.12's
+        ``Server.wait_closed()`` waits for handler tasks, so a wall-clock
+        stall added up to 30s of dead lane time to every one of these
+        teardowns even when the proxy behaved correctly.
+        """
+        release = asyncio.Event()
+
+        async def stalled(
+            _reader: asyncio.StreamReader, _writer: asyncio.StreamWriter
+        ) -> None:
+            await release.wait()
+
+        server = await asyncio.start_server(stalled, "127.0.0.1", 0)
+        return server, release
 
     def test_client_abort_frees_the_tunnel(self) -> None:
         async def scenario() -> None:
             from scripts.ci_throttle_proxy import ThrottleProxy
 
-            origin = await asyncio.start_server(self._stalled_origin, "127.0.0.1", 0)
+            origin, release = await self._start_stalled_origin()
             origin_port = origin.sockets[0].getsockname()[1]
             proxy = ThrottleProxy(rate_mbps=40.0, port=0)
             await proxy.start()
@@ -467,11 +495,75 @@ class TestRelayTeardown:
                     "the upstream pump parked on the stalled origin"
                 )
             finally:
-                await proxy.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                release.set()
                 origin.close()
-                await origin.wait_closed()
+                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
 
-        asyncio.run(scenario())
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_client_hangup_tears_down_even_if_request_pump_never_wakes(
+        self, monkeypatch
+    ) -> None:
+        """NFM-5401 regression pin: teardown must not need the request pump.
+
+        The Linux-runner race cancelled every Batch1 since NFM-5333: after
+        the client hung up, the ONLY thing that could end the handler was
+        the request-direction pump's ``read()`` resolving — and on the
+        Linux runners it never did (9-minute faulthandler dump: loop idle
+        in ``selectors.select``, handler parked, no fd event, no timer).
+        This test deletes that path outright — the request pump parks on
+        an Event that never completes — so the tunnel can only come down
+        if the proxy observes the client transport closing by some OTHER
+        means and tears both pumps down.
+        """
+        from scripts import ci_throttle_proxy
+
+        real_pump = ci_throttle_proxy._pump
+
+        async def pump_that_never_wakes_on_the_request_side(
+            reader: asyncio.StreamReader,
+            writer: asyncio.StreamWriter,
+            bucket: TokenBucket | None,
+            counter: Callable[[int], None],
+            idle_timeout: float | None = None,
+        ) -> None:
+            if bucket is None:  # the request direction: uncapped by design
+                await asyncio.Event().wait()  # never completes inside this test
+            await real_pump(reader, writer, bucket, counter, idle_timeout=idle_timeout)
+
+        monkeypatch.setattr(
+            ci_throttle_proxy, "_pump", pump_that_never_wakes_on_the_request_side
+        )
+
+        async def scenario() -> None:
+            origin, release = await self._start_stalled_origin()
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = ci_throttle_proxy.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+                writer.close()
+                await writer.wait_closed()
+
+                deadline = time.monotonic() + 5.0
+                while proxy._active > 0 and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                assert proxy._active == 0, (
+                    "client hangup must tear the tunnel down even when the "
+                    "request-direction pump never wakes — a relay must never "
+                    "outlive its client"
+                )
+            finally:
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                release.set()
+                origin.close()
+                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
     def test_stalled_upstream_hits_idle_timeout(self, monkeypatch) -> None:
         from scripts import ci_throttle_proxy
@@ -479,7 +571,7 @@ class TestRelayTeardown:
         monkeypatch.setattr(ci_throttle_proxy, "IDLE_TIMEOUT_SECONDS", 0.5)
 
         async def scenario() -> None:
-            origin = await asyncio.start_server(self._stalled_origin, "127.0.0.1", 0)
+            origin, release = await self._start_stalled_origin()
             origin_port = origin.sockets[0].getsockname()[1]
             proxy = ci_throttle_proxy.ThrottleProxy(rate_mbps=40.0, port=0)
             await proxy.start()
@@ -500,11 +592,12 @@ class TestRelayTeardown:
                 assert proxy._active == 0, "timed-out relay must release its handler"
             finally:
                 writer.close()
-                await proxy.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                release.set()
                 origin.close()
-                await origin.wait_closed()
+                await asyncio.wait_for(origin.wait_closed(), timeout=10.0)
 
-        asyncio.run(scenario())
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
