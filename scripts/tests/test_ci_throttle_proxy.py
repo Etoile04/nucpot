@@ -252,10 +252,22 @@ class TestHealthResponse:
                     "at": "2026-10-09T04:00:00+00:00",
                 }
             ],
+            midband_advisories=1,
+            midband_edges=[
+                {
+                    "edge": "160.202.154.51",
+                    "target": "mirrors.aliyun.com:443",
+                    "moved_bytes": 60_000_000,
+                    "window_s": 180.0,
+                    "at": "2026-10-09T16:30:00+00:00",
+                }
+            ],
         )
         doc = json.loads(payload.partition(b"\r\n\r\n")[2])
         assert doc["edge_kills"] == 2
         assert doc["sick_edges"][0]["edge"] == "222.84.158.10"
+        assert doc["midband_advisories"] == 1
+        assert doc["midband_edges"][0]["edge"] == "160.202.154.51"
 
     def test_edge_telemetry_defaults_to_empty(self) -> None:
         payload = build_health_response(
@@ -268,6 +280,8 @@ class TestHealthResponse:
         doc = json.loads(payload.partition(b"\r\n\r\n")[2])
         assert doc["edge_kills"] == 0
         assert doc["sick_edges"] == []
+        assert doc["midband_advisories"] == 0
+        assert doc["midband_edges"] == []
 
     def test_supervisor_liveness_fields(self) -> None:
         """NFM-5432: health exposes the supervisor's tick count and last-tick
@@ -704,7 +718,13 @@ class TestSickEdgeWatchdog:
     """
 
     @staticmethod
-    def _retune(monkeypatch, *, max_bytes: int = 128 * 1024):
+    def _retune(
+        monkeypatch,
+        *,
+        max_bytes: int = 128 * 1024,
+        mid_bytes: int = 384 * 1024,
+        mid_interval: float = 3600.0,
+    ):
         """Shrink the EDGE_* constants to test scale. Returns the module."""
         from scripts import ci_throttle_proxy as mod
 
@@ -712,6 +732,8 @@ class TestSickEdgeWatchdog:
         monkeypatch.setattr(mod, "EDGE_TRICKLE_WINDOW_SECONDS", 1.0)
         monkeypatch.setattr(mod, "EDGE_MIN_AGE_SECONDS", 1.0)
         monkeypatch.setattr(mod, "EDGE_TRICKLE_MAX_BYTES", max_bytes)
+        monkeypatch.setattr(mod, "EDGE_MIDBAND_MAX_BYTES", mid_bytes)
+        monkeypatch.setattr(mod, "EDGE_MIDBAND_ADVISORY_INTERVAL", mid_interval)
         return mod
 
     @staticmethod
@@ -932,6 +954,136 @@ class TestSickEdgeWatchdog:
                     "fair-shared slowness under a saturated cap must not be killed"
                 )
                 assert proxy._active >= 1
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_midband_rate_capped_tunnel_is_advised_not_killed(self, monkeypatch) -> None:
+        """NFM-5434: a rate-capped edge (160.202.154.51 class, 2.5-3.5
+        Mbit/s) sits ABOVE the kill floor — the calibration keeps the
+        floor at the trickle moat because the fleet's standing wheel-leg
+        envelope runs 1.2-2.5 Mbit/s session-average (513 MiB legs,
+        28-55 min, every deploy). The tunnel must survive and surface in
+        the advisory telemetry (health payload + log) exactly once per
+        cadence interval."""
+        mod = self._retune(monkeypatch)  # floor 128KiB/s, ceiling 384KiB/s, cadence 3600s
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * 2048, 0.01)  # ~200KiB/s
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                # ~2s of mid-band transfer: several judged windows pass
+                # over the tunnel while it stays inside the advisory band.
+                await asyncio.wait_for(reader.readexactly(400 * 1024), timeout=15.0)
+                assert proxy.edge_kills == 0, (
+                    "a rate-capped tunnel above the floor must never be killed"
+                )
+                assert proxy._active >= 1, "the advised tunnel must stay alive"
+                assert proxy.midband_advisories == 1, (
+                    "cadence must hold one advisory per (edge, target)"
+                )
+                assert proxy.midband_edges[-1]["edge"] == "127.0.0.1"
+                assert proxy.midband_edges[-1]["target"] == f"127.0.0.1:{origin_port}"
+
+                doc = await self._get_health(proxy.port)
+                assert doc["midband_advisories"] == 1
+                assert doc["midband_edges"][-1]["edge"] == "127.0.0.1"
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_saturated_bucket_gets_no_midband_advisory(self, monkeypatch) -> None:
+        """NFM-5434 guardrail: under a saturated cap, mid-band per-tunnel
+        rates are the bucket fair-sharing (the 16 x 2.5 Mbit/s fleet
+        shape) — the spare-capacity guard must keep the advisory silent
+        exactly as it keeps the kill silent."""
+        mod = self._retune(monkeypatch)  # floor 128KiB/s, ceiling 384KiB/s
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * 2048, 0.005)  # ~400KiB/s offer
+            origin_port = origin.sockets[0].getsockname()[1]
+            # cap 2.4576 Mbit/s = 300KiB/s: two tunnels offering 400KiB/s
+            # each get ~150KiB/s apiece (inside the advisory band) while
+            # the global window rate sits AT cap — not spare.
+            proxy = mod.ThrottleProxy(rate_mbps=2.4576, port=0, burst_seconds=2.0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            readers = []
+            writers = []
+            try:
+                for _ in range(2):
+                    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                    writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                    await writer.drain()
+                    await reader.readuntil(b"\r\n\r\n")
+                    readers.append(reader)
+                    writers.append(writer)
+
+                # ~2s of capped fair-shared transfer, past window + min age
+                await asyncio.wait_for(readers[0].readexactly(100 * 1024), timeout=20.0)
+                assert proxy.midband_advisories == 0, (
+                    "fair-shared mid-band rates under a saturated cap must not "
+                    "be advised (same guard as the kill)"
+                )
+                assert proxy.edge_kills == 0
+                assert proxy._active >= 2
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                for writer in writers:
+                    writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_bursty_midband_average_gets_no_advisory(self, monkeypatch) -> None:
+        """The creep discriminator gates the advisory too: a bursty tunnel
+        whose window AVERAGE lands mid-band (60KiB every 0.4s = 150KiB/s)
+        is pip's metadata phase, not a rate-capped edge."""
+        mod = self._retune(monkeypatch)  # floor 128KiB/s, ceiling 384KiB/s
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * (60 * 1024), 0.4)
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                # ~2.4s: three bursts, judged windows carry the mid-band
+                # average with quiet gaps between bursts.
+                await asyncio.wait_for(reader.readexactly(180 * 1024), timeout=15.0)
+                assert proxy.midband_advisories == 0, (
+                    "bursty traffic with quiet gaps is not a rate-capped edge"
+                )
+                assert proxy.edge_kills == 0
+                assert proxy._active >= 1, "bursty tunnel must stay alive"
             finally:
                 supervisor.cancel()
                 await asyncio.gather(supervisor, return_exceptions=True)
