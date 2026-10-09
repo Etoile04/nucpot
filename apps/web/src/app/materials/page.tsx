@@ -8,6 +8,13 @@ export const metadata: Metadata = {
   description: "浏览核燃料与材料数据库中的全部材料",
 }
 
+// NFM-5418: without this, a fully-static page emits Next.js's default
+// s-maxage=31536000 HTML header, so the Cloudflare edge pins it for a year
+// and any deploy that changes chunk hashes orphans the cached refs
+// (NFM-5335 class). Match the home page's ISR window instead: the shell
+// revalidates every 5 min behind stale-while-revalidate.
+export const revalidate = 300
+
 /**
  * NFM-3917 / Tier 1D: ``MaterialsListView`` is a client component that
  * reads ``?category_id=`` via ``useSearchParams``. Next.js 16 prerender

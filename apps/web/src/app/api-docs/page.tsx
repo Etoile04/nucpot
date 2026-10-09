@@ -15,6 +15,13 @@ export const metadata: Metadata = {
     "NFMD 核材料与势函数数据库公开 REST API 文档(基于 FastAPI 自动生成的 OpenAPI 3.1 规范,Swagger UI)。",
 }
 
+// NFM-5418: without this, a fully-static page emits Next.js's default
+// s-maxage=31536000 HTML header, so the Cloudflare edge pins it for a year
+// and any deploy that changes chunk hashes orphans the cached refs
+// (NFM-5335 class). Match the home page's ISR window instead: the shell
+// revalidates every 5 min behind stale-while-revalidate.
+export const revalidate = 300
+
 export default function ApiDocsPage() {
   // Use a div rather than <main> — the root layout already renders the
   // semantic <main> wrapper around children, and nesting <main> is invalid
@@ -33,9 +40,9 @@ export default function ApiDocsPage() {
           <div>
             <h1 className="text-xl font-semibold text-gray-100">API 文档</h1>
             <p className="text-sm text-gray-400 mt-0.5">
-              核燃料与材料物性数据库(NFMD)公开 REST API。共 19 个端点分组,
-              遵循 <code className="text-gray-300">{"{ success, data, error }"}</code>{" "}
-              统一信封与 RFC 7807 错误风格。
+              核燃料与材料物性数据库(NFMD)公开 REST API。共 19 个端点分组, 遵循{" "}
+              <code className="text-gray-300">{"{ success, data, error }"}</code> 统一信封与 RFC
+              7807 错误风格。
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm">

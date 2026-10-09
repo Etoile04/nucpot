@@ -3,9 +3,15 @@ import LiteratureManager from "./LiteratureManager"
 
 export const metadata: Metadata = {
   title: "文献库 - NucPot",
-  description:
-    "管理核材料文献库：上传 PDF、检索文献、追踪提取状态、并触发 LLM 提取。",
+  description: "管理核材料文献库：上传 PDF、检索文献、追踪提取状态、并触发 LLM 提取。",
 }
+
+// NFM-5418: without this, a fully-static page emits Next.js's default
+// s-maxage=31536000 HTML header, so the Cloudflare edge pins it for a year
+// and any deploy that changes chunk hashes orphans the cached refs
+// (NFM-5335 class). Match the home page's ISR window instead: the shell
+// revalidates every 5 min behind stale-while-revalidate.
+export const revalidate = 300
 
 /**
  * /literature — Literature Management (Pipeline A: Extraction)

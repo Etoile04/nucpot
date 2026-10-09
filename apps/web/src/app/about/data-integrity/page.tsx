@@ -26,6 +26,9 @@
  * never themselves split by this bug, so `break-words` on them is not a fix
  * and would re-admit mid-identifier breaks.
  */
+
+export const revalidate = 300
+
 export default function DataIntegrityPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
@@ -48,15 +51,11 @@ export default function DataIntegrityPage() {
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
                 2026-09-02，迁移 070（提交{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  444469cda
-                </span>
-                ） 执行时把同一文献的重复占位{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  data_sources
-                </span>
-                合并到 4 条规范记录上；合并过程中级联删除了 10
-                个仅关联占位数据源的数据集， 以及 31 条{" "}
+                <span className="font-mono text-gray-300 whitespace-nowrap">444469cda</span>）
+                执行时把同一文献的重复占位{" "}
+                <span className="font-mono text-gray-300 whitespace-nowrap">data_sources</span>
+                合并到 4 条规范记录上；合并过程中级联删除了 10 个仅关联占位数据源的数据集， 以及 31
+                条{" "}
                 <span className="font-mono text-gray-300 whitespace-nowrap">
                   property_measurements
                 </span>
@@ -67,20 +66,13 @@ export default function DataIntegrityPage() {
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
                 事故根因：迁移 070 的“坏数据源”判定范围过宽，把{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  Unknown Source
-                </span>{" "}
-                与{" "}
+                <span className="font-mono text-gray-300 whitespace-nowrap">Unknown Source</span> 与{" "}
                 <span className="font-mono text-gray-300 whitespace-nowrap">
                   Unattributed source (no DOI)
                 </span>{" "}
-                等占位标题下的 18 条真实来源（无
-                DOI、file_hash、content_md）误判为去重候选。
+                等占位标题下的 18 条真实来源（无 DOI、file_hash、content_md）误判为去重候选。
                 完整的根因分析与影响面清单见
-                <a
-                  href="/NFM/issues/NFM-4130"
-                  className="text-blue-400 hover:underline"
-                >
+                <a href="/NFM/issues/NFM-4130" className="text-blue-400 hover:underline">
                   NFM-4130
                 </a>
                 。
@@ -97,13 +89,8 @@ export default function DataIntegrityPage() {
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  NFM-4130
-                </span>
-                （提交{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  570a2e2f
-                </span>
+                <span className="font-mono text-gray-300 whitespace-nowrap">NFM-4130</span>
+                （提交 <span className="font-mono text-gray-300 whitespace-nowrap">570a2e2f</span>
                 ，PR #1107）——将迁移 070 的“坏数据源”判定范围收窄至 UUID
                 标题行，移除占位标题类，防止占位合并再次触发。
               </span>
@@ -111,10 +98,7 @@ export default function DataIntegrityPage() {
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
-                迁移{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  075
-                </span>
+                迁移 <span className="font-mono text-gray-300 whitespace-nowrap">075</span>
                 （NFM-4139）——从{" "}
                 <span className="font-mono text-gray-300 whitespace-nowrap">
                   data_sources_backup_070
@@ -124,23 +108,15 @@ export default function DataIntegrityPage() {
                   datasets_backup_070
                 </span>{" "}
                 备份表， 按原占位标题逐字恢复了 18 条{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  data_sources
-                </span>
-                与 10 条{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  datasets
-                </span>{" "}
+                <span className="font-mono text-gray-300 whitespace-nowrap">data_sources</span>与 10
+                条 <span className="font-mono text-gray-300 whitespace-nowrap">datasets</span>{" "}
                 记录。
               </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
-                迁移{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  079
-                </span>
+                迁移 <span className="font-mono text-gray-300 whitespace-nowrap">079</span>
                 （NFM-4191）——从{" "}
                 <span className="font-mono text-gray-300 whitespace-nowrap">
                   property_measurements_backup_070
@@ -151,10 +127,7 @@ export default function DataIntegrityPage() {
             <li className="flex items-start gap-2">
               <span className="text-blue-400 mt-1">•</span>
               <span className="min-w-0">
-                迁移{" "}
-                <span className="font-mono text-gray-300 whitespace-nowrap">
-                  077
-                </span>
+                迁移 <span className="font-mono text-gray-300 whitespace-nowrap">077</span>
                 （NFM-4159 §5.1）——将{" "}
                 <span className="font-mono text-gray-300 whitespace-nowrap">
                   datasets.source_id
@@ -212,22 +185,17 @@ export default function DataIntegrityPage() {
         <section>
           <h2 className="text-2xl font-semibold mb-4">完整事后分析</h2>
           <p className="text-gray-400 leading-relaxed mb-3">
-            完整的事后分析（含迁移脚本、影响面清单与恢复方案）由工程团队维护，
-            详见
-            <a
-              href="/NFM/issues/NFM-4130"
-              className="text-blue-400 hover:underline"
-            >
+            完整的事后分析（含迁移脚本、影响面清单与恢复方案）由工程团队维护， 详见
+            <a href="/NFM/issues/NFM-4130" className="text-blue-400 hover:underline">
               NFM-4130
             </a>
             。
           </p>
           <p className="text-gray-400 leading-relaxed">
-            如对具体行有疑问，或可补充某一行的来源信息，请通过项目仓库的 issue
-            渠道联系维护者。
+            如对具体行有疑问，或可补充某一行的来源信息，请通过项目仓库的 issue 渠道联系维护者。
           </p>
         </section>
       </main>
     </div>
-  );
+  )
 }
