@@ -469,7 +469,7 @@ def collect_paths(root: Path, requested: list[str]) -> tuple[list[str], int]:
 def git_diff_paths(base: str) -> list[str]:
     try:
         output = subprocess.run(
-            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            ["git", "diff", "--name-only", "--diff-filter=d", f"{base}...HEAD"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -536,6 +536,9 @@ def main(argv: list[str] | None = None) -> int:
     for relpath in relpaths:
         try:
             texts[relpath] = (REPO_ROOT / relpath).read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            print(f"check_prereg: skip {relpath} (absent at HEAD — deleted or renamed away)")
+            continue
         except OSError as exc:
             print(f"error: cannot read {relpath}: {exc}", file=sys.stderr)
             return 2

@@ -462,7 +462,7 @@ A standalone record of known technical debt in the database layer and adjacent c
   - "What is `_chunk_content()` and why is it still in `extraction_pipeline.py`?" → §5 DEBT-3 + ADR-NFM-2737 (strangler-fig extraction dispatch).
   - "Why are there hex-named migrations in epochs that don't match their numeric prefix?" → §3 E2 "Hex migration chain placement" note.
   - "Which migration introduced the `blog_role` enum?" → §3 E0 `001_create_users_table` (initial), extended in §3 E4 `043_add_domain_expert_role` (`domain_expert` value).
-  - "How does a `kg_node` reach the AGE graph?" → §3 E1 `015_kg_models_complete` (`age_synced_at` column) + the Neo4j→Apache AGE doc (linked in §8).
+  - "How does a `kg_node` reach the AGE graph?" → it no longer does: the AGE mirror was retired 2026-10 (see the "AGE retirement" appendix); the historical `age_synced_at`/`synced_to_graph` columns come from §3 E1 `015_kg_models_complete`.
   - "What columns does `extraction_jobs` accumulate across epochs?" → §3 E1 `013_multimodal`, E3 `034`, `035`, E4 `049`, `051`, E5 `056` — see the "Touched by" column in §2 row 15 for the canonical list.
   - "When was the `track_id` column added?" → §3 E5 `056` (on `extraction_jobs`) + §3 E6 `061` (propagated to `extraction_steps`).
   - "Where do I find the v0.1.0 ontology seed?" → §3 E4 `044_add_ontology_version` docstring + `apps/api/src/nfm_db/seeds/ontology_v0.1.0.json` (referenced from the migration).
@@ -623,3 +623,7 @@ verification_task.py                                                   — md-ve
 ```
 
 **Appendix: Single-head invariant mechanics.** Alembic stores each migration's `down_revision` in the migration file and the `alembic_version` row in the target database. A *head* is a migration whose `down_revision` is not referenced by any other migration's `revision` field. The single-head invariant (NFM-167) requires `len(script.get_heads()) == 1`. New migrations must descend from the current head or be merged in via a `_merge_*` migration. The 11 merges listed in §4 are the cumulative history of bringing the chain back to a single head after parallel development.
+
+## Appendix: AGE retirement (2026-10)
+
+The Apache AGE graph mirror described in [graph-database-migration-from-neo4j-to-apache-age.md](graph-database-migration-from-neo4j-to-apache-age.md) was **retired 2026-10** per the NFM-5215 ruling (parent work order NFM-5407). The KG substrate is relational tables (`kg_nodes`/`kg_edges`) + pgvector. The AGE code paths (connect listener, sync service, `POST /ontology/sync`) were deleted; the prod DB image (pgvector/pgvector:pg16) never carried the AGE binary, so removal is user-invisible. Historical `age_synced_at`/`synced_to_graph` columns from `015_kg_models_complete` remain in place (dropping them would require a new migration with no consumer benefit). The implementation is preserved in git history.

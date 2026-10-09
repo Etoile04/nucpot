@@ -7,7 +7,6 @@ queues low-confidence items for human review.
 Architecture:
   extraction_pipeline result -> RelationExtractor -> GraphBuilder
                                                      -> KGReviewQueue (< 0.6 confidence)
-                                                     -> ontology_sync (AGE graph)
 """
 
 from __future__ import annotations
@@ -449,18 +448,15 @@ class GraphBuilder:
     - Node creation: Create new nodes for unmatched entities
     - Edge creation: Create edges from extracted relations
     - Review queue: Route low-confidence items (< 0.6) to KGReviewQueue
-    - AGE sync: Trigger ontology_sync for newly created nodes/edges
     """
 
     def __init__(
         self,
         session: AsyncSession,
         corpus_id: str | None = None,
-        sync_to_age: bool = True,
     ) -> None:
         self._session = session
         self._corpus_id = corpus_id
-        self._sync_to_age = sync_to_age
         self._extractor = RelationExtractor()
         self._linker = EntityLinker()
 
@@ -763,18 +759,6 @@ class GraphBuilder:
         )
         self._session.add(node)
 
-        if self._sync_to_age:
-            try:
-                from nfm_db.services.ontology_sync import sync_node
-
-                await sync_node(self._session, node.id)
-            except Exception:
-                logger.warning(
-                    "AGE sync failed for node %s (non-fatal)",
-                    node.label,
-                    exc_info=True,
-                )
-
         return node
 
     async def _create_edge(
@@ -857,17 +841,6 @@ class GraphBuilder:
             extraction_method=PROVENANCE_LLM,
         )
         self._session.add(edge)
-
-        if self._sync_to_age:
-            try:
-                from nfm_db.services.ontology_sync import sync_edge
-
-                await sync_edge(self._session, edge.id)
-            except Exception:
-                logger.warning(
-                    "AGE sync failed for edge (non-fatal)",
-                    exc_info=True,
-                )
 
         return edge
 

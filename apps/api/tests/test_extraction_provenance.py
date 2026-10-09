@@ -234,7 +234,7 @@ async def test_llm_pipeline_node_records_llm(db_session: AsyncSession) -> None:
     """GraphBuilder._create_node stamps ``llm`` without consulting confidence."""
     from nfm_db.services.kg_re import ExtractedEntity, GraphBuilder
 
-    builder = GraphBuilder(session=db_session, sync_to_age=False)
+    builder = GraphBuilder(session=db_session)
     node = await builder._create_node(
         ExtractedEntity(
             label="UO2",
