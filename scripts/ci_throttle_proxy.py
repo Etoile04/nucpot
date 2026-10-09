@@ -854,13 +854,8 @@ class ThrottleProxy:
                 # every deploy) but under the advisory ceiling. Log-only
                 # and cadence-throttled per (edge, target): the tunnel is
                 # never touched, so a false advisory costs one log line.
-                if (
-                    moved * window < EDGE_MIDBAND_MAX_BYTES * span
-                    and _creeping_samples(samples)
-                ):
-                    edge_ip = (
-                        record.upstream_peer[0] if record.upstream_peer else "unknown"
-                    )
+                if moved * window < EDGE_MIDBAND_MAX_BYTES * span and _creeping_samples(samples):
+                    edge_ip = record.upstream_peer[0] if record.upstream_peer else "unknown"
                     key = (edge_ip, record.target)
                     last = self._midband_last.get(key)
                     if last is None or now - last >= EDGE_MIDBAND_ADVISORY_INTERVAL:
