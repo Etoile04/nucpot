@@ -269,6 +269,36 @@ class TestHealthResponse:
         assert doc["edge_kills"] == 0
         assert doc["sick_edges"] == []
 
+    def test_supervisor_liveness_fields(self) -> None:
+        """NFM-5432: health exposes the supervisor's tick count and last-tick
+        timestamp. 2026-10-09's 1h52m hang showed the previous health doc
+        cannot distinguish "watchdog judged the fleet healthy" from "watchdog
+        never judged anything" — edge_kills=0 meant both."""
+        payload = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=1,
+            connections=0,
+            started_iso="2026-10-09T00:00:00+00:00",
+            supervisor_ticks=4213,
+            supervisor_last_tick="2026-10-09T17:40:00+00:00",
+        )
+        doc = json.loads(payload.partition(b"\r\n\r\n")[2])
+        assert doc["supervisor_ticks"] == 4213
+        assert doc["supervisor_last_tick"] == "2026-10-09T17:40:00+00:00"
+
+    def test_supervisor_liveness_defaults(self) -> None:
+        payload = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=0,
+            connections=0,
+            started_iso="2026-10-09T00:00:00+00:00",
+        )
+        doc = json.loads(payload.partition(b"\r\n\r\n")[2])
+        assert doc["supervisor_ticks"] == 0
+        assert doc["supervisor_last_tick"] is None
+
 
 class TestHealthStartedStability:
     """`started` must be byte-stable across separate live health answers.
@@ -999,6 +1029,70 @@ class TestSickEdgeWatchdog:
                 origin.close()
 
         asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_drifted_tick_spacing_still_kills_trickle(self) -> None:
+        """NFM-5432 regression: the shipped 30s/180s tick:window ratio (1:6)
+        plus real asyncio tick drift made the supervisor unable to ever kill.
+
+        The samples deque evicts `older than window`, and the judge required
+        `span >= 0.9*window`; with ticks drifting to 30.4s the just-turned-
+        180s-old sample is evicted every tick, pinning the retained span at
+        window - tick (150s of 180s) — permanently under the 162s judging
+        gate. Deploy 37941082708's verified continuous 0.5 Mbit/s trickle
+        (the designed kill pattern) survived 1h52m on 2026-10-09 with 224
+        supervisor ticks and edge_kills=0. Deterministic repro at the SHIPPED
+        constants — no retuning, no sockets: drive _edge_supervise_once
+        directly with hand-advanced clocks and drifted (30.4s) tick spacing.
+        """
+        from scripts import ci_throttle_proxy as mod
+
+        assert mod.EDGE_SUPERVISOR_TICK_SECONDS == 30.0
+        assert mod.EDGE_TRICKLE_WINDOW_SECONDS == 180.0
+
+        async def scenario() -> None:
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            t0 = 1000.0
+            record = mod._TunnelRecord(
+                created=t0,
+                upstream_peer=("203.0.113.9", 443),
+                target="mirrors.aliyun.com:443",
+            )
+            proxy._tunnels[id(record)] = record
+            bytes_down = 0
+            for tick in range(1, 31):
+                if record.dead.is_set():
+                    break
+                now = t0 + 30.4 * tick  # drifted: real supervisor loops run late
+                bytes_down += int(0.5e6 / 8 * 30.4)  # continuous 0.5 Mbit/s
+                record.bytes_down = bytes_down
+                proxy.bytes_relayed = bytes_down
+                proxy._edge_supervise_once(now=now)
+            assert record.dead.is_set(), (
+                "a verified continuous trickle at the shipped tick:window "
+                "ratio must be killed even when supervisor ticks drift "
+                "(NFM-5432 fencepost: span pinned at window-tick < 0.9*window)"
+            )
+            assert proxy.edge_kills >= 1
+            assert proxy.sick_edges, "the drift kill must land in health telemetry"
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
+
+    def test_supervisor_ticks_are_counted_and_exposed(self, monkeypatch) -> None:
+        """NFM-5432: every supervision pass bumps a tick counter carried into
+        the health doc, so a silently dead watchdog (the 1h52m hang class) is
+        distinguishable from a quiet-but-alive one from the outside."""
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            assert proxy.supervisor_ticks == 0
+            assert proxy.supervisor_last_tick_iso is None
+            proxy._edge_supervise_once(now=1000.0)
+            proxy._edge_supervise_once(now=1000.05)
+            assert proxy.supervisor_ticks == 2
+            assert proxy.supervisor_last_tick_iso  # stamped on every pass
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
