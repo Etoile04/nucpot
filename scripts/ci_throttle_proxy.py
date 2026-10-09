@@ -38,7 +38,22 @@ of exactly those fetches:
     client hangup left that pump parked forever turned every Batch1 run
     since NFM-5333 into a 20-minute CANCELLED — and the same shape on the
     LaunchAgent host would leak one handler task + fds per occurrence
-    (2026-10-09 NFM-5401).
+    (2026-10-09 NFM-5401);
+  * per-edge health (NFM-5425): pip pools its CONNECT tunnels for the
+    whole install, so a tunnel pinned at connect time (getaddrinfo) to a
+    degraded CDN edge that TRICKLES — 0.2-0.5 Mbps single-connection
+    observed on 2026-10-09 aliyun/alikunlun edges while sibling edges of
+    the same mirror ran 1.6-2.4 MB/s — never errors and never idles out,
+    and the Dockerfile mirror ladder only advances on leg FAILURE, so
+    the build crawls for as long as the edge stays sick (4 occurrences
+    2026-10-09, 40-60 min each). A supervisor now tracks each tunnel's
+    delivered bytes and kills tunnels that crept continuously through a
+    full window yet stayed under EDGE_TRICKLE_MAX_BYTES while the global
+    bucket had spare capacity (the shared cap must never be mistaken for
+    a sick edge). A killed tunnel costs pip one of its --retries; the
+    reconnect re-resolves DNS and lands on a different edge — the
+    automated, surgical form of the manual ``launchctl kickstart``
+    mitigation proven 3x on 2026-10-09.
 
 Wired in ``scripts/deploy_prod.sh``: build containers reach the host via
 ``host.docker.internal:7899`` (Docker Desktop resolves it to the host's
@@ -70,12 +85,14 @@ import resource
 import socket
 import sys
 import time
+from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 DEFAULT_PORT = 7899
 DEFAULT_RATE_MBPS = 40.0
@@ -98,6 +115,38 @@ PEER_GONE_POLL_SECONDS = 1.0
 # orderings) — without this bound, shutting the LaunchAgent down with a
 # live tunnel wedges the process forever (NFM-5401).
 CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
+# --- NFM-5425: sick-CDN-edge watchdog ---------------------------------------
+# 2026-10-09: pip's pooled CONNECT tunnels pin to whatever CDN edge
+# getaddrinfo returned at connect time and stay there for the life of the
+# connection. A degraded aliyun/alikunlun edge that TRICKLES (observed
+# 0.2-0.5 Mbps single-connection while sibling edges of the same mirror
+# ran 1.6-2.4 MB/s, and fastly direct ~180 MB at 1.6-2.4 MB/s) never
+# fails the tunnel and never trips the 600s idle timeout, so the `||`
+# mirror ladder in docker/prod-api.Dockerfile — which advances only on
+# leg FAILURE — crawls indefinitely. The supervisor kills verified
+# trickling tunnels; pip spends one --retries and reconnects onto a
+# freshly resolved (healthy) edge.
+EDGE_SUPERVISOR_TICK_SECONDS = 30.0
+EDGE_TRICKLE_WINDOW_SECONDS = 180.0
+# <24 MiB per 180s ⇒ sustained < ~1.1 Mbit/s. Healthy single connections
+# observed 13-20 Mbit/s; even fair-shared under the 40 Mbit/s cap, 20
+# saturated tunnels each get 2 Mbit/s = 45 MiB/180s. The sick (≤11 MiB)
+# and healthy-shared (≥45 MiB) bands are an order of magnitude apart —
+# 24 MiB sits in the empty middle.
+EDGE_TRICKLE_MAX_BYTES = 24 * 1024 * 1024
+# A tunnel must prove itself for a full window before it is judged.
+EDGE_MIN_AGE_SECONDS = 180.0
+# Judge edges only while the global bucket is NOT the limiter: when the
+# aggregate window rate is at (or near) cap, per-tunnel slowness is fair
+# sharing, not a sick edge, and kills would churn healthy tunnels.
+EDGE_SPARE_CAPACITY_FRACTION = 0.25
+# A sick edge delivers continuously (TCP keeps feeding the in-flight
+# response); request/response metadata traffic moves in bursts with
+# quiet gaps between requests. Require ~all window ticks to have moved
+# bytes so pip's resolution phase is never mistaken for a trickle.
+EDGE_CREEP_TICK_FRACTION = 0.9
+# Recent sick edges kept in the health payload for deploy-watch.
+EDGE_SICK_LOG_MAX = 8
 
 LOG = logging.getLogger("nfmd-ci-throttle")
 
@@ -218,6 +267,8 @@ def build_health_response(
     bytes_relayed: int,
     connections: int,
     started_iso: str,
+    edge_kills: int = 0,
+    sick_edges: Optional[list] = None,
 ) -> bytes:
     doc = {
         "status": "ok",
@@ -229,6 +280,11 @@ def build_health_response(
         # Process start, NOT answer time: health telemetry must be literal
         # or restart-vs-wedge diagnosis reads phantom restarts (2026-10-07).
         "started": started_iso,
+        # NFM-5425: sick-edge supervisor telemetry — cumulative kills plus
+        # the recent edges killed, so a slow deploy window can be
+        # reconciled against the exact edge IPs without reading the log.
+        "edge_kills": edge_kills,
+        "sick_edges": list(sick_edges or []),
     }
     body = json.dumps(doc).encode()
     head = (
@@ -304,6 +360,30 @@ async def _peer_gone(
         await asyncio.sleep(poll_seconds)
 
 
+@dataclass
+class _TunnelRecord:
+    """Live accounting for one relayed download tunnel (NFM-5425).
+
+    ``bytes_down`` counts only the capped upstream→client direction — the
+    direction the sick-edge symptom lives in. ``dead`` is raced against the
+    tunnel's pumps exactly like ``_peer_gone``: setting it is enough to tear
+    the whole tunnel down through the handler's existing finally-path, so
+    the supervisor never touches sockets itself. ``samples`` is a sliding
+    ``(monotonic, bytes_down)`` series appended by the supervisor.
+
+    Constructed only inside a running event loop (the ``asyncio.Event``
+    binds to the current loop on py3.9).
+    """
+
+    created: float
+    upstream_peer: Optional[tuple] = None
+    target: str = ""
+    bytes_down: int = 0
+    finished: bool = False
+    dead: asyncio.Event = field(default_factory=asyncio.Event)
+    samples: deque = field(default_factory=deque)
+
+
 class ThrottleProxy:
     """The server. One global bucket; every client connection shares it."""
 
@@ -327,6 +407,14 @@ class ThrottleProxy:
         self.connections_total = 0
         self._active = 0
         self._started_iso = datetime.now(timezone.utc).isoformat()
+        # NFM-5425 sick-edge watchdog state: live tunnels keyed by record
+        # identity, cumulative kill count, and the recent-kill ring the
+        # health endpoint serves. `_rate_samples` is the global
+        # (monotonic, bytes_relayed) series behind the spare-capacity guard.
+        self._tunnels: dict = {}
+        self.edge_kills = 0
+        self.sick_edges: list = []
+        self._rate_samples: deque = deque()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -364,7 +452,11 @@ class ThrottleProxy:
                 await asyncio.wait_for(
                     self.server.wait_closed(), timeout=CLOSE_DRAIN_TIMEOUT_SECONDS
                 )
-            except TimeoutError:
+            except asyncio.TimeoutError:
+                # asyncio.TimeoutError, not builtin TimeoutError: the
+                # LaunchAgent host runs py3.9, where the two are distinct
+                # (aliased only in 3.11+) — the builtin spelling let the
+                # bounded-drain guard itself raise on 3.9.
                 LOG.warning(
                     "server drain did not settle in %.1fs; closing anyway",
                     CLOSE_DRAIN_TIMEOUT_SECONDS,
@@ -375,6 +467,15 @@ class ThrottleProxy:
 
     def _count(self, n: int) -> None:
         self.bytes_relayed += n
+
+    def _tunnel_counter(self, record: _TunnelRecord) -> Callable[[int], None]:
+        """Counter that feeds both the global total and one tunnel's record."""
+
+        def count(n: int) -> None:
+            self._count(n)
+            record.bytes_down += n
+
+        return count
 
     @staticmethod
     async def _settle(
@@ -451,6 +552,8 @@ class ThrottleProxy:
                     bytes_relayed=self.bytes_relayed,
                     connections=self._active,
                     started_iso=self._started_iso,
+                    edge_kills=self.edge_kills,
+                    sick_edges=self.sick_edges,
                 )
             )
             await writer.drain()
@@ -478,30 +581,45 @@ class ThrottleProxy:
         # Downloads flow upstream→client (capped); requests/ACKs flow the
         # other way and are tiny — uncapped. The request direction gets no
         # idle deadline (a client legitimately stays silent for the whole
-        # download), so the race is three-way: whichever ends first — a
-        # pump hitting EOF, an error, or the upstream idle timeout, or the
+        # download), so the race is four-way: whichever ends first — a
+        # pump hitting EOF, an error, or the upstream idle timeout, the
         # client transport closing (NFM-5401: the request pump's own EOF
         # wake cannot be the tunnel's only other exit — on the Linux
-        # runners it never fired) — tears down the whole tunnel.
+        # runners it never fired), or the sick-edge supervisor killing
+        # this tunnel (NFM-5425: `record.dead` — the pin to a degraded
+        # CDN edge is only breakable from outside the pumps) — tears down
+        # the whole tunnel.
+        record = _TunnelRecord(
+            created=time.monotonic(),
+            upstream_peer=upstream_writer.get_extra_info("peername"),
+            target=target,
+        )
+        self._tunnels[id(record)] = record
         downstream = asyncio.ensure_future(
             _pump(
                 upstream_reader,
                 writer,
                 self.bucket,
-                self._count,
+                self._tunnel_counter(record),
                 idle_timeout=IDLE_TIMEOUT_SECONDS,
             )
         )
         upstream = asyncio.ensure_future(_pump(reader, upstream_writer, None, lambda _n: None))
         client_gone = asyncio.ensure_future(_peer_gone(writer, reader))
+        sick_edge_kill = asyncio.ensure_future(record.dead.wait())
         try:
             done, _pending = await asyncio.wait(
-                {downstream, upstream, client_gone}, return_when=asyncio.FIRST_COMPLETED
+                {downstream, upstream, client_gone, sick_edge_kill},
+                return_when=asyncio.FIRST_COMPLETED,
             )
             for task in done:
                 task.result()
         finally:
-            await self._settle({downstream, upstream, client_gone}, (writer, upstream_writer))
+            record.finished = True
+            self._tunnels.pop(id(record), None)
+            await self._settle(
+                {downstream, upstream, client_gone, sick_edge_kill}, (writer, upstream_writer)
+            )
 
     async def _forward_http(
         self,
@@ -548,25 +666,139 @@ class ThrottleProxy:
         # The response leg races the same client-transport watchdog as the
         # CONNECT tunnel: a client that hangs up mid-download must not park
         # the handler until the upstream idle timeout (NFM-5401 invariant —
-        # a relay must never outlive either peer).
+        # a relay must never outlive either peer), and the sick-edge
+        # supervisor can kill the relay the same way (NFM-5425).
+        record = _TunnelRecord(
+            created=time.monotonic(),
+            upstream_peer=upstream_writer.get_extra_info("peername"),
+            target=authority,
+        )
+        self._tunnels[id(record)] = record
         response = asyncio.ensure_future(
             _pump(
                 upstream_reader,
                 writer,
                 self.bucket,
-                self._count,
+                self._tunnel_counter(record),
                 idle_timeout=IDLE_TIMEOUT_SECONDS,
             )
         )
         client_gone = asyncio.ensure_future(_peer_gone(writer))
+        sick_edge_kill = asyncio.ensure_future(record.dead.wait())
         try:
             done, _pending = await asyncio.wait(
-                {response, client_gone}, return_when=asyncio.FIRST_COMPLETED
+                {response, client_gone, sick_edge_kill}, return_when=asyncio.FIRST_COMPLETED
             )
             for task in done:
                 task.result()
         finally:
-            await self._settle({response, client_gone}, (writer, upstream_writer))
+            record.finished = True
+            self._tunnels.pop(id(record), None)
+            await self._settle({response, client_gone, sick_edge_kill}, (writer, upstream_writer))
+
+    # -- sick-edge supervision (NFM-5425) ----------------------------------
+
+    async def supervise_edges(self) -> None:
+        """Watch relays for trickle-serving CDN edges; kill the verified ones.
+
+        Started alongside the stats loop in ``main()`` (and explicitly by
+        tests). A tick that raises must not take the loop down — the
+        watchdog optimizes sick-edge days, it is not a load-bearing relay
+        component — so each tick is individually fenced.
+        """
+        while True:
+            await asyncio.sleep(EDGE_SUPERVISOR_TICK_SECONDS)
+            try:
+                self._edge_supervise_once()
+            except Exception:
+                LOG.exception("edge supervisor tick failed (continuing)")
+
+    def _edge_supervise_once(self, now: Optional[float] = None) -> None:
+        """One synchronous supervision pass over the live tunnels.
+
+        Reads module-level EDGE_* constants at call time so ops (and tests)
+        can retune them without re-instantiating the proxy.
+        """
+        now = time.monotonic() if now is None else now
+        window = EDGE_TRICKLE_WINDOW_SECONDS
+
+        # Global spare-capacity sample: if the aggregate window rate is at
+        # or near cap, per-tunnel slowness is the bucket fair-sharing, not
+        # a sick edge — killing would churn healthy tunnels for nothing.
+        self._rate_samples.append((now, self.bytes_relayed))
+        while self._rate_samples and now - self._rate_samples[0][0] > window:
+            self._rate_samples.popleft()
+        global_span = now - self._rate_samples[0][0]
+        global_bps = (
+            (self.bytes_relayed - self._rate_samples[0][1]) * 8 / global_span
+            if global_span > 0
+            else 0.0
+        )
+        # The bucket's ``rate_bps`` is BYTES per second (its tokens are
+        # bytes); the guard compares bit rates, so derive the cap in bits.
+        # (Unit trap caught in review: comparing global bits/s against the
+        # bytes/s cap number made the guard 8x too strict and mislabeled
+        # the log's cap — "5.0Mbit/s" for a 40 Mbit/s cap.)
+        cap_bps = self.rate_mbps * 1_000_000
+        spare_capacity = global_bps < EDGE_SPARE_CAPACITY_FRACTION * cap_bps
+
+        for record in list(self._tunnels.values()):
+            record.samples.append((now, record.bytes_down))
+            while record.samples and now - record.samples[0][0] > window:
+                record.samples.popleft()
+            samples = list(record.samples)
+            span = now - samples[0][0]
+            moved = record.bytes_down - samples[0][1]
+            if (
+                record.finished
+                or record.dead.is_set()
+                or not spare_capacity
+                or now - record.created < EDGE_MIN_AGE_SECONDS
+                or span < window * 0.9  # judge only on a (near-)full window
+                or moved <= 0  # idle pools and hard stalls are not trickles
+                or moved >= EDGE_TRICKLE_MAX_BYTES
+            ):
+                continue
+            # Creep discriminator: a sick edge feeds the in-flight response
+            # continuously, so ~every inter-tick delta is nonzero. Bursts
+            # with quiet gaps (pip's request/response metadata phase) are
+            # legitimate tunnels even when their window total is small.
+            # (A plain loop, not itertools.pairwise: the LaunchAgent host
+            # interpreter is py3.9.)
+            deltas = []
+            prev_bytes = samples[0][1]
+            for _t, current_bytes in samples[1:]:
+                deltas.append(current_bytes - prev_bytes)
+                prev_bytes = current_bytes
+            creeping = sum(1 for delta in deltas if delta > 0)
+            if not deltas or creeping < EDGE_CREEP_TICK_FRACTION * len(deltas):
+                continue
+            record.dead.set()
+            self.edge_kills += 1
+            edge_ip = record.upstream_peer[0] if record.upstream_peer else "unknown"
+            self.sick_edges.append(
+                {
+                    "edge": edge_ip,
+                    "target": record.target,
+                    "moved_bytes": moved,
+                    "window_s": round(span, 1),
+                    "at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            del self.sick_edges[:-EDGE_SICK_LOG_MAX]
+            LOG.warning(
+                "NFM-5425: killing sick-edge tunnel edge=%s target=%s moved=%.2fMiB "
+                "in %.0fs (~%.2fMbit/s, kill floor %.2fMbit/s; global %.2fMbit/s "
+                "vs cap %.1fMbit/s) — pip's retry re-resolves onto a fresh edge",
+                edge_ip,
+                record.target,
+                moved / 1048576,
+                span,
+                moved * 8 / max(span, 1e-9) / 1e6,
+                EDGE_TRICKLE_MAX_BYTES * 8 / window / 1e6,
+                global_bps / 1e6,
+                cap_bps / 1e6,
+            )
 
 
 def _rate_from_env() -> float:
@@ -650,17 +882,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     old_soft, new_soft = raise_fd_limit()
     LOG.info(
-        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s fd_soft_limit=%d->%d",
+        "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s fd_soft_limit=%d->%d "
+        "edge_watchdog=window%.0fs/floor%.1fMbit/s",
         __version__,
         os.getpid(),
         rate,
         proxy._started_iso,
         old_soft,
         new_soft,
+        EDGE_TRICKLE_WINDOW_SECONDS,
+        EDGE_TRICKLE_MAX_BYTES * 8 / EDGE_TRICKLE_WINDOW_SECONDS / 1e6,
     )
 
     async def run() -> None:
         await proxy.start()
+        supervisor = asyncio.ensure_future(proxy.supervise_edges())
         last_bytes = 0
         last_at = time.monotonic()
         try:
@@ -671,7 +907,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 if moved or proxy._active:
                     LOG.info(
                         "conns=%d total_conns=%d window=%.1fs moved=%.2fMiB "
-                        "window_rate=%.1fMbit/s cap=%.1fMbit/s total=%.2fMiB",
+                        "window_rate=%.1fMbit/s cap=%.1fMbit/s total=%.2fMiB "
+                        "edge_kills=%d",
                         proxy._active,
                         proxy.connections_total,
                         now - last_at,
@@ -679,10 +916,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                         moved * 8 / (now - last_at) / 1e6,
                         rate,
                         proxy.bytes_relayed / 1048576,
+                        proxy.edge_kills,
                     )
                 last_bytes = proxy.bytes_relayed
                 last_at = now
         finally:
+            supervisor.cancel()
+            await asyncio.gather(supervisor, return_exceptions=True)
             await proxy.close()
 
     try:

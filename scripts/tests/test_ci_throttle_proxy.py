@@ -22,7 +22,12 @@ These tests pin the contract the deploy script relies on:
 * an end-to-end CONNECT tunnel relays bytes and honors the pace;
 * health `started` reports the proxy's actual start (not answer time) and
   the proxy raises its own soft RLIMIT_NOFILE so a ~200-connection pip
-  burst cannot EMFILE-wedge the relay (2026-10-07 postmortem hardening).
+  burst cannot EMFILE-wedge the relay (2026-10-07 postmortem hardening);
+* the NFM-5425 sick-edge supervisor kills a tunnel only when it has crept
+  continuously under the trickle floor for a (near-)full window while the
+  global bucket had spare capacity — healthy throughput, bursty metadata
+  traffic, a saturated bucket, and idle pools are all left alone, and a
+  kill surfaces in the log and the health payload with the edge IP.
 """
 
 from __future__ import annotations
@@ -226,6 +231,43 @@ class TestHealthResponse:
         )
         doc = json.loads(later.partition(b"\r\n\r\n")[2])
         assert doc["started"] == boot
+
+    def test_edge_telemetry_fields(self) -> None:
+        """NFM-5425: sick-edge kills surface in the health doc with the
+        edge IP, so deploy-watch can reconcile a slow window without
+        reading the launchd log."""
+        payload = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=1,
+            connections=0,
+            started_iso="2026-10-09T00:00:00+00:00",
+            edge_kills=2,
+            sick_edges=[
+                {
+                    "edge": "222.84.158.10",
+                    "target": "mirrors.aliyun.com:443",
+                    "moved_bytes": 9_000_000,
+                    "window_s": 180.0,
+                    "at": "2026-10-09T04:00:00+00:00",
+                }
+            ],
+        )
+        doc = json.loads(payload.partition(b"\r\n\r\n")[2])
+        assert doc["edge_kills"] == 2
+        assert doc["sick_edges"][0]["edge"] == "222.84.158.10"
+
+    def test_edge_telemetry_defaults_to_empty(self) -> None:
+        payload = build_health_response(
+            rate_mbps=40.0,
+            port=7899,
+            bytes_relayed=0,
+            connections=0,
+            started_iso="2026-10-09T00:00:00+00:00",
+        )
+        doc = json.loads(payload.partition(b"\r\n\r\n")[2])
+        assert doc["edge_kills"] == 0
+        assert doc["sick_edges"] == []
 
 
 class TestHealthStartedStability:
@@ -604,6 +646,355 @@ class TestRelayTeardown:
                 # hangs forever when a handler was active at close()
                 # (fixed in 3.13; repro'd 2026-10-09 both orderings).
                 # The released handler drains during loop shutdown.
+                release.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+
+class TestSickEdgeWatchdog:
+    """NFM-5425: a trickle-serving CDN edge never fails and never idles out.
+
+    pip pools its CONNECT tunnels for the whole install, and each tunnel
+    stays pinned to whatever CDN edge getaddrinfo returned at connect
+    time — so a degraded edge serving 0.2-0.5 Mbps (2026-10-09:
+    222.84.158.10-.41 and 125.73.210.105, while sibling edges of the same
+    mirror ran 1.6-2.4 MB/s) makes the Dockerfile mirror ladder crawl
+    indefinitely: the `||` advances only on leg FAILURE, and a trickle is
+    neither. The proxy must detect the trickle itself and kill the
+    tunnel — pip spends one of its --retries and reconnects onto a
+    freshly resolved edge. The manual `launchctl kickstart -k` mitigation
+    proven 3x that day killed every tunnel at once; the supervisor is the
+    surgical version, one verified-sick tunnel at a time.
+
+    Thresholds are monkeypatched to seconds/KiB (shipped defaults:
+    180s window / 24MiB floor); the "not killed" scenarios pin the
+    false-kill guards — the shared cap must never be mistaken for a sick
+    edge (that kill would churn healthy tunnels on every capped build).
+    """
+
+    @staticmethod
+    def _retune(monkeypatch, *, max_bytes: int = 128 * 1024):
+        """Shrink the EDGE_* constants to test scale. Returns the module."""
+        from scripts import ci_throttle_proxy as mod
+
+        monkeypatch.setattr(mod, "EDGE_SUPERVISOR_TICK_SECONDS", 0.05)
+        monkeypatch.setattr(mod, "EDGE_TRICKLE_WINDOW_SECONDS", 1.0)
+        monkeypatch.setattr(mod, "EDGE_MIN_AGE_SECONDS", 1.0)
+        monkeypatch.setattr(mod, "EDGE_TRICKLE_MAX_BYTES", max_bytes)
+        return mod
+
+    @staticmethod
+    async def _start_feeding_origin(chunk: bytes, interval: float):
+        """Origin that writes ``chunk`` every ``interval`` forever, then
+        never EOFs — a CDN edge in miniature. Small chunk + short interval
+        models the trickle; large chunk + long interval models pip's
+        request/response metadata phase (bursts with quiet gaps)."""
+        stop = asyncio.Event()
+
+        async def feed(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                while not stop.is_set():
+                    writer.write(chunk)
+                    await writer.drain()
+                    await asyncio.sleep(interval)
+            except (ConnectionError, asyncio.CancelledError):
+                pass  # the proxy tore the tunnel down; that is the point
+
+        server = await asyncio.start_server(feed, "127.0.0.1", 0)
+        return server, stop
+
+    @staticmethod
+    async def _start_finite_stream(total: int, chunk: int, interval: float):
+        """Origin that streams ``total`` bytes at a healthy pace, then EOFs."""
+        stop = asyncio.Event()
+
+        async def stream(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                sent = 0
+                while sent < total and not stop.is_set():
+                    n = min(chunk, total - sent)
+                    writer.write(b"x" * n)
+                    await writer.drain()
+                    sent += n
+                    await asyncio.sleep(interval)
+            except (ConnectionError, asyncio.CancelledError):
+                pass
+            # returning closes the transport: the tunnel sees a clean EOF
+
+        server = await asyncio.start_server(stream, "127.0.0.1", 0)
+        return server, stop
+
+    @staticmethod
+    async def _get_health(port: int) -> dict:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(
+            f"GET {HEALTH_PATH} HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n".encode()
+        )
+        await writer.drain()
+        raw = await reader.read()
+        writer.close()
+        return json.loads(raw.partition(b"\r\n\r\n")[2])
+
+    def test_trickling_connect_tunnel_is_killed(self, monkeypatch) -> None:
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * 2048, 0.02)  # ~100KiB/s
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                # read(-1) only resolves at EOF: an unkilled trickle hangs
+                # here until wait_for times out — that is the failure mode
+                # under test (the origin feeds forever).
+                received = await asyncio.wait_for(reader.read(-1), timeout=8.0)
+                assert received, "the trickle must have delivered bytes on the way out"
+                assert proxy.edge_kills >= 1
+                assert proxy.sick_edges, "the kill must land in health telemetry"
+                assert proxy.sick_edges[-1]["edge"] == "127.0.0.1"
+                assert proxy.sick_edges[-1]["target"] == f"127.0.0.1:{origin_port}"
+
+                doc = await self._get_health(proxy.port)
+                assert doc["edge_kills"] >= 1
+                assert doc["sick_edges"][-1]["edge"] == "127.0.0.1"
+
+                deadline = time.monotonic() + 5.0
+                while proxy._active > 0 and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                assert proxy._active == 0, "killed tunnel must release its handler"
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_trickling_plain_http_tunnel_is_killed(self, monkeypatch) -> None:
+        """Same kill through the _forward_http leg (plain-HTTP mirrors)."""
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * 2048, 0.02)
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(
+                    f"GET http://127.0.0.1:{origin_port}/big.bin HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{origin_port}\r\n"
+                    "Proxy-Connection: close\r\n\r\n".encode()
+                )
+                await writer.drain()
+
+                received = await asyncio.wait_for(reader.read(-1), timeout=8.0)
+                assert received
+                assert proxy.edge_kills >= 1
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_healthy_throughput_is_not_killed(self, monkeypatch) -> None:
+        mod = self._retune(monkeypatch)
+        total = 4 * 1024 * 1024  # ~4s of ~1MiB/s: outlives window + min age
+
+        async def scenario() -> None:
+            origin, stop = await self._start_finite_stream(total, 50 * 1024, 0.05)
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                body = await asyncio.wait_for(reader.readexactly(total), timeout=20.0)
+                assert len(body) == total
+                assert proxy.edge_kills == 0, "a healthy fast tunnel must never be killed"
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=40.0))
+
+    def test_bursty_metadata_traffic_is_not_killed(self, monkeypatch) -> None:
+        """The creep discriminator: bursts with quiet gaps (pip resolving
+        index metadata over one pooled tunnel) move few bytes per window,
+        but not CONTINUOUSLY — that is not a sick edge and must survive."""
+        mod = self._retune(monkeypatch)  # floor 128KiB/window; bursts are 60KiB
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * (60 * 1024), 1.2)
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                # ~2 windows of burst traffic; without the creep rule every
+                # judged window (60KiB < 128KiB floor) would kill this.
+                await asyncio.wait_for(reader.readexactly(120 * 1024), timeout=15.0)
+                assert proxy.edge_kills == 0
+                assert proxy._active >= 1, "bursty tunnel must still be alive"
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_saturated_bucket_is_not_mistaken_for_sick_edge(self, monkeypatch) -> None:
+        """The spare-capacity guard: with the cap itself the limiter,
+        per-tunnel throughput sits under the floor through fair sharing —
+        killing those tunnels would churn every capped build."""
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            origin, stop = await self._start_feeding_origin(b"x" * 2048, 0.02)
+            origin_port = origin.sockets[0].getsockname()[1]
+            # cap 0.05 Mbit/s = 6.25KiB/s: the feeder offers ~100KiB/s, so
+            # the bucket — not the origin — is the bottleneck, and the
+            # global window rate sits AT cap (not spare).
+            proxy = mod.ThrottleProxy(rate_mbps=0.05, port=0, burst_seconds=2.0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                # ~2.2s of capped transfer: well past window + min age, the
+                # tunnel sits far under the floor the whole time.
+                await asyncio.wait_for(reader.readexactly(14 * 1024), timeout=20.0)
+                assert proxy.edge_kills == 0, (
+                    "fair-shared slowness under a saturated cap must not be killed"
+                )
+                assert proxy._active >= 1
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stop.set()
+                origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=30.0))
+
+    def test_kill_fires_alongside_healthy_companion_traffic(self, monkeypatch) -> None:
+        """Pins the spare-capacity guard's units. The 2026-10-09 incidents
+        all had healthy sibling tunnels moving a few Mbps alongside the
+        trickle; the aggregate (~3Mbit/s here) is well under 25% of the
+        40Mbit/s cap, so the trickle MUST still be killed. Comparing the
+        global bit rate against the bucket's bytes/s rate number (8x off)
+        blocks exactly this kill — the incident shape itself."""
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            stream_total = 768 * 1024  # ~300KiB/s for ~2.6s
+            stream_origin, stream_stop = await self._start_finite_stream(
+                stream_total, 15 * 1024, 0.05
+            )
+            trickle_origin, trickle_stop = await self._start_feeding_origin(b"x" * 2048, 0.02)
+            stream_port = stream_origin.sockets[0].getsockname()[1]
+            trickle_port = trickle_origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                stream_reader, stream_writer = await asyncio.open_connection(
+                    "127.0.0.1", proxy.port
+                )
+                stream_writer.write(f"CONNECT 127.0.0.1:{stream_port} HTTP/1.1\r\n\r\n".encode())
+                await stream_writer.drain()
+                await stream_reader.readuntil(b"\r\n\r\n")
+                trickle_reader, trickle_writer = await asyncio.open_connection(
+                    "127.0.0.1", proxy.port
+                )
+                trickle_writer.write(f"CONNECT 127.0.0.1:{trickle_port} HTTP/1.1\r\n\r\n".encode())
+                await trickle_writer.drain()
+                await trickle_reader.readuntil(b"\r\n\r\n")
+
+                # The healthy companion delivers in full (~300KiB/s >= the
+                # 128KiB window floor, so it is never a kill candidate).
+                body = await asyncio.wait_for(stream_reader.readexactly(stream_total), timeout=20.0)
+                assert len(body) == stream_total
+                # The trickle is torn down despite the companion traffic.
+                received = await asyncio.wait_for(trickle_reader.read(-1), timeout=10.0)
+                assert received
+                assert proxy.edge_kills == 1, (
+                    "a trickle must be killed while healthy siblings use only a "
+                    "few Mbit/s of a 40Mbit/s cap (spare-capacity guard units)"
+                )
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                stream_writer.close()
+                trickle_writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
+                stream_stop.set()
+                trickle_stop.set()
+                stream_origin.close()
+                trickle_origin.close()
+
+        asyncio.run(asyncio.wait_for(scenario(), timeout=40.0))
+
+    def test_idle_tunnel_is_not_killed(self, monkeypatch) -> None:
+        """moved == 0 (a pooled, silent tunnel) is not a trickle: true
+        stalls belong to the idle timeout, idle pools to nobody."""
+        mod = self._retune(monkeypatch)
+
+        async def scenario() -> None:
+            origin, release = await TestRelayTeardown._start_stalled_origin()
+            origin_port = origin.sockets[0].getsockname()[1]
+            proxy = mod.ThrottleProxy(rate_mbps=40.0, port=0)
+            await proxy.start()
+            supervisor = asyncio.ensure_future(proxy.supervise_edges())
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+                writer.write(f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n\r\n".encode())
+                await writer.drain()
+                await reader.readuntil(b"\r\n\r\n")
+
+                await asyncio.sleep(2.0)  # > window + min age at test scale
+                assert proxy.edge_kills == 0
+                assert proxy._active >= 1, "silent idle tunnel must be left alone"
+            finally:
+                supervisor.cancel()
+                await asyncio.gather(supervisor, return_exceptions=True)
+                writer.close()
+                await asyncio.wait_for(proxy.close(), timeout=10.0)
                 release.set()
                 origin.close()
 
