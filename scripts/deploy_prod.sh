@@ -566,6 +566,61 @@ fi
 echo "Checking Web health..."
 health_first_poll http://localhost:3000/ 12 5 || exit 1
 
+# NFM-5420 task 3 / NFM-5426 — post-cutover Cloudflare edge purge. Static
+# HTML is edge-cached by origin s-maxage; before NFM-5419 that was a 1-year
+# pin, so every deploy that changed chunk hashes left warm colos serving
+# HTML with dead /_next/static refs (NFM-5418). Origin now emits s-maxage=300,
+# which bounds NEW entries, but the previous entry still occupies the cache
+# key until it expires or is purged — so the deploy itself must purge.
+# purge_everything (not a route list) on purpose: it is the only form that
+# implicitly covers ALIAS paths like the /browse → /potentials rewrite in
+# apps/web/next.config.ts LEGACY_ALIAS_REWRITES, which a canonical-route
+# purge list misses (NFM-5426's exact failure mode).
+#
+# Credentials come from (first match wins):
+#   1. exported CF_ZONE_PURGE_TOKEN / CF_ZONE_ID — manual on-host runs;
+#   2. docker/.env.prod — the operator-managed env file compose already
+#      reads (--env-file, nfmdeploy-readable, untracked so it survives the
+#      runner's `git reset --hard`). This is the GH-runner path: run-deploy.sh
+#      sudo env_keep only passes DEPLOY_SHA/PROXY_PORT through, so the env
+#      file is the sanctioned channel that needs no sudoers or workflow
+#      change. Plain unquoted values (CF tokens are [A-Za-z0-9_-]).
+# Deliberately NOT fatal (NFM-5149 advisory precedent): by this point the
+# origin cutover above is complete and verified; a failed or skipped purge
+# leaves stale edge HTML for at most the old entry's TTL and must never
+# retro-red a healthy deploy.
+echo "==> Cloudflare edge purge (NFM-5420/NFM-5426)"
+if [ -z "${CF_ZONE_PURGE_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+  if [ -f docker/.env.prod ]; then
+    # Heredoc (not a pipe) so the export survives in this shell.
+    while IFS='=' read -r cf_k cf_v; do
+      case "${cf_k}" in
+        CF_ZONE_PURGE_TOKEN|CF_ZONE_ID)
+          [ -n "${cf_v}" ] && export "${cf_k}=${cf_v}"
+          ;;
+      esac
+    done <<EOF
+$(grep -E '^(CF_ZONE_PURGE_TOKEN|CF_ZONE_ID)=' docker/.env.prod 2>/dev/null || true)
+EOF
+  fi
+fi
+if [ -n "${CF_ZONE_PURGE_TOKEN:-}" ] && [ -n "${CF_ZONE_ID:-}" ]; then
+  cf_purge_rc=0
+  curl -fsS --max-time 30 -X POST \
+    -H "Authorization: Bearer ${CF_ZONE_PURGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"purge_everything":true}' \
+    "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+    >/dev/null 2>&1 || cf_purge_rc=$?
+  if [ "$cf_purge_rc" -eq 0 ]; then
+    echo "==> CF purge_everything issued (alias paths incl. /browse covered)"
+  else
+    echo "!! NFM-5426: CF purge FAILED (curl exit ${cf_purge_rc}) — edge HTML stays stale until s-maxage expiry. Purge manually: CF dashboard → zone → Caching → Configuration → Purge Everything." >&2
+  fi
+else
+  echo "!! NFM-5426: CF purge SKIPPED — CF_ZONE_PURGE_TOKEN / CF_ZONE_ID not in env nor docker/.env.prod. Edge HTML can outlive this build (NFM-5418 class); purge manually if chunk hashes changed." >&2
+fi
+
 # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest now that cutover and
 # health gates have passed. The manifest (one JSON artifact, overwritten per
 # deploy, written atomically) is the G4b drift alarm's baseline:
