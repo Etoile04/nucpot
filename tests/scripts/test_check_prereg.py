@@ -319,6 +319,29 @@ def test_cli_base_uses_git_diff_and_surface_filter(monkeypatch):
     assert cp.git_diff_paths("HEAD~1") == [ML_REL]
 
 
+def test_git_diff_paths_excludes_deletions_via_diff_filter(monkeypatch):
+    seen = {}
+
+    class FakeCompleted:
+        stdout = f"{ML_REL}\n"
+
+    def fake_run(*a, **k):
+        seen["argv"] = a[0]
+        return FakeCompleted()
+
+    monkeypatch.setattr(cp.subprocess, "run", fake_run)
+    assert cp.git_diff_paths("HEAD~1") == [ML_REL]
+    assert "--diff-filter=d" in seen["argv"]
+
+
+def test_cli_base_missing_file_at_head_skips_not_exit_two(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cp, "git_diff_paths", lambda base: [ML_REL])
+    assert cp.main(["--base", "HEAD~1"]) == 0
+    captured = capsys.readouterr()
+    assert "absent at HEAD" in captured.out
+
+
 # ---------------------------------------------------------------------------
 # --verify (mocked carrier thread)
 # ---------------------------------------------------------------------------
