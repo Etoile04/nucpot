@@ -92,7 +92,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 DEFAULT_PORT = 7899
 DEFAULT_RATE_MBPS = 40.0
@@ -145,6 +145,14 @@ EDGE_SPARE_CAPACITY_FRACTION = 0.25
 # quiet gaps between requests. Require ~all window ticks to have moved
 # bytes so pip's resolution phase is never mistaken for a trickle.
 EDGE_CREEP_TICK_FRACTION = 0.9
+# Minimum retained-sample span (as a fraction of the window) required
+# before a tunnel is judged — the judge is RATE-normalized (NFM-5432), so
+# any span this large yields the same verdict a full window would; the old
+# 0.9 gate combined with the `> window` eviction fencepost pinned the
+# retained span at window-tick (150s of 180s at the shipped 30s/180s
+# ratio, ticks always drifting late) and the supervisor could never judge
+# anything in production.
+EDGE_TRICKLE_MIN_SPAN_FRACTION = 0.75
 # Recent sick edges kept in the health payload for deploy-watch.
 EDGE_SICK_LOG_MAX = 8
 
@@ -269,6 +277,8 @@ def build_health_response(
     started_iso: str,
     edge_kills: int = 0,
     sick_edges: Optional[list] = None,
+    supervisor_ticks: int = 0,
+    supervisor_last_tick: Optional[str] = None,
 ) -> bytes:
     doc = {
         "status": "ok",
@@ -285,6 +295,11 @@ def build_health_response(
         # reconciled against the exact edge IPs without reading the log.
         "edge_kills": edge_kills,
         "sick_edges": list(sick_edges or []),
+        # NFM-5432: supervisor liveness — a frozen counter/timestamp means
+        # the watchdog itself died; edge_kills=0 alone meant "healthy" and
+        # "never judged" alike during the 1h52m 37941082708 hang.
+        "supervisor_ticks": supervisor_ticks,
+        "supervisor_last_tick": supervisor_last_tick,
     }
     body = json.dumps(doc).encode()
     head = (
@@ -415,6 +430,11 @@ class ThrottleProxy:
         self.edge_kills = 0
         self.sick_edges: list = []
         self._rate_samples: deque = deque()
+        # NFM-5432 supervisor liveness: edge_kills=0 cannot distinguish
+        # "judged the fleet healthy" from "never judged anything" (the
+        # 1h52m 37941082708 hang), so every pass counts and stamps itself.
+        self.supervisor_ticks = 0
+        self.supervisor_last_tick_iso: Optional[str] = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -554,6 +574,8 @@ class ThrottleProxy:
                     started_iso=self._started_iso,
                     edge_kills=self.edge_kills,
                     sick_edges=self.sick_edges,
+                    supervisor_ticks=self.supervisor_ticks,
+                    supervisor_last_tick=self.supervisor_last_tick_iso,
                 )
             )
             await writer.drain()
@@ -720,6 +742,8 @@ class ThrottleProxy:
         can retune them without re-instantiating the proxy.
         """
         now = time.monotonic() if now is None else now
+        self.supervisor_ticks += 1
+        self.supervisor_last_tick_iso = datetime.now(timezone.utc).isoformat()
         window = EDGE_TRICKLE_WINDOW_SECONDS
 
         # Global spare-capacity sample: if the aggregate window rate is at
@@ -754,10 +778,21 @@ class ThrottleProxy:
                 or record.dead.is_set()
                 or not spare_capacity
                 or now - record.created < EDGE_MIN_AGE_SECONDS
-                or span < window * 0.9  # judge only on a (near-)full window
+                # NFM-5432: the judge is rate-normalized below, so any
+                # retained span this large is sufficient evidence — the old
+                # 0.9 gate plus the `> window` eviction fencepost pinned the
+                # span at window-tick under real tick drift and the judge
+                # never ran in production (37941082708, 1h52m, 0 kills).
+                or span < EDGE_TRICKLE_MIN_SPAN_FRACTION * window
                 or moved <= 0  # idle pools and hard stalls are not trickles
-                or moved >= EDGE_TRICKLE_MAX_BYTES
             ):
+                continue
+            # Rate-normalized floor: the same EDGE_TRICKLE_MAX_BYTES budget
+            # expressed per second, judged over whatever span the deque
+            # retained. At a full window this is byte-identical to the old
+            # `moved < EDGE_TRICKLE_MAX_BYTES` comparison; at a drift-pinned
+            # span it still judges (and kills) instead of skipping forever.
+            if moved * window >= EDGE_TRICKLE_MAX_BYTES * span:
                 continue
             # Creep discriminator: a sick edge feeds the in-flight response
             # continuously, so ~every inter-tick delta is nonzero. Bursts
