@@ -92,7 +92,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlsplit
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 DEFAULT_PORT = 7899
 DEFAULT_RATE_MBPS = 40.0
@@ -155,6 +155,26 @@ EDGE_CREEP_TICK_FRACTION = 0.9
 EDGE_TRICKLE_MIN_SPAN_FRACTION = 0.75
 # Recent sick edges kept in the health payload for deploy-watch.
 EDGE_SICK_LOG_MAX = 8
+# --- NFM-5434: mid-band edge advisory (rate-capped edges, log-only) ----------
+# 2026-10-09 calibration (nfmd-ci-throttle.log, 3971 aggregate windows +
+# session reconstruction): the fleet's STANDING bulk envelope runs
+# 1.2-2.5 Mbit/s session-average — the 513 MiB alembic wheel leg takes
+# 28-55 min on every deploy — while solo fast windows (8-14 Mbit/s) are
+# 0.7% of the sample and the observed trickle band tops out ~0.7 Mbit/s.
+# The kill floor therefore STAYS at EDGE_TRICKLE_MAX_BYTES: it already
+# sits in the empty moat between the trickle ceiling (0.7) and the
+# envelope floor (1.25), and any raise would execute the normal
+# degraded-path envelope on every deploy. The 2.5-3.5 Mbit/s rate-capped
+# band (160.202.154.51, NFM-5432) is normal operation under an
+# aliyun-family brownout, remedied by mirror-ladder ordering — which
+# needs per-edge rates this proxy never records (only killed tunnels log
+# their edge). The advisory observes the band WITHOUT touching the
+# tunnel: same spare-capacity/age/span/creep guards as the kill judge,
+# plus an upper ceiling and a per-(edge,target) cadence.
+EDGE_MIDBAND_MAX_BYTES = 90 * 1024 * 1024  # 90 MiB/180s => ceiling ~4.2 Mbit/s
+EDGE_MIDBAND_ADVISORY_INTERVAL = 900.0
+EDGE_MIDBAND_LOG_MAX = 8
+EDGE_MIDBAND_KEYS_MAX = 256
 
 LOG = logging.getLogger("nfmd-ci-throttle")
 
@@ -277,6 +297,8 @@ def build_health_response(
     started_iso: str,
     edge_kills: int = 0,
     sick_edges: Optional[list] = None,
+    midband_advisories: int = 0,
+    midband_edges: Optional[list] = None,
     supervisor_ticks: int = 0,
     supervisor_last_tick: Optional[str] = None,
 ) -> bytes:
@@ -295,6 +317,11 @@ def build_health_response(
         # reconciled against the exact edge IPs without reading the log.
         "edge_kills": edge_kills,
         "sick_edges": list(sick_edges or []),
+        # NFM-5434: rate-capped-but-above-floor edges (log-only advisory)
+        # so the mirror-ladder health-check can rank edges by delivered
+        # rate without reading the log.
+        "midband_advisories": midband_advisories,
+        "midband_edges": list(midband_edges or []),
         # NFM-5432: supervisor liveness — a frozen counter/timestamp means
         # the watchdog itself died; edge_kills=0 alone meant "healthy" and
         # "never judged" alike during the 1h52m 37941082708 hang.
@@ -375,6 +402,25 @@ async def _peer_gone(
         await asyncio.sleep(poll_seconds)
 
 
+def _creeping_samples(samples: list) -> bool:
+    """NFM-5425 creep discriminator, shared by the kill judge and the
+    NFM-5434 advisory: a sick or rate-capped edge feeds the in-flight
+    response continuously, so ~every inter-tick delta is nonzero, while
+    request/response metadata traffic moves in bursts with quiet gaps.
+    (A plain loop, not itertools.pairwise: the LaunchAgent host
+    interpreter is py3.9.)
+    """
+    deltas = []
+    prev_bytes = samples[0][1]
+    for _t, current_bytes in samples[1:]:
+        deltas.append(current_bytes - prev_bytes)
+        prev_bytes = current_bytes
+    if not deltas:
+        return False
+    creeping = sum(1 for delta in deltas if delta > 0)
+    return creeping >= EDGE_CREEP_TICK_FRACTION * len(deltas)
+
+
 @dataclass
 class _TunnelRecord:
     """Live accounting for one relayed download tunnel (NFM-5425).
@@ -429,6 +475,12 @@ class ThrottleProxy:
         self._tunnels: dict = {}
         self.edge_kills = 0
         self.sick_edges: list = []
+        # NFM-5434 mid-band advisory state: recent advisories for the
+        # health payload, a cumulative count, and the per-(edge,target)
+        # timestamps behind the advisory cadence.
+        self.midband_advisories = 0
+        self.midband_edges: list = []
+        self._midband_last: dict = {}
         self._rate_samples: deque = deque()
         # NFM-5432 supervisor liveness: edge_kills=0 cannot distinguish
         # "judged the fleet healthy" from "never judged anything" (the
@@ -574,6 +626,8 @@ class ThrottleProxy:
                     started_iso=self._started_iso,
                     edge_kills=self.edge_kills,
                     sick_edges=self.sick_edges,
+                    midband_advisories=self.midband_advisories,
+                    midband_edges=self.midband_edges,
                     supervisor_ticks=self.supervisor_ticks,
                     supervisor_last_tick=self.supervisor_last_tick_iso,
                 )
@@ -793,20 +847,59 @@ class ThrottleProxy:
             # `moved < EDGE_TRICKLE_MAX_BYTES` comparison; at a drift-pinned
             # span it still judges (and kills) instead of skipping forever.
             if moved * window >= EDGE_TRICKLE_MAX_BYTES * span:
+                # NFM-5434 mid-band advisory: the tunnel is ABOVE the kill
+                # floor (which stays where it is — the fleet's standing
+                # envelope starts at 1.25 Mbit/s session-average, so a
+                # higher floor would kill normal degraded-path traffic on
+                # every deploy) but under the advisory ceiling. Log-only
+                # and cadence-throttled per (edge, target): the tunnel is
+                # never touched, so a false advisory costs one log line.
+                if (
+                    moved * window < EDGE_MIDBAND_MAX_BYTES * span
+                    and _creeping_samples(samples)
+                ):
+                    edge_ip = (
+                        record.upstream_peer[0] if record.upstream_peer else "unknown"
+                    )
+                    key = (edge_ip, record.target)
+                    last = self._midband_last.get(key)
+                    if last is None or now - last >= EDGE_MIDBAND_ADVISORY_INTERVAL:
+                        if len(self._midband_last) >= EDGE_MIDBAND_KEYS_MAX:
+                            self._midband_last.clear()
+                        self._midband_last[key] = now
+                        self.midband_advisories += 1
+                        self.midband_edges.append(
+                            {
+                                "edge": edge_ip,
+                                "target": record.target,
+                                "moved_bytes": moved,
+                                "window_s": round(span, 1),
+                                "at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
+                        del self.midband_edges[:-EDGE_MIDBAND_LOG_MAX]
+                        LOG.info(
+                            "NFM-5434: mid-band edge advisory edge=%s target=%s "
+                            "moved=%.2fMiB in %.0fs (~%.2fMbit/s, advisory band "
+                            "%.2f-%.2fMbit/s; global %.2fMbit/s vs cap %.1fMbit/s) "
+                            "— rate-capped above the kill floor; recorded for "
+                            "mirror ranking, tunnel left alone",
+                            edge_ip,
+                            record.target,
+                            moved / 1048576,
+                            span,
+                            moved * 8 / max(span, 1e-9) / 1e6,
+                            EDGE_TRICKLE_MAX_BYTES * 8 / window / 1e6,
+                            EDGE_MIDBAND_MAX_BYTES * 8 / window / 1e6,
+                            global_bps / 1e6,
+                            cap_bps / 1e6,
+                        )
                 continue
             # Creep discriminator: a sick edge feeds the in-flight response
             # continuously, so ~every inter-tick delta is nonzero. Bursts
             # with quiet gaps (pip's request/response metadata phase) are
             # legitimate tunnels even when their window total is small.
-            # (A plain loop, not itertools.pairwise: the LaunchAgent host
-            # interpreter is py3.9.)
-            deltas = []
-            prev_bytes = samples[0][1]
-            for _t, current_bytes in samples[1:]:
-                deltas.append(current_bytes - prev_bytes)
-                prev_bytes = current_bytes
-            creeping = sum(1 for delta in deltas if delta > 0)
-            if not deltas or creeping < EDGE_CREEP_TICK_FRACTION * len(deltas):
+            if not _creeping_samples(samples):
                 continue
             record.dead.set()
             self.edge_kills += 1
@@ -918,7 +1011,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     old_soft, new_soft = raise_fd_limit()
     LOG.info(
         "nfmd-ci-throttle v%s starting — pid=%d rate=%.1fMbit/s started=%s fd_soft_limit=%d->%d "
-        "edge_watchdog=window%.0fs/floor%.1fMbit/s",
+        "edge_watchdog=window%.0fs/floor%.1fMbit/s/advisory_ceil%.1fMbit/s",
         __version__,
         os.getpid(),
         rate,
@@ -927,6 +1020,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         new_soft,
         EDGE_TRICKLE_WINDOW_SECONDS,
         EDGE_TRICKLE_MAX_BYTES * 8 / EDGE_TRICKLE_WINDOW_SECONDS / 1e6,
+        EDGE_MIDBAND_MAX_BYTES * 8 / EDGE_TRICKLE_WINDOW_SECONDS / 1e6,
     )
 
     async def run() -> None:
