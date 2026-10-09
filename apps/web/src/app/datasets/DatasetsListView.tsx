@@ -14,6 +14,15 @@
  *   - D4: page shell mirrors MaterialsListView (shared chrome + antd
  *     components, standard max-w-[1200px] container) instead of a
  *     page-local gradient wrapper.
+ *
+ * NFM-5330 (390px viewport clip, out-of-scope finding of the NFM-5321
+ * re-verdict): the fixed-width trailing columns (96/120/120) used to
+ * bleed past the viewport with `overflow: visible` — 审核/测量日期/更新时间
+ * were unreachable and the 标题 column wrapped up to four lines. The
+ * table now sets `scroll={{ x: 840 }}` (antd's scroll container, the
+ * same pattern as MaterialsListView and 14 other tables), wraps in
+ * TableScrollFade for a swipe affordance, and keeps the three text
+ * columns single-line via `ellipsis` + native title tooltip.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -21,6 +30,7 @@ import Link from "next/link"
 import { Alert, Button, Empty, Pagination, Spin, Table, Tag, Typography } from "antd"
 import type { ColumnsType } from "antd/es/table"
 import { formatDate } from "@/lib/format-date"
+import { TableScrollFade } from "@/components/tables/TableScrollFade"
 import {
   listDatasets,
   type DatasetListItem,
@@ -48,6 +58,17 @@ const INITIAL: ListState = {
 }
 
 const PAGE_SIZE = 20
+
+/**
+ * NFM-5330 — minimum table width below which antd switches to its
+ * horizontal scroll container. Fixed trailing columns take 336px
+ * (96 + 120 + 120); 840 leaves the three text columns ~168px each,
+ * enough for the truncated-title tooltips to stay useful. On viewports
+ * wider than this (desktop), rc-table's `min-width: 100%` keeps the
+ * table stretched to the container — same single-block layout as
+ * before, no scroll, no fades.
+ */
+const TABLE_MIN_WIDTH_PX = 840
 
 export function DatasetsListView() {
   const [state, setState] = useState<ListState>(INITIAL)
@@ -94,10 +115,15 @@ export function DatasetsListView() {
       title: "标题",
       dataIndex: "title",
       key: "title",
+      // NFM-5330: single line + ellipsis instead of wrapping to four
+      // lines at 390px; the anchor's title attr keeps the full text
+      // available as a native tooltip.
+      ellipsis: true,
       render: (_, row) => (
         <Link
           href={`/datasets/${row.id}`}
           className="text-blue-400 hover:text-blue-300 hover:underline font-medium"
+          title={row.title}
         >
           {row.title}
         </Link>
@@ -107,6 +133,7 @@ export function DatasetsListView() {
       title: "材料",
       dataIndex: "material_name",
       key: "material_name",
+      ellipsis: true,
       render: (_, row) => {
         const name = row.material_name ?? row.material_id.slice(0, 8)
         return (
@@ -124,6 +151,7 @@ export function DatasetsListView() {
       title: "数据源",
       dataIndex: "source_id",
       key: "source_id",
+      ellipsis: true,
       // NFM-5321 D3: expand=source resolves the title; an unresolved
       // title renders 「—」 (the table's empty-value convention) rather
       // than a truncated UUID fragment.
@@ -200,14 +228,17 @@ export function DatasetsListView() {
           <Empty description="暂无数据集" />
         ) : (
           <>
-            <Table<DatasetListItem>
-              rowKey="id"
-              dataSource={state.items}
-              columns={columns}
-              pagination={false}
-              loading={state.loading}
-              size="middle"
-            />
+            <TableScrollFade>
+              <Table<DatasetListItem>
+                rowKey="id"
+                dataSource={state.items}
+                columns={columns}
+                pagination={false}
+                loading={state.loading}
+                size="middle"
+                scroll={{ x: TABLE_MIN_WIDTH_PX }}
+              />
+            </TableScrollFade>
             {state.pages > 1 ? (
               <div className="flex justify-end pt-2">
                 <Pagination
