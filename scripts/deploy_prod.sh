@@ -696,6 +696,34 @@ else
   echo "==> NOTE: host-prod-gate entry-sync not present in this checkout — NFM-5149 drift check skipped"
 fi
 
+# NFM-5420 (NFM-5418 fix 2/2): purge the Cloudflare edge cache AFTER the
+# cutover health checks pass, so edge HTML never outlives its build. The
+# zone caches HTML (Cache-Everything-class rule); without this purge a
+# deploy that renames chunks leaves every POP serving HTML that references
+# 404 chunk URLs for the cached TTL (observed ~19.5h into a 1-year
+# s-maxage pin on /datasets + /browse).
+#
+# Host-side token is read from CLOUDFLARE_API_TOKEN (nfmdeploy env). When
+# absent this is advisory-only — enforcement lives in the JOB context:
+# the cf-cache-purge job in production-deployment.yml fails closed on a
+# missing repo secret (the NFM-5221 lesson: banners inside the deploy
+# body get ignored; a red job does not). --allow-skip keeps manual
+# runbook deploys flowing when no token is provisioned yet; a PRESENT
+# but failing purge still aborts (exit 1) because that means edge HTML
+# is pinned to a build that no longer exists.
+if [ -f scripts/cf-purge.sh ]; then
+  CF_PURGE_RC=0
+  bash scripts/cf-purge.sh --allow-skip || CF_PURGE_RC=$?
+  if [ "$CF_PURGE_RC" -eq 3 ]; then
+    echo "==> NOTE: CF cache purge skipped (no token) — cf-cache-purge CI job owns enforcement"
+  elif [ "$CF_PURGE_RC" -ne 0 ]; then
+    echo "FATAL: CF cache purge failed (rc=${CF_PURGE_RC}) — edge HTML may reference dead chunks" >&2
+    exit "$CF_PURGE_RC"
+  fi
+else
+  echo "==> NOTE: scripts/cf-purge.sh not present in this checkout — CF purge skipped"
+fi
+
 # NFM-2148 / ADR-NFM-2139 §5 D1 retention: keep the most-recent 10
 # nucpot-prod-* tags per repository in the local daemon. The new SHA we just
 # built is always newest, so it is never pruned.

@@ -1354,6 +1354,65 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
+  # NFM-5420 (NFM-5418 fix 2/2) — post-deploy Cloudflare edge-cache purge.
+  #
+  # The zone caches HTML (Cache-Everything-class rule) while origin HTML
+  # used to carry s-maxage=31536000, so a deploy that renames chunks left
+  # every POP serving HTML referencing 404 chunk URLs for up to a year
+  # (NFM-5418: /datasets + /browse dead for cache-cold visitors).
+  # NFM-5419 fixed origin to s-maxage=300; this job evicts the edge copy
+  # after every deploy so edge HTML never outlives its build.
+  #
+  # Runs only when deploy-prod AND smoke-test both succeeded: purging while
+  # smoke is red would push cache-cold visitors onto a broken build (the
+  # stale-but-intact edge copy is then the better failure mode).
+  #
+  # NFM-5221 lesson applied: enforcement lives in the JOB context, not in
+  # an ignorable banner inside the deploy body. A missing token FAILS this
+  # job with the exact provisioning action — fail-closed is the point; the
+  # incident class was silence, not noise. deploy_prod.sh carries the same
+  # purge as --allow-skip advisory for manual runbook deploys.
+  #
+  # Token: repo secret CLOUDFLARE_CACHE_PURGE_TOKEN, scoped to
+  # Zone.CachePurge on the nucpot.dpdns.org zone only. Zone id comes from
+  # the CLOUDFLARE_ZONE_ID repo variable when set (a CachePurge-only token
+  # cannot list zones); otherwise the script resolves it by zone name,
+  # which additionally requires Zone:Read on the token.
+  # ===========================================================================
+  cf-cache-purge:
+    name: Purge Cloudflare Edge Cache (NFM-5420)
+    runs-on: [self-hosted, production]
+    needs: [deploy-prod, smoke-test]
+    if: always() && needs.deploy-prod.result == 'success' && needs.smoke-test.result == 'success'
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_PURGE_TOKEN }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+    steps:
+      - name: Warm up direct route to api.cloudflare.com (GFW transience)
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Same pattern as the github.com warm-up: probe until it answers
+          # so the purge lands on a live route instead of racing a connect
+          # timeout (cf-purge.sh retries too; this avoids a cold first try).
+          for i in 1 2 3 4 5; do
+            curl -sf --max-time 10 -o /dev/null https://api.cloudflare.com && { echo "api.cloudflare.com reachable (attempt $i)"; exit 0; }
+            echo "api.cloudflare.com not reachable (attempt $i), waiting 15s..."; sleep 15
+          done
+          echo "WARNING: api.cloudflare.com still unreachable after 5 attempts"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Purge edge cache (fail-closed on missing token)
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_CACHE_PURGE_TOKEN repo secret is not provisioned — edge HTML can outlive this build (NFM-5418 class). Provision a Zone.CachePurge-scoped token for nucpot.dpdns.org and add it as the repo secret, then re-run this job. Purge skipped."
+            exit 1
+          fi
+          bash scripts/cf-purge.sh
+
+  # ===========================================================================
   # C6.1.1 — Production durable producer (stage 1) — NFM-2110
   #
   # Hosted runner that assembles one §3.1 deploy-event JSON object via the
