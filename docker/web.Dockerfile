@@ -70,6 +70,23 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/content ./content
 
+# NFM-5441: legacy chunk compatibility shim (temporary — remove after the
+# NFM-5420 board-gated CF purge lands and NFM-5418 confirms edge healing).
+# The CF edge still serves 1y-pinned HTML (cached 2026-10-08/09 across
+# /datasets /browse /potentials /materials) whose hashed asset refs 404 at
+# origin, breaking cache-cold visitors (NFM-5418): 2 refs visibly 404 at the
+# edge, 11 more 404 at origin since the f727ce6c8 chunk rotation (latent —
+# any cache-miss colo). These 13 files are served under their ORIGINAL
+# hashed names so that HTML renders again. Additive only: content-hashed
+# filenames cannot collide with the current build's chunks.
+#   *.js (12) — byte-exact recovery (rebuild at 186e54c76, the main tip live
+#     at cache time, reproduces every content-hash name exactly).
+#   25fb4gkiz433k.css — same-source rebuild under the legacy name: the
+#     original image was pruned and no rebuild reproduces that hash (deploy
+#     tree drift); rule-level diff vs the current build shows ONLY the
+#     NFM-5330 utility additions, i.e. exactly the pre-5330 stylesheet.
+COPY docker/legacy-chunks/ ./apps/web/.next/static/chunks/
+
 EXPOSE 3000
 
 CMD ["node", "apps/web/server.js"]
