@@ -103,3 +103,59 @@ Per NFM-5309: 7 days after this lands, SRE re-censuses
 (`site_monitor_cadence_check.py --json`). Success = watchdog reads OK for the
 window (no WARN/CRIT) AND no monitoring-blindness incident recurred; the
 `*/10`-era expectation of 144/day is retired with this contract.
+
+## 7. Sentinel chunk-scan degraded contract (NFM-5446)
+
+The host sentinel's NFM-5418 chunk-ref scan (5 edge-HTML pages + ref HEAD
+verification) failed OPEN until 2026-10-11: it ran serially under a 240 s
+deadline, and on deadline expiry it recorded `0 0 scan-deadline-exceeded
+(fail-open)` as GREEN. During diurnal edge-interference windows
+(NFM-5262, 5-10.4 s/request) the serial scan could never fit 240 s, so
+BOTH watched lanes — P1 stale 1y-pins and P0 dead chunk refs — went
+unverified while the sentinel read green for hours (observed: ~30
+consecutive probes / 3 h 46 m with four pages still 1y-pinned).
+
+Post-NFM-5446 contract (`scripts/nfm-site-monitor.sh`, mirrored to
+`~/bin/nfm-site-monitor.sh`):
+
+- **Parallel scan**: page GETs and ref HEADs (pool of 12) run concurrently
+  under one wall budget; the 240 s SIGALRM remains only as a backstop for
+  pathological hangs.
+- **Fail-closed-or-unknown**: a scan that cannot complete reports
+  `scan-degraded` with rc 3 (`--scan-once` exit 3) — never green. Coverage
+  caveats are explicit (`refs-unverified=N` — including refs beyond the
+  per-page cap of 45 distinct refs, `page-fetch-skipped=…`, `all page
+  fetches failed`).
+- **TTL spot-check lane (always runs)**: each page's s-maxage/age verdict is
+  captured from response headers before the body read, so stale-pin P1
+  detection survives ref-budget exhaustion — pins surface as WARN even
+  during degraded scans.
+- **Only 4xx is a definitive dead ref (P0)**; 5xx/network errors count as
+  unverified (transient origin trouble is owned by the base probe lane).
+- **Skip-rate escalation**: `scan_skip_streak` in the sentinel state counts
+  consecutive degraded scans; ≥3 (~15 min at 300 s cadence, matching
+  STALE_SENTINEL_SECONDS) escalates to a CRITICAL `sentinel chunk-scan
+  blind` page (monitoring-blindness class, latched `pending_page`, acked
+  via `--ack-page` like other CRITICALs). A completing scan resets the
+  streak and logs a RECOVERY if it ended a blind episode.
+
+SRE readers: a `WARN — chunk-scan DEGRADED` line means the P0 lane was
+unverified for that cycle (investigate if it persists); `CRITICAL —
+sentinel chunk-scan blind` pages the sentinel itself. The NFM-5418
+close-gate keeps requiring direct fresh-connection reads (s-maxage=300 on
+all watched pages) — sentinel green is necessary, not sufficient.
+
+**REF_CAP tuning (2026-10-11):** the per-page verification cap is a
+green-blocking ceiling — a page carrying more distinct chunk refs than
+REF_CAP truncates the tail into `refs-unverified`, so the scan degrades on
+EVERY cycle and the skip-streak CRITICAL latches permanently. This is
+deterministic (calm edge, all sampled HEADs 200s at 1–2 s), unlike a
+latency-window degradation. Observed: live `/materials` grew to 40
+distinct refs under the original cap of 30 → 10 refs dropped per scan →
+permanent `sentinel chunk-scan blind` from 10:47Z until the cap was raised
+to 45. **Operational rule: `refs-unverified=N > 0` persisting across scans
+while spot-check HEADs are fast means the site outgrew REF_CAP — raise it
+(keep ~10% headroom above the largest page's distinct-ref count) rather
+than acking the page.** Raising the cap increases worst-case scan cost
+(5 × REF_CAP HEADs through the pool); the 240 s budget still bounds it
+and a genuinely slow edge degrades exactly as before.
