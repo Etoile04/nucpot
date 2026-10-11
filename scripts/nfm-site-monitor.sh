@@ -56,6 +56,13 @@
 #     NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_SCAN_REF_POOL, NFM_MONITOR_LOG,
 #     NFM_MONITOR_STATE, NFM_MONITOR_PROBE, NFM_MONITOR_NOTIFY
 #     (scripts/tests/test_nfm_site_monitor.py refuses to run without them).
+#   - Gate-review hardening: the ref-cap check iterates `bad` under `lock`
+#     (a lock-free sum raced concurrent appends and a RuntimeError in the
+#     worker would silently DROP a real P0 finding); final reporting and the
+#     SIGALRM backstop read findings through a retrying lock-free snapshot
+#     (the handler must never take `lock` — the interrupted main thread may
+#     hold it) and the backstop now reports verified P0s (rc 1) instead of
+#     hardcoding p0=0; snapshot failure is degraded-unknown, never green.
 #
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
@@ -143,7 +150,9 @@ state_write() { # streak first_fail since_remind level internal_streak pending_p
 # chunk hashes, cache-cold visitors get HTML whose refs 404 and React never
 # boots (NFM-5418; same class as NFM-5335). HTML-200 health probes are blind
 # to this — the HTML serves 200 from the edge while only the refs die.
-# Fetch edge HTML for SCAN_PAGES and verify every ref resolves. A definitive
+# Fetch edge HTML for SCAN_PAGES and verify its chunk refs resolve (capped at
+# REF_CAP distinct refs per page; truncated refs count as unverified — a
+# capped scan degrades, never reads green). A definitive
 # 4xx on a ref is P0-class (dead page for cache-cold visitors). Runs only
 # when the base probe is green; the base lane owns outage detection.
 #
@@ -194,6 +203,24 @@ def _fmt_findings():
             "%s (s-maxage=%s, age=%ss)" % (p, v, ages.get(p, "?")) for p, v in stale.items()))
     return " | ".join(parts)[:350]
 
+def _snapshot():
+    """Consistent (p0, n_stale, findings) read of the worker-mutated dicts.
+
+    Lock-free with retry: the SIGALRM handler must NOT take `lock` (the
+    interrupted main thread may hold it -> deadlock), and by emit time
+    straggler pool workers can still be appending (shutdown(wait=False)).
+    A RuntimeError (dict changed size during iteration) retries the whole
+    snapshot; persistent failure returns (-1, -1, "") which callers treat
+    as degraded-unknown — never green (fail-closed).
+    """
+    for _ in range(4):
+        try:
+            return (sum(len(v) for v in bad.values()), len(stale),
+                    _fmt_findings())
+        except RuntimeError:
+            continue
+    return (-1, -1, "")
+
 def _emit(line, rc):
     print(line, flush=True)
     os._exit(rc)
@@ -201,18 +228,25 @@ def _emit(line, rc):
 def _deadline(signum, frame):
     # Absolute backstop: budget accounting above should degrade first; this
     # only fires on hangs the socket timeouts cannot bound. NEVER green.
+    # Verified findings gathered before the alarm still page: a confirmed
+    # dead ref is definitive regardless of coverage (same contract as the
+    # main-path p0 branch — rc 1, not 3).
+    p0, n_stale, findings = _snapshot()
+    if p0 > 0:
+        _emit("%d %d scan-degraded: deadline-exceeded | partial-findings: %s"
+              % (p0 + max(n_stale, 0), p0, findings or "count-unavailable"), 1)
     msg = "scan-degraded: deadline-exceeded"
-    if stale or bad:
-        msg += " | partial-findings: " + _fmt_findings()
-    if stale:
-        _emit("%d 0 %s" % (len(stale), msg), 3)
+    if findings:
+        msg += " | partial-findings: " + findings
+    if n_stale > 0:
+        _emit("%d 0 %s" % (n_stale, msg), 3)
     _emit("0 0 %s" % msg, 3)
 
 signal.signal(signal.SIGALRM, _deadline)
-signal.alarm(int(DEADLINE))
+signal.alarm(max(1, int(DEADLINE)))
 
 def fetch_page(page):
-    global fetched, refs_seen
+    global fetched, refs_seen, skipped_refs
     req = urllib.request.Request(base + page, headers={"User-Agent": ua})
     resp = urllib.request.urlopen(req, timeout=PAGE_TIMEOUT)
     try:
@@ -227,10 +261,12 @@ def fetch_page(page):
         body = resp.read(4000000).decode("utf-8", "replace")
     finally:
         resp.close()
-    refs = list(dict.fromkeys(ref_re.findall(body)))[:REF_CAP]
+    distinct = list(dict.fromkeys(ref_re.findall(body)))
+    refs = distinct[:REF_CAP]
     with lock:
         fetched += 1
         refs_seen += len(refs)
+        skipped_refs += len(distinct) - len(refs)
     return page, refs
 
 def head_ref(page, ref):
@@ -248,12 +284,17 @@ def head_ref(page, ref):
         with lock:
             skipped_refs += 1
         return
-    if 400 <= code < 500 and sum(len(v) for v in bad.values()) < 8:
+    if 400 <= code < 500:
         # Only a definitive 4xx means the object is GONE (P0). A 5xx is
         # transient/unknown (origin trouble — the base probe lane owns
         # outages) and must never produce a false P0 page.
+        # Cap check under `lock`: iterating `bad` lock-free races concurrent
+        # appends from other pool workers; the resulting RuntimeError in this
+        # worker would be swallowed by the never-checked future and DROP a
+        # real P0 finding (gate review: lock-free dict iteration race).
         with lock:
-            bad.setdefault(page, []).append("%s->%d" % (ref.rsplit("/", 1)[-1], code))
+            if sum(len(v) for v in bad.values()) < 8:
+                bad.setdefault(page, []).append("%s->%d" % (ref.rsplit("/", 1)[-1], code))
     elif code >= 500:
         with lock:
             skipped_refs += 1
@@ -282,13 +323,23 @@ try:
             rfuts = [rpool.submit(head_ref, p, r) for p, r in ref_tasks]
             _d, nd = wait(rfuts, timeout=max(0.0, left() - REPORT_MARGIN))
             # in-flight past the stage budget count as UNVERIFIED (a late
-            # result may still land; over-counting stays conservative)
+            # result may still land; over-counting stays conservative), and
+            # so does any ref whose worker ended exceptional — the ref was
+            # never verified, whatever the crash was (gate-review class:
+            # unchecked futures must not silently read as coverage).
             with lock:
                 skipped_refs += len(nd)
+                skipped_refs += sum(1 for f in _d if f.exception() is not None)
         finally:
             rpool.shutdown(wait=False)
 
-    p0 = sum(len(v) for v in bad.values())
+    # Snapshot under retry: straggler ref workers may still be appending
+    # (rpool.shutdown(wait=False) + unchecked futures), so lock-free
+    # iteration here has the same race the cap check had.
+    p0, n_stale, findings = _snapshot()
+    if p0 < 0 or n_stale < 0:
+        _emit("0 0 scan-degraded: internal-error: findings snapshot raced "
+              "4 consecutive retries (fail-closed, never green)", 3)
     reasons = []
     if fetched == 0:
         reasons.append("all page fetches failed")
@@ -299,18 +350,17 @@ try:
     if skipped_refs:
         reasons.append("refs-unverified=%d" % skipped_refs)
 
-    findings = _fmt_findings()
     if p0 > 0:
         # Definitive dead refs page regardless of coverage caveats.
         d = findings + ((" (scan-degraded: " + "; ".join(reasons) + ")") if reasons else "")
-        _emit("%d %d %s" % (p0 + len(stale), p0, d), 1)
+        _emit("%d %d %s" % (p0 + n_stale, p0, d), 1)
     if reasons:
         d = "scan-degraded: " + "; ".join(reasons)
-        if stale:
+        if n_stale > 0:
             d += " | " + findings  # TTL lane carried pins out anyway
-        _emit("%d 0 %s" % (len(stale), d), 3)
-    if stale:
-        _emit("%d 0 %s" % (len(stale), findings), 1)
+        _emit("%d 0 %s" % (n_stale, d), 3)
+    if n_stale > 0:
+        _emit("%d 0 %s" % (n_stale, findings), 1)
     _emit("0 0 ok (%d refs verified across %d page(s))" % (refs_seen, fetched), 0)
 except Exception as e:
     # Internal errors are degraded-unknown too (was fail-open pre-NFM-5446).

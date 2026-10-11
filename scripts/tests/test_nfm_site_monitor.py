@@ -33,6 +33,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import test_nfm_site_monitor as this_module
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "nfm-site-monitor.sh")
 SCAN_PAGES = ["/", "/datasets", "/browse", "/potentials", "/materials"]
@@ -46,24 +47,32 @@ def _require_seams() -> None:
     """Fail fast (without executing anything) if the env seams are gone.
 
     Without this guard a seam-stripped script would silently fall back to
-    the real site / real ~/.nfm-site-monitor.state inside tests.
+    the real site / real ~/.nfm-site-monitor.state inside tests. The check
+    matches the READ expressions (``${SEAM:-…}`` in bash,
+    ``os.environ.get("SEAM"`` in python), not bare name presence — a
+    comment name-dropping a seam must not pass (gate review: the bare
+    source-grep was too weak to prove the seam is actually consumed).
     """
-    with open(SCRIPT, "r", encoding="utf-8") as fh:
+    with open(SCRIPT, encoding="utf-8") as fh:
         src = fh.read()
-    for seam in ("NFM_SCAN_BASE", "NFM_SCAN_DEADLINE", "NFM_MONITOR_LOG",
-                 "NFM_MONITOR_STATE", "NFM_MONITOR_PROBE", "NFM_MONITOR_NOTIFY"):
-        if seam not in src:
-            pytest.fail("script lost its %s env seam — refusing to run against production" % seam)
+    for seam in ("NFM_MONITOR_LOG", "NFM_MONITOR_STATE", "NFM_MONITOR_PROBE", "NFM_MONITOR_NOTIFY"):
+        if seam + ":-" not in src:
+            pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
+    for seam in ("NFM_SCAN_BASE", "NFM_SCAN_DEADLINE", "NFM_SCAN_REF_POOL"):
+        if f'os.environ.get("{seam}"' not in src:
+            pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
 
 
 def _ref(i: int) -> str:
-    return "/_next/static/chunks/r%d-a1b2c3.js" % i
+    return f"/_next/static/chunks/r{i}-a1b2c3.js"
 
 
 def _page_body(n_refs: int) -> str:
-    return "<html><head>" + "".join(
-        '<script src="%s"></script>' % _ref(i) for i in range(n_refs)
-    ) + "</head><body>ok</body></html>"
+    return (
+        "<html><head>"
+        + "".join(f'<script src="{_ref(i)}"></script>' for i in range(n_refs))
+        + "</head><body>ok</body></html>"
+    )
 
 
 class _MockEdge(BaseHTTPRequestHandler):
@@ -77,7 +86,6 @@ class _MockEdge(BaseHTTPRequestHandler):
         return self.server.config["pages"].get(path)
 
     def do_GET(self):
-        cfg = self.server.config
         if self.path.startswith("/_next/static/"):
             self._serve_ref()
             return
@@ -122,22 +130,27 @@ def mock_site(tmp_path):
     """Yield (base_url, config). Default: fast healthy site."""
     config = {
         "pages": {
-            p: {"lat": 0.02, "cc": "public, s-maxage=300, stale-while-revalidate",
-                "body": _page_body(2)}
+            p: {
+                "lat": 0.02,
+                "cc": "public, s-maxage=300, stale-while-revalidate",
+                "body": _page_body(2),
+            }
             for p in SCAN_PAGES
         },
         "ref_lat": 0.0,
         "ref_status": {},
     }
+
     class _Srv(ThreadingHTTPServer):
         request_queue_size = 128  # absorb the parallel-scan connection burst
 
     srv = _Srv(("127.0.0.1", 0), _MockEdge)
     srv.config = config
     import threading
+
     th = threading.Thread(target=srv.serve_forever, daemon=True)
     th.start()
-    yield "http://127.0.0.1:%d" % srv.server_address[1], config
+    yield f"http://127.0.0.1:{srv.server_address[1]}", config
     srv.shutdown()
     srv.server_close()
 
@@ -152,8 +165,8 @@ def env(tmp_path, mock_site):
         "NFM_SCAN_BASE": base,
         "NFM_SCAN_DEADLINE": "240",
         "NFM_SCAN_REF_POOL": "4",  # gentle burst: sandboxed shells can 502
-                                   # under 12-way loopback bursts; production
-                                   # (LaunchAgent, direct egress) runs 12
+        # under 12-way loopback bursts; production
+        # (LaunchAgent, direct egress) runs 12
         "NFM_MONITOR_LOG": str(tmp_path / "monitor.log"),
         "NFM_MONITOR_STATE": str(tmp_path / "monitor.state"),
         "NFM_MONITOR_PROBE": str(probe),
@@ -166,23 +179,28 @@ def run_script(env, *args, timeout=SUBPROCESS_TIMEOUT):
     _require_seams()
     try:
         return subprocess.run(
-            ["bash", SCRIPT, *args], env={**os.environ, **env},
-            capture_output=True, text=True, timeout=timeout,
+            ["bash", SCRIPT, *args],
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail("script did not finish in %ss (args=%r) — likely hit the "
-                    "real network: stdout=%r" % (timeout, args, exc.stdout))
+        pytest.fail(
+            f"script did not finish in {timeout}s (args={args!r}) — likely hit the "
+            f"real network: stdout={exc.stdout!r}"
+        )
 
 
 def log_text(env):
-    with open(env["NFM_MONITOR_LOG"], "r", encoding="utf-8") as fh:
+    with open(env["NFM_MONITOR_LOG"], encoding="utf-8") as fh:
         return fh.read()
 
 
 def state_dict(env):
     out = {}
     try:
-        with open(env["NFM_MONITOR_STATE"], "r", encoding="utf-8") as fh:
+        with open(env["NFM_MONITOR_STATE"], encoding="utf-8") as fh:
             for line in fh:
                 if "=" in line:
                     k, v = line.rstrip("\n").split("=", 1)
@@ -195,13 +213,69 @@ def state_dict(env):
 def _degrade_refs(config, lat, n_refs=30, page="/"):
     """Make the ref-verification stage unable to fit its budget."""
     config["pages"][page] = {
-        "lat": 0.02, "cc": "public, s-maxage=300, stale-while-revalidate",
+        "lat": 0.02,
+        "cc": "public, s-maxage=300, stale-while-revalidate",
         "body": _page_body(n_refs),
     }
     config["ref_lat"] = lat
 
 
 # ------------------------------------------------------------- --scan-once
+
+
+# ------------------------------------------------------ seam-guard unit tests
+
+
+def _write_fake_script(tmp_path, body):
+    p = tmp_path / "fake-monitor.sh"
+    p.write_text(body, encoding="utf-8")
+    return str(p)
+
+
+def test_seam_guard_rejects_comment_only_mentions(tmp_path, monkeypatch):
+    """A script that only name-drops the seams in a comment must be refused.
+
+    Guards the guard: the check must match the READ expressions
+    (``${SEAM:-…}`` / ``os.environ.get("SEAM"``), not bare name presence —
+    otherwise a refactor that drops the actual reads keeps passing and tests
+    silently fall through to production state (gate finding: source-grep
+    too weak).
+    """
+    monkeypatch.setattr(
+        this_module,
+        "SCRIPT",
+        _write_fake_script(
+            tmp_path,
+            (
+                "#!/usr/bin/env bash\n"
+                "# mentions NFM_SCAN_BASE NFM_SCAN_DEADLINE NFM_MONITOR_LOG\n"
+                "# NFM_MONITOR_STATE NFM_MONITOR_PROBE NFM_MONITOR_NOTIFY\n"
+                "# NFM_SCAN_REF_POOL in a comment only\n"
+                "echo prod path\n"
+            ),
+        ),
+    )
+    with pytest.raises(pytest.fail.Exception, match="env seam"):
+        this_module._require_seams()
+
+
+def test_seam_guard_accepts_real_reads(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        this_module,
+        "SCRIPT",
+        _write_fake_script(
+            tmp_path,
+            (
+                '#!/usr/bin/env bash\nLOG="${NFM_MONITOR_LOG:-x}"\n'
+                'STATE="${NFM_MONITOR_STATE:-x}"\nPROBE="${NFM_MONITOR_PROBE:-x}"\n'
+                'NOTIFY="${NFM_MONITOR_NOTIFY:-x}"\n'
+                "python3 - <<EOF\nimport os\n"
+                'os.environ.get("NFM_SCAN_BASE")\nos.environ.get("NFM_SCAN_DEADLINE")\n'
+                'os.environ.get("NFM_SCAN_REF_POOL")\nEOF\n'
+            ),
+        ),
+    )
+    this_module._require_seams()  # must not raise
 
 
 def test_scan_once_green(env, mock_site):
@@ -253,6 +327,21 @@ def test_scan_once_partial_verification_is_degraded(env, mock_site):
     assert "scan-degraded" in r.stdout
 
 
+def test_scan_once_ref_cap_overflow_is_degraded(env, mock_site):
+    """Refs dropped by the per-page REF_CAP truncation are unverified.
+
+    A page carrying more distinct chunk refs than the per-page cap must not
+    read green with only the first 30 verified (gate review: silent partial
+    coverage); the dropped tail counts as refs-unverified => rc 3.
+    """
+    _base, config = mock_site
+    config["pages"]["/"]["body"] = _page_body(35)
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "scan-degraded" in r.stdout
+    assert "refs-unverified=5" in r.stdout
+
+
 def test_scan_once_ttl_lane_survives_degradation(env, mock_site):
     """Stale pins stay visible even when ref verification blows the budget."""
     _base, config = mock_site
@@ -286,6 +375,24 @@ def test_scan_once_all_pages_down_is_degraded(env, mock_site):
     assert r.returncode == 3, r.stdout
     assert "scan-degraded" in r.stdout
     assert "all page fetches failed" in r.stdout
+
+
+def test_scan_once_alarm_backstop_preserves_ttl_findings(env, mock_site):
+    """SIGALRM itself (not the budget path) must be fail-closed AND keep
+    findings already captured. One slow page stalls the page-stage wait past
+    the alarm; the four fast pages' 1y-pins are already in `stale` (captured
+    from headers before the body read). The handler's output is identified by
+    "deadline-exceeded", which the budget path never prints."""
+    _base, config = mock_site
+    for p in ["/datasets", "/browse", "/potentials", "/materials"]:
+        config["pages"][p]["cc"] = "public, s-maxage=31536000"
+    config["pages"]["/"]["lat"] = 3.0  # > DEADLINE: alarm fires mid-page-stage
+    env["NFM_SCAN_DEADLINE"] = "2"
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "deadline-exceeded" in r.stdout  # the SIGALRM backstop ran
+    assert "P1 stale 1y-pin" in r.stdout  # captured findings survived
+    assert "s-maxage=31536000" in r.stdout
 
 
 # ------------------------------------------------- real-probe integration
@@ -348,8 +455,7 @@ def test_integration_skip_streak_resets_on_completed_scan(env, mock_site):
     assert state_dict(env)["scan_skip_streak"] == "2"
     # a completing (green) scan resets the streak...
     config["ref_lat"] = 0.0
-    config["pages"]["/"] = {
-        "lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(2)}
+    config["pages"]["/"] = {"lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(2)}
     env["NFM_SCAN_DEADLINE"] = "240"
     assert run_script(env).returncode == 0
     assert state_dict(env)["scan_skip_streak"] == "0"

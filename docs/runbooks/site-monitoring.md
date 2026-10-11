@@ -123,8 +123,9 @@ Post-NFM-5446 contract (`scripts/nfm-site-monitor.sh`, mirrored to
   pathological hangs.
 - **Fail-closed-or-unknown**: a scan that cannot complete reports
   `scan-degraded` with rc 3 (`--scan-once` exit 3) — never green. Coverage
-  caveats are explicit (`refs-unverified=N`, `page-fetch-skipped=…`,
-  `all page fetches failed`).
+  caveats are explicit (`refs-unverified=N` — including refs beyond the
+  per-page cap of 30 distinct refs, `page-fetch-skipped=…`, `all page
+  fetches failed`).
 - **TTL spot-check lane (always runs)**: each page's s-maxage/age verdict is
   captured from response headers before the body read, so stale-pin P1
   detection survives ref-budget exhaustion — pins surface as WARN even
