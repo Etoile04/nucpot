@@ -124,7 +124,7 @@ Post-NFM-5446 contract (`scripts/nfm-site-monitor.sh`, mirrored to
 - **Fail-closed-or-unknown**: a scan that cannot complete reports
   `scan-degraded` with rc 3 (`--scan-once` exit 3) — never green. Coverage
   caveats are explicit (`refs-unverified=N` — including refs beyond the
-  per-page cap of 30 distinct refs, `page-fetch-skipped=…`, `all page
+  per-page cap of 45 distinct refs, `page-fetch-skipped=…`, `all page
   fetches failed`).
 - **TTL spot-check lane (always runs)**: each page's s-maxage/age verdict is
   captured from response headers before the body read, so stale-pin P1
@@ -144,3 +144,18 @@ unverified for that cycle (investigate if it persists); `CRITICAL —
 sentinel chunk-scan blind` pages the sentinel itself. The NFM-5418
 close-gate keeps requiring direct fresh-connection reads (s-maxage=300 on
 all watched pages) — sentinel green is necessary, not sufficient.
+
+**REF_CAP tuning (2026-10-11):** the per-page verification cap is a
+green-blocking ceiling — a page carrying more distinct chunk refs than
+REF_CAP truncates the tail into `refs-unverified`, so the scan degrades on
+EVERY cycle and the skip-streak CRITICAL latches permanently. This is
+deterministic (calm edge, all sampled HEADs 200s at 1–2 s), unlike a
+latency-window degradation. Observed: live `/materials` grew to 40
+distinct refs under the original cap of 30 → 10 refs dropped per scan →
+permanent `sentinel chunk-scan blind` from 10:47Z until the cap was raised
+to 45. **Operational rule: `refs-unverified=N > 0` persisting across scans
+while spot-check HEADs are fast means the site outgrew REF_CAP — raise it
+(keep ~10% headroom above the largest page's distinct-ref count) rather
+than acking the page.** Raising the cap increases worst-case scan cost
+(5 × REF_CAP HEADs through the pool); the 240 s budget still bounds it
+and a genuinely slow edge degrades exactly as before.

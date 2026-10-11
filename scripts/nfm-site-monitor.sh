@@ -182,7 +182,13 @@ PAGE_TIMEOUT = 15.0       # per page GET socket timeout
 PAGE_STAGE_BUDGET = 90.0  # wall budget for the (parallel) page GETs
 REF_TIMEOUT = 8.0         # per ref HEAD socket timeout
 REF_POOL = int(os.environ.get("NFM_SCAN_REF_POOL", "12"))  # parallel ref HEADs (serial pre-NFM-5446)
-REF_CAP = 30              # max distinct refs verified per page
+REF_CAP = 45              # max distinct refs verified per page. 2026-10-11: 30→45 —
+                          # live /materials carries 40 distinct chunk refs, so cap-30
+                          # truncated 10 refs on EVERY scan; the skip streak could then
+                          # never reset and the sentinel-blind CRITICAL latched
+                          # permanently. Keep above the real per-page ref count; a
+                          # persistent refs-unverified>0 across calm-edge scans means
+                          # the site outgrew the cap (raise it, see runbook §7).
 REPORT_MARGIN = 5.0       # reserve for printing/teardown before SIGALRM
 
 lock = threading.Lock()

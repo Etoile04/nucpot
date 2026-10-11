@@ -331,15 +331,34 @@ def test_scan_once_ref_cap_overflow_is_degraded(env, mock_site):
     """Refs dropped by the per-page REF_CAP truncation are unverified.
 
     A page carrying more distinct chunk refs than the per-page cap must not
-    read green with only the first 30 verified (gate review: silent partial
+    read green with only the first N verified (gate review: silent partial
     coverage); the dropped tail counts as refs-unverified => rc 3.
+    REF_CAP is 45: overflow needs >45 distinct refs on one page.
     """
     _base, config = mock_site
-    config["pages"]["/"]["body"] = _page_body(35)
+    config["pages"]["/"]["body"] = _page_body(50)
     r = run_script(env, "--scan-once")
     assert r.returncode == 3, r.stdout
     assert "scan-degraded" in r.stdout
     assert "refs-unverified=5" in r.stdout
+
+
+def test_scan_once_materials_sized_page_verifies_green(env, mock_site):
+    """A 40-ref page (live /materials, 2026-10-11) verifies fully under
+    REF_CAP=45 and reads green.
+
+    Live-verified regression: at REF_CAP=30 this exact page shape dropped 10
+    refs on EVERY scan, so the skip streak could never reset and the
+    sentinel-blind CRITICAL latched permanently (deterministic overflow, not
+    an edge-latency window — the edge was calm when measured). The cap must
+    sit above the real per-page ref count or the sentinel pages forever.
+    """
+    _base, config = mock_site
+    config["pages"]["/"]["body"] = _page_body(40)
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 0, r.stdout
+    assert "ok (" in r.stdout
+    assert "refs-unverified" not in r.stdout
 
 
 def test_scan_once_ttl_lane_survives_degradation(env, mock_site):
