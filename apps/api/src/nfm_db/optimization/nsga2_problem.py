@@ -38,7 +38,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Candidate solute elements with (name, lower_bound, upper_bound) in atomic
-#: fraction units (sum to ≤ 1.0 with U).
+#: fraction units (sum to ≤ 1.0 with U). The table's lower bound feeds the
+#: ZrOnlyProblem search box (Zr column); the full problem uses xl = 0.0 for
+#: every solute so absence is representable under the strict-> presence
+#: semantics of g7 (CR NFM-5484).
 ALLOY_ELEMENTS: list[tuple[str, float, float]] = [
     ("Mo", 0.005, 0.20),
     ("Nb", 0.005, 0.20),
@@ -86,9 +89,10 @@ N_IEQ_CONSTRAINTS: int = 7
 SYNTHETIC_T_STABLE_C: float = 670.0
 
 #: Solute fractions at or below this threshold are treated as "absent"
-#: for the element-count constraint. The threshold coincides with the
-#: variable lower bound, so a solute pinned at its bound is trace-only
-#: and does not count toward the 2-6 element window.
+#: for the element-count constraint. The threshold sits strictly inside
+#: the full problem's solute box (xl = 0.0, CR NFM-5484): a solute in
+#: (0, 0.005] — including one pinned at the 0.0 lower bound — is
+#: trace-only and does not count toward the 2-6 element window.
 ELEMENT_ABSENCE_THRESHOLD: float = 0.005
 
 
@@ -239,9 +243,9 @@ class NuclearFuelOptimizationProblem(Problem):
       7. element-count window: 2 ≤ #(U + present solutes) ≤ 6 (NFM-5481)
 
     A solute counts as "present" only strictly above
-    ELEMENT_ABSENCE_THRESHOLD; a solute pinned at its 0.005 lower bound is
-    trace-only. U counts as present when its fraction exceeds the same
-    threshold.
+    ELEMENT_ABSENCE_THRESHOLD; a solute at or below 0.005 (including one
+    pinned at the 0.0 lower bound) is trace-only. U counts as present
+    when its fraction exceeds the same threshold.
 
     Uses vectorized _evaluate for batch prediction performance. ML surrogate
     models from prediction_service.py are called per-batch rather than
@@ -260,7 +264,18 @@ class NuclearFuelOptimizationProblem(Problem):
         use_ml_surrogate: bool = True,
         fabricability_scorer: FabricabilityScorer | None = None,
     ) -> None:
-        xl = np.array([lo for _, lo, _ in ALLOY_ELEMENTS])
+        # CR NFM-5484 fix (PR #1471, CHANGES REQUESTED): the full problem's
+        # solute xl must be 0.0 so element absence is representable. With
+        # xl = 0.005 = ELEMENT_ABSENCE_THRESHOLD and strict > presence,
+        # every interior point counts 6 solutes + U = 7 elements, so g7 is
+        # violated everywhere in the box and the feasible set is empty
+        # (0/100k uniform samples jointly g1+g7-feasible; the benchmark
+        # grid reported pareto=0 in every cell). The 0.005 threshold stays
+        # as the g7 presence semantics: a solute in (0, 0.005] is
+        # trace-only. ZrOnlyProblem keeps deriving Zr's xl from the
+        # ALLOY_ELEMENTS table, so its seeded front and the NFM-5481
+        # golden re-baseline are untouched by this fix.
+        xl = np.zeros(N_VAR)
         xu = np.array([hi for _, _, hi in ALLOY_ELEMENTS])
 
         super().__init__(
@@ -463,9 +478,10 @@ class NuclearFuelOptimizationProblem(Problem):
         g6 = FLOOR_T_STABLE_C - temps
 
         # Element-count window: U plus every solute strictly above the
-        # absence threshold (a solute at its 0.005 lower bound is trace-only
-        # and does not count). U counts when its own fraction clears the
-        # threshold — a solute sum ≥ 1.0 leaves no uranium in the alloy.
+        # absence threshold (a solute at or below 0.005 — including the
+        # 0.0 lower bound — is trace-only and does not count). U counts
+        # when its own fraction clears the threshold — a solute sum ≥ 1.0
+        # leaves no uranium in the alloy.
         element_count = (
             np.sum(X > ELEMENT_ABSENCE_THRESHOLD, axis=1)
             + (u_fracs > ELEMENT_ABSENCE_THRESHOLD)

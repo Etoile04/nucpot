@@ -58,6 +58,7 @@ from nfm_db.optimization.nsga2_problem import (
     OptimizationConfig,
     OptimizationResult,
 )
+from nfm_db.optimization.zr_only import ZrOnlyProblem
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / constants
@@ -183,11 +184,52 @@ def test_problem_definition_dimensions(problem):
 
 @pytest.mark.unit
 def test_problem_variable_bounds_match_alloy_elements():
-    """xl/xu must mirror the ALLOY_ELEMENTS (name, lo, hi) table."""
+    """Full problem: xl = 0.0 (absence representable); xu mirrors the table.
+
+    CR NFM-5484 (PR #1471): with xl = 0.005 = ELEMENT_ABSENCE_THRESHOLD
+    and strict > presence, every interior point counts 6 solutes + U = 7
+    elements — g7 is violated box-wide and the feasible set is empty.
+    xl is 0.0 now; the table's 0.005 lower bound survives only in
+    ZrOnlyProblem's Zr column, so its seeded front and the NFM-5481
+    golden re-baseline stay byte-stable.
+    """
     problem = NuclearFuelOptimizationProblem(use_ml_surrogate=False)
-    np.testing.assert_allclose(problem.xl, [lo for _, lo, _ in ALLOY_ELEMENTS])
+    np.testing.assert_allclose(problem.xl, np.zeros(len(ALLOY_ELEMENTS)))
     np.testing.assert_allclose(problem.xu, [hi for _, _, hi in ALLOY_ELEMENTS])
     assert all(lo == 0.005 for _, lo, _ in ALLOY_ELEMENTS)
+
+    zr_problem = ZrOnlyProblem()
+    for i, (name, lo, _) in enumerate(ALLOY_ELEMENTS):
+        expected_zr_lo = lo if name == "Zr" else 0.0
+        assert zr_problem.xl[i] == pytest.approx(expected_zr_lo)
+
+
+@pytest.mark.unit
+def test_full_problem_box_admits_g7_feasible_interior(problem):
+    """CR NFM-5484 regression: the declared box must contain g1+g7-feasible
+    points (the pre-fix box [0.005, 0.20]^6 contained none — every
+    benchmark cell reported an empty Pareto front)."""
+
+    X = np.array([
+        [0.10, 0.0, 0.0, 0.0, 0.0, 0.0],       # binary -> count 2, feasible
+        [0.05, 0.05, 0.0, 0.0, 0.0, 0.0],      # ternary -> count 3, feasible
+        [0.10, 0.004, 0.0, 0.0, 0.0, 0.0],     # trace band -> count 2, feasible
+        [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # all-present -> count 7, violated
+    ])
+    # Every probe is inside the declared box now that xl = 0.0.
+    assert np.all(problem.xl <= X)
+    assert np.all(problem.xu >= X)
+
+    n = X.shape[0]
+    out: dict = {}
+    problem._compute_constraints(
+        X, np.full(n, 11.75), np.full(n, 18.0), np.full(n, 600.0), out,
+    )
+    G = out["G"]
+    # g1/g2/g3/g7 jointly feasible on rows 0-2 (solute sums in [0.05, 0.20]).
+    assert np.all(G[[0, 1, 2]][:, [0, 1, 2, 6]] <= 1e-9)
+    # The all-present interior row still violates g7 — the old failure mode.
+    assert G[3, 6] > 0
 
 
 @pytest.mark.unit
@@ -330,9 +372,9 @@ def test_constraints_role_spec_density_and_temperature_floors(problem):
 def test_constraints_element_count_window(problem):
     """g7 (NFM-5481): 2-6 total elements — U plus strictly-present solutes.
 
-    A solute pinned at ELEMENT_ABSENCE_THRESHOLD (= the variable lower
-    bound) is trace-only and must not count: U alone is a 1-element
-    "alloy" and violates the window, matching the role spec.
+    A solute at ELEMENT_ABSENCE_THRESHOLD is trace-only and must not
+    count: U alone is a 1-element "alloy" and violates the window,
+    matching the role spec.
     """
     trace = ELEMENT_ABSENCE_THRESHOLD
     X = np.array([
