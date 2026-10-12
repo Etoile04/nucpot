@@ -5,9 +5,9 @@ endpoint-level apps/api/tests/test_design_optimization.py (16 tests,
 48.30% module coverage at baseline, 2026-09-14):
 
   - nsga2_problem.py: Problem definition (n_var/n_obj/n_ieq_constr/bounds),
-    3-objective evaluation (negated maximization sense), 4 inequality
-    constraints, synthetic fallback path, ML surrogate path, Pareto
-    aggregation helpers.
+    3-objective evaluation (negated maximization sense), 7 inequality
+    constraints (g1-g4 legacy bounds + g5-g7 role-spec floors, NFM-5481),
+    synthetic fallback path, ML surrogate path, Pareto aggregation helpers.
   - ml_surrogate.py: batch evaluation shapes, lazy model loading via
     joblib artifacts (env-overridable paths), _use_ml_surrogate attribute
     semantics (NFM-1969), cluster-feature heuristic, convergence metrics
@@ -46,6 +46,13 @@ from nfm_db.optimization.nsga2_problem import (
     BOUNDS_MAX_SINGLE_ELEMENT,
     BOUNDS_U_MAX,
     BOUNDS_U_MIN,
+    CONSTRAINT_MAX_ELEMENTS,
+    CONSTRAINT_MIN_ELEMENTS,
+    ELEMENT_ABSENCE_THRESHOLD,
+    FLOOR_T_STABLE_C,
+    FLOOR_U_DENSITY,
+    N_IEQ_CONSTRAINTS,
+    SYNTHETIC_T_STABLE_C,
     FabricabilityScorer,
     NuclearFuelOptimizationProblem,
     OptimizationConfig,
@@ -66,7 +73,10 @@ _IDX_CE = PHYSICAL_FEATURE_NAMES.index("config_entropy")
 _IDX_MH = PHYSICAL_FEATURE_NAMES.index("mixing_enthalpy")
 _IDX_CHI = PHYSICAL_FEATURE_NAMES.index("pauling_chi_diff")
 
-SYNTHETIC_TEMP = 400.0
+#: MLSurrogateEvaluator silent-fallback temperature fill (below the
+#: role-spec floor on purpose — a silently degraded surrogate must yield
+#: an all-infeasible front, not a plausible-looking wrong one).
+SURROGATE_FALLBACK_TEMP = 400.0
 
 
 @pytest.fixture
@@ -165,10 +175,10 @@ class _StubEvaluator:
 
 @pytest.mark.unit
 def test_problem_definition_dimensions(problem):
-    """Problem must expose 6 vars, 3 objectives, 4 inequality constraints."""
+    """Problem must expose 6 vars, 3 objectives, 7 inequality constraints."""
     assert problem.n_var == len(ALLOY_ELEMENTS) == 6
     assert problem.n_obj == 3
-    assert problem.n_ieq_constr == 4
+    assert problem.n_ieq_constr == N_IEQ_CONSTRAINTS == 7
 
 
 @pytest.mark.unit
@@ -219,15 +229,27 @@ def test_build_compositions_clamps_u_at_zero(problem):
 
 @pytest.mark.unit
 def test_evaluate_synthetic_shapes_and_temp(problem):
-    """Synthetic path: F (n,3), G (n,4), T_stable pinned at 400°C."""
+    """Synthetic path: F (n,3), G (n,7), T_stable pinned at 670°C."""
     X = np.full((4, 6), 0.05)
     out: dict = {}
     problem._evaluate(X, out)
     assert out["F"].shape == (4, 3)
-    assert out["G"].shape == (4, 4)
-    np.testing.assert_allclose(out["F"][:, 1], -SYNTHETIC_TEMP)
+    assert out["G"].shape == (4, N_IEQ_CONSTRAINTS)
+    np.testing.assert_allclose(out["F"][:, 1], -SYNTHETIC_T_STABLE_C)
     # Objective 1 is negated U density: negative for physical densities.
     assert np.all(out["F"][:, 0] < 0.0)
+
+
+@pytest.mark.unit
+def test_synthetic_temperature_constant_clears_role_spec_floor():
+    """SYNTHETIC_T_STABLE_C must stay strictly above FLOOR_T_STABLE_C (NFM-5481).
+
+    The deterministic regression path (ZrOnlyProblem golden harness) pins
+    T_stable at this constant. If it ever drops to or below the role-spec
+    floor, g6 renders every synthetic evaluation infeasible and the golden
+    front collapses to empty.
+    """
+    assert SYNTHETIC_T_STABLE_C > FLOOR_T_STABLE_C
 
 
 @pytest.mark.unit
@@ -247,22 +269,26 @@ def test_eval_count_increments_per_individual(problem):
 
 @pytest.mark.unit
 def test_constraints_each_bound_violation_and_feasible(problem):
-    """All four constraints: violated > 0, feasible ≤ 0."""
+    """All seven constraints: violated > 0, feasible ≤ 0."""
     X = np.array([
         [0.075] * 6,           # U = 0.55  -> g1 violated
         [0.008, 0, 0, 0, 0, 0],  # U = 0.992 -> g2 violated
         [0.25, 0, 0, 0, 0, 0],   # max elem -> g3 violated
-        [0.05] * 6,            # U = 0.70  -> g1/g2 feasible
+        [0.025] * 6,           # U = 0.85  -> g1/g2 feasible (g7: 7 elements)
     ])
     bv = np.array([11.75, 11.75, 11.75, 11.75])  # g4 feasible everywhere
+    rho = np.array([18.0, 18.0, 18.0, 18.0])     # g5 feasible everywhere
+    temps = np.array([600.0, 600.0, 600.0, 600.0])  # g6 feasible everywhere
     out: dict = {}
-    problem._compute_constraints(X, bv, out)
+    problem._compute_constraints(X, bv, rho, temps, out)
     G = out["G"]
-    assert G.shape == (4, 4)
+    assert G.shape == (4, N_IEQ_CONSTRAINTS)
     assert 0 < G[0, 0] == pytest.approx(BOUNDS_U_MIN - 0.55)
     assert 0 < G[1, 1] == pytest.approx(0.992 - BOUNDS_U_MAX)
     assert 0 < G[2, 2] == pytest.approx(0.25 - BOUNDS_MAX_SINGLE_ELEMENT)
     assert G[3, 0] < 0 and G[3, 1] < 0 and G[3, 2] < 0
+    # Role-spec floors hold on every row here (guards, not drivers).
+    assert np.all(G[:, 4] < 0) and np.all(G[:, 5] < 0)
 
 
 @pytest.mark.unit
@@ -271,11 +297,62 @@ def test_constraint_bv_ratio_window(problem):
     X = np.zeros((3, 6))
     bv = np.array([5.0, 11.75, 20.0])
     out: dict = {}
-    problem._compute_constraints(X, bv, out)
+    problem._compute_constraints(X, bv, np.full(3, 18.0), np.full(3, 600.0), out)
     G = out["G"]
     assert 0 < G[0, 3] == pytest.approx(BOUNDS_BV_MIN - 5.0)
     assert G[1, 3] < 0
     assert 0 < G[2, 3] == pytest.approx(20.0 - BOUNDS_BV_MAX)
+
+
+@pytest.mark.unit
+def test_constraints_role_spec_density_and_temperature_floors(problem):
+    """g5/g6 (NFM-5481): below-floor rho_U / T_stable are infeasible.
+
+    Boundary values (exactly 16.0 g/cm^3, exactly 500 degC) sit at g == 0
+    and must remain feasible — the role spec demands >=, not >.
+    """
+    X = np.full((4, 6), 0.01)  # U = 0.94 — inside the role-spec window
+    bv = np.full(4, 11.75)
+    rho = np.array([15.9, 16.0, 18.5, 17.0])
+    temps = np.array([700.0, 499.5, 500.0, 660.0])
+    out: dict = {}
+    problem._compute_constraints(X, bv, rho, temps, out)
+    G = out["G"]
+    assert 0 < G[0, 4] == pytest.approx(FLOOR_U_DENSITY - 15.9)
+    assert G[1, 4] == pytest.approx(0.0)  # rho_U exactly at the floor
+    assert G[2, 4] < 0 and G[3, 4] < 0
+    assert 0 < G[1, 5] == pytest.approx(FLOOR_T_STABLE_C - 499.5)
+    assert G[2, 5] == pytest.approx(0.0)  # T exactly at the floor
+    assert G[0, 5] < 0 and G[3, 5] < 0
+
+
+@pytest.mark.unit
+def test_constraints_element_count_window(problem):
+    """g7 (NFM-5481): 2-6 total elements — U plus strictly-present solutes.
+
+    A solute pinned at ELEMENT_ABSENCE_THRESHOLD (= the variable lower
+    bound) is trace-only and must not count: U alone is a 1-element
+    "alloy" and violates the window, matching the role spec.
+    """
+    trace = ELEMENT_ABSENCE_THRESHOLD
+    X = np.array([
+        [trace, 0.0, 0.0, 0.0, 0.0, 0.0],      # 1 element (U only) -> violated
+        [0.10, 0.0, 0.0, 0.0, 0.0, 0.0],       # 2 elements -> feasible
+        [0.05, 0.05, 0.05, 0.0, 0.0, 0.0],     # 4 elements -> feasible
+        [0.03, 0.03, 0.03, 0.03, 0.03, 0.0],   # 6 elements -> boundary feasible
+        [0.03, 0.03, 0.03, 0.03, 0.03, 0.03],  # 7 elements -> violated
+    ])
+    n = X.shape[0]
+    out: dict = {}
+    problem._compute_constraints(
+        X, np.full(n, 11.75), np.full(n, 18.0), np.full(n, 600.0), out,
+    )
+    G = out["G"]
+    assert 0 < G[0, 6] == pytest.approx(CONSTRAINT_MIN_ELEMENTS - 1)
+    assert G[1, 6] <= 0
+    assert G[2, 6] < 0
+    assert G[3, 6] == pytest.approx(0.0)  # 6 elements: upper boundary feasible
+    assert 0 < G[4, 6] == pytest.approx(7 - CONSTRAINT_MAX_ELEMENTS)
 
 
 @pytest.mark.unit
@@ -284,9 +361,10 @@ def test_target_composition_is_within_constraints(problem):
     X = np.array([[0.084, 0.0, 0.028, 0.006, 0.0, 0.0]])
     out: dict = {}
     problem._evaluate(X, out)
-    # U = 0.882 inside [0.60, 0.90]; max element 0.084 ≤ 0.20. Only the
-    # data-driven B/V constraint (g4) may or may not hold — g1..g3 must.
-    assert np.all(out["G"][0, :3] <= 1e-9)
+    # U = 0.882 inside [0.80, 0.95]; max element 0.084 ≤ 0.20; element
+    # count 4 inside [2, 6]; synthetic floors slack (T = 670 ≥ 500).
+    # Only the data-driven B/V constraint (g4) may or may not hold.
+    assert np.all(out["G"][0, [0, 1, 2, 4, 5, 6]] <= 1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +558,7 @@ def test_ensure_loaded_disabled_uses_synthetic():
     """use_ml_surrogate=False short-circuits to synthetic (400°C fill)."""
     evaluator = MLSurrogateEvaluator(use_ml_surrogate=False)
     temps = evaluator.predict_temperatures_batch([TARGET_COMPOSITION])
-    np.testing.assert_allclose(temps, SYNTHETIC_TEMP)
+    np.testing.assert_allclose(temps, SURROGATE_FALLBACK_TEMP)
     assert evaluator._use_ml_surrogate is False
 
 
@@ -511,7 +589,7 @@ def test_load_models_missing_temp_file_falls_back(monkeypatch, tmp_path):
     temps = evaluator.predict_temperatures_from_features(
         np.zeros((2, len(PHYSICAL_FEATURE_NAMES))),
     )
-    np.testing.assert_allclose(temps, SYNTHETIC_TEMP)
+    np.testing.assert_allclose(temps, SURROGATE_FALLBACK_TEMP)
 
 
 def _write_temp_artifact(path, *, raw: bool = False):
@@ -624,7 +702,7 @@ def test_evaluate_objectives_with_scorer():
     assert F.shape == (1, 3)
     assert fm.shape[0] == 1
     assert F[0, 0] == pytest.approx(-fm[0, _IDX_U])
-    assert F[0, 1] == pytest.approx(-SYNTHETIC_TEMP)
+    assert F[0, 1] == pytest.approx(-SURROGATE_FALLBACK_TEMP)
     expected = FabricabilityScorer.default().score(
         np.array([fm[0, _IDX_CE]]), np.array([fm[0, _IDX_BV]]))[0]
     assert F[0, 2] == pytest.approx(-expected)

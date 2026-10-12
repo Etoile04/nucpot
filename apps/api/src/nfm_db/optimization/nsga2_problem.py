@@ -3,7 +3,9 @@
 Defines NuclearFuelOptimizationProblem as a vectorized pymoo Problem with:
   - 3 objectives: maximize U density, maximize phase stability temperature,
     maximize fabricability
-  - 4 constraints: U content bounds, per-element bounds, B/V ratio bounds
+  - 7 constraints (NFM-5481): U content bounds [0.80, 0.95] at.% (role-spec
+    window), per-element bounds, B/V ratio bounds, role-spec floors
+    rho_U >= 16.0 g/cm^3 and T_stable >= 500 degC, element-count window 2-6
 
 ML surrogate integration uses prediction_service.py (PhaseClassifier v0.1 +
 TempPredictor v0.1) as fast evaluators replacing expensive DFT calls.
@@ -49,15 +51,44 @@ ALLOY_ELEMENTS: list[tuple[str, float, float]] = [
 N_VAR = len(ALLOY_ELEMENTS)
 
 # Constraint bounds
-BOUNDS_U_MIN: float = 0.60
-BOUNDS_U_MAX: float = 0.90
+#
+# U window [0.80, 0.95] at.% is the role-spec search space (技术路线图 §5.3,
+# NFM-5481). The previous [0.60, 0.90] window predated the role-spec floors:
+# widening the ceiling to 0.95 was verified against surrogate training
+# coverage before adoption (training_set_5551: 1,549 fraction-unit rows with
+# U in (0.90, 0.95]; the U-Zr binary line itself spans Zr 1.5-30.3 at.%).
+BOUNDS_U_MIN: float = 0.80
+BOUNDS_U_MAX: float = 0.95
 BOUNDS_MAX_SINGLE_ELEMENT: float = 0.20
 BOUNDS_BV_MIN: float = 8.0
 BOUNDS_BV_MAX: float = 18.0
 CONSTRAINT_MIN_ELEMENTS: int = 2
 CONSTRAINT_MAX_ELEMENTS: int = 6
 
-#: Elements below this fraction are treated as "absent" for element count.
+# Role-spec floors (NFM-5481 — binding condition of the NFM-5474 prereg
+# approval, NDE marker 74a2b4e7): a candidate composition below either
+# floor is infeasible regardless of objective performance.
+FLOOR_U_DENSITY: float = 16.0  # g/cm^3
+FLOOR_T_STABLE_C: float = 500.0  # deg C
+
+#: Total number of inequality constraints (g1..g7) exposed to pymoo.
+N_IEQ_CONSTRAINTS: int = 7
+
+#: Deterministic stand-in temperature for the synthetic (no-artifact)
+#: evaluation path. Must stay strictly above FLOOR_T_STABLE_C so the
+#: deterministic regression path exercises g6 with slack, mirroring the
+#: observed surrogate front (Zr-only v0.1 artifacts: T_stable in
+#: [662.7, 672.6] degC, docs/analysis/2026-10-12-nfm5474-first-gated-
+#: confirmatory-run.md). The MLSurrogateEvaluator silent fallback keeps a
+#: below-floor 400 degC fill on purpose: with g6 wired, a silently
+#: degraded surrogate now yields an all-infeasible (empty) front instead
+#: of a plausible-looking wrong one — fail-closed.
+SYNTHETIC_T_STABLE_C: float = 670.0
+
+#: Solute fractions at or below this threshold are treated as "absent"
+#: for the element-count constraint. The threshold coincides with the
+#: variable lower bound, so a solute pinned at its bound is trace-only
+#: and does not count toward the 2-6 element window.
 ELEMENT_ABSENCE_THRESHOLD: float = 0.005
 
 
@@ -198,15 +229,19 @@ class NuclearFuelOptimizationProblem(Problem):
       2. Minimize -T_stable (maximize phase stability temperature)
       3. Minimize -fabricability (maximize fabricability score)
 
-    Four inequality constraints (g ≤ 0 means feasible):
-      1. U_MIN - u_fraction ≤ 0  (U ≥ 60 at.%)
-      2. u_fraction - U_MAX ≤ 0  (U ≤ 90 at.%)
+    Seven inequality constraints (g ≤ 0 means feasible):
+      1. U_MIN - u_fraction ≤ 0  (U ≥ 80 at.%, role-spec window)
+      2. u_fraction - U_MAX ≤ 0  (U ≤ 95 at.%, role-spec window)
       3. max_element - 0.20 ≤ 0  (each solute ≤ 20 at.%)
       4. |BV - center| - half_width ≤ 0  (B/V within [8.0, 18.0])
+      5. FLOOR_U_DENSITY - ρ_U ≤ 0  (U density ≥ 16.0 g/cm³, NFM-5481)
+      6. FLOOR_T_STABLE_C - T_stable ≤ 0  (phase stability ≥ 500 °C, NFM-5481)
+      7. element-count window: 2 ≤ #(U + present solutes) ≤ 6 (NFM-5481)
 
-    The element count constraint (2–6 solutes) is enforced implicitly via
-    the lower bound of 0.005 on each variable — individuals below threshold
-    are counted as absent.
+    A solute counts as "present" only strictly above
+    ELEMENT_ABSENCE_THRESHOLD; a solute pinned at its 0.005 lower bound is
+    trace-only. U counts as present when its fraction exceeds the same
+    threshold.
 
     Uses vectorized _evaluate for batch prediction performance. ML surrogate
     models from prediction_service.py are called per-batch rather than
@@ -231,7 +266,7 @@ class NuclearFuelOptimizationProblem(Problem):
         super().__init__(
             n_var=N_VAR,
             n_obj=3,
-            n_ieq_constr=4,
+            n_ieq_constr=N_IEQ_CONSTRAINTS,
             xl=xl,
             xu=xu,
         )
@@ -277,7 +312,7 @@ class NuclearFuelOptimizationProblem(Problem):
 
         Populates:
             out["F"]: (n, 3) objective matrix — minimize all three.
-            out["G"]: (n, 4) inequality constraint violations — ≤ 0 feasible.
+            out["G"]: (n, 7) inequality constraint violations — ≤ 0 feasible.
 
         Uses MLSurrogateEvaluator for vectorized batch prediction when
         available, falling back to per-individual feature computation.
@@ -353,7 +388,7 @@ class NuclearFuelOptimizationProblem(Problem):
         out["F"] = np.column_stack([f1, f2, f3])
 
         # Constraints
-        self._compute_constraints(X, bv_ratios, out)
+        self._compute_constraints(X, bv_ratios, u_densities, temps, out)
 
     def _evaluate_synthetic(
         self,
@@ -368,7 +403,7 @@ class NuclearFuelOptimizationProblem(Problem):
         n = len(compositions)
         u_densities = np.zeros(n)
         bv_ratios = np.zeros(n)
-        temps = np.full(n, 400.0)
+        temps = np.full(n, SYNTHETIC_T_STABLE_C)
         entropies = np.zeros(n)
 
         for i, comp in enumerate(compositions):
@@ -383,20 +418,34 @@ class NuclearFuelOptimizationProblem(Problem):
 
         out["F"] = np.column_stack([f1, f2, f3])
 
-        self._compute_constraints(X, bv_ratios, out)
+        self._compute_constraints(X, bv_ratios, u_densities, temps, out)
 
     def _compute_constraints(
         self,
         X: np.ndarray,
         bv_ratios: np.ndarray,
+        u_densities: np.ndarray,
+        temps: np.ndarray,
         out: dict[str, Any],
     ) -> None:
         """Compute inequality constraints (shared by ML and synthetic paths).
 
-        Constraint 1: U_MIN - u_fraction ≤ 0  (U ≥ 60 at.%)
-        Constraint 2: u_fraction - U_MAX ≤ 0  (U ≤ 90 at.%)
+        Constraint 1: U_MIN - u_fraction ≤ 0  (U ≥ 80 at.%)
+        Constraint 2: u_fraction - U_MAX ≤ 0  (U ≤ 95 at.%)
         Constraint 3: max_element - 0.20 ≤ 0  (each solute ≤ 20 at.%)
         Constraint 4: B/V out of [8.0, 18.0]
+        Constraint 5: FLOOR_U_DENSITY - ρ_U ≤ 0  (NFM-5481 role-spec floor)
+        Constraint 6: FLOOR_T_STABLE_C - T_stable ≤ 0  (NFM-5481 role-spec floor)
+        Constraint 7: element count (U + solutes strictly above the absence
+            threshold) outside [CONSTRAINT_MIN_ELEMENTS, CONSTRAINT_MAX_ELEMENTS]
+
+        Args:
+            X: Decision matrix (n_pop, n_var).
+            bv_ratios: B/V ratios (n_pop,).
+            u_densities: U densities in g/cm³ (n_pop,) — from the feature
+                matrix (ML path) or compute_all_features (synthetic path).
+            temps: Phase stability temperatures in °C (n_pop,).
+            out: Output dictionary to populate with G.
         """
         solute_sums = np.sum(X, axis=1)
         u_fracs = 1.0 - solute_sums
@@ -406,7 +455,27 @@ class NuclearFuelOptimizationProblem(Problem):
         g3 = np.max(X, axis=1) - BOUNDS_MAX_SINGLE_ELEMENT
         g4 = np.maximum(BOUNDS_BV_MIN - bv_ratios, bv_ratios - BOUNDS_BV_MAX)
 
-        out["G"] = np.column_stack([g1, g2, g3, g4])
+        # Role-spec floors (NFM-5481). Guards by design on the Zr-only
+        # boundary (observed front: ρ_U ≥ 16.307, T_stable ≥ 662.7 with the
+        # v0.1 surrogate); they become active when the search space is
+        # relaxed to multi-element or more dilute compositions.
+        g5 = FLOOR_U_DENSITY - u_densities
+        g6 = FLOOR_T_STABLE_C - temps
+
+        # Element-count window: U plus every solute strictly above the
+        # absence threshold (a solute at its 0.005 lower bound is trace-only
+        # and does not count). U counts when its own fraction clears the
+        # threshold — a solute sum ≥ 1.0 leaves no uranium in the alloy.
+        element_count = (
+            np.sum(X > ELEMENT_ABSENCE_THRESHOLD, axis=1)
+            + (u_fracs > ELEMENT_ABSENCE_THRESHOLD)
+        )
+        g7 = np.maximum(
+            CONSTRAINT_MIN_ELEMENTS - element_count,
+            element_count - CONSTRAINT_MAX_ELEMENTS,
+        )
+
+        out["G"] = np.column_stack([g1, g2, g3, g4, g5, g6, g7])
 
     @property
     def eval_count(self) -> int:

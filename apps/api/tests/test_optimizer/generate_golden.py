@@ -176,9 +176,15 @@ def _build_provenance() -> dict:
             "-fabricability (negate entropy+B/V scorer)",
         ],
         "constraints": [
-            "BOUNDS_U_MIN (=0.60) <= u_frac <= BOUNDS_U_MAX (=0.90)",
+            "BOUNDS_U_MIN (=0.80) <= u_frac <= BOUNDS_U_MAX (=0.95) "
+            "(role-spec window, NFM-5481)",
             "max_element <= BOUNDS_MAX_SINGLE_ELEMENT (=0.20)",
             "BOUNDS_BV_MIN (=8.0) <= B/V <= BOUNDS_BV_MAX (=18.0)",
+            "FLOOR_U_DENSITY (=16.0) <= rho_U (g/cm^3) — NFM-5481 role-spec floor",
+            "FLOOR_T_STABLE_C (=500.0) <= T_stable (degC) — NFM-5481 role-spec "
+            "floor; synthetic path pins T at SYNTHETIC_T_STABLE_C (=670.0)",
+            "2 <= element count (U + solutes strictly above "
+            "ELEMENT_ABSENCE_THRESHOLD=0.005) <= 6 — NFM-5481",
         ],
         "surrogate_mode": (
             "synthetic (model artifacts absent in this environment; "
