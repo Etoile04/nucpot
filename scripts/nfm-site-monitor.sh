@@ -194,8 +194,20 @@ smaxage_re = re.compile(r's-maxage=(\d+)')
 
 PAGE_TIMEOUT = 15.0       # per page GET socket timeout
 PAGE_STAGE_BUDGET = 90.0  # wall budget for the (parallel) page GETs
-REF_TIMEOUT = 8.0         # per ref HEAD socket timeout
-REF_POOL = int(os.environ.get("NFM_SCAN_REF_POOL", "12"))  # parallel ref HEADs (serial pre-NFM-5446)
+REF_TIMEOUT = 15.0        # per ref HEAD socket timeout. NFM-5490: 8→15 — the
+                          # NFM-5262 diurnal edge tail runs 5-10.4 s/request
+                          # (+SSL handshake), so an 8 s timeout converted the
+                          # whole latency window into refs-unverified (ep-4:
+                          # 38 unverified while patient-client HEADs from the
+                          # same vantage returned 40/40 HTTP 200). Matches
+                          # PAGE_TIMEOUT; the DEADLINE still bounds the scan.
+REF_POOL = int(os.environ.get("NFM_SCAN_REF_POOL", "24"))  # parallel ref HEADs (serial pre-NFM-5446; 12 pre-NFM-5490).
+                          # 24: with ~150 refs scan-wide at 5-10 s each during
+                          # a diurnal window, a 12-pool cannot drain the waves
+                          # inside the post-page-stage budget even when every
+                          # HEAD succeeds; 24 halves the wave count. Worst
+                          # case (all HEADs burn the full timeout, retried)
+                          # still fail-closes via the budget gate below.
 REF_CAP = 45              # max distinct refs verified per page. 2026-10-11: 30→45 —
                           # live /materials carries 40 distinct chunk refs, so cap-30
                           # truncated 10 refs on EVERY scan; the skip streak could then
@@ -298,16 +310,31 @@ def fetch_page(page):
 
 def head_ref(page, ref):
     global skipped_refs
-    if left() <= REF_TIMEOUT:  # one more HEAD cannot fit the budget
-        with lock:
-            skipped_refs += 1
-        return
     req = urllib.request.Request(base + ref, method="HEAD", headers={"User-Agent": ua})
-    try:
-        code = urllib.request.urlopen(req, timeout=REF_TIMEOUT).status
-    except urllib.error.HTTPError as e:
-        code = e.code
-    except Exception:
+    # NFM-5490: one budget-gated retry on TRANSPORT failures only (SSL
+    # UNEXPECTED_EOF, handshake/reset, tail-latency timeout) — the ep-4
+    # live adjudication proved refs stay verifiable mid-blindness with a
+    # patient client (40/40 HTTP 200 while this loop sat at unverified=38).
+    # A definitive verdict is never retried away: 4xx stays immediate P0
+    # (HTTPError breaks out below) and 5xx stays unknown — the retry can
+    # only turn a genuinely-dead transport error into a real 200, never a
+    # false green; persistent failure still counts unverified (fail-closed).
+    code = None
+    for _attempt in (1, 2):
+        if left() <= REF_TIMEOUT:  # one more HEAD cannot fit the budget
+            with lock:
+                skipped_refs += 1
+            return
+        try:
+            code = urllib.request.urlopen(req, timeout=REF_TIMEOUT).status
+            break
+        except urllib.error.HTTPError as e:
+            code = e.code
+            break
+        except Exception:
+            continue  # retry once while budget remains
+    if code is None:
+        # both attempts failed at transport level — unverified, fail-closed
         with lock:
             skipped_refs += 1
         return

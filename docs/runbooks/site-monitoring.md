@@ -118,7 +118,7 @@ consecutive probes / 3 h 46 m with four pages still 1y-pinned).
 Post-NFM-5446 contract (`scripts/nfm-site-monitor.sh`, mirrored to
 `~/bin/nfm-site-monitor.sh`):
 
-- **Parallel scan**: page GETs and ref HEADs (pool of 12) run concurrently
+- **Parallel scan**: page GETs and ref HEADs (pool of 24, NFM-5490) run concurrently
   under one wall budget; the 240 s SIGALRM remains only as a backstop for
   pathological hangs.
 - **Fail-closed-or-unknown**: a scan that cannot complete reports
@@ -159,3 +159,33 @@ while spot-check HEADs are fast means the site outgrew REF_CAP — raise it
 than acking the page.** Raising the cap increases worst-case scan cost
 (5 × REF_CAP HEADs through the pool); the 240 s budget still bounds it
 and a genuinely slow edge degrades exactly as before.
+
+**Latency hardening (NFM-5490, 2026-10-12):** episodes 1–4 (census: 2/day
+in the NFM-5262 latency regime) were adjudicated benign — P0 lane clean
+mid-blindness, fail-closed intact — but the ep-4 *live* adjudication added
+decisive evidence: patient-client HEADs from the same vantage returned
+40/40 HTTP 200 while the sentinel sat at refs-unverified=38. The blindness
+was partly self-inflicted client fragility, not edge impossibility. The
+HEAD verifier therefore (a) retries TRANSPORT failures once, budget-gated
+(SSL UNEXPECTED_EOF / handshake-reset / tail-latency timeout — the ep-4
+class), (b) runs REF_TIMEOUT at 15 s to cover the observed 5–10.4 s
+diurnal tail (was 8 s — below the tail, so the whole window converted to
+unverified), and (c) pools 24 parallel HEADs (was 12) so ~150 scan-wide
+refs at 5–10 s each still drain inside the post-page-stage budget. Verdict
+semantics are unchanged: a definitive 4xx is still an immediate P0, a 5xx
+is still unknown (base-probe lane owns outages), and persistent transport
+failure or budget exhaustion still degrades fail-closed — the retry can
+only convert a genuinely-recovered transport error into a real 200, never
+manufacture a false green. This is deliberately the OPPOSITE direction
+from the NFM-5488-rejected skip-rate allowance: verify more, never mask.
+The monitor User-Agent stays byte-identical — it selects the edge's
+monitor-UA HTML variant, and changing it would reset the pin-aging the
+TTL lane watches.
+
+**Adjudication extraction note (ep-4 playbook addition):** RSC-payload
+(`self.__next_f`) chunk refs are JSON-escaped (`…js\"`). A naive
+`[^"']+` capture includes the trailing backslash → HEADing `URL\` yields
+phantom 404s (ep-4: 34 apparent dead refs → 0 real after
+`rstrip('\\')`). The sentinel's own `ref_re` character class cannot
+capture a backslash, so shipped extraction is immune; manual/ad-hoc
+adjudication regexes must normalize before HEADing.
