@@ -92,8 +92,10 @@ self-certified as accepted — disposition is routed to NDE (NFM-5480).
   curve almost completely before evolution begins: gen-1 HV = 99.66% of final.
 - The preregistered **relative** criterion (final-10-gen gain < 1% of **total** gain) is
   ill-conditioned when total gain is near-degenerate (total gain = 0.002381,
-  ~0.24% of the normalized [0, 1.1]³ volume): it compares an asymptotic crawl against
+  0.179% of the 1.331 normalized reference volume): it compares an asymptotic crawl against
   itself, and the ±8e-4 trajectory oscillation is of the same order as the tail gain.
+  *(Volume-fraction correction per NDE verdict `fe595b7d`, NFM-5480; the originally filed
+  "~0.24%" was the fraction of unit volume.)*
 - Supplementary convergence evidence (reported for NDE's disposition, not as a
   self-clearing substitute): absolute tail gain 0.000137 ≈ 0.010%
   of normalized volume; GD(gen-90, final) = 0.003820; full-range spans
