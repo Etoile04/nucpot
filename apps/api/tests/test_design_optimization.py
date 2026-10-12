@@ -583,7 +583,8 @@ def test_real_problem_evaluate_produces_correct_shapes():
     assert "F" in out
     assert "G" in out
     assert out["F"].shape == (n_pop, 3)  # 3 objectives
-    assert out["G"].shape == (n_pop, 4)  # 4 constraints
+    # 7 constraints: g1-g4 legacy bounds + g5-g7 role-spec floors (NFM-5481)
+    assert out["G"].shape == (n_pop, 7)
 
 
 @pytest.mark.unit
