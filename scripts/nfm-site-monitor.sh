@@ -64,6 +64,20 @@
 #     hold it) and the backstop now reports verified P0s (rc 1) instead of
 #     hardcoding p0=0; snapshot failure is degraded-unknown, never green.
 #
+# NFM-5454 (2026-10-11, SRE tuning) — single-ref flake threshold:
+#   - Post-#1469 data (2026-10-11): every noise-grade degraded scan had
+#     refs-unverified=1 (a single ref HEAD error, NFM-5262 diurnal class;
+#     9 occurrences; the 17:48Z sentinel-blind CRITICAL fired on three =1
+#     probes — ~2 pages/day at that sensitivity). Real failures the same
+#     day were multi-ref (=9, =12) or cap-era (=10).
+#   - Change: refs-unverified degrades only at >= REFS_DEGRADE_MIN (2). A
+#     lone unverified ref logs a NOTE-tagged ok line instead (drift watch:
+#     a PERSISTENT single = cap/edge investigation, runbook §7).
+#     Over-budget truncation is counted separately (refs-truncated) and
+#     degrades at ANY count — the cap-outgrown signal stays fail-closed.
+#     Definitive 4xx dead refs remain immediate P0 (rc 1) — untouched.
+#     SCAN_SKIP_CRITICAL stays 3: blindness detection latency unchanged.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -174,7 +188,7 @@ t0 = time.monotonic()
 def left():
     return DEADLINE - (time.monotonic() - t0)
 
-ua = "nfm-site-monitor/1.2 (+NFM-5418 chunk scan, NFM-5446 fail-closed)"
+ua = "nfm-site-monitor/1.3 (+NFM-5418 chunk scan, NFM-5446 fail-closed, NFM-5454 flake threshold)"
 ref_re = re.compile(r'/_next/static/[A-Za-z0-9._\-/]+')
 smaxage_re = re.compile(r's-maxage=(\d+)')
 
@@ -189,6 +203,11 @@ REF_CAP = 45              # max distinct refs verified per page. 2026-10-11: 30�
                           # permanently. Keep above the real per-page ref count; a
                           # persistent refs-unverified>0 across calm-edge scans means
                           # the site outgrew the cap (raise it, see runbook §7).
+REFS_DEGRADE_MIN = 2      # NFM-5454: refs-unverified below this is a NOTE, not a
+                          # degrade reason — a single errored ref is diurnal
+                          # edge-latency noise (2026-10-11: all 9 noise-grade
+                          # degrades were =1). Multi-ref failures (=9, =12 same
+                          # day) and truncation still degrade immediately.
 REPORT_MARGIN = 5.0       # reserve for printing/teardown before SIGALRM
 
 lock = threading.Lock()
@@ -197,7 +216,9 @@ ages = {}    # page -> age header at read time
 bad = {}     # page -> ["ref->code", ...]
 fetched = 0
 refs_seen = 0
-skipped_refs = 0  # unverified: over budget or errored (conservative count)
+skipped_refs = 0    # errored/unknown: HEAD exception, 5xx, budget-skipped, or
+                    # in-flight past the stage budget (degrades at >= REFS_DEGRADE_MIN)
+truncated_refs = 0  # over budget (distinct > REF_CAP) — degrades at ANY count (NFM-5454)
 
 def _fmt_findings():
     parts = []
@@ -252,7 +273,7 @@ signal.signal(signal.SIGALRM, _deadline)
 signal.alarm(max(1, int(DEADLINE)))
 
 def fetch_page(page):
-    global fetched, refs_seen, skipped_refs
+    global fetched, refs_seen, skipped_refs, truncated_refs
     req = urllib.request.Request(base + page, headers={"User-Agent": ua})
     resp = urllib.request.urlopen(req, timeout=PAGE_TIMEOUT)
     try:
@@ -272,7 +293,7 @@ def fetch_page(page):
     with lock:
         fetched += 1
         refs_seen += len(refs)
-        skipped_refs += len(distinct) - len(refs)
+        truncated_refs += len(distinct) - len(refs)
     return page, refs
 
 def head_ref(page, ref):
@@ -353,21 +374,31 @@ try:
         reasons.append("no chunk refs found in fetched pages")
     if skipped_pages:
         reasons.append("page-fetch-skipped=" + ",".join(sorted(set(skipped_pages))))
-    if skipped_refs:
+    if truncated_refs:
+        # cap outgrown (runbook §7 signal) — fail-closed at ANY count
+        reasons.append("refs-truncated=%d" % truncated_refs)
+    if skipped_refs >= REFS_DEGRADE_MIN:
         reasons.append("refs-unverified=%d" % skipped_refs)
+    note = ""
+    if skipped_refs and skipped_refs < REFS_DEGRADE_MIN:
+        # NFM-5454: single-ref flake — visible for drift watch, no degrade
+        note = ("; refs-unverified=%d (below NFM-5454 degrade threshold %d "
+                "— diurnal single-ref flake, no streak impact)"
+                % (skipped_refs, REFS_DEGRADE_MIN))
 
     if p0 > 0:
         # Definitive dead refs page regardless of coverage caveats.
-        d = findings + ((" (scan-degraded: " + "; ".join(reasons) + ")") if reasons else "")
+        d = findings + note + ((" (scan-degraded: " + "; ".join(reasons) + ")") if reasons else "")
         _emit("%d %d %s" % (p0 + n_stale, p0, d), 1)
     if reasons:
         d = "scan-degraded: " + "; ".join(reasons)
         if n_stale > 0:
             d += " | " + findings  # TTL lane carried pins out anyway
+        d += note
         _emit("%d 0 %s" % (n_stale, d), 3)
     if n_stale > 0:
-        _emit("%d 0 %s" % (n_stale, findings), 1)
-    _emit("0 0 ok (%d refs verified across %d page(s))" % (refs_seen, fetched), 0)
+        _emit("%d 0 %s" % (n_stale, findings + note), 1)
+    _emit("0 0 ok (%d refs verified across %d page(s)%s)" % (refs_seen - skipped_refs, fetched, note), 0)
 except Exception as e:
     # Internal errors are degraded-unknown too (was fail-open pre-NFM-5446).
     _emit("0 0 scan-degraded: internal-error: %s" % e, 3)
@@ -472,6 +503,9 @@ if (( RC == 0 )); then
     log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL} (NFM-5446): ${scan_detail} — P0 lane unverified this cycle"
     scan_degraded_note=1
   elif (( SCAN_RC == 0 )); then
+    if [[ "$scan_detail" == *"below NFM-5454 degrade threshold"* ]]; then
+      log "NOTE — chunk-scan ok with 1 ref unverified (below NFM-5454 degrade threshold 2; diurnal flake, NFM-5262 class) — no streak impact; persistent single-ref = investigate cap/edge"
+    fi
     if (( $(state_get scan_skip_streak 0) >= SCAN_SKIP_CRITICAL )); then
       log "RECOVERY — chunk-scan completed again after blind streak $(state_get scan_skip_streak 0) (NFM-5446) — SRE closes the sentinel-blind alert"
     fi

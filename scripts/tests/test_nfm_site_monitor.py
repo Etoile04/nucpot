@@ -19,6 +19,10 @@ back to fail-open:
   BEFORE the body read, so stale-pin P1s stay visible during degradation;
 - a skip streak of >= 3 consecutive degraded scans escalates to a
   sentinel-blind CRITICAL page; a completed scan resets the streak;
+- NFM-5454 flake threshold: refs-unverified degrades only at >= 2 — a
+  single errored ref reads green with a NOTE (drift watch), while
+  over-budget truncation (refs-truncated) still degrades at ANY count
+  and definitive 4xx dead refs stay immediate P0;
 - env seams (NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_MONITOR_LOG/STATE/
   PROBE/NOTIFY) keep the suite hermetic — no real network, no real
   LaunchAgent state. Every helper hard-fails if the seams are missing so
@@ -332,15 +336,63 @@ def test_scan_once_ref_cap_overflow_is_degraded(env, mock_site):
 
     A page carrying more distinct chunk refs than the per-page cap must not
     read green with only the first N verified (gate review: silent partial
-    coverage); the dropped tail counts as refs-unverified => rc 3.
+    coverage); the dropped tail counts as refs-truncated => rc 3.
     REF_CAP is 45: overflow needs >45 distinct refs on one page.
+    NFM-5454: truncation is its OWN counter and degrades at ANY count —
+    the cap-outgrown (runbook §7) signal must stay fail-closed even though
+    a single ERRORED ref no longer degrades.
     """
     _base, config = mock_site
     config["pages"]["/"]["body"] = _page_body(50)
     r = run_script(env, "--scan-once")
     assert r.returncode == 3, r.stdout
     assert "scan-degraded" in r.stdout
-    assert "refs-unverified=5" in r.stdout
+    assert "refs-truncated=5" in r.stdout
+
+
+def test_scan_once_single_truncated_ref_still_degrades(env, mock_site):
+    """A 46-ref page truncates exactly ONE ref — and still must not read
+    green (NFM-5454): truncation fail-closed at count=1 is what keeps the
+    cap-outgrown drift detectable once single-ref ERRORS are below
+    threshold.
+    """
+    _base, config = mock_site
+    config["pages"]["/"]["body"] = _page_body(46)
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "refs-truncated=1" in r.stdout
+
+
+def test_scan_once_single_ref_flake_below_threshold_is_green_with_note(env, mock_site):
+    """NFM-5454: ONE errored ref (5xx) is diurnal flake, not degradation.
+
+    Live data 2026-10-11: all 9 noise-grade degraded scans had
+    refs-unverified=1 and the 17:48Z sentinel-blind CRITICAL fired on
+    three =1 probes (~2 pages/day). A lone error now reads rc 0 with an
+    explicit note so heartbeat log-reads keep drift visibility.
+    """
+    _base, config = mock_site
+    # r2 exists ONLY on "/" (default pages carry r0/r1) => exactly 1 skip
+    config["pages"]["/"]["body"] = _page_body(3)
+    config["ref_status"] = {"r2-a1b2c3.js": 500}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 0, r.stdout
+    assert "ok (" in r.stdout
+    assert "below NFM-5454 degrade threshold 2" in r.stdout
+
+
+def test_scan_once_two_ref_flakes_still_degrade(env, mock_site):
+    """NFM-5454 threshold is 2, not 'any': >=2 errored refs still degrade
+    immediately (multi-ref failure = real edge trouble, e.g. the =9 and
+    =12 bursts observed 2026-10-11).
+    """
+    _base, config = mock_site
+    # r2/r3 exist ONLY on "/" (default pages carry r0/r1) => exactly 2 skips
+    config["pages"]["/"]["body"] = _page_body(4)
+    config["ref_status"] = {"r2-a1b2c3.js": 500, "r3-a1b2c3.js": 500}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "refs-unverified=2" in r.stdout
 
 
 def test_scan_once_materials_sized_page_verifies_green(env, mock_site):
@@ -424,6 +476,24 @@ def test_integration_green_run(env, mock_site):
     st = state_dict(env)
     assert st["level"] == "OK"
     assert st["scan_skip_streak"] == "0"
+
+
+def test_integration_single_ref_flake_logs_note_not_warn(env, mock_site):
+    """NFM-5454 drift-watch lane: one flaked ref on an otherwise green run
+    logs a NOTE line (heartbeat reads it) — no WARN, no streak movement.
+    """
+    _base, config = mock_site
+    # r2 exists ONLY on "/" (default pages carry r0/r1) => exactly 1 skip
+    config["pages"]["/"]["body"] = _page_body(3)
+    config["ref_status"] = {"r2-a1b2c3.js": 500}
+    r = run_script(env)
+    assert r.returncode == 0, r.stdout
+    lt = log_text(env)
+    assert "NOTE — chunk-scan ok with 1 ref unverified" in lt
+    assert "chunk-scan DEGRADED" not in lt
+    st = state_dict(env)
+    assert st["scan_skip_streak"] == "0"
+    assert st["level"] == "OK"
 
 
 def test_integration_degraded_pins_surface_as_warn(env, mock_site):
