@@ -3,7 +3,7 @@
   "issue": "NFM-5058",
   "title": "Zr-only Pareto regression golden (KR-OPT-Q4-S2)",
   "provenance": {
-    "generated_at_utc": "2026-09-21T01:22:34.604562+00:00",
+    "generated_at_utc": "2026-10-12T03:58:48.112255+00:00",
     "generator": "tests.test_optimizer.generate_golden",
     "boundary": "Zr-only (Mo, Nb, V, Ti, Cr forced to 0)",
     "excluded_element_basis": {
@@ -33,16 +33,19 @@
       "-fabricability (negate entropy+B/V scorer)"
     ],
     "constraints": [
-      "BOUNDS_U_MIN (=0.60) <= u_frac <= BOUNDS_U_MAX (=0.90)",
+      "BOUNDS_U_MIN (=0.80) <= u_frac <= BOUNDS_U_MAX (=0.95) (role-spec window, NFM-5481)",
       "max_element <= BOUNDS_MAX_SINGLE_ELEMENT (=0.20)",
-      "BOUNDS_BV_MIN (=8.0) <= B/V <= BOUNDS_BV_MAX (=18.0)"
+      "BOUNDS_BV_MIN (=8.0) <= B/V <= BOUNDS_BV_MAX (=18.0)",
+      "FLOOR_U_DENSITY (=16.0) <= rho_U (g/cm^3) \u2014 NFM-5481 role-spec floor",
+      "FLOOR_T_STABLE_C (=500.0) <= T_stable (degC) \u2014 NFM-5481 role-spec floor; synthetic path pins T at SYNTHETIC_T_STABLE_C (=670.0)",
+      "2 <= element count (U + solutes strictly above ELEMENT_ABSENCE_THRESHOLD=0.005) <= 6 \u2014 NFM-5481"
     ],
     "surrogate_mode": "synthetic (model artifacts absent in this environment; regression test runs identically so fronts stay comparable)",
     "provenance_files": {
       "prediction_service.py": "b39a8ddd44e792cbcef136d966b989cbb351a439",
-      "nsga2_problem.py": "08cdc934c34a7945e519de58428607d62f104445",
+      "nsga2_problem.py": "38909c6e29ed93cfcaa4c67e0d90a953f3194460",
       "ml_surrogate.py": "1402edceb3d5e296bdf169b3b6f95f20405fa3b6",
-      "zr_only.py": "f35df96048efe95bd63c32334392c9a2a434e383"
+      "zr_only.py": "38909c6e29ed93cfcaa4c67e0d90a953f3194460"
     },
     "tolerance_spec": {
       "per_axis_drift_max": 0.05,
@@ -53,47 +56,25 @@
   "front": {
     "n_solutions": 200,
     "n_evaluations": 20000,
-    "wall_time_s": 0.989,
+    "wall_time_s": 1.128,
     "objective_axis_spans": {
       "rho_U": {
-        "fmin": -17.665854,
+        "fmin": -18.357507,
         "fmax": -16.307346,
-        "span": 1.358507
+        "span": 2.050161
       },
       "T_stable": {
-        "fmin": -400.0,
-        "fmax": -400.0,
+        "fmin": -670.0,
+        "fmax": -670.0,
         "span": 1.0
       },
       "fabricability": {
         "fmin": -0.33811,
-        "fmax": -0.307147,
-        "span": 0.030963
+        "fmax": -0.279596,
+        "span": 0.058514
       }
     },
     "solutions": [
-      {
-        "rank": 1,
-        "composition": {
-          "U": 0.9,
-          "Mo": 0.0,
-          "Nb": 0.0,
-          "V": 0.0,
-          "Ti": 0.0,
-          "Zr": 0.1,
-          "Cr": 0.0
-        },
-        "objectives_minimized": {
-          "neg_rho_U": -17.665854,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.307147
-        },
-        "objectives_physical": {
-          "rho_U_g_cm3": 17.665854,
-          "T_stable_C": 400.0,
-          "fabricability": 0.307147
-        }
-      },
       {
         "rank": 1,
         "composition": {
@@ -107,4369 +88,4391 @@
         },
         "objectives_minimized": {
           "neg_rho_U": -16.307346,
-          "neg_T_stable": -400.0,
+          "neg_T_stable": -670.0,
           "neg_fabricability": -0.33811
         },
         "objectives_physical": {
           "rho_U_g_cm3": 16.307346,
-          "T_stable_C": 400.0,
+          "T_stable_C": 670.0,
           "fabricability": 0.33811
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.839683,
+          "U": 0.949999,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.160317,
+          "Zr": 0.050001,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.84253,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.328728
+          "neg_rho_U": -18.357507,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.279596
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.84253,
-          "T_stable_C": 400.0,
-          "fabricability": 0.328728
+          "rho_U_g_cm3": 18.357507,
+          "T_stable_C": 670.0,
+          "fabricability": 0.279596
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.841446,
+          "U": 0.880606,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.158554,
+          "Zr": 0.119394,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.866433,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.328232
+          "neg_rho_U": -17.399815,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.315209
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.866433,
-          "T_stable_C": 400.0,
-          "fabricability": 0.328232
+          "rho_U_g_cm3": 17.399815,
+          "T_stable_C": 670.0,
+          "fabricability": 0.315209
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.834293,
+          "U": 0.826061,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.165707,
+          "Zr": 0.173939,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.769547,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330201
+          "neg_rho_U": -16.658248,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.332325
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.769547,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330201
+          "rho_U_g_cm3": 16.658248,
+          "T_stable_C": 670.0,
+          "fabricability": 0.332325
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.851716,
+          "U": 0.878296,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.148284,
+          "Zr": 0.121704,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.005831,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325195
+          "neg_rho_U": -17.368216,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.316092
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.005831,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325195
+          "rho_U_g_cm3": 17.368216,
+          "T_stable_C": 670.0,
+          "fabricability": 0.316092
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.850169,
+          "U": 0.831486,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.149831,
+          "Zr": 0.168514,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.984814,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325669
+          "neg_rho_U": -16.731565,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.330942
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.984814,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325669
+          "rho_U_g_cm3": 16.731565,
+          "T_stable_C": 670.0,
+          "fabricability": 0.330942
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.864261,
+          "U": 0.808909,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.135739,
+          "Zr": 0.191091,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.176581,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321133
+          "neg_rho_U": -16.42706,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.336288
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.176581,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321133
+          "rho_U_g_cm3": 16.42706,
+          "T_stable_C": 670.0,
+          "fabricability": 0.336288
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.832984,
+          "U": 0.842073,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.167016,
+          "Zr": 0.157927,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.751828,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330549
+          "neg_rho_U": -16.874937,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.328054
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.751828,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330549
+          "rho_U_g_cm3": 16.874937,
+          "T_stable_C": 670.0,
+          "fabricability": 0.328054
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.884758,
+          "U": 0.833522,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.115242,
+          "Zr": 0.166478,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.456664,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.313583
+          "neg_rho_U": -16.759114,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.330406
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.456664,
-          "T_stable_C": 400.0,
-          "fabricability": 0.313583
+          "rho_U_g_cm3": 16.759114,
+          "T_stable_C": 670.0,
+          "fabricability": 0.330406
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.879243,
+          "U": 0.84351,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.120757,
+          "Zr": 0.15649,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.381175,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.315732
+          "neg_rho_U": -16.894414,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.327642
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.381175,
-          "T_stable_C": 400.0,
-          "fabricability": 0.315732
+          "rho_U_g_cm3": 16.894414,
+          "T_stable_C": 670.0,
+          "fabricability": 0.327642
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.86189,
+          "U": 0.845388,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.13811,
+          "Zr": 0.154612,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.144267,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321931
+          "neg_rho_U": -16.919904,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.327096
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.144267,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321931
+          "rho_U_g_cm3": 16.919904,
+          "T_stable_C": 670.0,
+          "fabricability": 0.327096
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.854355,
+          "U": 0.945635,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.145645,
+          "Zr": 0.054365,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.041702,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324374
+          "neg_rho_U": -18.296799,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.282499
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.041702,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324374
+          "rho_U_g_cm3": 18.296799,
+          "T_stable_C": 670.0,
+          "fabricability": 0.282499
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.861061,
+          "U": 0.812123,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.138939,
+          "Zr": 0.187877,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.132981,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322207
+          "neg_rho_U": -16.470306,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.335591
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.132981,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322207
+          "rho_U_g_cm3": 16.470306,
+          "T_stable_C": 670.0,
+          "fabricability": 0.335591
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.865251,
+          "U": 0.918026,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.134749,
+          "Zr": 0.081974,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.190079,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320795
+          "neg_rho_U": -17.914239,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.29849
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.190079,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320795
+          "rho_U_g_cm3": 17.914239,
+          "T_stable_C": 670.0,
+          "fabricability": 0.29849
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.878683,
+          "U": 0.919559,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.121317,
+          "Zr": 0.080441,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.373509,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.315945
+          "neg_rho_U": -17.935425,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.297695
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.373509,
-          "T_stable_C": 400.0,
-          "fabricability": 0.315945
+          "rho_U_g_cm3": 17.935425,
+          "T_stable_C": 670.0,
+          "fabricability": 0.297695
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.830313,
+          "U": 0.807449,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.169687,
+          "Zr": 0.192551,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.715713,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331247
+          "neg_rho_U": -16.407425,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.336597
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.715713,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331247
+          "rho_U_g_cm3": 16.407425,
+          "T_stable_C": 670.0,
+          "fabricability": 0.336597
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.835102,
+          "U": 0.944508,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.164898,
+          "Zr": 0.055492,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.78049,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329984
+          "neg_rho_U": -18.281131,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.28323
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.78049,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329984
+          "rho_U_g_cm3": 18.281131,
+          "T_stable_C": 670.0,
+          "fabricability": 0.28323
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.879822,
+          "U": 0.813931,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.120178,
+          "Zr": 0.186069,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.389087,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.315511
+          "neg_rho_U": -16.494642,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.335191
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.389087,
-          "T_stable_C": 400.0,
-          "fabricability": 0.315511
+          "rho_U_g_cm3": 16.494642,
+          "T_stable_C": 670.0,
+          "fabricability": 0.335191
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.880207,
+          "U": 0.824032,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.119793,
+          "Zr": 0.175968,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.394359,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.315363
+          "neg_rho_U": -16.630844,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.332826
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.394359,
-          "T_stable_C": 400.0,
-          "fabricability": 0.315363
+          "rho_U_g_cm3": 16.630844,
+          "T_stable_C": 670.0,
+          "fabricability": 0.332826
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.808227,
+          "U": 0.882655,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.191773,
+          "Zr": 0.117345,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.417881,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336433
+          "neg_rho_U": -17.427865,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.314413
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.417881,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336433
+          "rho_U_g_cm3": 17.427865,
+          "T_stable_C": 670.0,
+          "fabricability": 0.314413
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.853545,
+          "U": 0.935476,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.146455,
+          "Zr": 0.064524,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.030694,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324628
+          "neg_rho_U": -18.155738,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.288826
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.030694,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324628
+          "rho_U_g_cm3": 18.155738,
+          "T_stable_C": 670.0,
+          "fabricability": 0.288826
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.883991,
+          "U": 0.848878,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.116009,
+          "Zr": 0.151122,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.446166,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.313887
+          "neg_rho_U": -16.967281,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.32606
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.446166,
-          "T_stable_C": 400.0,
-          "fabricability": 0.313887
+          "rho_U_g_cm3": 16.967281,
+          "T_stable_C": 670.0,
+          "fabricability": 0.32606
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.871746,
+          "U": 0.902391,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.128254,
+          "Zr": 0.097609,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.278702,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318512
+          "neg_rho_U": -17.698736,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.306067
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.278702,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318512
+          "rho_U_g_cm3": 17.698736,
+          "T_stable_C": 670.0,
+          "fabricability": 0.306067
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.898897,
+          "U": 0.846886,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.101103,
+          "Zr": 0.153114,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.650694,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.307638
+          "neg_rho_U": -16.94023,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.326655
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.650694,
-          "T_stable_C": 400.0,
-          "fabricability": 0.307638
+          "rho_U_g_cm3": 16.94023,
+          "T_stable_C": 670.0,
+          "fabricability": 0.326655
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.898486,
+          "U": 0.839929,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.101514,
+          "Zr": 0.160071,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.645046,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.30782
+          "neg_rho_U": -16.845866,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.328659
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.645046,
-          "T_stable_C": 400.0,
-          "fabricability": 0.30782
+          "rho_U_g_cm3": 16.845866,
+          "T_stable_C": 670.0,
+          "fabricability": 0.328659
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.836804,
+          "U": 0.881447,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.163196,
+          "Zr": 0.118553,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.803533,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329523
+          "neg_rho_U": -17.411329,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.314884
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.803533,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329523
+          "rho_U_g_cm3": 17.411329,
+          "T_stable_C": 670.0,
+          "fabricability": 0.314884
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.859212,
+          "U": 0.821096,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.140788,
+          "Zr": 0.178904,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.107797,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322816
+          "neg_rho_U": -16.591232,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.333536
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.107797,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322816
+          "rho_U_g_cm3": 16.591232,
+          "T_stable_C": 670.0,
+          "fabricability": 0.333536
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.889001,
+          "U": 0.937655,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.110999,
+          "Zr": 0.062345,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.514825,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.311866
+          "neg_rho_U": -18.185964,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.287517
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.514825,
-          "T_stable_C": 400.0,
-          "fabricability": 0.311866
+          "rho_U_g_cm3": 18.185964,
+          "T_stable_C": 670.0,
+          "fabricability": 0.287517
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.875502,
+          "U": 0.869154,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.124498,
+          "Zr": 0.130846,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.33002,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317139
+          "neg_rho_U": -17.24331,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.319437
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.33002,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317139
+          "rho_U_g_cm3": 17.24331,
+          "T_stable_C": 670.0,
+          "fabricability": 0.319437
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.886229,
+          "U": 0.810339,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.113771,
+          "Zr": 0.189661,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.47683,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312993
+          "neg_rho_U": -16.446292,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.335981
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.47683,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312993
+          "rho_U_g_cm3": 16.446292,
+          "T_stable_C": 670.0,
+          "fabricability": 0.335981
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.831952,
+          "U": 0.899889,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.168048,
+          "Zr": 0.100111,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.737873,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.33082
+          "neg_rho_U": -17.664325,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.307197
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.737873,
-          "T_stable_C": 400.0,
-          "fabricability": 0.33082
+          "rho_U_g_cm3": 17.664325,
+          "T_stable_C": 670.0,
+          "fabricability": 0.307197
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.805182,
+          "U": 0.936382,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.194818,
+          "Zr": 0.063618,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.376949,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337069
+          "neg_rho_U": -18.168301,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.288285
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.376949,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337069
+          "rho_U_g_cm3": 18.168301,
+          "T_stable_C": 670.0,
+          "fabricability": 0.288285
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.88263,
+          "U": 0.871624,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.11737,
+          "Zr": 0.128376,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.427529,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.314423
+          "neg_rho_U": -17.277039,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.318556
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.427529,
-          "T_stable_C": 400.0,
-          "fabricability": 0.314423
+          "rho_U_g_cm3": 17.277039,
+          "T_stable_C": 670.0,
+          "fabricability": 0.318556
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.847762,
+          "U": 0.874025,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.152238,
+          "Zr": 0.125975,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.952126,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326394
+          "neg_rho_U": -17.309833,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.317684
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.952126,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326394
+          "rho_U_g_cm3": 17.309833,
+          "T_stable_C": 670.0,
+          "fabricability": 0.317684
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.888207,
+          "U": 0.872784,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.111793,
+          "Zr": 0.127216,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.503944,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312191
+          "neg_rho_U": -17.292875,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.318137
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.503944,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312191
+          "rho_U_g_cm3": 17.292875,
+          "T_stable_C": 670.0,
+          "fabricability": 0.318137
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.860232,
+          "U": 0.889965,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.139768,
+          "Zr": 0.110035,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.121684,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322481
+          "neg_rho_U": -17.52804,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.311468
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.121684,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322481
+          "rho_U_g_cm3": 17.52804,
+          "T_stable_C": 670.0,
+          "fabricability": 0.311468
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.870812,
+          "U": 0.867976,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.129188,
+          "Zr": 0.132024,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.265944,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318848
+          "neg_rho_U": -17.227235,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.319851
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.265944,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318848
+          "rho_U_g_cm3": 17.227235,
+          "T_stable_C": 670.0,
+          "fabricability": 0.319851
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.873773,
+          "U": 0.847371,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.126227,
+          "Zr": 0.152629,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.306388,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317776
+          "neg_rho_U": -16.946807,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.326511
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.306388,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317776
+          "rho_U_g_cm3": 16.946807,
+          "T_stable_C": 670.0,
+          "fabricability": 0.326511
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.839137,
+          "U": 0.948236,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.160863,
+          "Zr": 0.051764,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.835135,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.32888
+          "neg_rho_U": -18.332965,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.280783
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.835135,
-          "T_stable_C": 400.0,
-          "fabricability": 0.32888
+          "rho_U_g_cm3": 18.332965,
+          "T_stable_C": 670.0,
+          "fabricability": 0.280783
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.804604,
+          "U": 0.816164,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.195396,
+          "Zr": 0.183836,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.369182,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337188
+          "neg_rho_U": -16.524725,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.334686
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.369182,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337188
+          "rho_U_g_cm3": 16.524725,
+          "T_stable_C": 670.0,
+          "fabricability": 0.334686
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.810318,
+          "U": 0.927266,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.189682,
+          "Zr": 0.072734,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.446013,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335985
+          "neg_rho_U": -18.041985,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.293547
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.446013,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335985
+          "rho_U_g_cm3": 18.041985,
+          "T_stable_C": 670.0,
+          "fabricability": 0.293547
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.892677,
+          "U": 0.855828,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.107323,
+          "Zr": 0.144172,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.565259,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.310333
+          "neg_rho_U": -17.061745,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323908
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.565259,
-          "T_stable_C": 400.0,
-          "fabricability": 0.310333
+          "rho_U_g_cm3": 17.061745,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323908
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.802403,
+          "U": 0.854586,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.197597,
+          "Zr": 0.145414,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.339616,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337634
+          "neg_rho_U": -17.044853,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.324301
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.339616,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337634
+          "rho_U_g_cm3": 17.044853,
+          "T_stable_C": 670.0,
+          "fabricability": 0.324301
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.861335,
+          "U": 0.806479,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.138665,
+          "Zr": 0.193521,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.136703,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322116
+          "neg_rho_U": -16.394385,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.3368
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.136703,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322116
+          "rho_U_g_cm3": 16.394385,
+          "T_stable_C": 670.0,
+          "fabricability": 0.3368
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.874274,
+          "U": 0.81444,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.125726,
+          "Zr": 0.18556,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.313237,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317593
+          "neg_rho_U": -16.501507,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.335076
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.313237,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317593
+          "rho_U_g_cm3": 16.501507,
+          "T_stable_C": 670.0,
+          "fabricability": 0.335076
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.853337,
+          "U": 0.804472,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.146663,
+          "Zr": 0.195528,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.027869,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324693
+          "neg_rho_U": -16.3674,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337215
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.027869,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324693
+          "rho_U_g_cm3": 16.3674,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337215
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.84538,
+          "U": 0.820305,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.15462,
+          "Zr": 0.179695,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.919796,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327098
+          "neg_rho_U": -16.580555,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.333724
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.919796,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327098
+          "rho_U_g_cm3": 16.580555,
+          "T_stable_C": 670.0,
+          "fabricability": 0.333724
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.878263,
+          "U": 0.830165,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.121737,
+          "Zr": 0.169835,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.367761,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316105
+          "neg_rho_U": -16.71371,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.331285
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.367761,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316105
+          "rho_U_g_cm3": 16.71371,
+          "T_stable_C": 670.0,
+          "fabricability": 0.331285
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.811112,
+          "U": 0.925922,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.188888,
+          "Zr": 0.074078,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.456694,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335813
+          "neg_rho_U": -18.023386,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.294289
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.456694,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335813
+          "rho_U_g_cm3": 18.023386,
+          "T_stable_C": 670.0,
+          "fabricability": 0.294289
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.876246,
+          "U": 0.877507,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.123754,
+          "Zr": 0.122493,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.340182,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316863
+          "neg_rho_U": -17.357422,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.31639
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.340182,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316863
+          "rho_U_g_cm3": 17.357422,
+          "T_stable_C": 670.0,
+          "fabricability": 0.31639
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.893892,
+          "U": 0.87526,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.106108,
+          "Zr": 0.12474,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.581928,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.309817
+          "neg_rho_U": -17.326713,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.317229
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.581928,
-          "T_stable_C": 400.0,
-          "fabricability": 0.309817
+          "rho_U_g_cm3": 17.326713,
+          "T_stable_C": 670.0,
+          "fabricability": 0.317229
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.835981,
+          "U": 0.828337,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.164019,
+          "Zr": 0.171663,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.792394,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329747
+          "neg_rho_U": -16.688994,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.331753
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.792394,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329747
+          "rho_U_g_cm3": 16.688994,
+          "T_stable_C": 670.0,
+          "fabricability": 0.331753
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.835926,
+          "U": 0.94942,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.164074,
+          "Zr": 0.05058,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.791654,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329762
+          "neg_rho_U": -18.349444,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.279988
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.791654,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329762
+          "rho_U_g_cm3": 18.349444,
+          "T_stable_C": 670.0,
+          "fabricability": 0.279988
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.875877,
+          "U": 0.940755,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.124123,
+          "Zr": 0.059245,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.335137,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317
+          "neg_rho_U": -18.228987,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.28561
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.335137,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317
+          "rho_U_g_cm3": 18.228987,
+          "T_stable_C": 670.0,
+          "fabricability": 0.28561
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.866435,
+          "U": 0.89891,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.133565,
+          "Zr": 0.10109,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.206216,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320387
+          "neg_rho_U": -17.650875,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.307632
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.206216,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320387
+          "rho_U_g_cm3": 17.650875,
+          "T_stable_C": 670.0,
+          "fabricability": 0.307632
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.897868,
+          "U": 0.939741,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.102132,
+          "Zr": 0.060259,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.636547,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.308093
+          "neg_rho_U": -18.214913,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.28624
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.636547,
-          "T_stable_C": 400.0,
-          "fabricability": 0.308093
+          "rho_U_g_cm3": 18.214913,
+          "T_stable_C": 670.0,
+          "fabricability": 0.28624
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.811726,
+          "U": 0.939242,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.188274,
+          "Zr": 0.060758,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.464961,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335679
+          "neg_rho_U": -18.207989,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.286547
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.464961,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335679
+          "rho_U_g_cm3": 18.207989,
+          "T_stable_C": 670.0,
+          "fabricability": 0.286547
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.866875,
+          "U": 0.901389,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.133125,
+          "Zr": 0.098611,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.212225,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320235
+          "neg_rho_U": -17.68495,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.306522
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.212225,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320235
+          "rho_U_g_cm3": 17.68495,
+          "T_stable_C": 670.0,
+          "fabricability": 0.306522
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.820815,
+          "U": 0.934396,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.179185,
+          "Zr": 0.065604,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.587441,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333602
+          "neg_rho_U": -18.140752,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.289466
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.587441,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333602
+          "rho_U_g_cm3": 18.140752,
+          "T_stable_C": 670.0,
+          "fabricability": 0.289466
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.874804,
+          "U": 0.871003,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.125196,
+          "Zr": 0.128997,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.320478,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317398
+          "neg_rho_U": -17.268558,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.318779
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.320478,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317398
+          "rho_U_g_cm3": 17.268558,
+          "T_stable_C": 670.0,
+          "fabricability": 0.318779
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.891666,
+          "U": 0.908389,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.108334,
+          "Zr": 0.091611,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.55138,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.310759
+          "neg_rho_U": -17.781322,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.303269
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.55138,
-          "T_stable_C": 400.0,
-          "fabricability": 0.310759
+          "rho_U_g_cm3": 17.781322,
+          "T_stable_C": 670.0,
+          "fabricability": 0.303269
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.813176,
+          "U": 0.897969,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.186824,
+          "Zr": 0.102031,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.484482,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335359
+          "neg_rho_U": -17.637934,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.308049
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.484482,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335359
+          "rho_U_g_cm3": 17.637934,
+          "T_stable_C": 670.0,
+          "fabricability": 0.308049
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.812071,
+          "U": 0.890704,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.187929,
+          "Zr": 0.109296,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.469601,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335603
+          "neg_rho_U": -17.538176,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.311161
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.469601,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335603
+          "rho_U_g_cm3": 17.538176,
+          "T_stable_C": 670.0,
+          "fabricability": 0.311161
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.815444,
+          "U": 0.850395,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.184556,
+          "Zr": 0.149605,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.515029,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.33485
+          "neg_rho_U": -16.987887,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.3256
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.515029,
-          "T_stable_C": 400.0,
-          "fabricability": 0.33485
+          "rho_U_g_cm3": 16.987887,
+          "T_stable_C": 670.0,
+          "fabricability": 0.3256
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.886794,
+          "U": 0.948936,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.113206,
+          "Zr": 0.051064,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.484567,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312766
+          "neg_rho_U": -18.342705,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.280314
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.484567,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312766
+          "rho_U_g_cm3": 18.342705,
+          "T_stable_C": 670.0,
+          "fabricability": 0.280314
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.862529,
+          "U": 0.841065,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.137471,
+          "Zr": 0.158935,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.15297,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321718
+          "neg_rho_U": -16.861271,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.32834
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.15297,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321718
+          "rho_U_g_cm3": 16.861271,
+          "T_stable_C": 670.0,
+          "fabricability": 0.32834
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.805746,
+          "U": 0.931668,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.194254,
+          "Zr": 0.068332,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.384524,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336953
+          "neg_rho_U": -18.102954,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.291056
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.384524,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336953
+          "rho_U_g_cm3": 18.102954,
+          "T_stable_C": 670.0,
+          "fabricability": 0.291056
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.854725,
+          "U": 0.819423,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.145275,
+          "Zr": 0.180577,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.046733,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324257
+          "neg_rho_U": -16.568661,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.333932
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.046733,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324257
+          "rho_U_g_cm3": 16.568661,
+          "T_stable_C": 670.0,
+          "fabricability": 0.333932
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.875003,
+          "U": 0.916678,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.124997,
+          "Zr": 0.083322,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.323195,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317324
+          "neg_rho_U": -17.895638,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.29918
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.323195,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317324
+          "rho_U_g_cm3": 17.895638,
+          "T_stable_C": 670.0,
+          "fabricability": 0.29918
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.885107,
+          "U": 0.912086,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.114893,
+          "Zr": 0.087914,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.461453,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.313443
+          "neg_rho_U": -17.832277,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.301479
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.461453,
-          "T_stable_C": 400.0,
-          "fabricability": 0.313443
+          "rho_U_g_cm3": 17.832277,
+          "T_stable_C": 670.0,
+          "fabricability": 0.301479
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.831387,
+          "U": 0.946862,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.168613,
+          "Zr": 0.053138,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.730232,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330968
+          "neg_rho_U": -18.313864,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.281695
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.730232,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330968
+          "rho_U_g_cm3": 18.313864,
+          "T_stable_C": 670.0,
+          "fabricability": 0.281695
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.834754,
+          "U": 0.86699,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.165246,
+          "Zr": 0.13301,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.77579,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330078
+          "neg_rho_U": -17.21379,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.320195
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.77579,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330078
+          "rho_U_g_cm3": 17.21379,
+          "T_stable_C": 670.0,
+          "fabricability": 0.320195
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.824038,
+          "U": 0.907133,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.175962,
+          "Zr": 0.092867,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.63093,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.332825
+          "neg_rho_U": -17.76401,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.303866
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.63093,
-          "T_stable_C": 400.0,
-          "fabricability": 0.332825
+          "rho_U_g_cm3": 17.76401,
+          "T_stable_C": 670.0,
+          "fabricability": 0.303866
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.825497,
+          "U": 0.872526,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.174503,
+          "Zr": 0.127474,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.650628,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.332466
+          "neg_rho_U": -17.28935,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.318231
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.650628,
-          "T_stable_C": 400.0,
-          "fabricability": 0.332466
+          "rho_U_g_cm3": 17.28935,
+          "T_stable_C": 670.0,
+          "fabricability": 0.318231
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.809514,
+          "U": 0.941398,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.190486,
+          "Zr": 0.058602,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.435193,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336158
+          "neg_rho_U": -18.237917,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.285208
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.435193,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336158
+          "rho_U_g_cm3": 18.237917,
+          "T_stable_C": 670.0,
+          "fabricability": 0.285208
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.882983,
+          "U": 0.909205,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.117017,
+          "Zr": 0.090795,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.432366,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.314284
+          "neg_rho_U": -17.792563,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.302879
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.432366,
-          "T_stable_C": 400.0,
-          "fabricability": 0.314284
+          "rho_U_g_cm3": 17.792563,
+          "T_stable_C": 670.0,
+          "fabricability": 0.302879
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.845027,
+          "U": 0.929674,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.154973,
+          "Zr": 0.070326,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.915,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327202
+          "neg_rho_U": -18.075328,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.292196
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.915,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327202
+          "rho_U_g_cm3": 18.075328,
+          "T_stable_C": 670.0,
+          "fabricability": 0.292196
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.806121,
+          "U": 0.943235,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.193879,
+          "Zr": 0.056765,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.389568,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336875
+          "neg_rho_U": -18.263434,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.284047
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.389568,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336875
+          "rho_U_g_cm3": 18.263434,
+          "T_stable_C": 670.0,
+          "fabricability": 0.284047
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.842,
+          "U": 0.94426,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.158,
+          "Zr": 0.05574,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.873943,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.328074
+          "neg_rho_U": -18.277684,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.28339
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.873943,
-          "T_stable_C": 400.0,
-          "fabricability": 0.328074
+          "rho_U_g_cm3": 18.277684,
+          "T_stable_C": 670.0,
+          "fabricability": 0.28339
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.848848,
+          "U": 0.929997,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.151152,
+          "Zr": 0.070003,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.966865,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326069
+          "neg_rho_U": -18.079797,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.292013
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.966865,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326069
+          "rho_U_g_cm3": 18.079797,
+          "T_stable_C": 670.0,
+          "fabricability": 0.292013
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.89115,
+          "U": 0.893973,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.10885,
+          "Zr": 0.106027,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.544305,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.310975
+          "neg_rho_U": -17.58305,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.309782
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.544305,
-          "T_stable_C": 400.0,
-          "fabricability": 0.310975
+          "rho_U_g_cm3": 17.58305,
+          "T_stable_C": 670.0,
+          "fabricability": 0.309782
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.872374,
+          "U": 0.936924,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.127626,
+          "Zr": 0.063076,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.287276,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318286
+          "neg_rho_U": -18.175812,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.287959
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.287276,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318286
+          "rho_U_g_cm3": 18.175812,
+          "T_stable_C": 670.0,
+          "fabricability": 0.287959
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.822983,
+          "U": 0.87609,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.177017,
+          "Zr": 0.12391,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.616686,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333082
+          "neg_rho_U": -17.338054,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.316921
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.616686,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333082
+          "rho_U_g_cm3": 17.338054,
+          "T_stable_C": 670.0,
+          "fabricability": 0.316921
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.899483,
+          "U": 0.911235,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.100517,
+          "Zr": 0.088765,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.658741,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.307378
+          "neg_rho_U": -17.820536,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.301896
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.658741,
-          "T_stable_C": 400.0,
-          "fabricability": 0.307378
+          "rho_U_g_cm3": 17.820536,
+          "T_stable_C": 670.0,
+          "fabricability": 0.301896
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.803262,
+          "U": 0.85932,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.196738,
+          "Zr": 0.14068,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.351154,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337461
+          "neg_rho_U": -17.109272,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.322781
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.351154,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337461
+          "rho_U_g_cm3": 17.109272,
+          "T_stable_C": 670.0,
+          "fabricability": 0.322781
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.897353,
+          "U": 0.857765,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.102647,
+          "Zr": 0.142235,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.629468,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.308319
+          "neg_rho_U": -17.088097,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323286
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.629468,
-          "T_stable_C": 400.0,
-          "fabricability": 0.308319
+          "rho_U_g_cm3": 17.088097,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323286
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.889324,
+          "U": 0.860097,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.110676,
+          "Zr": 0.139903,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.51925,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.311733
+          "neg_rho_U": -17.119848,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.322526
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.51925,
-          "T_stable_C": 400.0,
-          "fabricability": 0.311733
+          "rho_U_g_cm3": 17.119848,
+          "T_stable_C": 670.0,
+          "fabricability": 0.322526
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.842517,
+          "U": 0.85686,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.157483,
+          "Zr": 0.14314,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.880948,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327927
+          "neg_rho_U": -17.07578,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323578
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.880948,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327927
+          "rho_U_g_cm3": 17.07578,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323578
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.842988,
+          "U": 0.829076,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.157012,
+          "Zr": 0.170924,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.887343,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327792
+          "neg_rho_U": -16.69898,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.331565
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.887343,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327792
+          "rho_U_g_cm3": 16.69898,
+          "T_stable_C": 670.0,
+          "fabricability": 0.331565
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.870085,
+          "U": 0.928119,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.129915,
+          "Zr": 0.071881,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.256021,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.319107
+          "neg_rho_U": -18.053796,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.293071
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.256021,
-          "T_stable_C": 400.0,
-          "fabricability": 0.319107
+          "rho_U_g_cm3": 18.053796,
+          "T_stable_C": 670.0,
+          "fabricability": 0.293071
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.865341,
+          "U": 0.885367,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.134659,
+          "Zr": 0.114633,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.191301,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320764
+          "neg_rho_U": -17.465017,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.313339
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.191301,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320764
+          "rho_U_g_cm3": 17.465017,
+          "T_stable_C": 670.0,
+          "fabricability": 0.313339
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.849939,
+          "U": 0.908031,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.150061,
+          "Zr": 0.091969,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.981685,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325739
+          "neg_rho_U": -17.77639,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.30344
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.981685,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325739
+          "rho_U_g_cm3": 17.77639,
+          "T_stable_C": 670.0,
+          "fabricability": 0.30344
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.869217,
+          "U": 0.928514,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.130783,
+          "Zr": 0.071486,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.24418,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.319415
+          "neg_rho_U": -18.059262,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.29285
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.24418,
-          "T_stable_C": 400.0,
-          "fabricability": 0.319415
+          "rho_U_g_cm3": 18.059262,
+          "T_stable_C": 670.0,
+          "fabricability": 0.29285
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.86859,
+          "U": 0.9202,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.13141,
+          "Zr": 0.0798,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.235614,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.319636
+          "neg_rho_U": -17.944272,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.29736
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.235614,
-          "T_stable_C": 400.0,
-          "fabricability": 0.319636
+          "rho_U_g_cm3": 17.944272,
+          "T_stable_C": 670.0,
+          "fabricability": 0.29736
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.818344,
+          "U": 0.805618,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.181656,
+          "Zr": 0.194382,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.554114,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.334184
+          "neg_rho_U": -16.382805,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.336979
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.554114,
-          "T_stable_C": 400.0,
-          "fabricability": 0.334184
+          "rho_U_g_cm3": 16.382805,
+          "T_stable_C": 670.0,
+          "fabricability": 0.336979
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.873195,
+          "U": 0.886008,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.126805,
+          "Zr": 0.113992,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.298485,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317988
+          "neg_rho_U": -17.473797,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.313082
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.298485,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317988
+          "rho_U_g_cm3": 17.473797,
+          "T_stable_C": 670.0,
+          "fabricability": 0.313082
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.852145,
+          "U": 0.822199,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.147855,
+          "Zr": 0.177801,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.011661,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325063
+          "neg_rho_U": -16.60611,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.333271
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.011661,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325063
+          "rho_U_g_cm3": 16.60611,
+          "T_stable_C": 670.0,
+          "fabricability": 0.333271
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.880762,
+          "U": 0.947515,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.119238,
+          "Zr": 0.052485,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.401963,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.315149
+          "neg_rho_U": -18.322943,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.281263
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.401963,
-          "T_stable_C": 400.0,
-          "fabricability": 0.315149
+          "rho_U_g_cm3": 18.322943,
+          "T_stable_C": 670.0,
+          "fabricability": 0.281263
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.829671,
+          "U": 0.917361,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.170329,
+          "Zr": 0.082639,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.70703,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331412
+          "neg_rho_U": -17.90506,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.298831
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.70703,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331412
+          "rho_U_g_cm3": 17.90506,
+          "T_stable_C": 670.0,
+          "fabricability": 0.298831
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.865908,
+          "U": 0.897333,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.134092,
+          "Zr": 0.102667,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.199033,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320569
+          "neg_rho_U": -17.629198,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.308328
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.199033,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320569
+          "rho_U_g_cm3": 17.629198,
+          "T_stable_C": 670.0,
+          "fabricability": 0.308328
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.895512,
+          "U": 0.905477,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.104488,
+          "Zr": 0.094523,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.604182,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.30912
+          "neg_rho_U": -17.741213,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.304644
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.604182,
-          "T_stable_C": 400.0,
-          "fabricability": 0.30912
+          "rho_U_g_cm3": 17.741213,
+          "T_stable_C": 670.0,
+          "fabricability": 0.304644
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.84588,
+          "U": 0.9029,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.15412,
+          "Zr": 0.0971,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.926574,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326952
+          "neg_rho_U": -17.705745,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.305835
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.926574,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326952
+          "rho_U_g_cm3": 17.705745,
+          "T_stable_C": 670.0,
+          "fabricability": 0.305835
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.852709,
+          "U": 0.893088,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.147291,
+          "Zr": 0.106912,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.019334,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324888
+          "neg_rho_U": -17.570895,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310159
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.019334,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324888
+          "rho_U_g_cm3": 17.570895,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310159
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.821521,
+          "U": 0.858449,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.178479,
+          "Zr": 0.141551,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.596961,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333434
+          "neg_rho_U": -17.097404,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323065
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.596961,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333434
+          "rho_U_g_cm3": 17.097404,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323065
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.883646,
+          "U": 0.913318,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.116354,
+          "Zr": 0.086682,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.441442,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.314023
+          "neg_rho_U": -17.849264,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.30087
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.441442,
-          "T_stable_C": 400.0,
-          "fabricability": 0.314023
+          "rho_U_g_cm3": 17.849264,
+          "T_stable_C": 670.0,
+          "fabricability": 0.30087
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.847133,
+          "U": 0.891119,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.152867,
+          "Zr": 0.108881,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.943587,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326581
+          "neg_rho_U": -17.543879,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310988
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.943587,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326581
+          "rho_U_g_cm3": 17.543879,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310988
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.807599,
+          "U": 0.840713,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.192401,
+          "Zr": 0.159287,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.409436,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336566
+          "neg_rho_U": -16.856492,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.328439
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.409436,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336566
+          "rho_U_g_cm3": 16.856492,
+          "T_stable_C": 670.0,
+          "fabricability": 0.328439
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.882156,
+          "U": 0.912849,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.117844,
+          "Zr": 0.087151,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.421038,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.314608
+          "neg_rho_U": -17.8428,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.301102
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.421038,
-          "T_stable_C": 400.0,
-          "fabricability": 0.314608
+          "rho_U_g_cm3": 17.8428,
+          "T_stable_C": 670.0,
+          "fabricability": 0.301102
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.899717,
+          "U": 0.910167,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.100283,
+          "Zr": 0.089833,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.661964,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.307273
+          "neg_rho_U": -17.805818,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.302415
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.661964,
-          "T_stable_C": 400.0,
-          "fabricability": 0.307273
+          "rho_U_g_cm3": 17.805818,
+          "T_stable_C": 670.0,
+          "fabricability": 0.302415
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.893385,
+          "U": 0.827221,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.106615,
+          "Zr": 0.172779,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.574978,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.310032
+          "neg_rho_U": -16.673917,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.332035
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.574978,
-          "T_stable_C": 400.0,
-          "fabricability": 0.310032
+          "rho_U_g_cm3": 16.673917,
+          "T_stable_C": 670.0,
+          "fabricability": 0.332035
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.894858,
+          "U": 0.942694,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.105142,
+          "Zr": 0.057306,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.595198,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.309403
+          "neg_rho_U": -18.255924,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.284391
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.595198,
-          "T_stable_C": 400.0,
-          "fabricability": 0.309403
+          "rho_U_g_cm3": 18.255924,
+          "T_stable_C": 670.0,
+          "fabricability": 0.284391
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.812659,
+          "U": 0.838882,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.187341,
+          "Zr": 0.161118,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.477517,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335473
+          "neg_rho_U": -16.831679,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.328951
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.477517,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335473
+          "rho_U_g_cm3": 16.831679,
+          "T_stable_C": 670.0,
+          "fabricability": 0.328951
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.806634,
+          "U": 0.948556,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.193366,
+          "Zr": 0.051444,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.396463,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336768
+          "neg_rho_U": -18.337427,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.280569
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.396463,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336768
+          "rho_U_g_cm3": 18.337427,
+          "T_stable_C": 670.0,
+          "fabricability": 0.280569
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.871254,
+          "U": 0.923776,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.128746,
+          "Zr": 0.076224,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.27198,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318689
+          "neg_rho_U": -17.99371,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.295457
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.27198,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318689
+          "rho_U_g_cm3": 17.99371,
+          "T_stable_C": 670.0,
+          "fabricability": 0.295457
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.867194,
+          "U": 0.946398,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.132806,
+          "Zr": 0.053602,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.216576,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320124
+          "neg_rho_U": -18.307405,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.282
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.216576,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320124
+          "rho_U_g_cm3": 18.307405,
+          "T_stable_C": 670.0,
+          "fabricability": 0.282
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.896546,
+          "U": 0.865589,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.103454,
+          "Zr": 0.134411,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.618378,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.308672
+          "neg_rho_U": -17.194677,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.320679
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.618378,
-          "T_stable_C": 400.0,
-          "fabricability": 0.308672
+          "rho_U_g_cm3": 17.194677,
+          "T_stable_C": 670.0,
+          "fabricability": 0.320679
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.822351,
+          "U": 0.856139,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.177649,
+          "Zr": 0.143861,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.608153,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333235
+          "neg_rho_U": -17.065973,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323808
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.608153,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333235
+          "rho_U_g_cm3": 17.065973,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323808
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.890566,
+          "U": 0.943703,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.109434,
+          "Zr": 0.056297,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.536285,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.311218
+          "neg_rho_U": -18.26995,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.283747
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.536285,
-          "T_stable_C": 400.0,
-          "fabricability": 0.311218
+          "rho_U_g_cm3": 18.26995,
+          "T_stable_C": 670.0,
+          "fabricability": 0.283747
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.859785,
+          "U": 0.867646,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.140215,
+          "Zr": 0.132354,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.115602,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322628
+          "neg_rho_U": -17.222744,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.319966
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.115602,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322628
+          "rho_U_g_cm3": 17.222744,
+          "T_stable_C": 670.0,
+          "fabricability": 0.319966
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.830868,
+          "U": 0.886852,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.169132,
+          "Zr": 0.113148,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.723216,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331103
+          "neg_rho_U": -17.485362,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.312742
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.723216,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331103
+          "rho_U_g_cm3": 17.485362,
+          "T_stable_C": 670.0,
+          "fabricability": 0.312742
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.87683,
+          "U": 0.862216,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.12317,
+          "Zr": 0.137784,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.348166,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316645
+          "neg_rho_U": -17.148715,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.321822
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.348166,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316645
+          "rho_U_g_cm3": 17.148715,
+          "T_stable_C": 670.0,
+          "fabricability": 0.321822
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.855841,
+          "U": 0.802303,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.144159,
+          "Zr": 0.197697,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.061922,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.323903
+          "neg_rho_U": -16.338272,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337654
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.061922,
-          "T_stable_C": 400.0,
-          "fabricability": 0.323903
+          "rho_U_g_cm3": 16.338272,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337654
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.848089,
+          "U": 0.803355,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.151911,
+          "Zr": 0.196645,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.956558,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326297
+          "neg_rho_U": -16.352398,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337442
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.956558,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326297
+          "rho_U_g_cm3": 16.352398,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337442
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.862969,
+          "U": 0.849652,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.137031,
+          "Zr": 0.150348,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.158971,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.32157
+          "neg_rho_U": -16.977794,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.325826
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.158971,
-          "T_stable_C": 400.0,
-          "fabricability": 0.32157
+          "rho_U_g_cm3": 16.977794,
+          "T_stable_C": 670.0,
+          "fabricability": 0.325826
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.824881,
+          "U": 0.91441,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.175119,
+          "Zr": 0.08559,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.642317,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.332618
+          "neg_rho_U": -17.864336,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.300326
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.642317,
-          "T_stable_C": 400.0,
-          "fabricability": 0.332618
+          "rho_U_g_cm3": 17.864336,
+          "T_stable_C": 670.0,
+          "fabricability": 0.300326
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.84938,
+          "U": 0.87679,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.15062,
+          "Zr": 0.12321,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.974093,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325908
+          "neg_rho_U": -17.347619,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.31666
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.974093,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325908
+          "rho_U_g_cm3": 17.347619,
+          "T_stable_C": 670.0,
+          "fabricability": 0.31666
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.890918,
+          "U": 0.863107,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.109082,
+          "Zr": 0.136893,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.541118,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.311072
+          "neg_rho_U": -17.160844,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.321523
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.541118,
-          "T_stable_C": 400.0,
-          "fabricability": 0.311072
+          "rho_U_g_cm3": 17.160844,
+          "T_stable_C": 670.0,
+          "fabricability": 0.321523
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.89449,
+          "U": 0.827248,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.10551,
+          "Zr": 0.172752,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.590141,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.309561
+          "neg_rho_U": -16.674278,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.332028
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.590141,
-          "T_stable_C": 400.0,
-          "fabricability": 0.309561
+          "rho_U_g_cm3": 16.674278,
+          "T_stable_C": 670.0,
+          "fabricability": 0.332028
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.855667,
+          "U": 0.834463,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.144333,
+          "Zr": 0.165537,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.059555,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.323959
+          "neg_rho_U": -16.771848,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.330156
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.059555,
-          "T_stable_C": 400.0,
-          "fabricability": 0.323959
+          "rho_U_g_cm3": 16.771848,
+          "T_stable_C": 670.0,
+          "fabricability": 0.330156
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.818881,
+          "U": 0.909527,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.181119,
+          "Zr": 0.090473,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.561352,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.334059
+          "neg_rho_U": -17.796991,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.302724
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.561352,
-          "T_stable_C": 400.0,
-          "fabricability": 0.334059
+          "rho_U_g_cm3": 17.796991,
+          "T_stable_C": 670.0,
+          "fabricability": 0.302724
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.855117,
+          "U": 0.940215,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.144883,
+          "Zr": 0.059785,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.052071,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324133
+          "neg_rho_U": -18.221489,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.285946
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.052071,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324133
+          "rho_U_g_cm3": 18.221489,
+          "T_stable_C": 670.0,
+          "fabricability": 0.285946
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.80687,
+          "U": 0.929114,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.19313,
+          "Zr": 0.070886,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.399631,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336719
+          "neg_rho_U": -18.067572,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.292513
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.399631,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336719
+          "rho_U_g_cm3": 18.067572,
+          "T_stable_C": 670.0,
+          "fabricability": 0.292513
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.822548,
+          "U": 0.92239,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.177452,
+          "Zr": 0.07761,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.610816,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333187
+          "neg_rho_U": -17.974537,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.296202
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.610816,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333187
+          "rho_U_g_cm3": 17.974537,
+          "T_stable_C": 670.0,
+          "fabricability": 0.296202
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.813731,
+          "U": 0.805153,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.186269,
+          "Zr": 0.194847,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.491951,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335235
+          "neg_rho_U": -16.376559,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337075
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.491951,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335235
+          "rho_U_g_cm3": 16.376559,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337075
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.821868,
+          "U": 0.934863,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.178132,
+          "Zr": 0.065137,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.601635,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333351
+          "neg_rho_U": -18.147236,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.28919
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.601635,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333351
+          "rho_U_g_cm3": 18.147236,
+          "T_stable_C": 670.0,
+          "fabricability": 0.28919
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.829115,
+          "U": 0.886352,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.170885,
+          "Zr": 0.113648,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.699512,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331555
+          "neg_rho_U": -17.478515,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.312944
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.699512,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331555
+          "rho_U_g_cm3": 17.478515,
+          "T_stable_C": 670.0,
+          "fabricability": 0.312944
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.85528,
+          "U": 0.895588,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.14472,
+          "Zr": 0.104412,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.054288,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324082
+          "neg_rho_U": -17.605226,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.309088
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.054288,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324082
+          "rho_U_g_cm3": 17.605226,
+          "T_stable_C": 670.0,
+          "fabricability": 0.309088
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.872696,
+          "U": 0.822729,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.127304,
+          "Zr": 0.177271,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.291679,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318169
+          "neg_rho_U": -16.613255,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.333144
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.291679,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318169
+          "rho_U_g_cm3": 16.613255,
+          "T_stable_C": 670.0,
+          "fabricability": 0.333144
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.808845,
+          "U": 0.932185,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.191155,
+          "Zr": 0.067815,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.426193,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336301
+          "neg_rho_U": -18.110114,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.290758
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.426193,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336301
+          "rho_U_g_cm3": 18.110114,
+          "T_stable_C": 670.0,
+          "fabricability": 0.290758
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.887786,
+          "U": 0.920756,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.112214,
+          "Zr": 0.079244,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.498173,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312363
+          "neg_rho_U": -17.951964,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.297067
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.498173,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312363
+          "rho_U_g_cm3": 17.951964,
+          "T_stable_C": 670.0,
+          "fabricability": 0.297067
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.874028,
+          "U": 0.904394,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.125972,
+          "Zr": 0.095606,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.30987,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.317683
+          "neg_rho_U": -17.726302,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.305147
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.30987,
-          "T_stable_C": 400.0,
-          "fabricability": 0.317683
+          "rho_U_g_cm3": 17.726302,
+          "T_stable_C": 670.0,
+          "fabricability": 0.305147
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.852462,
+          "U": 0.850993,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.147538,
+          "Zr": 0.149007,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.01597,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.324965
+          "neg_rho_U": -16.996012,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.325417
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.01597,
-          "T_stable_C": 400.0,
-          "fabricability": 0.324965
+          "rho_U_g_cm3": 16.996012,
+          "T_stable_C": 670.0,
+          "fabricability": 0.325417
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.804093,
+          "U": 0.881098,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.195907,
+          "Zr": 0.118902,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.362305,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337292
+          "neg_rho_U": -17.406561,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.315019
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.362305,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337292
+          "rho_U_g_cm3": 17.406561,
+          "T_stable_C": 670.0,
+          "fabricability": 0.315019
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.848358,
+          "U": 0.857295,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.151642,
+          "Zr": 0.142705,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.960208,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326216
+          "neg_rho_U": -17.081699,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.323438
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.960208,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326216
+          "rho_U_g_cm3": 17.081699,
+          "T_stable_C": 670.0,
+          "fabricability": 0.323438
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.837601,
+          "U": 0.884326,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.162399,
+          "Zr": 0.115674,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.814326,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329305
+          "neg_rho_U": -17.450751,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.313754
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.814326,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329305
+          "rho_U_g_cm3": 17.450751,
+          "T_stable_C": 670.0,
+          "fabricability": 0.313754
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.867454,
+          "U": 0.926573,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.132546,
+          "Zr": 0.073427,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.220126,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.320033
+          "neg_rho_U": -18.032401,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.29393
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.220126,
-          "T_stable_C": 400.0,
-          "fabricability": 0.320033
+          "rho_U_g_cm3": 18.032401,
+          "T_stable_C": 670.0,
+          "fabricability": 0.29393
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.892319,
+          "U": 0.844395,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.107681,
+          "Zr": 0.155605,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.560342,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.310484
+          "neg_rho_U": -16.90643,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.327385
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.560342,
-          "T_stable_C": 400.0,
-          "fabricability": 0.310484
+          "rho_U_g_cm3": 16.90643,
+          "T_stable_C": 670.0,
+          "fabricability": 0.327385
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.816483,
+          "U": 0.883153,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.183517,
+          "Zr": 0.116847,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.529029,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.334613
+          "neg_rho_U": -17.434682,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.314218
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.529029,
-          "T_stable_C": 400.0,
-          "fabricability": 0.334613
+          "rho_U_g_cm3": 17.434682,
+          "T_stable_C": 670.0,
+          "fabricability": 0.314218
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.838181,
+          "U": 0.860463,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.161819,
+          "Zr": 0.139537,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.822189,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329145
+          "neg_rho_U": -17.12483,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.322405
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.822189,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329145
+          "rho_U_g_cm3": 17.12483,
+          "T_stable_C": 670.0,
+          "fabricability": 0.322405
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.841457,
+          "U": 0.823422,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.158543,
+          "Zr": 0.176578,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.866578,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.328229
+          "neg_rho_U": -16.622621,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.332975
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.866578,
-          "T_stable_C": 400.0,
-          "fabricability": 0.328229
+          "rho_U_g_cm3": 16.622621,
+          "T_stable_C": 670.0,
+          "fabricability": 0.332975
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.877567,
+          "U": 0.844605,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.122433,
+          "Zr": 0.155395,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.358244,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316368
+          "neg_rho_U": -16.909275,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.327325
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.358244,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316368
+          "rho_U_g_cm3": 16.909275,
+          "T_stable_C": 670.0,
+          "fabricability": 0.327325
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.885726,
+          "U": 0.903425,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.114274,
+          "Zr": 0.096575,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.469936,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.313195
+          "neg_rho_U": -17.71297,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.305594
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.469936,
-          "T_stable_C": 400.0,
-          "fabricability": 0.313195
+          "rho_U_g_cm3": 17.71297,
+          "T_stable_C": 670.0,
+          "fabricability": 0.305594
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.843329,
+          "U": 0.913804,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.156671,
+          "Zr": 0.086196,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.89197,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327694
+          "neg_rho_U": -17.855974,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.300628
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.89197,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327694
+          "rho_U_g_cm3": 17.855974,
+          "T_stable_C": 670.0,
+          "fabricability": 0.300628
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.897004,
+          "U": 0.92426,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.102996,
+          "Zr": 0.07574,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.62467,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.308472
+          "neg_rho_U": -18.000394,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.295196
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.62467,
-          "T_stable_C": 400.0,
-          "fabricability": 0.308472
+          "rho_U_g_cm3": 18.000394,
+          "T_stable_C": 670.0,
+          "fabricability": 0.295196
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.887216,
+          "U": 0.930541,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.112784,
+          "Zr": 0.069459,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.490357,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312594
+          "neg_rho_U": -18.087336,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.291703
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.490357,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312594
+          "rho_U_g_cm3": 18.087336,
+          "T_stable_C": 670.0,
+          "fabricability": 0.291703
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.844323,
+          "U": 0.869548,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.155677,
+          "Zr": 0.130452,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.905451,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327406
+          "neg_rho_U": -17.248696,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.319298
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.905451,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327406
+          "rho_U_g_cm3": 17.248696,
+          "T_stable_C": 670.0,
+          "fabricability": 0.319298
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.843811,
+          "U": 0.94987,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.156189,
+          "Zr": 0.05013,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.898497,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327555
+          "neg_rho_U": -18.355707,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.279683
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.898497,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327555
+          "rho_U_g_cm3": 18.355707,
+          "T_stable_C": 670.0,
+          "fabricability": 0.279683
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.838704,
+          "U": 0.898458,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.161296,
+          "Zr": 0.101542,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.82927,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329001
+          "neg_rho_U": -17.644663,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.307833
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.82927,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329001
+          "rho_U_g_cm3": 17.644663,
+          "T_stable_C": 670.0,
+          "fabricability": 0.307833
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.8265,
+          "U": 0.803253,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.1735,
+          "Zr": 0.196747,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.664179,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.332216
+          "neg_rho_U": -16.351024,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337463
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.664179,
-          "T_stable_C": 400.0,
-          "fabricability": 0.332216
+          "rho_U_g_cm3": 16.351024,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337463
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.856245,
+          "U": 0.833929,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.143755,
+          "Zr": 0.166071,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.067412,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.323775
+          "neg_rho_U": -16.764613,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.330298
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.067412,
-          "T_stable_C": 400.0,
-          "fabricability": 0.323775
+          "rho_U_g_cm3": 16.764613,
+          "T_stable_C": 670.0,
+          "fabricability": 0.330298
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.83703,
+          "U": 0.905982,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.16297,
+          "Zr": 0.094018,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.806601,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329461
+          "neg_rho_U": -17.74816,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.304408
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.806601,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329461
+          "rho_U_g_cm3": 17.74816,
+          "T_stable_C": 670.0,
+          "fabricability": 0.304408
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.823691,
+          "U": 0.935078,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.176309,
+          "Zr": 0.064922,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.626244,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.33291
+          "neg_rho_U": -18.150221,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.289062
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.626244,
-          "T_stable_C": 400.0,
-          "fabricability": 0.33291
+          "rho_U_g_cm3": 18.150221,
+          "T_stable_C": 670.0,
+          "fabricability": 0.289062
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.801536,
+          "U": 0.801221,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.198464,
+          "Zr": 0.198779,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.327964,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337807
+          "neg_rho_U": -16.323739,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.337869
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.327964,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337807
+          "rho_U_g_cm3": 16.323739,
+          "T_stable_C": 670.0,
+          "fabricability": 0.337869
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.844618,
+          "U": 0.892379,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.155382,
+          "Zr": 0.107621,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.909449,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.327321
+          "neg_rho_U": -17.561169,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310458
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.909449,
-          "T_stable_C": 400.0,
-          "fabricability": 0.327321
+          "rho_U_g_cm3": 17.561169,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310458
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.838051,
+          "U": 0.891694,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.161949,
+          "Zr": 0.108306,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.820426,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.329181
+          "neg_rho_U": -17.551769,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310747
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.820426,
-          "T_stable_C": 400.0,
-          "fabricability": 0.329181
+          "rho_U_g_cm3": 17.551769,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310747
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.829581,
+          "U": 0.895011,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.170419,
+          "Zr": 0.104989,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.705814,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331435
+          "neg_rho_U": -17.597299,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.309337
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.705814,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331435
+          "rho_U_g_cm3": 17.597299,
+          "T_stable_C": 670.0,
+          "fabricability": 0.309337
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.87794,
+          "U": 0.933277,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.12206,
+          "Zr": 0.066723,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.363346,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316227
+          "neg_rho_U": -18.125244,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.290123
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.363346,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316227
+          "rho_U_g_cm3": 18.125244,
+          "T_stable_C": 670.0,
+          "fabricability": 0.290123
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.824534,
+          "U": 0.835692,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.175466,
+          "Zr": 0.164308,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.637632,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.332703
+          "neg_rho_U": -16.788484,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.329825
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.637632,
-          "T_stable_C": 400.0,
-          "fabricability": 0.332703
+          "rho_U_g_cm3": 16.788484,
+          "T_stable_C": 670.0,
+          "fabricability": 0.329825
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.849459,
+          "U": 0.928956,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.150541,
+          "Zr": 0.071044,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.975173,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.325884
+          "neg_rho_U": -18.065387,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.292601
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.975173,
-          "T_stable_C": 400.0,
-          "fabricability": 0.325884
+          "rho_U_g_cm3": 18.065387,
+          "T_stable_C": 670.0,
+          "fabricability": 0.292601
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.8638,
+          "U": 0.932679,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.1362,
+          "Zr": 0.067321,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.170301,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321289
+          "neg_rho_U": -18.116963,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.290471
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.170301,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321289
+          "rho_U_g_cm3": 18.116963,
+          "T_stable_C": 670.0,
+          "fabricability": 0.290471
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.896159,
+          "U": 0.878119,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.103841,
+          "Zr": 0.121881,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.613073,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.30884
+          "neg_rho_U": -17.365792,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.316159
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.613073,
-          "T_stable_C": 400.0,
-          "fabricability": 0.30884
+          "rho_U_g_cm3": 17.365792,
+          "T_stable_C": 670.0,
+          "fabricability": 0.316159
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.89306,
+          "U": 0.930763,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.10694,
+          "Zr": 0.069237,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.570514,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.31017
+          "neg_rho_U": -18.090416,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.291576
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.570514,
-          "T_stable_C": 400.0,
-          "fabricability": 0.31017
+          "rho_U_g_cm3": 18.090416,
+          "T_stable_C": 670.0,
+          "fabricability": 0.291576
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.819547,
+          "U": 0.92293,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.180453,
+          "Zr": 0.07707,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.570337,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.333902
+          "neg_rho_U": -17.982008,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.295913
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.570337,
-          "T_stable_C": 400.0,
-          "fabricability": 0.333902
+          "rho_U_g_cm3": 17.982008,
+          "T_stable_C": 670.0,
+          "fabricability": 0.295913
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.898677,
+          "U": 0.924446,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.101323,
+          "Zr": 0.075554,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.647663,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.307736
+          "neg_rho_U": -18.002975,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.295095
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.647663,
-          "T_stable_C": 400.0,
-          "fabricability": 0.307736
+          "rho_U_g_cm3": 18.002975,
+          "T_stable_C": 670.0,
+          "fabricability": 0.295095
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.858834,
+          "U": 0.921862,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.141166,
+          "Zr": 0.078138,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.102652,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.322939
+          "neg_rho_U": -17.967242,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.296483
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.102652,
-          "T_stable_C": 400.0,
-          "fabricability": 0.322939
+          "rho_U_g_cm3": 17.967242,
+          "T_stable_C": 670.0,
+          "fabricability": 0.296483
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.863748,
+          "U": 0.800415,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.136252,
+          "Zr": 0.199585,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.169587,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321307
+          "neg_rho_U": -16.312915,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.338029
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.169587,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321307
+          "rho_U_g_cm3": 16.312915,
+          "T_stable_C": 670.0,
+          "fabricability": 0.338029
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.846547,
+          "U": 0.834998,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.153453,
+          "Zr": 0.165002,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.935633,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326755
+          "neg_rho_U": -16.779087,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.330012
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.935633,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326755
+          "rho_U_g_cm3": 16.779087,
+          "T_stable_C": 670.0,
+          "fabricability": 0.330012
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.828281,
+          "U": 0.896648,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.171719,
+          "Zr": 0.103352,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.688239,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331767
+          "neg_rho_U": -17.619782,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.308628
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.688239,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331767
+          "rho_U_g_cm3": 17.619782,
+          "T_stable_C": 670.0,
+          "fabricability": 0.308628
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.873113,
+          "U": 0.945976,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.126887,
+          "Zr": 0.054024,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.297376,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.318017
+          "neg_rho_U": -18.301543,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.282276
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.297376,
-          "T_stable_C": 400.0,
-          "fabricability": 0.318017
+          "rho_U_g_cm3": 18.301543,
+          "T_stable_C": 670.0,
+          "fabricability": 0.282276
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.816009,
+          "U": 0.904923,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.183991,
+          "Zr": 0.095077,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.522639,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.334722
+          "neg_rho_U": -17.733581,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.304902
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.522639,
-          "T_stable_C": 400.0,
-          "fabricability": 0.334722
+          "rho_U_g_cm3": 17.733581,
+          "T_stable_C": 670.0,
+          "fabricability": 0.304902
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.814133,
+          "U": 0.938535,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.185867,
+          "Zr": 0.061465,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.497375,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.335145
+          "neg_rho_U": -18.198174,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.286981
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.497375,
-          "T_stable_C": 400.0,
-          "fabricability": 0.335145
+          "rho_U_g_cm3": 18.198174,
+          "T_stable_C": 670.0,
+          "fabricability": 0.286981
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.889647,
+          "U": 0.870329,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.110353,
+          "Zr": 0.129671,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.523683,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.311599
+          "neg_rho_U": -17.259348,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.31902
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.523683,
-          "T_stable_C": 400.0,
-          "fabricability": 0.311599
+          "rho_U_g_cm3": 17.259348,
+          "T_stable_C": 670.0,
+          "fabricability": 0.31902
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.888199,
+          "U": 0.915802,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.111801,
+          "Zr": 0.084198,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.503825,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312195
+          "neg_rho_U": -17.883538,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.299625
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.503825,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312195
+          "rho_U_g_cm3": 17.883538,
+          "T_stable_C": 670.0,
+          "fabricability": 0.299625
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.886912,
+          "U": 0.940426,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.113088,
+          "Zr": 0.059574,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.486187,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.312718
+          "neg_rho_U": -18.224418,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.285815
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.486187,
-          "T_stable_C": 400.0,
-          "fabricability": 0.312718
+          "rho_U_g_cm3": 18.224418,
+          "T_stable_C": 670.0,
+          "fabricability": 0.285815
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.801052,
+          "U": 0.904036,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.198948,
+          "Zr": 0.095964,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.321473,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.337903
+          "neg_rho_U": -17.721378,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.305313
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.321473,
-          "T_stable_C": 400.0,
-          "fabricability": 0.337903
+          "rho_U_g_cm3": 17.721378,
+          "T_stable_C": 670.0,
+          "fabricability": 0.305313
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.846131,
+          "U": 0.81149,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.153869,
+          "Zr": 0.18851,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.929976,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326878
+          "neg_rho_U": -16.46178,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.33573
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.929976,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326878
+          "rho_U_g_cm3": 16.46178,
+          "T_stable_C": 670.0,
+          "fabricability": 0.33573
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.856625,
+          "U": 0.889303,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.143375,
+          "Zr": 0.110697,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.07259,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.323653
+          "neg_rho_U": -17.518973,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.311741
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.07259,
-          "T_stable_C": 400.0,
-          "fabricability": 0.323653
+          "rho_U_g_cm3": 17.518973,
+          "T_stable_C": 670.0,
+          "fabricability": 0.311741
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.895758,
+          "U": 0.924859,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.104242,
+          "Zr": 0.075141,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.607554,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.309014
+          "neg_rho_U": -18.008681,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.294871
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.607554,
-          "T_stable_C": 400.0,
-          "fabricability": 0.309014
+          "rho_U_g_cm3": 18.008681,
+          "T_stable_C": 670.0,
+          "fabricability": 0.294871
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.897591,
+          "U": 0.888816,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.102409,
+          "Zr": 0.111184,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.632742,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.308215
+          "neg_rho_U": -17.512295,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.311941
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.632742,
-          "T_stable_C": 400.0,
-          "fabricability": 0.308215
+          "rho_U_g_cm3": 17.512295,
+          "T_stable_C": 670.0,
+          "fabricability": 0.311941
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.863305,
+          "U": 0.85234,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.136695,
+          "Zr": 0.14766,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.163544,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.321457
+          "neg_rho_U": -17.014319,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.325002
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.163544,
-          "T_stable_C": 400.0,
-          "fabricability": 0.321457
+          "rho_U_g_cm3": 17.014319,
+          "T_stable_C": 670.0,
+          "fabricability": 0.325002
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.848639,
+          "U": 0.864546,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.151361,
+          "Zr": 0.135454,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.96403,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.326132
+          "neg_rho_U": -17.18047,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.321036
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.96403,
-          "T_stable_C": 400.0,
-          "fabricability": 0.326132
+          "rho_U_g_cm3": 17.18047,
+          "T_stable_C": 670.0,
+          "fabricability": 0.321036
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.818097,
+          "U": 0.93877,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.181903,
+          "Zr": 0.06123,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.550777,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.334241
+          "neg_rho_U": -18.201432,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.286837
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.550777,
-          "T_stable_C": 400.0,
-          "fabricability": 0.334241
+          "rho_U_g_cm3": 18.201432,
+          "T_stable_C": 670.0,
+          "fabricability": 0.286837
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.807308,
+          "U": 0.893035,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.192692,
+          "Zr": 0.106965,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.405525,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.336627
+          "neg_rho_U": -17.570165,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310181
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.405525,
-          "T_stable_C": 400.0,
-          "fabricability": 0.336627
+          "rho_U_g_cm3": 17.570165,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310181
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.832832,
+          "U": 0.894868,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.167168,
+          "Zr": 0.105132,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.749775,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330589
+          "neg_rho_U": -17.595339,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.309398
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.749775,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330589
+          "rho_U_g_cm3": 17.595339,
+          "T_stable_C": 670.0,
+          "fabricability": 0.309398
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.894174,
+          "U": 0.869991,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.105826,
+          "Zr": 0.130009,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.585812,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.309696
+          "neg_rho_U": -17.254742,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.31914
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.585812,
-          "T_stable_C": 400.0,
-          "fabricability": 0.309696
+          "rho_U_g_cm3": 17.254742,
+          "T_stable_C": 670.0,
+          "fabricability": 0.31914
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.828714,
+          "U": 0.892429,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.171286,
+          "Zr": 0.107571,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.694089,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.331657
+          "neg_rho_U": -17.561848,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.310438
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.694089,
-          "T_stable_C": 400.0,
-          "fabricability": 0.331657
+          "rho_U_g_cm3": 17.561848,
+          "T_stable_C": 670.0,
+          "fabricability": 0.310438
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.877193,
+          "U": 0.838044,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.122807,
+          "Zr": 0.161956,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.353129,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.316508
+          "neg_rho_U": -16.820334,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.329183
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.353129,
-          "T_stable_C": 400.0,
-          "fabricability": 0.316508
+          "rho_U_g_cm3": 16.820334,
+          "T_stable_C": 670.0,
+          "fabricability": 0.329183
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.881833,
+          "U": 0.854283,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.118167,
+          "Zr": 0.145717,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -17.416622,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.314734
+          "neg_rho_U": -17.040727,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.324396
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 17.416622,
-          "T_stable_C": 400.0,
-          "fabricability": 0.314734
+          "rho_U_g_cm3": 17.040727,
+          "T_stable_C": 670.0,
+          "fabricability": 0.324396
         }
       },
       {
         "rank": 1,
         "composition": {
-          "U": 0.832424,
+          "U": 0.912465,
           "Mo": 0.0,
           "Nb": 0.0,
           "V": 0.0,
           "Ti": 0.0,
-          "Zr": 0.167576,
+          "Zr": 0.087535,
           "Cr": 0.0
         },
         "objectives_minimized": {
-          "neg_rho_U": -16.744252,
-          "neg_T_stable": -400.0,
-          "neg_fabricability": -0.330697
+          "neg_rho_U": -17.837494,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.301292
         },
         "objectives_physical": {
-          "rho_U_g_cm3": 16.744252,
-          "T_stable_C": 400.0,
-          "fabricability": 0.330697
+          "rho_U_g_cm3": 17.837494,
+          "T_stable_C": 670.0,
+          "fabricability": 0.301292
+        }
+      },
+      {
+        "rank": 1,
+        "composition": {
+          "U": 0.888611,
+          "Mo": 0.0,
+          "Nb": 0.0,
+          "V": 0.0,
+          "Ti": 0.0,
+          "Zr": 0.111389,
+          "Cr": 0.0
+        },
+        "objectives_minimized": {
+          "neg_rho_U": -17.509471,
+          "neg_T_stable": -670.0,
+          "neg_fabricability": -0.312026
+        },
+        "objectives_physical": {
+          "rho_U_g_cm3": 17.509471,
+          "T_stable_C": 670.0,
+          "fabricability": 0.312026
         }
       }
     ]
