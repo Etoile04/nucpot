@@ -21,6 +21,7 @@ from pymoo.core.problem import Problem
 
 from nfm_db.optimization.nsga2_problem import (
     ALLOY_ELEMENTS,
+    N_IEQ_CONSTRAINTS,
     FabricabilityScorer,
 )
 
@@ -48,7 +49,7 @@ class ZrOnlyProblem(Problem):
         super().__init__(
             n_var=len(ALLOY_ELEMENTS),
             n_obj=3,
-            n_ieq_constr=4,
+            n_ieq_constr=N_IEQ_CONSTRAINTS,
             xl=xl,
             xu=xu,
         )
