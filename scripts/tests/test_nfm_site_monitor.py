@@ -23,6 +23,12 @@ back to fail-open:
   single errored ref reads green with a NOTE (drift watch), while
   over-budget truncation (refs-truncated) still degrades at ANY count
   and definitive 4xx dead refs stay immediate P0;
+- NFM-5490 latency hardening: a transport-failed ref HEAD (SSL
+  UNEXPECTED_EOF / connection reset / tail-latency timeout) gets ONE
+  budget-gated retry before counting as unverified, and REF_TIMEOUT
+  covers the observed 5-10.4 s diurnal-edge tail. A persistent transport
+  failure STILL fails closed — the retry hardens verification, it never
+  manufactures a false green (4xx stays immediate P0, 5xx stays unknown).
 - env seams (NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_MONITOR_LOG/STATE/
   PROBE/NOTIFY) keep the suite hermetic — no real network, no real
   LaunchAgent state. Every helper hard-fails if the seams are missing so
@@ -41,7 +47,7 @@ import test_nfm_site_monitor as this_module
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "nfm-site-monitor.sh")
 SCAN_PAGES = ["/", "/datasets", "/browse", "/potentials", "/materials"]
-REF_TIMEOUT = 8  # must mirror the script's per-HEAD socket timeout
+REF_TIMEOUT = 15  # must mirror the script's per-HEAD socket timeout (NFM-5490: 8→15, diurnal tail)
 SUBPROCESS_TIMEOUT = 40
 
 # ------------------------------------------------------------------ helpers
@@ -122,8 +128,19 @@ class _MockEdge(BaseHTTPRequestHandler):
 
     def _serve_ref(self):
         cfg = self.server.config
+        name = self.path.rsplit("/", 1)[-1]
+        flaky = cfg.get("ref_flaky", {})
+        remaining = flaky.get(name, 0)
+        if remaining > 0:
+            # NFM-5490: drop the connection WITHOUT a response — the client
+            # sees a transport error (RemoteDisconnected), the ep-4 class.
+            # Per-name countdown is deterministic under pool concurrency:
+            # a ref's attempt-then-retry is sequential within one worker.
+            flaky[name] = remaining - 1
+            self.close_connection = True
+            return
         time.sleep(cfg.get("ref_lat", 0))
-        code = cfg.get("ref_status", {}).get(self.path.rsplit("/", 1)[-1], 200)
+        code = cfg.get("ref_status", {}).get(name, 200)
         self.send_response(code)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -170,7 +187,13 @@ def env(tmp_path, mock_site):
         "NFM_SCAN_DEADLINE": "240",
         "NFM_SCAN_REF_POOL": "4",  # gentle burst: sandboxed shells can 502
         # under 12-way loopback bursts; production
-        # (LaunchAgent, direct egress) runs 12
+        # (LaunchAgent, direct egress) runs 24
+        # NFM-5490: the production sentinel egresses DIRECTLY (no proxy,
+        # NFM-5446-era vantage fix) — a sandbox http_proxy would rewrite
+        # mock-edge connection drops into 502 HTTPError *verdicts*, hiding
+        # the transport-exception path the retry exists for. Bypass it.
+        "NO_PROXY": "127.0.0.1,localhost",
+        "no_proxy": "127.0.0.1,localhost",
         "NFM_MONITOR_LOG": str(tmp_path / "monitor.log"),
         "NFM_MONITOR_STATE": str(tmp_path / "monitor.state"),
         "NFM_MONITOR_PROBE": str(probe),
@@ -325,7 +348,10 @@ def test_scan_once_partial_verification_is_degraded(env, mock_site):
     """Some refs verified, some skipped => unknown, not green."""
     _base, config = mock_site
     _degrade_refs(config, lat=4.0)
-    env["NFM_SCAN_DEADLINE"] = "12"
+    # NFM-5490: deadline must stay just above REF_TIMEOUT (15) so the first
+    # ref wave runs and later waves trip the budget mid-scan — at 12 the
+    # entry reservation gate would skip everything before any HEAD.
+    env["NFM_SCAN_DEADLINE"] = "17"
     r = run_script(env, "--scan-once")
     assert r.returncode == 3, r.stdout
     assert "scan-degraded" in r.stdout
@@ -393,6 +419,42 @@ def test_scan_once_two_ref_flakes_still_degrade(env, mock_site):
     r = run_script(env, "--scan-once")
     assert r.returncode == 3, r.stdout
     assert "refs-unverified=2" in r.stdout
+
+
+def test_scan_once_transient_transport_error_retries_green(env, mock_site):
+    """NFM-5490: a dropped-connection HEAD is retried once, not counted
+    unverified on the first transport failure.
+
+    Live ep-4 evidence (2026-10-12T10:47:40Z): mid-blindness the sentinel
+    sat at refs-unverified=38 while patient-client HEADs from the same
+    vantage returned 40/40 HTTP 200 — the refs were verifiable and the
+    8 s no-retry urllib client simply gave up. Every ref dropping its
+    first attempt and succeeding on the retry must read GREEN.
+    """
+    _base, config = mock_site
+    # per-name countdown: the first r0 request and first r1 request drop
+    # (2 transport failures across the scan); retries then find 200s
+    config["ref_flaky"] = {"r0-a1b2c3.js": 1, "r1-a1b2c3.js": 1}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 0, r.stdout
+    assert "ok (" in r.stdout
+    assert "refs-unverified" not in r.stdout
+
+
+def test_scan_once_persistent_transport_error_still_degrades(env, mock_site):
+    """NFM-5490 retry is bounded to ONE re-attempt: refs that keep failing
+    at transport level stay unverified — fail-closed preserved. The retry
+    hardens verification against transient SSL EOF/reset; it must never
+    manufacture a false green out of a genuinely unreachable edge.
+    """
+    _base, config = mock_site
+    config["pages"]["/"]["body"] = _page_body(4)
+    # r0/r1 exist on all 5 pages, r2/r3 only on "/" => 2*5 + 2 = 12 skips
+    config["ref_flaky"] = {f"r{i}-a1b2c3.js": 99 for i in range(4)}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "scan-degraded" in r.stdout
+    assert "refs-unverified=12" in r.stdout
 
 
 def test_scan_once_materials_sized_page_verifies_green(env, mock_site):
