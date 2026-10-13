@@ -29,6 +29,17 @@ back to fail-open:
   covers the observed 5-10.4 s diurnal-edge tail. A persistent transport
   failure STILL fails closed — the retry hardens verification, it never
   manufactures a false green (4xx stays immediate P0, 5xx stays unknown).
+- NFM-5497 blind-streak mode classifier: every degraded cycle is tagged
+  mode A (``fetches=0`` — ALL 5 page fetches failed, genuine edge-down) or
+  mode B (>=1 fetch completed — refs-unverified-only, the benign diurnal
+  edge-flap class that paged ~daily as sentinel-blind CRITICALs through
+  ep-5). Mode A escalates at 3 consecutive with byte-identical semantics
+  to the pre-classifier build; mode B escalates to WARN only (no
+  PAGE-UNACK latch, no page) UNLESS a definitive P0 FAIL (dead chunk
+  refs / P0 probe failure) lands within/overlapping the streak window —
+  blind + confirmed breakage still pages. Streak counters are per-mode
+  and strictly consecutive; a cycle recording a NOTE (refs-unverified <
+  REFS_DEGRADE_MIN) never enters any streak.
 - env seams (NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_MONITOR_LOG/STATE/
   PROBE/NOTIFY) keep the suite hermetic — no real network, no real
   LaunchAgent state. Every helper hard-fails if the seams are missing so
@@ -575,11 +586,17 @@ def test_integration_degraded_pins_surface_as_warn(env, mock_site):
     assert st["scan_skip_streak"] == "1"
 
 
-def test_integration_skip_streak_escalates_critical(env, mock_site):
-    """>=3 consecutive degraded scans => sentinel-blind CRITICAL + latch."""
+def test_integration_mode_a_streak_escalates_critical(env, mock_site):
+    """NFM-5497 mode A (all-fetches-failed): >=3 consecutive degraded scans
+    => sentinel-blind CRITICAL + latch — semantics byte-identical to the
+    pre-classifier build (threshold SCAN_SKIP_CRITICAL=3, latch, exit 2).
+
+    The degraded cycles are driven by an unreachable base (every page GET
+    fails => fetched=0 => mode A), the genuine-edge-down shape.
+    """
     _base, config = mock_site
-    _degrade_refs(config, lat=float(REF_TIMEOUT))
-    env["NFM_SCAN_DEADLINE"] = "12"
+    env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"  # nothing listens there
+    env["NFM_SCAN_DEADLINE"] = "30"
     r1 = run_script(env)
     r2 = run_script(env)
     assert r1.returncode == 0 and r2.returncode == 0, (r1.stdout, r2.stdout)
@@ -589,10 +606,224 @@ def test_integration_skip_streak_escalates_critical(env, mock_site):
     lt = log_text(env)
     assert "CRITICAL — sentinel chunk-scan blind" in lt
     assert "NFM-5446" in lt
+    assert "mode=A" in lt  # NFM-5497 evidence rides the same line
     st = state_dict(env)
     assert st["level"] == "CRITICAL"
     assert st["scan_skip_streak"] == "3"
     assert st["pending_page"] not in ("-", "")
+
+
+# ------------------------------------------- NFM-5497 blind-streak mode classifier
+
+
+def test_scan_once_degraded_carries_fetches_token_all_down(env, mock_site):
+    """NFM-5497: every degraded scan emits machine-readable fetch coverage
+    (fetches=<fetched>/<pages>) so the blind-streak lane can classify the
+    cycle without parsing English. All-fetches-failed => fetches=0/5.
+    """
+    _base, _config = mock_site
+    env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"
+    env["NFM_SCAN_DEADLINE"] = "30"
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "fetches=0/5" in r.stdout
+
+
+def test_scan_once_degraded_carries_fetches_token_refs_only(env, mock_site):
+    """Pages all fetched, refs starved => fetches=5/5 (the ep-5 skip-2/3 and
+    refs-unverified-only shape: >=1 fetch completed => mode B)."""
+    _base, config = mock_site
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "fetches=5/5" in r.stdout
+
+
+def test_integration_mode_a_recovery_and_page_unack_unchanged(env, mock_site):
+    """Mode-A recovery semantics are unchanged: a completed scan after a
+    mode-A blind CRITICAL logs the same RECOVERY prefix and the PAGE-UNACK
+    latch persists until --ack-page."""
+    _base, config = mock_site
+    env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"
+    env["NFM_SCAN_DEADLINE"] = "30"
+    for _ in range(3):
+        run_script(env)
+    assert state_dict(env)["level"] == "CRITICAL"
+    # site comes back
+    env["NFM_SCAN_BASE"] = mock_site[0]
+    env["NFM_SCAN_DEADLINE"] = "240"
+    r = run_script(env)
+    assert r.returncode == 0, r.stdout
+    lt = log_text(env)
+    assert (
+        "RECOVERY — chunk-scan completed again after blind streak 3 (NFM-5446)"
+        " — SRE closes the sentinel-blind alert" in lt
+    )
+    assert "PAGE-UNACK" in lt  # latched CRITICAL still demands retro-file + ack
+
+
+def test_integration_mode_b_streak_warns_not_critical(env, mock_site):
+    """NFM-5497 mode B (refs-unverified-only): 3 consecutive mode-B degraded
+    cycles => WARN, NOT CRITICAL, no PAGE-UNACK latch, no page — the benign
+    diurnal edge-flap class that used to page ~daily (ep-5, 2026-10-13)."""
+    _base, config = mock_site
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    r1 = run_script(env)
+    r2 = run_script(env)
+    assert r1.returncode == 0 and r2.returncode == 0, (r1.stdout, r2.stdout)
+    r3 = run_script(env)
+    assert r3.returncode == 0, r3.stdout  # WARN-grade, never exit 2
+    lt = log_text(env)
+    assert "CRITICAL" not in lt
+    assert "mode=B" in lt
+    st = state_dict(env)
+    assert st["level"] != "CRITICAL"
+    assert st["pending_page"] in ("-", "")
+    assert st["scan_skip_streak"] == "3"
+    assert st["scan_skip_streak_a"] == "0"
+    assert st["scan_skip_streak_b"] == "3"
+
+
+def test_integration_mode_b_warn_line_carries_evidence(env, mock_site):
+    """Observability contract: every degraded cycle logs mode=, fetches_failed,
+    refs_unverified, p0=, origin= (calibration data accrues for tuning)."""
+    _base, config = mock_site
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    r = run_script(env)
+    assert r.returncode == 0, r.stdout
+    warn = [ln for ln in log_text(env).splitlines() if "chunk-scan DEGRADED" in ln][0]
+    assert "mode=B" in warn
+    assert "fetches_failed=0/5" in warn
+    assert "refs_unverified=" in warn
+    assert "p0=unknown" in warn  # blind != failed
+    assert "origin=ok" in warn
+
+
+def test_integration_ep5_replay_ab_b_is_warn_only(env, mock_site):
+    """Ep-5 replay (NFM-5493): 13:33 all-fetches-failed (A), 13:50
+    refs-unverified=12 (B), 13:57 refs-unverified=2 (B) — paged CRITICAL on
+    the pre-classifier build. Per-mode strictly-consecutive counters => the
+    mode flip resets A, B never reaches 3 => WARN only, no latch."""
+    _base, config = mock_site
+    # cycle 1 — mode A: every page fetch fails
+    env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"
+    env["NFM_SCAN_DEADLINE"] = "30"
+    assert run_script(env).returncode == 0
+    st = state_dict(env)
+    assert st["scan_skip_streak_a"] == "1"
+    assert st["scan_skip_streak_b"] == "0"
+    # cycles 2-3 — mode B: pages fetched, refs starved (skip 2/3 class)
+    env["NFM_SCAN_BASE"] = mock_site[0]
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    assert run_script(env).returncode == 0
+    assert run_script(env).returncode == 0
+    lt = log_text(env)
+    assert "CRITICAL" not in lt
+    assert "PAGE-UNACK" not in lt
+    st = state_dict(env)
+    assert st["scan_skip_streak"] == "3"  # any-mode run (display/compat)
+    assert st["scan_skip_streak_a"] == "0"  # A was reset by the B cycles
+    assert st["scan_skip_streak_b"] == "2"
+    assert st["pending_page"] in ("-", "")
+
+
+def test_integration_mode_b_with_p0_dead_ref_escalates_critical(env, mock_site):
+    """Mode B escalates to CRITICAL iff a definitive P0 FAIL (dead chunk
+    refs = cache-cold-visitor breakage, NFM-5446 page class) lands
+    within/overlapping the streak window — the fail-closed half of the
+    classifier: blind + confirmed breakage still pages."""
+    _base, config = mock_site
+    degrade = dict(lat=float(REF_TIMEOUT))
+
+    def _b_cycle():
+        _degrade_refs(config, **degrade)
+        env["NFM_SCAN_DEADLINE"] = "12"
+
+    def _p0_cycle():
+        # healthy scan that finds a definitive 4xx dead ref => rc 1 P0
+        config["pages"]["/"] = {
+            "lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)
+        }
+        config["ref_lat"] = 0.0
+        config["ref_status"] = {"r2-a1b2c3.js": 404}
+        env["NFM_SCAN_DEADLINE"] = "240"
+
+    _b_cycle()
+    assert run_script(env).returncode == 0
+    _b_cycle()
+    assert run_script(env).returncode == 0
+    assert state_dict(env)["scan_skip_streak_b"] == "2"
+    _p0_cycle()
+    r = run_script(env)
+    assert r.returncode == 1, r.stdout  # base-lane WARN: failure streak 1/2 (1 P0)
+    assert state_dict(env)["blind_p0_fail"] not in ("-", "")  # evidence latched
+    assert state_dict(env)["scan_skip_streak_b"] == "0"  # completed scan resets
+    config["ref_status"] = {}
+    _b_cycle()
+    assert run_script(env).returncode == 0
+    _b_cycle()
+    assert run_script(env).returncode == 0
+    _b_cycle()
+    r3 = run_script(env)
+    assert r3.returncode == 2, r3.stdout  # mode-B streak 3 + P0 evidence => CRITICAL
+    lt = log_text(env)
+    crit = [ln for ln in lt.splitlines() if "CRITICAL — sentinel chunk-scan blind" in ln][-1]
+    assert "mode=B" in crit
+    assert "p0=fail" in crit
+    st = state_dict(env)
+    assert st["level"] == "CRITICAL"
+    assert st["pending_page"] not in ("-", "")
+
+
+def test_integration_mode_b_flag_clears_on_clean_completed_scan(env, mock_site):
+    """The P0-evidence window closes with the blind episode: a fully green
+    cycle (base green + scan verified clean) clears blind_p0_fail, so a LATER
+    benign mode-B streak warns instead of paging on stale evidence."""
+    _base, config = mock_site
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    assert run_script(env).returncode == 0
+    assert run_script(env).returncode == 0
+    # dead-ref P0 cycle latches the evidence...
+    config["pages"]["/"] = {
+        "lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)
+    }
+    config["ref_lat"] = 0.0
+    config["ref_status"] = {"r2-a1b2c3.js": 404}
+    env["NFM_SCAN_DEADLINE"] = "240"
+    assert run_script(env).returncode == 1
+    assert state_dict(env)["blind_p0_fail"] not in ("-", "")
+    # ...then a fully-green cycle ends the episode and clears it...
+    config["ref_status"] = {}
+    assert run_script(env).returncode == 0
+    assert state_dict(env)["blind_p0_fail"] == "-"
+    # ...so a fresh benign mode-B streak never pages
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    for _ in range(3):
+        assert run_script(env).returncode == 0
+    assert "CRITICAL — sentinel chunk-scan blind" not in log_text(env)
+
+
+def test_integration_mode_counters_are_strictly_per_mode(env, mock_site):
+    """A cycle of one mode increments its counter and resets the other's
+    (spec: strictly consecutive per-mode streaks)."""
+    _base, config = mock_site
+    env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"
+    env["NFM_SCAN_DEADLINE"] = "30"
+    assert run_script(env).returncode == 0
+    assert state_dict(env)["scan_skip_streak_a"] == "1"
+    env["NFM_SCAN_BASE"] = mock_site[0]
+    _degrade_refs(config, lat=float(REF_TIMEOUT))
+    env["NFM_SCAN_DEADLINE"] = "12"
+    assert run_script(env).returncode == 0
+    st = state_dict(env)
+    assert st["scan_skip_streak_a"] == "0"
+    assert st["scan_skip_streak_b"] == "1"
 
 
 def test_integration_skip_streak_resets_on_completed_scan(env, mock_site):
