@@ -78,6 +78,40 @@
 #     Definitive 4xx dead refs remain immediate P0 (rc 1) — untouched.
 #     SCAN_SKIP_CRITICAL stays 3: blindness detection latency unchanged.
 #
+# NFM-5497 (2026-10-13) — blind-streak edge-flap classifier:
+#   - Problem: the NFM-5446 skip-streak lane counted ANY 3 consecutive
+#     degraded chunk-scan cycles as sentinel-blind and paged CRITICAL —
+#     including benign diurnal edge-flap bursts (NFM-5262) whose cycles
+#     merely starve ref HEADs while pages fetch fine (ep-5, 2026-10-13:
+#     all-fetches-failed, then refs-unverified=12, then =2 -> CRITICAL
+#     page at ~daily cadence; NFM-5493 retro, NFM-5488 triggers 2/3 hit).
+#   - Fix: each degraded cycle is classified by fetch coverage, which the
+#     scan itself emits as a "fetches=<fetched>/<pages>" token:
+#       mode A all-fetches-failed — 0 of 5 page GETs completed (genuine
+#         edge-down class): 3 consecutive mode-A cycles -> CRITICAL with
+#         semantics byte-identical to the pre-classifier build (threshold
+#         SCAN_SKIP_CRITICAL=3, recovery, ack unchanged). A degraded
+#         report carrying no fetch evidence also classifies mode A —
+#         fail-closed. Launcher failures (no scan report at all) leave
+#         the per-mode counters untouched and never page from this lane,
+#         exactly as before.
+#       mode B refs-unverified-only — >=1 page fetch completed: 3
+#         consecutive mode-B cycles -> WARN only (no PAGE-UNACK latch, no
+#         page). Escalates to CRITICAL iff a definitive P0 FAIL (dead
+#         chunk refs / P0 probe failure — cache-cold-visitor breakage,
+#         page-worthy per NFM-5446) lands within/overlapping the streak
+#         window (state blind_p0_fail; set by any definitive P0 failure,
+#         cleared by a fully green cycle). P0 unknown/skipped never
+#         escalates — blind != failed.
+#   - Streak counters are per-mode and strictly consecutive (a cycle of
+#     one mode increments its counter and resets the other's); any
+#     completed scan resets both. A cycle recording a NOTE
+#     (refs-unverified < REFS_DEGRADE_MIN, NFM-5454) never enters any
+#     streak and needs no mode tag.
+#   - Every degraded cycle logs mode=/fetches_failed=/refs_unverified=/
+#     p0=/origin= evidence so calibration data accrues for future tuning
+#     (NFM-5454 pattern).
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -152,9 +186,12 @@ state_get() { # key default
     echo "$2"
   fi
 }
-state_write() { # streak first_fail since_remind level internal_streak pending_page scan_skip_streak
-  printf 'streak=%s\nfirst_fail=%s\nsince_remind=%s\nlevel=%s\ninternal_streak=%s\npending_page=%s\nscan_skip_streak=%s\n' \
-    "$1" "$2" "$3" "$4" "$5" "$6" "$7" > "$STATE.tmp"
+state_write() { # streak first_fail since_remind level internal_streak pending_page scan_skip_streak scan_skip_a scan_skip_b blind_p0_fail
+  # NFM-5497 adds the per-mode streaks + the blind-window P0-evidence flag.
+  # scan_skip_streak keeps its pre-NFM-5497 meaning (consecutive degraded
+  # cycles of ANY mode) for display/reader continuity.
+  printf 'streak=%s\nfirst_fail=%s\nsince_remind=%s\nlevel=%s\ninternal_streak=%s\npending_page=%s\nscan_skip_streak=%s\nscan_skip_streak_a=%s\nscan_skip_streak_b=%s\nblind_p0_fail=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${9}" "${10}" > "$STATE.tmp"
   mv "$STATE.tmp" "$STATE"
 }
 
@@ -271,12 +308,16 @@ def _deadline(signum, frame):
     # dead ref is definitive regardless of coverage (same contract as the
     # main-path p0 branch — rc 1, not 3).
     p0, n_stale, findings = _snapshot()
+    # NFM-5497: fetch coverage rides the report so the blind-streak lane
+    # can classify the cycle (0 fetched => mode A, >=1 => mode B).
+    tag = "fetches=%d/%d" % (fetched, len(sys.argv[1:]) or 1)
     if p0 > 0:
-        _emit("%d %d scan-degraded: deadline-exceeded | partial-findings: %s"
-              % (p0 + max(n_stale, 0), p0, findings or "count-unavailable"), 1)
+        _emit("%d %d scan-degraded: deadline-exceeded | partial-findings: %s | %s"
+              % (p0 + max(n_stale, 0), p0, findings or "count-unavailable", tag), 1)
     msg = "scan-degraded: deadline-exceeded"
     if findings:
         msg += " | partial-findings: " + findings
+    msg += " | " + tag
     if n_stale > 0:
         _emit("%d 0 %s" % (n_stale, msg), 3)
     _emit("0 0 %s" % msg, 3)
@@ -393,7 +434,8 @@ try:
     p0, n_stale, findings = _snapshot()
     if p0 < 0 or n_stale < 0:
         _emit("0 0 scan-degraded: internal-error: findings snapshot raced "
-              "4 consecutive retries (fail-closed, never green)", 3)
+              "4 consecutive retries (fail-closed, never green) | "
+              "fetches=%d/%d" % (fetched, len(pages)), 3)
     reasons = []
     if fetched == 0:
         reasons.append("all page fetches failed")
@@ -406,6 +448,11 @@ try:
         reasons.append("refs-truncated=%d" % truncated_refs)
     if skipped_refs >= REFS_DEGRADE_MIN:
         reasons.append("refs-unverified=%d" % skipped_refs)
+    # NFM-5497: fetch coverage rides every DEGRADED report (only — a clean
+    # scan must not grow reasons) — the blind-streak lane classifies mode
+    # A/B from this token, never prose.
+    if reasons:
+        reasons.append("fetches=%d/%d" % (fetched, len(pages)))
     note = ""
     if skipped_refs and skipped_refs < REFS_DEGRADE_MIN:
         # NFM-5454: single-ref flake — visible for drift watch, no degrade
@@ -428,7 +475,8 @@ try:
     _emit("0 0 ok (%d refs verified across %d page(s)%s)" % (refs_seen - skipped_refs, fetched, note), 0)
 except Exception as e:
     # Internal errors are degraded-unknown too (was fail-open pre-NFM-5446).
-    _emit("0 0 scan-degraded: internal-error: %s" % e, 3)
+    _emit("0 0 scan-degraded: internal-error: %s | fetches=%d/%d"
+          % (e, fetched, len(sys.argv[1:]) or 1), 3)
 PYEOF
 }
 
@@ -456,7 +504,7 @@ fi
 if [[ "${1:-}" == "--ack-page" ]]; then
   pending="$(state_get pending_page -)"
   if [[ "$pending" != "-" && -n "$pending" ]]; then
-    state_write 0 - 0 OK 0 - 0
+    state_write 0 - 0 OK 0 - 0 0 0 -  # NFM-5497: full reset incl. blind-window flag
     log "PAGE-ACK — SRE acked the CRITICAL from $pending (retro [SRE-CRITICAL] filed) — reconciliation closed"
     echo "ack-page: PAGE-ACK written, pending_page cleared"
   else
@@ -467,6 +515,19 @@ if [[ "${1:-}" == "--ack-page" ]]; then
 fi
 
 # ---- real probe ------------------------------------------------------------
+# NFM-5497 classifier state, read once per run: per-mode blind-streak
+# counters + the blind-window P0-evidence flag (set by any definitive P0
+# failure — base probe or scan dead-refs —, cleared by a fully green
+# cycle). The _next variants track this run's updates and are what every
+# state_write below persists; they default to "preserved".
+skip_a="$(state_get scan_skip_streak_a 0)"
+skip_b="$(state_get scan_skip_streak_b 0)"
+blind_p0="$(state_get blind_p0_fail -)"
+skip_a_next="$skip_a"
+skip_b_next="$skip_b"
+blind_p0_next="$blind_p0"
+N_SCAN_PAGES="$(wc -w <<<"$SCAN_PAGES" | tr -d ' ')"
+
 if [[ ! -f "$PROBE" ]]; then
   internal_streak="$(( $(state_get internal_streak 0) + 1 ))"
   if (( internal_streak >= INTERNAL_STREAK_CRITICAL )); then
@@ -475,12 +536,14 @@ if [[ ! -f "$PROBE" ]]; then
     if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
     notify_page "sentinel-broken: probe script missing (internal streak $internal_streak)"
     state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
-      "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)"
+      "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
     exit 2
   fi
   log "ERROR internal (streak $internal_streak/$INTERNAL_STREAK_CRITICAL) — probe script missing at $PROBE"
   state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
-    "$(state_get level OK)" "$internal_streak" "$(state_get pending_page -)" "$(state_get scan_skip_streak 0)"
+    "$(state_get level OK)" "$internal_streak" "$(state_get pending_page -)" "$(state_get scan_skip_streak 0)" \
+    "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   exit 3
 fi
 
@@ -506,11 +569,48 @@ if (( RC == 0 )); then
   read -r scan_total scan_p0 scan_detail <<<"$SCAN_OUT"
   if (( SCAN_RC == 1 )); then
     scan_skip_next=0
+    skip_a_next=0; skip_b_next=0   # NFM-5497: a completed scan ends any blind episode
+    if (( scan_p0 > 0 )); then
+      blind_p0_next="$NOW"         # definitive dead refs inside the window
+    else
+      blind_p0_next="-"            # findings-only (P1 pins): episode closed clean
+    fi
     OUT="${scan_total} check(s) failed (${scan_p0} P0 critical)
 | ❌ edge-html-desync | dead chunk refs (breaks cache-cold visitors) and/or stale 1y-pinned edge copies on watched pages | ${scan_detail}"
     RC=1
   elif (( SCAN_RC == 3 )); then
     scan_skip_next="$(( $(state_get scan_skip_streak 0) + 1 ))"
+    # NFM-5497 mode classification: mode A = 0 page fetches completed
+    # (all-fetches-failed, genuine edge-down; a degraded report carrying
+    # no fetch evidence also classifies mode A — fail-closed); mode B =
+    # >=1 fetch completed (refs-unverified-only, incl. mixed cycles like
+    # ep-5 skip 2/3). The scan emits "fetches=<fetched>/<pages>" on every
+    # degraded report.
+    scan_mode="A"; fetches_failed="?"
+    if [[ "$scan_detail" == *"fetches="* ]]; then
+      ftok="$(printf '%s' "$scan_detail" | grep -oE 'fetches=[0-9]+/[0-9]+' | head -1)"
+      if [[ -n "$ftok" ]]; then
+        fetched_n="${ftok#fetches=}"
+        ftot="${fetched_n#*/}"
+        fetched_n="${fetched_n%%/*}"
+        fetches_failed="$(( ftot - fetched_n ))"
+        if (( fetched_n > 0 )); then scan_mode="B"; fi
+      fi
+    elif [[ "$scan_detail" == *"all page fetches failed"* ]]; then
+      fetches_failed="$N_SCAN_PAGES"  # pre-token prose fallback, defensive
+    fi
+    ru_tok="$(printf '%s' "$scan_detail" | grep -oE 'refs-unverified=[0-9]+' | head -1)"
+    refs_unv="${ru_tok#refs-unverified=}"
+    [[ -n "$refs_unv" ]] || refs_unv="0"
+    # Per-mode strictly-consecutive streaks: a cycle of one mode
+    # increments its counter and resets the other's.
+    if [[ "$scan_mode" == "A" ]]; then
+      skip_a_next="$(( skip_a + 1 ))"; skip_b_next=0
+    else
+      skip_b_next="$(( skip_b + 1 ))"; skip_a_next=0
+    fi
+    p0_ev="unknown"; [[ -n "${blind_p0_next/-}" ]] && p0_ev="fail"
+    mode_ev="[NFM-5497 mode=$scan_mode fetches_failed=$fetches_failed/$N_SCAN_PAGES refs_unverified=$refs_unv p0=$p0_ev origin=ok; streak A=$skip_a_next B=$skip_b_next]"
     # TTL-lane findings during a degraded scan still surface as P1 WARN —
     # this is exactly the masking window NFM-5446 closes.
     if [[ "$scan_detail" == *"P1 stale"* ]]; then
@@ -518,29 +618,55 @@ if (( RC == 0 )); then
 | ❌ edge-html-desync | stale 1y-pinned edge copies on watched pages (TTL lane during degraded scan) | ${scan_detail}"
       RC=1
     fi
-    if (( scan_skip_next >= SCAN_SKIP_CRITICAL )); then
+    if (( skip_a_next >= SCAN_SKIP_CRITICAL )); then
+      # NFM-5497 mode A — semantics byte-identical to the pre-classifier
+      # build: threshold, latch, notify, recovery, ack all unchanged.
       pending="$(state_get pending_page -)"
       if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
-      log "CRITICAL — sentinel chunk-scan blind (NFM-5446): scan degraded ${scan_skip_next} consecutive probe(s) — ${scan_detail} — P0 lane UNVERIFIED (monitoring blindness)"
+      log "CRITICAL — sentinel chunk-scan blind (NFM-5446): scan degraded ${scan_skip_next} consecutive probe(s) — ${scan_detail} — P0 lane UNVERIFIED (monitoring blindness) ${mode_ev}"
       notify_page "sentinel chunk-scan blind (${scan_skip_next} consecutive degraded scans) — P0 lane unverified"
       state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
-        CRITICAL 0 "$pending" "$scan_skip_next"
+        CRITICAL 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
       exit 2
     fi
-    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL} (NFM-5446): ${scan_detail} — P0 lane unverified this cycle"
-    scan_degraded_note=1
+    if (( skip_b_next >= SCAN_SKIP_CRITICAL )); then
+      if [[ "$blind_p0_next" != "-" && -n "$blind_p0_next" ]]; then
+        # NFM-5497 fail-closed half: blind + CONFIRMED P0 breakage
+        # (dead chunk refs = cache-cold-visitor breakage, NFM-5446
+        # page class) still pages, exactly as the pre-classifier build
+        # paged every blind streak.
+        pending="$(state_get pending_page -)"
+        if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+        log "CRITICAL — sentinel chunk-scan blind with P0 FAIL evidence (NFM-5497): mode-B streak ${skip_b_next} consecutive degraded + definitive P0 failure at ${blind_p0_next} — ${scan_detail} — dead refs / P0 breakage inside the blind window (page-worthy per NFM-5446) ${mode_ev}"
+        notify_page "sentinel chunk-scan blind + P0 FAIL evidence (mode-B streak ${skip_b_next})"
+        state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+          CRITICAL 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+        exit 2
+      fi
+      # Benign diurnal edge-flap class (NFM-5262): WARN only — no
+      # PAGE-UNACK latch, no page, no exit 2.
+      log "WARN — chunk-scan blind streak mode=B refs-unverified-only (NFM-5497): degraded ${scan_skip_next} consecutive probe(s), mode-B streak ${skip_b_next} — ${scan_detail} — P0 lane unverified this cycle; no page (diurnal edge-flap class, NFM-5262; escalates only on P0 FAIL evidence) ${mode_ev}"
+      scan_degraded_note=1
+    else
+      log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL} (NFM-5446): ${scan_detail} — P0 lane unverified this cycle ${mode_ev}"
+      scan_degraded_note=1
+    fi
   elif (( SCAN_RC == 0 )); then
     if [[ "$scan_detail" == *"below NFM-5454 degrade threshold"* ]]; then
       log "NOTE — chunk-scan ok with 1 ref unverified (below NFM-5454 degrade threshold 2; diurnal flake, NFM-5262 class) — no streak impact; persistent single-ref = investigate cap/edge"
     fi
     if (( $(state_get scan_skip_streak 0) >= SCAN_SKIP_CRITICAL )); then
-      log "RECOVERY — chunk-scan completed again after blind streak $(state_get scan_skip_streak 0) (NFM-5446) — SRE closes the sentinel-blind alert"
+      log "RECOVERY — chunk-scan completed again after blind streak $(state_get scan_skip_streak 0) (NFM-5446) — SRE closes the sentinel-blind alert [NFM-5497 episode split: mode-A $(state_get scan_skip_streak_a 0) / mode-B $(state_get scan_skip_streak_b 0)]"
     fi
     scan_skip_next=0
+    skip_a_next=0; skip_b_next=0; blind_p0_next="-"  # episode closed clean
   else
-    # scan launcher itself failed (python missing, etc.) — degraded, not green
+    # scan launcher itself failed (python missing, etc.) — degraded, not green.
+    # NFM-5497: no scan report => no mode, no per-mode counter movement
+    # (preserved); this lane escalates exactly as before (WARN + overall
+    # streak only).
     scan_skip_next="$(( $(state_get scan_skip_streak 0) + 1 ))"
-    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL}: scan launcher rc=$SCAN_RC — P0/pin lanes unverified this cycle"
+    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL}: scan launcher rc=$SCAN_RC — P0/pin lanes unverified this cycle [NFM-5497 mode=unknown — no scan report; counters preserved]"
     scan_degraded_note=1
   fi
 fi
@@ -567,7 +693,7 @@ if (( RC == 0 )); then
       log "PAGE-UNACK (still latched) — CRITICAL from $pending never acked by SRE — retro-file [SRE-CRITICAL] then run --ack-page"
     fi
   fi
-  state_write 0 - 0 OK 0 "$pending" "$scan_skip_next"
+  state_write 0 - 0 OK 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   exit 0
 fi
 
@@ -579,6 +705,13 @@ if (( RC == 1 )); then
   [[ -n "$p0" ]] || p0="-1"
   failed="$(printf '%s' "$OUT" | grep -oE '[0-9]+ check\(s\) failed' | grep -oE '^[0-9]+' | tail -1)"
   [[ -n "$failed" ]] || failed="?"
+  # NFM-5497: latch P0 evidence for any blind-streak window that is (or
+  # becomes) active — p0 != 0 includes "-1" (unparseable = P0-unknown,
+  # page-worthy, never miss a real P0). Cleared only by a fully green
+  # cycle in the scan lane above.
+  if [[ "$p0" != "0" ]]; then
+    blind_p0_next="$NOW"
+  fi
 
   streak="$(( $(state_get streak 0) + 1 ))"
   since_remind="$(( $(state_get since_remind 0) + 1 ))"
@@ -607,16 +740,19 @@ if (( RC == 1 )); then
       log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail"
     fi
     notify_page "P0 public-edge failure: $failed check(s) down ($p0 P0)"
-    state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next"
+    state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
     exit 2
   fi
 
   if [[ "$p0" == "0" ]]; then
     log "WARN — P1-only failures ($failed check(s), 0 P0), streak $streak — not page-worthy; reminder cadence applies — $faildetail"
-    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next"
+    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   else
     log "WARN — failure streak $streak/$STREAK_THRESHOLD ($failed check(s) failed, $p0 P0) — confirming before CRITICAL — $faildetail"
-    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next"
+    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   fi
   exit 1
 fi
@@ -629,10 +765,12 @@ if (( internal_streak >= INTERNAL_STREAK_CRITICAL )); then
   if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
   notify_page "sentinel-broken: probe rc=$RC (internal streak $internal_streak)"
   state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
-    "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)"
+    "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)" \
+    "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   exit 2
 fi
 log "ERROR internal (streak $internal_streak/$INTERNAL_STREAK_CRITICAL) — probe exited rc=$RC: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
 state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
-  "$(state_get level OK)" "$internal_streak" "$(state_get scan_skip_streak 0)"
+  "$(state_get level OK)" "$internal_streak" "$(state_get scan_skip_streak 0)" \
+  "$skip_a_next" "$skip_b_next" "$blind_p0_next"
 exit 3
