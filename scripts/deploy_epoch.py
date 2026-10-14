@@ -41,11 +41,27 @@ Subcommands
                    deploy_prod.sh passes --enforce by default since the
                    NFM-5259 flip, 2026-10-05). With --enforce a REFUSE
                    exits 80 WITHOUT touching the holder's lock.
+    lock-acquire   NFM-5527 queue phase: ``--wait-secs N`` (enforced mode
+                   only; default 0 = today's instant refusal) first POLLS
+                   the holder for up to N seconds — one ``LOCK_WAIT`` line
+                   per poll, never minting, never touching the holder's
+                   lock — and only then performs the single atomic
+                   mint+decide. A second apply QUEUES behind an in-flight
+                   one instead of going red; budget exhaustion falls back
+                   to the rc-80 enforced refusal. Exactly ONE mint happens
+                   per invocation either way, so epoch ordering keeps
+                   meaning "+1 per deploy attempt" (evidence run
+                   38419888271, 2026-10-14: a cancelled job's host-side
+                   apply outlived the job and completed the cutover 23 min
+                   later; only GHA queue luck kept the next apply from
+                   colliding with the orphan).
 
 Output contract (lock-acquire, one per line, grep-friendly for SRE):
     EPOCH_MINTED=<int>
     LOCK_DECISION=<acquire|refuse|enforced-refuse>
     LOCK_REASON=<short token>
+    LOCK_WAIT remaining=<n>s polls=<k> holder_pid=… holder_sha=…
+             (queue phase only — one per poll, plus a LOCK_WAIT_DONE line)
 plus a single ``deploy_epoch_lock: {...}`` JSON line carrying the full
 decision context (AC6 observability: minted epoch + lock decision in the
 deploy log without new infrastructure).
@@ -243,6 +259,66 @@ def _write_lock(path: Path, payload: dict) -> None:
         raise
 
 
+def lock_wait_poll(
+    lock_path: Path,
+    *,
+    max_age: int,
+    poll: float,
+    wait_secs: float,
+) -> dict:
+    """NFM-5527 queue phase: poll the lock holder WITHOUT minting.
+
+    Runs before the single atomic mint+decide in :func:`lock_acquire` so a
+    second apply can QUEUE behind an in-flight one (or an orphaned apply
+    that outlived its cancelled job) instead of instantly failing red.
+    Returns when the lock is free — or stale/dead-pid, which acquire will
+    classify and overwrite — or when the wait budget is exhausted (acquire
+    then refuses as before). Never touches the lock file and never mints:
+    one mint per invocation regardless of poll count, keeping epoch
+    ordering meaningful. One ``LOCK_WAIT`` line per poll rides ssh stdout
+    into the Actions log, so a queued deploy is visible while it waits.
+    """
+    poll = max(float(poll), 0.05)
+    deadline = time.monotonic() + max(float(wait_secs), 0.0)
+    info: dict = {}
+    polls = 0
+    while True:
+        existing = _read_lock(lock_path)
+        pid = existing.get("pid") if isinstance(existing, dict) else None
+        try:
+            age = time.time() - lock_path.stat().st_mtime
+        except OSError:
+            age = None
+        fresh = age is not None and age <= max_age
+        live = isinstance(pid, int) and _pid_alive(pid)
+        info = {
+            "holder_pid": pid if isinstance(pid, int) else None,
+            "holder_sha": existing.get("deploy_sha") if isinstance(existing, dict) else None,
+            "holder_epoch": existing.get("epoch") if isinstance(existing, dict) else None,
+        }
+        if not (fresh and live):
+            if polls:
+                print(f"LOCK_WAIT_DONE polls={polls} holder=free")
+            info["exhausted"] = False
+            return info
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(
+                f"LOCK_WAIT_DONE polls={polls} holder=busy "
+                f"holder_pid={info['holder_pid']}"
+            )
+            info["exhausted"] = True
+            return info
+        polls += 1
+        holder_sha = str(info["holder_sha"] or "")[:12]
+        print(
+            f"LOCK_WAIT remaining={int(remaining)}s polls={polls} "
+            f"holder_pid={info['holder_pid']} holder_sha={holder_sha} "
+            f"holder_epoch={info['holder_epoch']}"
+        )
+        time.sleep(min(poll, remaining))
+
+
 def lock_acquire(
     lock_path: Path,
     deploy_sha: str,
@@ -367,6 +443,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="actually refuse on a fresh-lock/live-pid conflict (default: shadow log only)",
     )
+    lock_parser.add_argument(
+        "--wait-secs",
+        type=float,
+        default=0.0,
+        help="NFM-5527 queue: poll the holder up to N seconds before the "
+        "mint+decide (enforced mode only; default 0 = instant refusal)",
+    )
+    lock_parser.add_argument(
+        "--poll-secs",
+        type=float,
+        default=30.0,
+        help="queue poll interval seconds (default 30)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -380,6 +469,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mint":
         print(mint_epoch())
         return 0
+
+    if args.wait_secs > 0 and args.enforce:
+        # NFM-5527 queue phase — mint-free holder polling BEFORE the one
+        # atomic mint+decide. Shadow mode never refuses, so it never waits.
+        lock_wait_poll(
+            Path(args.lock),
+            max_age=args.max_age,
+            poll=args.poll_secs,
+            wait_secs=args.wait_secs,
+        )
 
     code, decision, reason, context = lock_acquire(
         Path(args.lock),

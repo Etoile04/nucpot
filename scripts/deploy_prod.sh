@@ -90,6 +90,40 @@ if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
 fi
 mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
 
+# NFM-5527 — host-side apply journal. Evidence run 38419888271 (2026-10-14):
+# the deploy job was cancelled externally at 06:01:54Z, yet the host-side
+# apply survived the ssh/sudo teardown and completed the cutover at
+# 06:24:48Z — the GHA conclusion (`cancelled`) mislabels reality and the
+# in-job cutover guard was skipped by the cancel. This append-only JSONL
+# journal, one line per apply start/end, lives beside the deploy lock (same
+# G2 var dir, deploy-identity-writable, world-readable) so "did the apply
+# finish after a cancel, and for which sha" is answerable FROM THE HOST,
+# not inferred from the run conclusion. Advisory only: a journal-append
+# failure must never fail the deploy (the manifest at the end of this
+# script remains the sanctioned-drift baseline). NFM_DEPLOY_JOURNAL is a
+# test hook; production resolves through the lock's own directory chain.
+NFMD_JOURNAL="${NFM_DEPLOY_JOURNAL:-$(dirname "$NFM_DEPLOY_LOCK")/prod-deploy.journal}"
+NFMD_JOURNAL_ARMED=0
+nfmd_journal_line() {
+  # $1 = event ("apply-start" | "apply-end"); $2 = exit rc (end records).
+  # DEPLOY_ACTOR is sanitized to a JSON-safe charset (gh-runner handles and
+  # user names are [A-Za-z0-9-] plus the ':' separator, but never trust).
+  local ev="$1" rc="${2:-}" epoch_val extra=""
+  if [ -n "${DEPLOY_EPOCH_MINTED}" ]; then
+    epoch_val="${DEPLOY_EPOCH_MINTED}"
+  else
+    epoch_val="null"
+  fi
+  if [ -n "$rc" ]; then
+    extra=", \"rc\": ${rc}, \"status\": \"$( [ "$rc" = "0" ] && printf ok || printf failed )\""
+  fi
+  printf '{"ts": "%s", "event": "%s", "epoch": %s, "sha": "%s", "pid": %s, "actor": "%s"%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$epoch_val" "${DEPLOY_SHA}" "$$" \
+    "$(printf '%s' "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}" | tr -d '"\\')" \
+    "$extra" >> "$NFMD_JOURNAL" 2>/dev/null \
+    || echo "WARNING (NFM-5527): apply-journal append failed for ${ev} (${NFMD_JOURNAL})" >&2
+}
+
 # NFM-5253 (NFM-4848 T4, deploy-epoch fencing) / NFM-5259 (enforcement flip,
 # 2026-10-05, gated on the NFM-5258 SRE shadow-week sign-off — week clean,
 # epochs 1→7 strict +1): the lockfile acquire is an epoch-aware CAS instead
@@ -117,9 +151,27 @@ case "${NFM_DEPLOY_LOCK_ENFORCE:-1}" in
     echo "WARNING (NFM-5259): unrecognized NFM_DEPLOY_LOCK_ENFORCE='${NFM_DEPLOY_LOCK_ENFORCE}' — treating as ENFORCED; only the exact value 0 is the emergency-disable." >&2
     ;;
 esac
+# NFM-5527 — QUEUE instead of instant rc-80 refusal. Under enforcement, a
+# second apply that finds a fresh lock held by a live pid now WAITS up to
+# NFM_DEPLOY_LOCK_WAIT_SECS (polling inside deploy_epoch.py lock-acquire,
+# never minting per poll) before the single mint+decide — so a deploy that
+# lands while an in-flight apply (including an orphaned apply whose job was
+# cancelled — evidence 38419888271, cutover 23 min after the cancel) holds
+# the lock queues behind it instead of going red. Budget exhaustion keeps
+# today's rc-80 refusal. 0 restores the instant refusal. Default 2400s:
+# a cold build is ~30 min, and the window stays under the drift checker's
+# 2h --max-lock-age freshness bound.
+NFM_DEPLOY_LOCK_WAIT_SECS="${NFM_DEPLOY_LOCK_WAIT_SECS:-2400}"
+case "${NFM_DEPLOY_LOCK_WAIT_SECS}" in
+  ''|*[!0-9]*)
+    echo "WARNING (NFM-5527): NFM_DEPLOY_LOCK_WAIT_SECS='${NFM_DEPLOY_LOCK_WAIT_SECS}' is not a non-negative integer — using the 2400s default." >&2
+    NFM_DEPLOY_LOCK_WAIT_SECS=2400
+    ;;
+esac
+NFM5253_WAIT_FLAG="--wait-secs=${NFM_DEPLOY_LOCK_WAIT_SECS}"
 NFM5253_ACQUIRE_RC=0
 NFM5253_ACQUIRE_OUT="$(python3 "${NFM5253_SCRIPT_DIR}/deploy_epoch.py" lock-acquire \
-  --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} 2>&1)" \
+  --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} ${NFM5253_WAIT_FLAG} 2>&1)" \
   || NFM5253_ACQUIRE_RC=$?
 if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
   printf '%s\n' "${NFM5253_ACQUIRE_OUT}"
@@ -131,6 +183,10 @@ if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
   # never attest).
   echo "DEPLOY_EPOCH_MINTED=${DEPLOY_EPOCH_MINTED}"
   echo "==> deploy epoch ${DEPLOY_EPOCH_MINTED} minted; lock decision: ${DEPLOY_LOCK_DECISION:-unknown} (NFM-5253 enforced)"
+  # NFM-5527: this body is now an APPLY — journal its start so a cancel can
+  # never make its outcome unanswerable from the host.
+  NFMD_JOURNAL_ARMED=1
+  nfmd_journal_line "apply-start"
   if [ "${DEPLOY_LOCK_DECISION}" = "refuse" ]; then
     echo "WARNING (NFM-5253 shadow): lock conflict detected but NOT enforced — proceeding (explicit NFM_DEPLOY_LOCK_ENFORCE=0 emergency-disable; the NFM-5259 default is enforced)."
   fi
@@ -154,8 +210,18 @@ else
   echo "WARNING (NFM-5253): epoch mint/lock-acquire unavailable (rc=${NFM5253_ACQUIRE_RC}) — falling back to the legacy lock write: ${NFM5253_ACQUIRE_OUT}"
   printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
+  # NFM-5527: this is still a real apply — journal it (epoch null: the
+  # helper was unavailable, so no epoch was minted).
+  NFMD_JOURNAL_ARMED=1
+  nfmd_journal_line "apply-start"
 fi
-trap 'rm -f "$NFM_DEPLOY_LOCK"' EXIT
+# NFM-5527: fold the apply-journal end-record into the same single EXIT
+# trap (armed only after a successful lock acquisition — a refused or
+# helper-fatal run never journaled an apply-start and must not journal an
+# end for an apply that never began). rc is captured BEFORE any trap work;
+# leaving the exit code untouched at the end of the trap preserves the
+# original status.
+trap 'rc=$?; if [ "${NFMD_JOURNAL_ARMED:-0}" = "1" ]; then nfmd_journal_line "apply-end" "$rc"; fi; rm -f "$NFM_DEPLOY_LOCK"' EXIT
 
 # NFM-3328: fail-fast semantics. Prior deploys slid past failed steps (build
 # errors, `docker compose` unavailable) into green health checks against
@@ -198,7 +264,8 @@ else
   NFMD_DC_PRIVATE=1
   # fold private-dir cleanup into the deploy-lock EXIT trap (line 89);
   # single trap statement — a second `trap ... EXIT` would replace it
-  trap 'rm -f "$NFM_DEPLOY_LOCK"; if [ "${NFMD_DC_PRIVATE:-}" = "1" ]; then rm -rf "${DOCKER_CONFIG:-}"; fi' EXIT
+  # (NFM-5527: the replacement carries the apply-journal end-record too)
+  trap 'rc=$?; if [ "${NFMD_JOURNAL_ARMED:-0}" = "1" ]; then nfmd_journal_line "apply-end" "$rc"; fi; rm -f "$NFM_DEPLOY_LOCK"; if [ "${NFMD_DC_PRIVATE:-}" = "1" ]; then rm -rf "${DOCKER_CONFIG:-}"; fi' EXIT
 fi
 mkdir -p "${DOCKER_CONFIG}/cli-plugins"
 printf '{}' > "${DOCKER_CONFIG}/config.json"

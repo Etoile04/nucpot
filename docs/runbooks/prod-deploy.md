@@ -999,3 +999,73 @@ etime arithmetic) before declaring the propagation complete.
 - [prod-compose-gate.md](./prod-compose-gate.md) — the G2 wall itself
   (`host_setup.sh` installs `entry-sync.sh` root-side alongside the entries).
 
+## 12. Post-cancel host-side reconciliation (NFM-5527)
+
+### 12.1. Why this exists
+
+Run 38419888271 (2026-10-14): the deploy job was cancelled externally at
+06:01:54Z, but the host-side apply survived the ssh/sudo teardown (nothing
+signals it — the cancel kills the runner's ssh client, and sudo does not
+forward that death to the `nfmdeploy` deploy body) and **completed the
+cutover at 06:24:48Z**. The GHA conclusion said `cancelled`, the in-job
+cutover guard was skipped by the cancel, and only queue luck kept the next
+run's already-green apply from overlapping the orphan. Ground truth for
+"what is prod running" is **always** the health endpoint's `deploy_sha` +
+the cutover guard (NFM-5442 rule), never the run conclusion.
+
+NFM-5527 adds two structural guards plus this standing step:
+
+* **Queue, not instant refusal** — `deploy_prod.sh` now passes
+  `--wait-secs` (env `NFM_DEPLOY_LOCK_WAIT_SECS`, default 2400s, `0` =
+  legacy instant refusal) to `deploy_epoch.py lock-acquire`: a second
+  apply finding a fresh live-pid lock WAITS behind it (polling, never
+  minting per poll) before the single mint+decide. Two host-side applies
+  can no longer collide; a deploy that lands while an orphan applies
+  queues instead of going red. Exhaustion still refuses with rc 80.
+* **Apply journal** — `${G2_VAR_DIR}/prod-deploy.journal` (beside the
+  deploy lock; `~/.nfmd` fallback off-gate) gets one JSONL record per
+  apply start (`ts`/`epoch`/`sha`/`pid`/`actor`) and one per trap-covered
+  end (`rc` + `ok|failed`). "Did the apply finish after the cancel, and
+  for which sha" is now answered from the host.
+* **Post-cancel reconciliation step** — `production-deployment.yml` runs
+  an `if: cancelled()` step that reads the journal tail + health
+  `deploy_sha` into the run log automatically. This section is what a
+  human does with that output.
+
+### 12.2. The standing step (any cancelled deploy job)
+
+```bash
+# 1. What did the apply journal record? (start without a matching end
+#    = died by signal — e.g. SIGKILLed; end AFTER the cancel timestamp
+#    = the orphan finished its cutover after the job died)
+tail -n 6 /usr/local/var/nfm-g2/prod-deploy.journal
+
+# 2. What is prod ACTUALLY running now? (NFM-5442: ground truth)
+curl -fsS http://localhost:8001/api/v1/health | sed -n 's/.*"deploy_sha"[^:]*:[[:space:]]*"\([^"]*\)".*/deploy_sha=\1/p'
+
+# 3. Compare against the intended sha of the cancelled run, then:
+#    - health sha == intended sha   → the orphan COMPLETED the cutover;
+#      verify like any landed deploy (cutover assert + smoke) — do NOT
+#      blind re-trigger, you would queue a redundant apply of the same sha.
+#    - health sha != intended sha   → reconcile deliberately: either the
+#      orphan died mid-apply (check drift alarm §8) or a LATER run cut
+#      over — read the journal ordering before deciding to re-trigger.
+#      The next apply will QUEUE behind any still-live holder (NFM-5527),
+#      so a re-trigger is overlap-safe, but confirm intent first.
+```
+
+Manual runs that want the old fail-fast behavior export
+`NFM_DEPLOY_LOCK_WAIT_SECS=0`.
+
+### 12.3. References
+
+- [NFM-5527](../../issues/NFM-5527) — evidence run 38419888271 and the
+  hazard analysis (mislabelled run conclusion; no structural overlap
+  protection).
+- [NFM-5442](../../issues/NFM-5442) — gate red ≠ deploy failure; health
+  `deploy_sha` + cutover guard as ground truth.
+- [NFM-5253](../../issues/NFM-5253) / [NFM-5259](../../issues/NFM-5259) —
+  the deploy-epoch lock this queues on (enforced since 2026-10-05).
+- [NFM-5526](../../issues/NFM-5526) — the QA battery that compensated the
+  skipped in-job cutover guard for run 38419888271.
+
