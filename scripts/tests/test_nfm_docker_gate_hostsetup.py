@@ -186,6 +186,7 @@ class EntryHarness:
             "lightrag-watchdog.log",
             "lightrag-watchdog.state",
             "lightrag-watchdog-launchd.log",
+            "lightrag-watchdog.state.e1",  # NFM-5523: §6 pre-create set (quad)
         ):
             fixture = self.log_dir / wd_file
             fixture.write_text("")
@@ -432,7 +433,7 @@ def test_pre_deploy_assert_blocks_missing_log_dir(entry):
 
 def test_pre_deploy_assert_blocks_drifted_watchdog_file_mode(entry):
     """File-mode drift is the same out-of-band chmod class: canonical §6
-    pre-creates the three watchdog files 0644 nfmdeploy:wheel."""
+    pre-creates the watchdog files 0644 nfmdeploy:wheel."""
     (entry.log_dir / "lightrag-watchdog.state").chmod(0o600)
     result = entry.run(*_assert_args())
     assert result.returncode == 78
@@ -440,8 +441,25 @@ def test_pre_deploy_assert_blocks_drifted_watchdog_file_mode(entry):
     assert "0644" in result.stderr
 
 
+def test_pre_deploy_assert_blocks_missing_e1_preburst_marker(entry):
+    """NFM-5523: the e1 preburst once-per-day marker is daemon-WRITTEN
+    (start-lightrag-watchdog.sh writes today's date after the preburst
+    recycle) but cannot be daemon-CREATED — LOG_DIR is root-owned and the
+    daemon runs as nfmdeploy. Without the §6 pre-create the marker read is
+    always empty, the once-per-day guard never short-circuits, and E-1
+    kills the serving runner on every <=60s in-window tick. The preflight
+    must refuse deploys while the marker is absent (same fail-closed class
+    as NFM-5397) so entry-sync enforcement covers the host-side fix."""
+    (entry.log_dir / "lightrag-watchdog.state.e1").unlink()
+    result = entry.run(*_assert_args())
+    assert result.returncode == 78
+    assert "lightrag-watchdog.state.e1" in result.stderr
+    assert "0644" in result.stderr
+    assert not entry.docker_calls.exists()  # refused BEFORE any docker reach
+
+
 def test_pre_deploy_assert_canonical_log_dir_proceeds_to_assert(entry):
-    """Canonical 0755 + 0644x3 passes the preflight and reaches assert.sh."""
+    """Canonical 0755 + 0644x4 passes the preflight and reaches assert.sh."""
     result = entry.run(*_assert_args())
     assert result.returncode == 0, result.stderr
     assert "--image nucpot-prod-api:candidate-abc1234" in entry.docker_calls.read_text()
