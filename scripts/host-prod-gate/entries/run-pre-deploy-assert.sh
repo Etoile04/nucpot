@@ -72,9 +72,13 @@ esac
 # nfmdeploy — could no longer traverse it: launchd spawn rc=78 EX_CONFIG on
 # every 5-min tick, silently, for days. Deploying on top of a dead watchdog
 # is the NFM-5346 wedge-then-deploy trap, so refuse here. Canonical shape is
-# host_setup.sh §6: dir 0755, the three pre-created watchdog files 0644
-# (ownership nfmdeploy:wheel is chown'd at install time; mode drift is the
-# observed regression class, and mode-only also keeps hermetic tests honest).
+# host_setup.sh §6: dir 0755, the pre-created watchdog files 0644 (NFM-5523
+# grew the set from trio to quad by adding the .state.e1 preburst marker —
+# the daemon WRITES it but cannot CREATE it in the root-owned dir, so an
+# absent marker means §1a preburst recycles the runner on every in-window
+# tick; ownership nfmdeploy:wheel is chown'd at install time; mode drift is
+# the observed regression class, and mode-only also keeps hermetic tests
+# honest).
 # NFM_G2_LOG_DIR is a test hook in the NFM_G2_REPO family; sudo env_reset
 # never passes it in production.
 # ============================================================================
@@ -92,11 +96,16 @@ if [ "${dir_mode}" != "755" ]; then
   echo "  Root fix: sudo chmod 0755 ${LOG_DIR} && sudo launchctl kickstart -k system/com.nfm.g2.lightrag-watchdog" >&2
   exit 78
 fi
-for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log; do
+for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log lightrag-watchdog.state.e1; do
   f_mode="$(_mode_of "${LOG_DIR}/${WD_FILE}")"
   if [ "${f_mode}" != "644" ]; then
     echo "FATAL (NFM-5397): ${LOG_DIR}/${WD_FILE} mode is '${f_mode:-<missing>}' — canonical is 0644 nfmdeploy:wheel (host_setup.sh §6)." >&2
-    echo "  Root fix: sudo chmod 0644 ${LOG_DIR}/${WD_FILE}" >&2
+    if [ -z "${f_mode}" ]; then
+      echo "  File is absent (host provisioned before NFM-5523). Root fix: re-run host_setup.sh §6, or:" >&2
+      echo "    sudo touch ${LOG_DIR}/${WD_FILE} && sudo chown nfmdeploy:wheel ${LOG_DIR}/${WD_FILE} && sudo chmod 0644 ${LOG_DIR}/${WD_FILE}" >&2
+    else
+      echo "  Root fix: sudo chmod 0644 ${LOG_DIR}/${WD_FILE}" >&2
+    fi
     exit 78
   fi
 done

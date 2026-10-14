@@ -292,7 +292,13 @@ mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
 # ${LOG_DIR} is root-owned — its decision log, cooldown state, and launchd
 # stdio file must be pre-created deploy-writable or the first probe tick
 # EACCES-aborts under set -e before any recovery can fire.
-for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log; do
+# NFM-5523: the set also carries the e1 preburst marker (STATE + ".e1").
+# The daemon WRITES today's date into it after the §1a preburst recycle to
+# enforce "exactly once per UTC day", but cannot CREATE it in the root-owned
+# dir — absent a pre-create, the marker read stays empty, the once-per-day
+# guard never short-circuits, and E-1 unconditionally recycles the serving
+# runner on every <=60s in-window tick.
+for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log lightrag-watchdog.state.e1; do
   touch "${LOG_DIR}/${WD_FILE}"
   chown "${DEPLOY_USER}:wheel" "${LOG_DIR}/${WD_FILE}"
   chmod 0644 "${LOG_DIR}/${WD_FILE}"
