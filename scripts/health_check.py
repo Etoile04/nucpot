@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -42,11 +43,21 @@ RETRY_DELAY_SECONDS = 5
 # NFM-5279: opener with proxies explicitly disabled. The prod sentinel host's
 # macOS system proxy (v2cloud 127.0.0.1:7892) applies to bare urlopen() via
 # getproxies(), so every check measures host → proxy → upstream → CF edge.
-# P0 connection-class failures get ONE confirmation attempt through this
+# Connection-class failures get ONE confirmation attempt through this
 # direct-egress opener: direct egress from the host reaches the real CF edges
 # (calibration 2026-10-01). No-op where no system proxy exists (GHA runners)
-# — the confirmation only runs on a P0 failure path.
+# — the confirmation only runs on a failure path. NFM-5525 extended this
+# from P0-only to every named check: the 2026-10-14 proxy-vantage flap
+# (2.5h+, resets for every ClientHello shape — python AND curl rc=35 via
+# the proxy, direct egress healthy throughout) blinded the whole P1 lane
+# for 24 beats while the site stayed up.
 NO_PROXY_OPENER = build_opener(ProxyHandler({}))
+
+# NFM-5525: curl binary for the second confirmation stage. Absolute path
+# because GUI-launched LaunchAgents have a sparse PATH (NFM-4579); env-seam
+# overridable so the test suite can substitute a hermetic stub.
+CURL_BIN = "/usr/bin/curl"
+CURL_ENV_SEAM = "NFM_HEALTH_CURL"
 
 
 @dataclass(frozen=True)
@@ -139,18 +150,19 @@ class CheckResult:
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
-def _confirm_p0_direct_egress(target: CheckTarget, failure: CheckResult) -> CheckResult:
-    """NFM-5279 — one direct-egress confirmation for a P0 connection-class failure.
+def _confirm_direct_egress(target: CheckTarget, failure: CheckResult) -> CheckResult:
+    """NFM-5279 — one direct-egress python confirmation for a connection-class failure.
 
-    Called only when a P0 target failed without the edge demonstrably
-    answering wrong content (connection errors, timeouts incl.
-    retry-exhausted, latency over budget) — the failure pattern of a local
-    proxy-vantage flap (NFM-5277). Re-probes the same URL through
-    ``NO_PROXY_OPENER`` with status + ``expected_contains`` only (no latency
-    budget on the confirmation). A correct direct answer means the edge is
-    healthy: return success annotated as a vantage flap so the P0
-    streak/latch never sees the failure. Anything else — exception, wrong
-    status, wrong body — returns the original failure unchanged (page path).
+    Called only when a target failed without the edge demonstrably answering
+    wrong content (connection errors, timeouts incl. retry-exhausted,
+    latency over budget) — the failure pattern of a local proxy-vantage flap
+    (NFM-5277). Re-probes the same URL through ``NO_PROXY_OPENER`` with
+    status + ``expected_contains`` only (no latency budget on the
+    confirmation). A correct direct answer means the edge is healthy: return
+    success annotated as a vantage flap so the streak/latch never sees the
+    failure. Anything else — exception, wrong status, wrong body — returns
+    the original failure unchanged (page path). Stage 1 of the NFM-5525
+    confirmation ladder (see ``_confirm_connection_class``).
     """
     try:
         start = time.monotonic()
@@ -180,12 +192,95 @@ def _confirm_p0_direct_egress(target: CheckTarget, failure: CheckResult) -> Chec
         return failure
 
 
+def _confirm_via_curl(target: CheckTarget, failure: CheckResult) -> CheckResult:
+    """NFM-5525 — curl-backed second confirmation stage (direct egress).
+
+    Covers the complementary failure class to stage 1: the python direct
+    path itself reset or DNS-blipped (a transient ``gaierror`` was observed
+    mid-episode 2026-10-14T09:34Z while curl direct kept serving 200s).
+    Runs the curl binary via the ``NFM_HEALTH_CURL`` env seam (absolute
+    path — GUI-launched agents have a sparse PATH, NFM-4579), direct
+    (``--noproxy '*'`` — the system proxy is the flapping vantage), same
+    UA, hard socket budget. Verifies status + ``expected_contains`` only —
+    no latency budget on a confirmation (NFM-5279 semantics). Any error,
+    wrong status, or wrong body returns the original failure unchanged:
+    this stage hardens verification, it never manufactures a false green.
+    """
+    curl_bin = os.environ.get(CURL_ENV_SEAM, CURL_BIN)
+    try:
+        start = time.monotonic()
+        proc = subprocess.run(
+            [
+                curl_bin,
+                "-sS",
+                "-L",
+                "--noproxy",
+                "*",
+                "--max-time",
+                str(TIMEOUT_SECONDS),
+                "-A",
+                "NucPot-HealthCheck/1.0",
+                "-w",
+                "\n%{http_code}",
+                target.url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS + 5,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return failure
+
+        body, _, code_str = proc.stdout.rpartition("\n")
+        status_code = int(code_str)
+        if status_code != target.expected_status:
+            return failure
+        if target.expected_contains and target.expected_contains not in body:
+            return failure
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            target=target,
+            success=True,
+            status_code=status_code,
+            response_time_ms=elapsed_ms,
+            error=(
+                f"python-lane failure ({failure.error}), "
+                f"curl direct-egress confirm OK {elapsed_ms / 1000:.1f}s — "
+                f"vantage flap, not edge (NFM-5525)"
+            ),
+        )
+    except Exception:
+        return failure
+
+
+def _confirm_connection_class(target: CheckTarget, failure: CheckResult) -> CheckResult:
+    """NFM-5279 + NFM-5525 confirmation ladder for connection-class failures.
+
+    Stage 1 — one direct-egress python re-probe (NFM-5279): survives local
+    proxy-vantage flaps; a correct answer means the edge is healthy and the
+    failure was a vantage artifact.
+    Stage 2 — one curl-backed direct probe (NFM-5525): survives the
+    complementary class where the python direct path is itself reset or
+    DNS-blipped.
+    A pass at either stage is annotated with the vantage evidence so the
+    flap stays observable; anything else returns the original failure
+    unchanged (page path).
+    """
+    confirmed = _confirm_direct_egress(target, failure)
+    if confirmed.success:
+        return confirmed
+    return _confirm_via_curl(target, failure)
+
+
 def check_url(target: CheckTarget) -> CheckResult:
     """Perform a single health check with retry logic."""
     last_error: str | None = None
     # NFM-5279: True when the latest failure is connection-class (the edge
-    # never answered, or answered too slowly) — eligible for one direct-egress
-    # confirmation on P0 targets once retries are exhausted.
+    # never answered, or answered too slowly) — eligible for the direct-egress
+    # + curl confirmation ladder (NFM-5525, all severities) once retries are
+    # exhausted.
     vantage_suspect = False
 
     for attempt in range(1, RETRY_COUNT + 1):
@@ -227,7 +322,7 @@ def check_url(target: CheckTarget) -> CheckResult:
                         ),
                     )
                     if target.severity == "P0":
-                        return _confirm_p0_direct_egress(target, latency_failure)
+                        return _confirm_connection_class(target, latency_failure)
                     return latency_failure
 
                 return CheckResult(
@@ -267,8 +362,12 @@ def check_url(target: CheckTarget) -> CheckResult:
         success=False,
         error=last_error or "Unknown error after retries",
     )
-    if vantage_suspect and target.severity == "P0":
-        return _confirm_p0_direct_egress(target, retry_failure)
+    # NFM-5525: the confirmation ladder is no longer P0-only. A connection-
+    # class failure on ANY named check (P1/P2 included) means the edge never
+    # answered from this vantage — the proxy-vantage flap signature — so it
+    # gets the same two-stage confirmation before being allowed to fail.
+    if vantage_suspect:
+        return _confirm_connection_class(target, retry_failure)
     return retry_failure
 
 
@@ -404,6 +503,18 @@ def main() -> int:
     # Print report
     report = format_results(results)
     print(report)
+
+    # NFM-5525: keep vantage flaps OBSERVABLE. The sentinel consumes only the
+    # exit code + counts, so without this line a proxy-vantage flap confirmed
+    # green would leave no stdout trace — the 2026-10-14 2.5h episode would
+    # vanish from the evidence feed (NFM-5496 classifier relies on it).
+    flap_confirms = [r for r in results if r.success and r.error]
+    if flap_confirms:
+        names = "; ".join(r.target.name for r in flap_confirms)
+        print(
+            f"\nNOTE: {len(flap_confirms)} check(s) passed via vantage confirmation "
+            f"(flap class, not site): {names}"
+        )
 
     # Send alerts if configured
     webhook_url = os.environ.get("ALERT_WEBHOOK", "")
