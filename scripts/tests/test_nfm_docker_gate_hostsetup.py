@@ -38,6 +38,7 @@ SANCTIONED = [
     "run-record-manifest.sh",  # NFM-4273: G4a manifest record via gate entry
     "run-cleanup.sh",  # NFM-4357: sanctioned image retention cleanup
     "run-backup.sh",  # NFM-4750: Plan B full-gate pg_dump + 4-volume tar
+    "run-autovc-build.sh",  # NFM-5524: sanctioned AutoVC image build (full gate)
 ]
 
 # NFM-4887: the ONE sanctioned root-runas chokepoint. The wedged host
@@ -174,6 +175,10 @@ class EntryHarness:
         self.bin_dir.mkdir()
         self.repo = tmp_path / "fakerepo"
         (self.repo / "tools" / "pre-deploy-assert-smoke").mkdir(parents=True)
+        # NFM-5524: second fake checkout for the AutoVC build entry (the
+        # entry builds the nucpot-autovc-repo checkout, not the nucpot one).
+        self.autovc_repo = tmp_path / "autovcrepo"
+        self.autovc_repo.mkdir()
         self.docker_calls = tmp_path / "docker-calls.txt"
         self.entry_lock = tmp_path / "entry.lock"
         # NFM-5397: canonical LOG_DIR fixture (host_setup.sh §6 shape) so the
@@ -223,6 +228,7 @@ class EntryHarness:
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         env.setdefault("NFM_G2_REPO", str(self.repo))  # test hook; env_reset kills it in prod
         env.setdefault("NFM_G2_LOG_DIR", str(self.log_dir))  # NFM-5397: same class of hook
+        env.setdefault("NFM_G2_AUTOVC_REPO", str(self.autovc_repo))  # NFM-5524
         # NFM-4297 CR F7: entries pin interpreters/lock to absolute paths
         # via NFM_G2_* hooks. Wire any fake present in fakebin to its hook
         # so fakes stay exercised; env_extra (applied last) overrides.
@@ -1464,3 +1470,74 @@ def test_run_cleanup_candidate_loop_covers_staging(entry):
         "nucpot-staging-lightrag",
         "nucpot-staging-web",
     ], f"candidate loop repo set wrong: {pruned_repos}"
+
+
+# ---- run-autovc-build.sh (NFM-5524: sanctioned AutoVC image build) --------------
+
+# Fake git for the AutoVC happy path: HEAD==_SHA and the head IS contained
+# by a remote-tracking ref (default harness git answers `branch -r` with
+# exit 1, which is exactly the unpushed-refusal case).
+
+
+def _autovc_pushed_git(entry):
+    entry._write_executable(
+        "git",
+        f'if [ "$1" = "rev-parse" ]; then printf "%s\\n" "{_SHA}"; exit 0; fi\n'
+        'if [ "$1" = "branch" ]; then printf "  origin/fix-NFM-3873-ref-value-semantics\\n"; exit 0; fi\n'
+        "exit 1\n",
+    )
+
+
+def test_run_autovc_build_rejects_unknown_service(entry):
+    assert entry.run("run-autovc-build.sh", "--service", "evil").returncode == 64
+
+
+def test_run_autovc_build_rejects_bad_tag(entry):
+    # docker tag charset: [A-Za-z0-9_][A-Za-z0-9._-]{0,127} — no slashes,
+    # no leading separator chars, no empty tag.
+    assert entry.run("run-autovc-build.sh", "--tag", "bad/tag").returncode == 64
+    assert entry.run("run-autovc-build.sh", "--tag", "-lead").returncode == 64
+    assert entry.run("run-autovc-build.sh", "--tag", ".lead").returncode == 64
+    assert entry.run("run-autovc-build.sh", "--tag", "").returncode == 64
+
+
+def test_run_autovc_build_refuses_unpushed_head(entry):
+    """NFM-5269 lesson pinned: the 2026-09-29 AutoVC loss served an unpushed
+    tree for five weeks and recovery needed the NFM-5174 bundle. The entry
+    must refuse to bake a tree no remote ref contains — before any docker
+    call (default harness git fails `branch -r --contains`)."""
+    result = entry.run("run-autovc-build.sh")
+    assert result.returncode == 1
+    assert "not reachable from any origin ref" in result.stderr
+    assert entry.docker_argv() == []
+
+
+def test_run_autovc_build_all_services_happy_path(entry):
+    _autovc_pushed_git(entry)
+    result = entry.run("run-autovc-build.sh")
+    assert result.returncode == 0, result.stderr
+    build_calls = [c for c in entry.docker_argv() if c[:1] == ["compose"]]
+    assert build_calls == [
+        ["compose", "-p", "nucpot-autovc-repo", "build", "api", "worker"]
+    ], entry.docker_argv()
+    assert "NFM-G2-AUTOVC-BUILD:" in result.stdout
+    assert _SHA in result.stdout
+
+
+def test_run_autovc_build_single_service(entry):
+    _autovc_pushed_git(entry)
+    result = entry.run("run-autovc-build.sh", "--service", "worker")
+    assert result.returncode == 0, result.stderr
+    build_calls = [c for c in entry.docker_argv() if c[:1] == ["compose"]]
+    assert build_calls == [["compose", "-p", "nucpot-autovc-repo", "build", "worker"]]
+
+
+def test_run_autovc_build_tag_labels_both_images(entry):
+    _autovc_pushed_git(entry)
+    result = entry.run("run-autovc-build.sh", "--tag", "nfm5281-verify")
+    assert result.returncode == 0, result.stderr
+    tag_calls = [c for c in entry.docker_argv() if c[:1] == ["tag"]]
+    assert tag_calls == [
+        ["tag", "nucpot-autovc-repo-api:latest", "nucpot-autovc-repo-api:nfm5281-verify"],
+        ["tag", "nucpot-autovc-repo-worker:latest", "nucpot-autovc-repo-worker:nfm5281-verify"],
+    ], entry.docker_argv()
