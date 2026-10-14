@@ -12,7 +12,7 @@
 #   * /usr/local/lib/nfm-g2/  — gate proxy package, config, root-owned
 #     sanctioned entry scripts (run-deploy / run-pre-deploy-assert /
 #     run-recovery / run-worker-inspect / run-record-manifest /
-#     run-backup) + launchd start scripts
+#     run-backup / run-autovc-build) + launchd start scripts
 #   * /usr/local/var/nfm-g2/  — NFM-4273 canonical shared G4 state dir
 #     (deploy manifest + deploy lock): deploy-identity-writable,
 #     world-readable so the desktop-user drift cron (G4b) reads the same
@@ -53,6 +53,10 @@ USER_HOME="$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory | awk '{print $
 [ -n "${USER_HOME}" ] || die "could not resolve home for ${SUDO_USER}"
 REPO_REAL="${USER_HOME}/Projects/nucpot"
 [ -d "${REPO_REAL}/.git" ] || die "expected repo checkout at ${REPO_REAL} (run on the production host)"
+# NFM-5524: the AutoVC stack checkout (separate repo, Etoile04/nucpot-autovc).
+# Optional per host — the sanctioned build entry (run-autovc-build.sh) only
+# works where the stack actually lives.
+AUTOVC_REAL="${USER_HOME}/Projects/nucpot-autovc-repo"
 
 # --- resolve the real Docker engine socket (the thing we lock) -------------
 RAW_SOCK="${USER_HOME}/.docker/run/docker.sock"
@@ -130,6 +134,11 @@ fi
 # =============================================================================
 mkdir -p "${DEPLOY_HOME}/Projects" "${DEPLOY_HOME}/.docker/cli-plugins"
 ln -sfn "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"
+# NFM-5524: same symlink treatment for the AutoVC checkout so the
+# sanctioned build entry reads it as the deploy identity.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  ln -sfn "${AUTOVC_REAL}" "${DEPLOY_HOME}/Projects/nucpot-autovc-repo"
+fi
 # No credsStore config (NFM-848: locked keychain breaks daemon-side pulls in
 # sshd/sudo contexts) and a compose plugin link into the real CLI install.
 printf '{}\n' > "${DEPLOY_HOME}/.docker/config.json"
@@ -176,6 +185,31 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
 fi
 
+# NFM-5524: same read grant for the AutoVC checkout when present — the
+# build entry (run-autovc-build.sh) runs git rev-parse / branch -r in it
+# and tars the whole tree as the docker build context.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  if ! ls -led "${AUTOVC_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
+    chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${AUTOVC_REAL}"
+    find "${AUTOVC_REAL}" -type d -name .git -prune -o -type d -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit"
+    chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${AUTOVC_REAL}/.git"
+    find "${AUTOVC_REAL}/.git" -type d -not -path "${AUTOVC_REAL}/.git" -not -path "*/worktrees*" 2>/dev/null \
+      | while read -r d; do
+          if ! ls -led "${d}" 2>/dev/null | grep -q "nfmdeploy"; then
+            chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${d}"
+          fi
+        done
+    # gitignored secrets the build reads directly: the autovc compose keeps
+    # its env at the repo ROOT (.env — env_file + compose interpolation),
+    # plus the same .git read pass as nucpot.
+    find "${AUTOVC_REAL}" -maxdepth 1 -type f ! -perm -o=r -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
+    find "${AUTOVC_REAL}/.git" -type f ! -perm -o=r -not -path "*/worktrees/*" -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
+  fi
+fi
+
 # git refuses repos owned by another user (dubious-ownership) — allow both
 # the symlinked and real paths. Absolute /usr/bin/git: PATH may resolve
 # Homebrew git, whose dylibs (libintl from a 0700 Cellar) are unreadable by
@@ -185,6 +219,14 @@ for P in "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"; do
     sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
   fi
 done
+# NFM-5524: the build entry runs git in the AutoVC checkout too.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  for P in "${AUTOVC_REAL}" "${DEPLOY_HOME}/Projects/nucpot-autovc-repo"; do
+    if ! sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
+      sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
+    fi
+  done
+fi
 
 # =============================================================================
 # 4. install gate code + entries (root-owned — the wall depends on this)
@@ -204,7 +246,7 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog mirror_health; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health start-lightrag-watchdog ollama-runner-term; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup run-autovc-build start-proxy start-watchdog start-mirror-health start-lightrag-watchdog ollama-runner-term; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-5149: entry-sync re-propagates the entries above per release. It is
@@ -383,4 +425,6 @@ log "  backup:   sudo -n -u ${DEPLOY_USER} ${G2}/run-backup.sh [--keep N] [--des
 log "            (NFM-4750 Plan B: full-gate pg_dump + 4 prod volume tars; ro gate denies these)"
 log "  cleanup:  sudo -n -u ${DEPLOY_USER} ${G2}/run-cleanup.sh [--keep-candidates N] [--keep-shas N] [--until HOURS]"
 log "            (NFM-4802: also runs daily 04:20 via the com.nfm.g2.cleanup-daily LaunchDaemon)"
+log "  autovc:   sudo -n -u ${DEPLOY_USER} ${G2}/run-autovc-build.sh [--service api|worker|all] [--tag LABEL]"
+log "            (NFM-5524: sanctioned AutoVC image build; HEAD must be pushed — refuses unpushed trees)"
 log "audit log: ${LOG_DIR}/gate-ro.log (+ gate-full.log, watchdog.log)"
