@@ -955,6 +955,26 @@ jobs:
           fi
           exit "$DEPLOY_RC"
 
+      # NFM-5527 (evidence run 38419888271, 2026-10-14): a cancelled deploy
+      # job does NOT stop the host-side apply — sudo + the ssh teardown
+      # never signal it, and the apply completed the cutover 23 min AFTER
+      # the external cancel while the run conclusion said `cancelled` and
+      # the in-job cutover guard below was skipped. On cancel, reconcile
+      # FROM THE HOST into this run log: the apply-journal tail (start/end
+      # stamps with sha+epoch) and the ground-truth health deploy_sha
+      # (NFM-5442 rule) — so the record shows what the orphan is doing
+      # before any human re-triggers. Strictly read-only; warnings, never
+      # failures (the job is already terminal).
+      - name: Post-cancel host reconciliation (NFM-5527)
+        id: post-cancel-reconcile
+        if: cancelled()
+        run: |
+          echo "== NFM-5527 post-cancel reconciliation: intended sha ${{ github.sha }} =="
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "echo '-- apply journal (last 6 records) --'; tail -n 6 /usr/local/var/nfm-g2/prod-deploy.journal 2>/dev/null || echo '(no journal records yet — apply pre-NFM-5527 or never started)'; echo '-- ground-truth health deploy_sha --'; curl -fsS --max-time 10 http://localhost:8001/api/v1/health 2>/dev/null | sed -n 's/.*\"deploy_sha\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/deploy_sha=\1/p' || echo '(health probe failed)'" \
+            || echo '(ssh reconciliation failed — host unreachable from runner)'
+          echo "::warning::NFM-5527: job cancelled — the host-side apply may still be RUNNING and can still cut over (evidence 38419888271). The health deploy_sha above is ground truth (NFM-5442): reconcile it against the intended sha and read the journal before re-triggering (runbook §12)."
+
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
       # up -d` also ate the defenses. This assertion runs in the JOB context,

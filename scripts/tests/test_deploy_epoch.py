@@ -819,6 +819,11 @@ def test_full_deploy_enforced_refusal_exits_80_before_cutover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     host = DeployHost(tmp_path, monkeypatch)
+    # NFM-5527: the default lock behavior now QUEUES (2400s) before
+    # refusing; this test pins the still-supported instant-refusal variant
+    # (the queue-then-refuse path has its own suite,
+    # test_nfm_5527_cancel_safety.py). The env flows via _subprocess_env.
+    monkeypatch.setenv("NFM_DEPLOY_LOCK_WAIT_SECS", "0")
     # A fresh lock held by a live pid (this pytest process) — an in-flight
     # deploy, which the refusal rule keys on regardless of the holder's
     # epoch (the seeded epoch values are incidental after the round-1 fix:
@@ -848,6 +853,9 @@ def test_full_deploy_default_enforced_refusal_exits_80_before_cutover(
     default itself must be ON — the same fresh-lock/live-pid conflict that
     shadow-mode tolerated now refuses (rc 80) before any cutover mutation."""
     host = DeployHost(tmp_path, monkeypatch)
+    # NFM-5527: wait=0 keeps this pinning the instant-refusal path; the
+    # enforcement DEFAULT under test is NFM_DEPLOY_LOCK_ENFORCE (unset).
+    monkeypatch.setenv("NFM_DEPLOY_LOCK_WAIT_SECS", "0")
     host.epoch_file.write_text("5\n", encoding="utf-8")
     host.lock_file.write_text(
         json.dumps({"epoch": 5, "pid": os.getpid(), "deploy_sha": "concurrent-run"}) + "\n",
@@ -871,6 +879,9 @@ def test_full_deploy_unrecognized_enforce_value_fails_closed(
     exact emergency-disable value 0 turns it off. An operator exporting a
     truthy-but-unrecognized spelling (true/yes/on, or a typo of 0) must get
     the ENFORCED refusal, not a silent drop to shadow mode."""
+    # NFM-5527: wait=0 — the knob under test is the enforcement spelling;
+    # the queue default would defer the refusal past the subprocess budget.
+    monkeypatch.setenv("NFM_DEPLOY_LOCK_WAIT_SECS", "0")
     for index, bad_value in enumerate(("true", "yes", "00 ", "off-typo")):
         host = DeployHost(tmp_path / f"host-{index}", monkeypatch)
         host.epoch_file.write_text("5\n", encoding="utf-8")
