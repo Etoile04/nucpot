@@ -18,7 +18,7 @@
 | Date (UTC) | Lane | What happened |
 | --- | --- | --- |
 | 2026-10-14 ×2 | Named checks (`health_check.py`) | 24 consecutive P1 WARN beats, SSL `UNEXPECTED_EOF` through the proxy vantage while curl-direct and external vantage read green (→ NFM-5525 ladder) |
-| 2026-10-15 02:12–02:34Z | Chunk scan (`nfm-site-monitor.sh` heredoc) | `fetches=0/5`, mode=A ×3 → false CRITICAL page (`origin=ok`) — the lane NFM-5525 did not cover |
+| 2026-10-15 02:12–02:26Z | Chunk scan (`nfm-site-monitor.sh` heredoc) | `fetches=0/5`, mode=A ×3 → false CRITICAL page (`origin=ok`) — the lane NFM-5525 did not cover |
 
 Ground truth (CTO-verified): the sentinel had **three python egress lanes with
 inconsistent proxy posture** on a host whose macOS system proxy (v2cloud
