@@ -208,8 +208,9 @@ notify_page() { # summary
 # host-egress vs edge in one line. scutil unavailable (non-macOS hosts)
 # reads "unknown" — best-effort observability, never a monitoring dependency.
 proxy_state_line() {
-  local summary
-  summary="$(/usr/sbin/scutil --proxy 2>/dev/null | /usr/bin/awk '
+  local scutil_bin summary
+  scutil_bin="${NFM_MONITOR_SCUTIL:-/usr/sbin/scutil}"
+  summary="$("$scutil_bin" --proxy 2>/dev/null | /usr/bin/awk '
     $1 == "HTTPEnable"  && $3 == 1 { eh = 1 }
     $1 == "HTTPProxy"   { eh_h = $3 }  $1 == "HTTPPort"  { eh_p = $3 }
     $1 == "HTTPSEnable" && $3 == 1 { es = 1 }
@@ -217,6 +218,7 @@ proxy_state_line() {
     $1 == "SOCKSEnable" && $3 == 1 { ek = 1 }
     $1 == "SOCKSProxy"  { ek_h = $3 }  $1 == "SOCKSPort" { ek_p = $3 }
     END {
+      if (NR == 0) exit
       out = ""
       if (eh) out = out " http=" eh_h ":" eh_p
       if (es) out = out " https=" es_h ":" es_p

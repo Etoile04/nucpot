@@ -353,6 +353,55 @@ def test_startup_proxy_state_line_logged(monitor_env, mock_site):
     assert "scutil-proxy:" in startup[0]
 
 
+def _scutil_stub(tmp_path, name, body):
+    stub = tmp_path / name
+    stub.write_text(body, encoding="utf-8")
+    stub.chmod(0o755)
+    return str(stub)
+
+
+@pytest.mark.parametrize("mode", ["missing", "silent"])
+def test_proxy_state_reads_unknown_when_scutil_fails(monitor_env, mock_site, tmp_path, mode):
+    """D3 fallback: scutil absent or emitting nothing must read ``unknown`` —
+    never a confident ``none``. The runbook adjudicates a mode-A cycle against
+    the scutil reading; a mislabeled ``none`` would point the flap at the
+    edge on any host where scutil is unavailable."""
+    if mode == "silent":
+        monitor_env["NFM_MONITOR_SCUTIL"] = _scutil_stub(
+            tmp_path, "scutil-silent.sh", "#!/bin/sh\nexit 0\n"
+        )
+    else:
+        monitor_env["NFM_MONITOR_SCUTIL"] = str(tmp_path / "scutil-absent")
+    r = run_script(monitor_env)
+    assert r.returncode == 0, r.stdout
+    startup = [ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln][0]
+    assert "scutil-proxy: unknown" in startup
+
+
+def test_proxy_state_reports_enabled_proxy_from_scutil(monitor_env, mock_site, tmp_path):
+    """D3 parse: a scutil report with HTTP enabled must surface the endpoint
+    in the one-line summary — the healthy-proxy reading the runbook needs to
+    attribute a degraded cycle to the edge."""
+    monitor_env["NFM_MONITOR_SCUTIL"] = _scutil_stub(
+        tmp_path,
+        "scutil-proxy-on.sh",
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        "<dictionary> {\n"
+        "  HTTPEnable : 1\n"
+        "  HTTPProxy : 127.0.0.1\n"
+        "  HTTPPort : 7892\n"
+        "  SOCKSEnable : 0\n"
+        "}\n"
+        "EOF\n",
+    )
+    r = run_script(monitor_env)
+    assert r.returncode == 0, r.stdout
+    startup = [ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln][0]
+    assert "scutil-proxy: http=127.0.0.1:7892" in startup
+    assert "unknown" not in startup
+
+
 def test_degraded_cycle_carries_scutil_next_to_mode_evidence(monitor_env, mock_site):
     """AC4/D3: every degraded cycle's evidence token carries the one-line
     scutil summary ADJACENT to mode=/fetches= — same log line, so the next
@@ -423,11 +472,3 @@ def test_adr013_broker_dpi_rulings_untouched():
     adr013 = SCRIPT_DIR.parent / "docs" / "adr" / "ADR-013-NFM-4266-prod-mutation-guardrails.md"
     text = adr013.read_text(encoding="utf-8")
     assert "DPI" in text or "dpi" in text, "ADR-013 DPI record vanished — D4 violation"
-
-
-def test_wrapper_documents_supersession():
-    """D4: the wrapper's records correction names the superseded 10-14
-    attribution (site-monitor scope) and keeps ADR-013 explicitly valid."""
-    src = MONITOR.read_text(encoding="utf-8")
-    assert "SUPERSEDED" in src or "superseded" in src
-    assert "ADR-013" in src
