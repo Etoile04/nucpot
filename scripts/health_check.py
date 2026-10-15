@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover
     UTC = _tz.utc
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -40,17 +40,22 @@ MAX_RESPONSE_TIME_MS = 5000
 RETRY_COUNT = 2
 RETRY_DELAY_SECONDS = 5
 
-# NFM-5279: opener with proxies explicitly disabled. The prod sentinel host's
-# macOS system proxy (v2cloud 127.0.0.1:7892) applies to bare urlopen() via
-# getproxies(), so every check measures host → proxy → upstream → CF edge.
-# Connection-class failures get ONE confirmation attempt through this
-# direct-egress opener: direct egress from the host reaches the real CF edges
-# (calibration 2026-10-01). No-op where no system proxy exists (GHA runners)
-# — the confirmation only runs on a failure path. NFM-5525 extended this
-# from P0-only to every named check: the 2026-10-14 proxy-vantage flap
-# (2.5h+, resets for every ClientHello shape — python AND curl rc=35 via
-# the proxy, direct egress healthy throughout) blinded the whole P1 lane
-# for 24 beats while the site stayed up.
+# NFM-5279/NFM-5525/ADR-023: opener with proxies explicitly disabled. The
+# prod sentinel host's macOS system proxy (v2cloud 127.0.0.1:7892) applies
+# to bare urlopen() via getproxies(), so a proxied fetch measures
+# host → proxy → upstream → CF edge and a user VPN flap reads as site
+# trouble. ADR-023 (2026-10-15, NFM-5540 → NFM-5541, implemented NFM-5542)
+# makes DIRECT THE PRIMARY lane for every sentinel python egress: this
+# opener now carries check_url()'s primary fetch (and send_alert()'s
+# webhook POST; the chunk-scan heredoc in nfm-site-monitor.sh got the same
+# opener). The NFM-5279/NFM-5525 two-stage confirmation ladder stays —
+# UNCHANGED — as the failure-path cross-check (one direct re-probe + one
+# curl-direct probe), covering python-lane transients like the
+# 2026-10-14T09:34Z gaierror. Records correction (NFM-5540): the 10-14
+# site-monitor blind windows first attributed to CN-side ClientHello DPI
+# were LOCAL proxy-vantage defects — superseded (ADR-013's broker/GitHub
+# DPI rulings are a different subsystem and remain valid). No-op where no
+# system proxy exists (GHA runners).
 NO_PROXY_OPENER = build_opener(ProxyHandler({}))
 
 # NFM-5525: curl binary for the second confirmation stage. Absolute path
@@ -280,7 +285,9 @@ def check_url(target: CheckTarget) -> CheckResult:
     # NFM-5279: True when the latest failure is connection-class (the edge
     # never answered, or answered too slowly) — eligible for the direct-egress
     # + curl confirmation ladder (NFM-5525, all severities) once retries are
-    # exhausted.
+    # exhausted. Post-ADR-023 the primary itself is already direct, so this
+    # marks DIRECT-lane transients (DNS blips, local resets) for the ladder's
+    # curl cross-check.
     vantage_suspect = False
 
     for attempt in range(1, RETRY_COUNT + 1):
@@ -289,7 +296,12 @@ def check_url(target: CheckTarget) -> CheckResult:
             req = Request(target.url, method="GET")
             req.add_header("User-Agent", "NucPot-HealthCheck/1.0")
 
-            with urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+            # ADR-023 (NFM-5542): primary fetch goes DIRECT through the
+            # no-proxy opener — a probe must never measure the user VPN
+            # proxy, so a proxy-vantage flap cannot blind this lane. The
+            # NFM-5279/NFM-5525 ladder below remains as the failure-path
+            # cross-check for direct-lane transients.
+            with NO_PROXY_OPENER.open(req, timeout=TIMEOUT_SECONDS) as resp:
                 elapsed_ms = int((time.monotonic() - start) * 1000)
                 body = resp.read().decode("utf-8", errors="replace")
 
@@ -460,7 +472,11 @@ def send_alert(results: list[CheckResult], webhook_url: str) -> None:
     req.add_header("Content-Type", "application/json")
 
     try:
-        with urlopen(req, timeout=10):
+        # ADR-023 (NFM-5542): webhook POST goes through the no-proxy opener —
+        # no sentinel egress may transit the user VPN proxy. Unused on the
+        # prod host today (no ALERT_WEBHOOK), fixed in passing with the probe
+        # lanes so the posture cannot regress if a webhook is added later.
+        with NO_PROXY_OPENER.open(req, timeout=10):
             pass
     except Exception as exc:
         print(f"Failed to send alert: {exc}", file=sys.stderr)
