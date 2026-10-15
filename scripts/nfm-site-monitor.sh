@@ -112,6 +112,32 @@
 #     p0=/origin= evidence so calibration data accrues for future tuning
 #     (NFM-5454 pattern).
 #
+# NFM-5542 (2026-10-15, ADR-023) — sentinel egress independence:
+#   - Ground truth (CTO, NFM-5540 → parent NFM-5541): this sentinel had
+#     THREE python egress lanes with inconsistent proxy posture. Bare
+#     urllib rides the macOS system proxy (v2cloud 127.0.0.1:7892 via
+#     scutil): the 2026-10-15 02:12–02:26Z chunk-scan false CRITICAL
+#     (fetches=0/5, mode=A ×3, origin=ok) and both 2026-10-14 blind
+#     windows were LOCAL VPN-proxy vantage defects, not site trouble.
+#     RECORDS CORRECTION: the 10-14 "CN-side ClientHello DPI" attribution
+#     for the site-monitor windows is SUPERSEDED — local monitoring defect
+#     (ADR-013's broker/GitHub DPI rulings are a different subsystem and
+#     stay valid).
+#   - ADR-023: DIRECT IS PRIMARY for every python lane. (D1) the chunk-scan
+#     heredoc below fetches pages and HEADs refs through one shared
+#     no-proxy opener (scripts/health_check.py::check_url + send_alert got
+#     the same opener); (D2) no_proxy='*' / NO_PROXY='*' are exported below
+#     so a future bare urlopen cannot silently re-couple through the
+#     ENV-VAR proxy class — note the macOS sysconf proxy is only bypassed
+#     by the explicit opener, which is why D1 is primary and D2 is
+#     defense-in-depth. curl (the NFM-5525 confirmation lane) honors
+#     no_proxy too and was already effectively direct (green in every
+#     episode, so origin-check semantics are unchanged).
+#   - (D3) observability: a one-line /usr/sbin/scutil --proxy summary is
+#     logged at sentinel startup and rides every degraded cycle's
+#     mode=/fetches= evidence token, so the next flap adjudicates
+#     host-egress vs edge in ONE log line.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -143,6 +169,16 @@ else
   PY=/usr/bin/python3
 fi
 
+# NFM-5542 (ADR-023) D2: pin python egress to direct, defense-in-depth.
+# no_proxy='*' neutralizes ENV-VAR proxies for urllib (the
+# getproxies_environment path) and for curl; the macOS system-configuration
+# proxy (scutil) is only bypassed by the explicit no-proxy openers (D1) —
+# this export stops a future bare urlopen from silently re-coupling through
+# the env-var class. Applies to every python invocation below (base probe +
+# chunk-scan heredoc).
+export no_proxy="*"
+export NO_PROXY="*"
+
 STREAK_THRESHOLD=2      # consecutive failing probes before CRITICAL
 REMINDER_RUNS=12        # ~1h reminder cadence while CRITICAL persists
 INTERNAL_STREAK_CRITICAL=6  # ~30 min of internal errors -> sentinel-broken page
@@ -163,6 +199,32 @@ log() {
 # Best-effort only — notification failure must never break monitoring.
 notify_page() { # summary
   "${NFM_MONITOR_NOTIFY:-/usr/bin/osascript}" -e "display notification \"$1\" with title \"nucpot site-monitor CRITICAL\"" >/dev/null 2>&1 || true
+}
+
+# NFM-5542 (ADR-023) D3: one-line macOS proxy posture summary. Absolute
+# paths (/usr/sbin/scutil, /usr/bin/awk) — GUI-launched agents have a sparse
+# PATH (NFM-4579). Logged at sentinel startup and adjacent to every degraded
+# cycle's mode=/fetches= evidence so the next VPN flap adjudicates
+# host-egress vs edge in one line. scutil unavailable (non-macOS hosts)
+# reads "unknown" — best-effort observability, never a monitoring dependency.
+proxy_state_line() {
+  local summary
+  summary="$(/usr/sbin/scutil --proxy 2>/dev/null | /usr/bin/awk '
+    $1 == "HTTPEnable"  && $3 == 1 { eh = 1 }
+    $1 == "HTTPProxy"   { eh_h = $3 }  $1 == "HTTPPort"  { eh_p = $3 }
+    $1 == "HTTPSEnable" && $3 == 1 { es = 1 }
+    $1 == "HTTPSProxy"  { es_h = $3 }  $1 == "HTTPSPort" { es_p = $3 }
+    $1 == "SOCKSEnable" && $3 == 1 { ek = 1 }
+    $1 == "SOCKSProxy"  { ek_h = $3 }  $1 == "SOCKSPort" { ek_p = $3 }
+    END {
+      out = ""
+      if (eh) out = out " http=" eh_h ":" eh_p
+      if (es) out = out " https=" es_h ":" es_p
+      if (ek) out = out " socks=" ek_h ":" ek_p
+      if (out == "") print "scutil-proxy: none"
+      else print "scutil-proxy:" out
+    }')"
+  printf '%s' "${summary:-scutil-proxy: unknown}"
 }
 
 # Log rotation: keep last 2000 lines once the file exceeds 50 MiB
@@ -259,6 +321,19 @@ REFS_DEGRADE_MIN = 2      # NFM-5454: refs-unverified below this is a NOTE, not 
                           # day) and truncation still degrade immediately.
 REPORT_MARGIN = 5.0       # reserve for printing/teardown before SIGALRM
 
+# NFM-5542 (ADR-023) D1: the scan egresses DIRECTLY — page GETs and ref
+# HEADs share ONE no-proxy opener. Bare urllib.request.urlopen rides the
+# macOS system proxy (getproxies -> scutil): that is what fired the
+# 2026-10-15 02:12–02:26Z false CRITICAL (fetches=0/5, mode=A ×3,
+# origin=ok while the site was up). The 10-14 "CN-side ClientHello DPI"
+# attribution for the site-monitor windows is superseded (NFM-5540): local
+# VPN-proxy defects — ADR-013's broker/GitHub DPI rulings are a different
+# subsystem and stay valid. ProxyHandler({}) pins this lane direct; the
+# wrapper's no_proxy='*' export (D2) additionally covers the env-var proxy
+# class. Verdict semantics unchanged: HTTPError handling, timeouts, and
+# budgets are identical to the urlopen build.
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 lock = threading.Lock()
 stale = {}   # page -> s-maxage value (TTL lane; from response headers)
 ages = {}    # page -> age header at read time
@@ -328,7 +403,9 @@ signal.alarm(max(1, int(DEADLINE)))
 def fetch_page(page):
     global fetched, refs_seen, skipped_refs, truncated_refs
     req = urllib.request.Request(base + page, headers={"User-Agent": ua})
-    resp = urllib.request.urlopen(req, timeout=PAGE_TIMEOUT)
+    # ADR-023 (NFM-5542): DIRECT primary — a VPN proxy flap must never read
+    # as "all page fetches failed" (the 10-15 02:12Z false-CRITICAL shape).
+    resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
     try:
         cc = resp.headers.get("cache-control") or ""
         # TTL lane (NFM-5446): pin verdict from HEADERS, captured before the
@@ -367,7 +444,7 @@ def head_ref(page, ref):
                 skipped_refs += 1
             return
         try:
-            code = urllib.request.urlopen(req, timeout=REF_TIMEOUT).status
+            code = NO_PROXY_OPENER.open(req, timeout=REF_TIMEOUT).status
             break
         except urllib.error.HTTPError as e:
             code = e.code
@@ -528,6 +605,11 @@ skip_b_next="$skip_b"
 blind_p0_next="$blind_p0"
 N_SCAN_PAGES="$(wc -w <<<"$SCAN_PAGES" | tr -d ' ')"
 
+# NFM-5542 (ADR-023) D3: proxy posture at sentinel startup, every run —
+# with the D1 direct primaries a residual flap is attributable to host
+# egress (not the edge) from this one line alone.
+log "startup proxy-state — $(proxy_state_line) — python lanes pinned direct (ADR-023/NFM-5542)"
+
 if [[ ! -f "$PROBE" ]]; then
   internal_streak="$(( $(state_get internal_streak 0) + 1 ))"
   if (( internal_streak >= INTERNAL_STREAK_CRITICAL )); then
@@ -610,7 +692,10 @@ if (( RC == 0 )); then
       skip_b_next="$(( skip_b + 1 ))"; skip_a_next=0
     fi
     p0_ev="unknown"; [[ -n "${blind_p0_next/-}" ]] && p0_ev="fail"
-    mode_ev="[NFM-5497 mode=$scan_mode fetches_failed=$fetches_failed/$N_SCAN_PAGES refs_unverified=$refs_unv p0=$p0_ev origin=ok; streak A=$skip_a_next B=$skip_b_next]"
+    # NFM-5542 (ADR-023) D3: the scutil proxy summary rides the SAME token
+    # as the mode=/fetches= evidence — one log line adjudicates host-egress
+    # vs edge on the next flap (mode A + healthy proxy = host egress).
+    mode_ev="[NFM-5497 mode=$scan_mode fetches_failed=$fetches_failed/$N_SCAN_PAGES refs_unverified=$refs_unv p0=$p0_ev origin=ok; streak A=$skip_a_next B=$skip_b_next; $(proxy_state_line)]"
     # TTL-lane findings during a degraded scan still surface as P1 WARN —
     # this is exactly the masking window NFM-5446 closes.
     if [[ "$scan_detail" == *"P1 stale"* ]]; then
@@ -666,7 +751,7 @@ if (( RC == 0 )); then
     # (preserved); this lane escalates exactly as before (WARN + overall
     # streak only).
     scan_skip_next="$(( $(state_get scan_skip_streak 0) + 1 ))"
-    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL}: scan launcher rc=$SCAN_RC — P0/pin lanes unverified this cycle [NFM-5497 mode=unknown — no scan report; counters preserved]"
+    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL}: scan launcher rc=$SCAN_RC — P0/pin lanes unverified this cycle [NFM-5497 mode=unknown — no scan report; counters preserved; $(proxy_state_line)]"
     scan_degraded_note=1
   fi
 fi
@@ -735,9 +820,9 @@ if (( RC == 1 )); then
     fi
     if (( since_remind >= REMINDER_RUNS )); then
       since_remind=0
-      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail"
+      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail [$(proxy_state_line)]"
     else
-      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail"
+      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail [$(proxy_state_line)]"
     fi
     notify_page "P0 public-edge failure: $failed check(s) down ($p0 P0)"
     state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \

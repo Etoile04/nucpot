@@ -189,3 +189,21 @@ phantom 404s (ep-4: 34 apparent dead refs → 0 real after
 `rstrip('\\')`). The sentinel's own `ref_re` character class cannot
 capture a backslash, so shipped extraction is immune; manual/ad-hoc
 adjudication regexes must normalize before HEADing.
+
+**Egress independence (ADR-023 / NFM-5542, 2026-10-15):** SUPERSEDED —
+the 2026-10-14 site-monitor blind windows earlier attributed to CN-side
+ClientHello DPI were LOCAL proxy-vantage defects (the sentinel's python
+lanes rode the macOS system proxy, v2cloud `127.0.0.1:7892`; see
+`docs/adr/ADR-023-NFM-5540-sentinel-egress-independence.md`). This
+supersession is site-monitor-scope only — ADR-013's broker/GitHub DPI
+rulings are a different subsystem and remain valid. Post-ADR-023 the
+sentinel's python egress is DIRECT as the primary lane everywhere
+(no-proxy openers in `health_check.py` and the scan heredoc; wrapper
+exports `no_proxy='*'` as defense-in-depth), so a VPN flap can no longer
+blind any lane. Every sentinel run logs a `proxy-state` line at startup
+and every degraded cycle carries `scutil-proxy: …` adjacent to its
+`mode=/fetches=` evidence: **the next flap adjudicates host-egress vs
+edge in one log line** — a healthy scutil proxy state on a mode-A blind
+cycle points at the direct lane/edge, an unhealthy one at host egress.
+The NFM-5525 confirmation ladder stays as the failure-path cross-check
+for direct-lane transients.
