@@ -130,8 +130,10 @@ probe).
   pin AC1 (named-check primary, clean pass under poisoned proxies), AC2
   (heredoc page GETs + ref HEADs via the opener, green under dead env proxies
   with `no_proxy` absent), AC3 (wrapper exports + webhook opener), AC4
-  (scutil one-liners), AC5 (supersession comments, ADR-013 untouched), AC6
-  (this document). AC7 (D5 deploy + first post-deploy cycle evidence) belongs
+  (scutil one-liners), and the ADR-013-untouched half of AC5; AC5's
+  supersession comments (in `health_check.py` / `nfm-site-monitor.sh`) and
+  AC6 (this document) are satisfied by those artifacts themselves, not
+  test-pinned. AC7 (D5 deploy + first post-deploy cycle evidence) belongs
   to the SRE sibling.
 
 ## 4. Implementation

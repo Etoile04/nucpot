@@ -6,11 +6,11 @@ proxy posture. Bare ``urlopen``/``urllib.request.urlopen`` rides the macOS
 system proxy (v2cloud 127.0.0.1:7892 via scutil), and three episodes in ~20 h
 produced false CRITICALs / page-latch cycles while the site was fully up:
 
-- 2026-10-14 ×2 — named-check lane blind (SSL EOF through the proxy vantage;
+- 2026-10-14 x2 — named-check lane blind (SSL EOF through the proxy vantage;
   NFM-5525 later added the confirmation ladder, but the PRIMARY still rode
   the VPN);
-- 2026-10-15 02:12–02:26Z — the UNCOVERED chunk-scan lane: log shows
-  ``fetches=0/5``, mode=A ×3 → CRITICAL, origin=ok. A VPN flap read as
+- 2026-10-15 02:12-02:26Z — the UNCOVERED chunk-scan lane: log shows
+  ``fetches=0/5``, mode=A x3 → CRITICAL, origin=ok. A VPN flap read as
   edge-down because the scan's page GETs and ref HEADs went through
   ``urllib.request.urlopen`` with no bypass and no ladder.
 
@@ -21,7 +21,7 @@ and a covered lane's primary still rode the VPN (inverse blindness: a real
 outage during a VPN flap stays unclassifiable).
 
 ADR-023 decision: **direct is the PRIMARY lane everywhere; proxy paths cease
-to exist for probes.** These tests pin the contract (AC1–AC4 of NFM-5542):
+to exist for probes.** These tests pin the contract (AC1-AC4 of NFM-5542):
 
 - AC1: ``check_url``'s primary fetch uses the no-proxy opener — a proxy-hostile
   environment (dead ``getproxies`` + a dead default opener installed) cannot
@@ -56,12 +56,12 @@ import os
 import subprocess
 import sys
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
 
 import pytest
-import urllib.request
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -76,10 +76,12 @@ DEAD_PROXY = "http://127.0.0.1:1"  # nothing listens on port 1 — refused insta
 from test_nfm_site_monitor import (  # noqa: E402
     REF_TIMEOUT,
     _degrade_refs,
-    env as monitor_env,  # noqa: F401  (pytest fixture)
     log_text,
     mock_site,  # noqa: F401  (pytest fixture)
     run_script,
+)
+from test_nfm_site_monitor import (  # noqa: E402
+    env as monitor_env,  # noqa: F401  (pytest fixture)
 )
 
 # ---------------------------------------------------------------------------
@@ -152,8 +154,9 @@ def test_check_url_primary_survives_dead_proxies_p1(local_site, monkeypatch):
     dead = {"http": DEAD_PROXY, "https": DEAD_PROXY}
     monkeypatch.setattr(urllib.request, "getproxies", lambda: dead)
     monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
-    monkeypatch.setattr(urllib.request, "_opener",
-                        urllib.request.build_opener(urllib.request.ProxyHandler(dead)))
+    monkeypatch.setattr(
+        urllib.request, "_opener", urllib.request.build_opener(urllib.request.ProxyHandler(dead))
+    )
 
     target = health_check.CheckTarget(name="T", url=local_site, severity="P1")
     result = health_check.check_url(target)
@@ -206,6 +209,7 @@ def test_send_alert_uses_no_proxy_opener(monkeypatch):
 
 def test_send_alert_swallows_opener_failure(monkeypatch, capsys):
     """Webhook failure stays best-effort (unchanged semantics): printed, not raised."""
+
     class _Dead:
         def open(self, req, timeout=None):
             raise URLError("refused")
@@ -252,7 +256,7 @@ def _scan_env(base: str) -> dict:
     }
 
 
-def test_chunk_scan_heredoc_is_proxy_independent(mock_site):
+def test_chunk_scan_heredoc_is_proxy_independent(mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC2: with env proxies dead and no_proxy absent, the scan reads GREEN.
 
     The 2026-10-15 02:12Z false-CRITICAL shape: a bare-urlopen scan lane in
@@ -276,19 +280,27 @@ def test_chunk_scan_heredoc_is_proxy_independent(mock_site):
     )
     r0 = subprocess.run(
         [sys.executable, "-", base + "/"],
-        input=probe, text=True, capture_output=True, env=_scan_env(base), timeout=30,
+        input=probe,
+        text=True,
+        capture_output=True,
+        env=_scan_env(base),
+        timeout=30,
     )
     assert "DEAD-AS-EXPECTED" in r0.stdout, r0.stdout + r0.stderr
 
     r = subprocess.run(
         [sys.executable, "-", "/"],
-        input=body, text=True, capture_output=True, env=_scan_env(base), timeout=60,
+        input=body,
+        text=True,
+        capture_output=True,
+        env=_scan_env(base),
+        timeout=60,
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "ok (" in r.stdout and "refs verified" in r.stdout
 
 
-def test_chunk_scan_heredoc_ref_heads_are_direct_too(mock_site):
+def test_chunk_scan_heredoc_ref_heads_are_direct_too(mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC2 (ref HEAD half): ref HEAD verdicts also ride the no-proxy opener.
 
     A page with a 4xx ref must produce the definitive ``->404`` P0 verdict —
@@ -299,8 +311,11 @@ def test_chunk_scan_heredoc_ref_heads_are_direct_too(mock_site):
     config["ref_status"] = {"r0-a1b2c3.js": 404}
     r = subprocess.run(
         [sys.executable, "-", "/"],
-        input=_heredoc_source(), text=True, capture_output=True,
-        env=_scan_env(base), timeout=60,
+        input=_heredoc_source(),
+        text=True,
+        capture_output=True,
+        env=_scan_env(base),
+        timeout=60,
     )
     assert r.returncode == 1, r.stdout + r.stderr
     assert "P0 dead refs" in r.stdout
@@ -312,7 +327,7 @@ def test_chunk_scan_heredoc_ref_heads_are_direct_too(mock_site):
 # ---------------------------------------------------------------------------
 
 
-def test_wrapper_exports_no_proxy_for_python(monitor_env, mock_site, tmp_path):
+def test_wrapper_exports_no_proxy_for_python(monitor_env, mock_site, tmp_path):  # noqa: F811  (fixture param shadows the registered import above)
     """AC3/D2: the wrapper pins no_proxy='*' and NO_PROXY='*' into its python
     invocations (defense-in-depth: a future bare urlopen cannot re-couple
     through the env-var proxy class). Captured via an env-dumping probe stub.
@@ -342,7 +357,7 @@ def test_wrapper_exports_no_proxy_for_python(monitor_env, mock_site, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_startup_proxy_state_line_logged(monitor_env, mock_site):
+def test_startup_proxy_state_line_logged(monitor_env, mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC4/D3: every sentinel run logs a one-line scutil proxy summary at
     startup. On non-macOS hosts scutil is absent and the line reads
     ``scutil-proxy: unknown`` — the line itself must always be there."""
@@ -361,7 +376,7 @@ def _scutil_stub(tmp_path, name, body):
 
 
 @pytest.mark.parametrize("mode", ["missing", "silent"])
-def test_proxy_state_reads_unknown_when_scutil_fails(monitor_env, mock_site, tmp_path, mode):
+def test_proxy_state_reads_unknown_when_scutil_fails(monitor_env, mock_site, tmp_path, mode):  # noqa: F811  (fixture param shadows the registered import above)
     """D3 fallback: scutil absent or emitting nothing must read ``unknown`` —
     never a confident ``none``. The runbook adjudicates a mode-A cycle against
     the scutil reading; a mislabeled ``none`` would point the flap at the
@@ -374,11 +389,11 @@ def test_proxy_state_reads_unknown_when_scutil_fails(monitor_env, mock_site, tmp
         monitor_env["NFM_MONITOR_SCUTIL"] = str(tmp_path / "scutil-absent")
     r = run_script(monitor_env)
     assert r.returncode == 0, r.stdout
-    startup = [ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln][0]
+    startup = next(ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln)
     assert "scutil-proxy: unknown" in startup
 
 
-def test_proxy_state_reports_enabled_proxy_from_scutil(monitor_env, mock_site, tmp_path):
+def test_proxy_state_reports_enabled_proxy_from_scutil(monitor_env, mock_site, tmp_path):  # noqa: F811  (fixture param shadows the registered import above)
     """D3 parse: a scutil report with HTTP enabled must surface the endpoint
     in the one-line summary — the healthy-proxy reading the runbook needs to
     attribute a degraded cycle to the edge."""
@@ -397,12 +412,12 @@ def test_proxy_state_reports_enabled_proxy_from_scutil(monitor_env, mock_site, t
     )
     r = run_script(monitor_env)
     assert r.returncode == 0, r.stdout
-    startup = [ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln][0]
+    startup = next(ln for ln in log_text(monitor_env).splitlines() if "proxy-state" in ln)
     assert "scutil-proxy: http=127.0.0.1:7892" in startup
     assert "unknown" not in startup
 
 
-def test_degraded_cycle_carries_scutil_next_to_mode_evidence(monitor_env, mock_site):
+def test_degraded_cycle_carries_scutil_next_to_mode_evidence(monitor_env, mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC4/D3: every degraded cycle's evidence token carries the one-line
     scutil summary ADJACENT to mode=/fetches= — same log line, so the next
     flap adjudicates host-egress vs edge in one line."""
@@ -411,12 +426,12 @@ def test_degraded_cycle_carries_scutil_next_to_mode_evidence(monitor_env, mock_s
     monitor_env["NFM_SCAN_DEADLINE"] = "12"
     r = run_script(monitor_env)
     assert r.returncode == 0, r.stdout
-    warn = [ln for ln in log_text(monitor_env).splitlines() if "chunk-scan DEGRADED" in ln][0]
+    warn = next(ln for ln in log_text(monitor_env).splitlines() if "chunk-scan DEGRADED" in ln)
     assert "mode=B" in warn
     assert "scutil-proxy:" in warn
 
 
-def test_mode_a_critical_carries_scutil_evidence(monitor_env, mock_site):
+def test_mode_a_critical_carries_scutil_evidence(monitor_env, mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC4/D3 on the paging path: the mode-A blind CRITICAL line (the exact
     2026-10-15 02:26Z false-CRITICAL shape) carries the proxy state inline."""
     _base, _config = mock_site
@@ -426,13 +441,16 @@ def test_mode_a_critical_carries_scutil_evidence(monitor_env, mock_site):
         assert run_script(monitor_env).returncode == 0
     r3 = run_script(monitor_env)
     assert r3.returncode == 2, r3.stdout
-    crit = [ln for ln in log_text(monitor_env).splitlines()
-            if "CRITICAL — sentinel chunk-scan blind" in ln][-1]
+    crit = [
+        ln
+        for ln in log_text(monitor_env).splitlines()
+        if "CRITICAL — sentinel chunk-scan blind" in ln
+    ][-1]
     assert "mode=A" in crit
     assert "scutil-proxy:" in crit
 
 
-def test_base_lane_critical_carries_scutil_evidence(tmp_path, mock_site):
+def test_base_lane_critical_carries_scutil_evidence(tmp_path, mock_site):  # noqa: F811  (fixture param shadows the registered import above)
     """AC4/D3 on the base lane: a confirmed base-probe P0 CRITICAL carries
     the proxy state too — a real outage during a healthy-proxy reading is
     edge trouble, not vantage trouble, in one line."""
@@ -457,7 +475,9 @@ def test_base_lane_critical_carries_scutil_evidence(tmp_path, mock_site):
     run_script(local_env)  # streak 1/2 — WARN
     r2 = run_script(local_env)  # streak 2/2 — CRITICAL
     assert r2.returncode == 2, r2.stdout
-    crit = [ln for ln in log_text(local_env).splitlines() if "CRITICAL —" in ln and "public-edge" in ln][-1]
+    crit = [
+        ln for ln in log_text(local_env).splitlines() if "CRITICAL —" in ln and "public-edge" in ln
+    ][-1]
     assert "scutil-proxy:" in crit
 
 

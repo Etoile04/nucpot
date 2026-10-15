@@ -9,9 +9,9 @@ Contract evolution (pin both eras):
   every named check — while the site was demonstrably UP (curl direct 200,
   external vantage ``status ok``, 0 P0 failures). NFM-5525 answered with a
   two-stage failure-path confirmation ladder.
-- 2026-10-15 02:12–02:26Z (the limit of that design, NFM-5540): the
+- 2026-10-15 02:12-02:26Z (the limit of that design, NFM-5540): the
   UNCOVERED chunk-scan lane went blind through the same proxy and fired a
-  false CRITICAL (``fetches=0/5``, mode=A ×3, origin=ok) — proof that
+  false CRITICAL (``fetches=0/5``, mode=A x3, origin=ok) — proof that
   failure-path confirmation cannot fix lanes it does not cover, and that a
   proxied primary still measures the user's VPN, not the site. ADR-023
   (NFM-5540/5541, implemented NFM-5542) made DIRECT THE PRIMARY for every
@@ -363,9 +363,7 @@ def test_p0_latency_overage_still_confirmed(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         health_check,
         "NO_PROXY_OPENER",
-        _FakeDirectOpener(
-            [_FakeResp(200, '{"status":"ok"}'), _FakeResp(200, '{"status":"ok"}')]
-        ),
+        _FakeDirectOpener([_FakeResp(200, '{"status":"ok"}'), _FakeResp(200, '{"status":"ok"}')]),
     )
     clock = itertools.count(start=0.0, step=1.0)
     monkeypatch.setattr(
