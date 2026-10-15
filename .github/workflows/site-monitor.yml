@@ -131,8 +131,28 @@ jobs:
     runs-on: [self-hosted, production]
     timeout-minutes: 3
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout (direct git, no action archive)
+        # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
+        # host's direct egress, so `uses: actions/checkout` dies during
+        # "Set up job" whenever the runner's action cache is empty (same
+        # failure class as the deploy-event collectors, red since 10:16Z;
+        # this watchdog fires next at 17:17Z). A plain git fetch removes
+        # the action-archive dependency entirely — on this host it rides
+        # the SSH-over-443 lane the deploy pre-flight probes (NFM-3842);
+        # the extraheader token is belt-and-braces for hosts without
+        # that rewrite. `git clean -ffdx` + `checkout -f` mirrors
+        # actions/checkout's clean:true default.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          git init . >/dev/null
+          git clean -ffdx
+          auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="$auth" \
+            fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout -f --progress FETCH_HEAD
 
       - name: Run stale-container watchdog
         id: watchdog

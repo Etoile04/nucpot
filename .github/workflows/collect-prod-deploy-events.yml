@@ -25,8 +25,8 @@ concurrency:
   cancel-in-progress: false
 
 # `actions: read` covers gh api calls into workflows/runs/artifacts.
-# `contents: read` covers `actions/checkout` so the orchestrator + collector
-# scripts are available on the runner.
+# `contents: read` covers the direct git fetch below (NFM-5548) so the
+# orchestrator + collector scripts are available on the runner.
 permissions:
   actions: read
   contents: read
@@ -54,8 +54,30 @@ jobs:
       NFMD_DEPLOY_EVENTS_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PATH || 'docker/.deploy-events.jsonl' }}
       NFMD_DEPLOY_EVENTS_PROCESSED_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PROCESSED_PATH || '' }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - name: Checkout repository (direct git, no action archive)
+        # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
+        # host's direct egress, so `uses: actions/checkout` dies during
+        # "Set up job" whenever the runner's action cache is empty — 3
+        # archive-download attempts exhausted, collectors red since
+        # 10:16Z. A plain git fetch removes the action-archive dependency
+        # entirely. On this host https://github.com/... URLs are rewritten
+        # to the SSH-over-443 lane that the deploy pre-flight already
+        # probes (NFM-3842); the extraheader token is belt-and-braces for
+        # hosts without that rewrite. `git clean -ffdx` + `checkout -f`
+        # mirrors actions/checkout's clean:true against the persisted
+        # self-hosted workspace (collector state lives under ~/.nfmd,
+        # never inside the workspace).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          git init . >/dev/null
+          git clean -ffdx
+          auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="$auth" \
+            fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout -f --progress FETCH_HEAD
 
       - name: Collect deploy events into JSONL
         # The bash orchestrator lives next to the Python collector; both are
