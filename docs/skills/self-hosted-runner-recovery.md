@@ -7,7 +7,9 @@ description: >-
   write failures (filed by NFM-2243), and (b) `ETIMEDOUT github.com:443` /
   `socket hang up` while downloading setup-* tarballs (filed by NFM-2754).
   Both manifest at `actions/setup-python@v7` and any step that downloads
-  from `github.com`.
+  from `github.com`. Also records the NFM-5548 checkout-lane invariant:
+  self-hosted collector/watchdog jobs check out via direct git fetch, not
+  `actions/checkout`.
 ---
 
 # Triage decision
@@ -24,6 +26,21 @@ active — the fix differs sharply:
 If neither pattern matches, the failure is in the workflow content itself
 (not the host) — check the actual job step output, not the action's
 boilerplate.
+
+## Checkout lane (NFM-5548)
+
+Self-hosted jobs on this host must not depend on the `actions/checkout`
+action-archive download: codeload.github.com 429s kill the job during
+"Set up job" whenever the runner's action cache is empty. The collector
+and watchdog lanes — `collect-prod-deploy-events.yml`,
+`prod-deploy-event-collector.yml`, and the `site-monitor.yml` watchdog
+job — check out with a direct `git fetch` of `$GITHUB_SHA` instead
+(authoritative implementation: the checkout steps in those workflow
+files; regression-pinned by
+`scripts/tests/test_nfm_5548_direct_checkout.py`). Workflows that still
+use `actions/checkout` on this host (e.g. `production-deployment.yml`,
+`run-migration.yml`, `staging-deploy.yml`) remain exposed to this
+failure class.
 
 # Self-Hosted Runner Recovery (macOS ARM64)
 
@@ -56,9 +73,11 @@ Workflows in this repo that `runs-on: [self-hosted, production]` (the
 - `staging-deploy.yml`
 - `run-migration.yml`
 - `collect-prod-deploy-events.yml` (legacy alias)
+- `site-monitor.yml` — only its `watchdog` job (bash-only, no `setup-*`
+  action, so the toolcache failure mode does not apply to it)
 
-`site-monitor.yml` and all `Batch N CI` / `ci.yml` workflows run on
-`ubuntu-latest` and are **not** affected.
+The `site-monitor.yml` probe job and all `Batch N CI` / `ci.yml`
+workflows run on `ubuntu-latest` and are **not** affected.
 
 ## Diagnosis (Permission failure mode)
 

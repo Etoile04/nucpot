@@ -49,6 +49,16 @@ concurrency:
   group: prod-deploy-event-collector
   cancel-in-progress: false
 
+# NFM-5548: pin the token to exactly what this collector uses —
+# `actions: read` for the gh api / `gh run download` artifact queries,
+# `contents: read` for the direct git fetch below (formerly
+# actions/checkout). The default token already carried these under the
+# org's permissive default; scoping explicitly keeps the direct-fetch
+# auth deterministic if that default ever flips.
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   collect:
     name: Collect prod deploy events
@@ -59,8 +69,30 @@ jobs:
       ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
       PYTHONPATH: ${{ github.workspace }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Checkout (direct git, no action archive)
+        # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
+        # host's direct egress, so `uses: actions/checkout` dies during
+        # "Set up job" whenever the runner's action cache is empty — 3
+        # archive-download attempts exhausted, collectors red since
+        # 10:16Z. A plain git fetch removes the action-archive dependency
+        # entirely. On this host https://github.com/... URLs are rewritten
+        # to the SSH-over-443 lane that the deploy pre-flight already
+        # probes (NFM-3842); the extraheader token is belt-and-braces for
+        # hosts without that rewrite. `git clean -ffdx` + `checkout -f`
+        # mirrors actions/checkout's clean:true against the persisted
+        # self-hosted workspace (master JSONL + sync state live under
+        # ~/.nfmd, never inside the workspace).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          git init . >/dev/null
+          git clean -ffdx
+          auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="$auth" \
+            fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout -f --progress FETCH_HEAD
 
       - name: Set up Python
         # The runner service runs as lwj04 which has no /Users/runner
