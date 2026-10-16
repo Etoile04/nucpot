@@ -253,7 +253,9 @@ def test_concurrent_checkouts_are_isolated(fixture_origin, tmp_path):
         workspace.mkdir()
         return _run_script(
             script,
-            _checkout_env(fixture_origin, str(workspace), str(runner_temp), str(tmp_path / f"env-{ident}")),
+            _checkout_env(
+                fixture_origin, str(workspace), str(runner_temp), str(tmp_path / f"env-{ident}")
+            ),
             str(workspace),
         )
 
@@ -264,7 +266,7 @@ def test_concurrent_checkouts_are_isolated(fixture_origin, tmp_path):
         ]
         results = [f.result() for f in procs]
 
-    for proc, ident in zip(results, ("collector-1", "collector-2"), strict=False):
+    for proc, ident in zip(results, ("collector-1", "collector-2")):
         _assert_rc0(proc, f"concurrent {ident}")
 
     dirs = [

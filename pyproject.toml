@@ -72,7 +72,10 @@ known-first-party = ["nfm_db"]
 # NFM-5548 sibling module so pytest can resolve it; the parameter name IS
 # the lookup key, so F401/F811 (import shadowed by params) are false
 # positives — removing the import would break fixture resolution.
-"scripts/tests/test_nfm_5556_raceproof_checkout.py" = ["F401", "F811"]
+# NFM-5558: same py3.9-parity class as NFM-4320/NFM-5279 — the suite may
+# run under the runner's /usr/bin/python3 = 3.9, so zip(strict=) (py3.10+)
+# must not appear; the zipped sequences are equal-length by construction.
+"scripts/tests/test_nfm_5556_raceproof_checkout.py" = ["F401", "F811", "B905"]
 
 [tool.mypy]
 python_version = "3.12"
