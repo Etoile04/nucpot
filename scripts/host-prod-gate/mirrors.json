@@ -4,25 +4,31 @@
       "name": "daocloud",
       "url": "https://docker.m.daocloud.io",
       "fronts_prod_images": true,
-      "comment": "primary; fronts nucpot-prod-* via DaoCloud allowlist"
+      "comment": "primary; fronts nucpot-prod-* via DaoCloud allowlist; chronic intermittent 502 (NFM-5553) — prod quorum is any-of daocloud/1panel"
     },
     {
       "name": "1panel",
       "url": "https://docker.1panel.live",
       "fronts_prod_images": true,
-      "comment": "secondary; fronts nucpot-prod-* — broken for library/alpine as of 2026-09-10"
+      "comment": "secondary prod path; fronts nucpot-prod-* — broken for library/alpine as of 2026-09-10"
     },
     {
-      "name": "dockerproxy",
-      "url": "https://dockerproxy.com",
+      "name": "1ms",
+      "url": "https://docker.1ms.run",
       "fronts_prod_images": false,
-      "comment": "fallback; does NOT front private nucpot-prod-* images"
+      "comment": "fallback; added NFM-5553 2026-10-16, 401 in ~250ms x3 probes"
     },
     {
-      "name": "ustc",
-      "url": "https://docker.mirrors.ustc.edu.cn",
+      "name": "xuanyuan",
+      "url": "https://docker.xuanyuan.me",
       "fronts_prod_images": false,
-      "comment": "fallback; CN-only, does NOT front private nucpot-prod-* images"
+      "comment": "fallback; added NFM-5553 2026-10-16, 401 in ~1.2s x3 probes"
+    },
+    {
+      "name": "dockerproxy-net",
+      "url": "https://dockerproxy.net",
+      "fronts_prod_images": false,
+      "comment": "fallback; successor of dead dockerproxy.com, 200 in ~0.8-2.2s x3 probes (NFM-5553)"
     }
   ]
 }

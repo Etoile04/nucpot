@@ -700,3 +700,82 @@ def test_main_first_tick_healthy_writes_recovery_verdict(tmp_path, monkeypatch):
     assert records[1]["first_tick"] is True
     verdict = latest_verdict(str(log))
     assert verdict is not None and verdict["event"] == "recovery"
+
+
+# ---- NFM-5553: prod-mirror quorum + shipped-fleet guard ------------------------
+
+def test_summarize_prod_healthy_when_any_prod_mirror_ok():
+    """NFM-5553: one live prod-fronting mirror keeps the prod pull path up.
+
+    daocloud (prod, chronic intermittent 502) is dark while 1panel (prod)
+    and every fallback answer 200/401. The old ALL-prod semantics set
+    prod_mirror_healthy=False here, so G2.7 went red on every daocloud
+    blip even though ``docker pull nucpot-prod-*`` still succeeded via
+    1panel. The flag guards "prod pulls deadlock", so the quorum is >=1
+    live prod mirror — matching summarize()'s docstring ("whether ANY
+    ``fronts_prod_images=True`` mirror returned ``ok``"), which the old
+    all() implementation contradicted.
+    """
+    results = (
+        ProbeResult("daocloud", "u1", "unexpected_status", 502, None, 200),
+        ProbeResult("1panel", "u2", "ok", 200, None, 1200),
+        ProbeResult("1ms", "u3", "ok", 401, None, 250),
+        ProbeResult("xuanyuan", "u4", "ok", 401, None, 1200),
+    )
+    mirrors_by_name = {
+        "daocloud": Mirror(name="daocloud", url="u1", fronts_prod_images=True),
+        "1panel": Mirror(name="1panel", url="u2", fronts_prod_images=True),
+        "1ms": Mirror(name="1ms", url="u3"),
+        "xuanyuan": Mirror(name="xuanyuan", url="u4"),
+    }
+    summary = summarize(results, threshold=2, mirrors_by_name=mirrors_by_name)
+    assert summary.healthy_count == 3
+    assert summary.healthy_below_threshold is False
+    assert summary.prod_mirror_healthy is True
+
+
+def test_summarize_prod_dark_when_every_prod_mirror_down():
+    """NFM-5553: the prod quorum alarm still fires when it must — every
+    prod-fronting mirror dark means nucpot-prod-* pulls deadlock even
+    with a full fallback bench (the false-green guard for the any() fix)."""
+    results = (
+        ProbeResult("daocloud", "u1", "unexpected_status", 502, None, 200),
+        ProbeResult("1panel", "u2", "unreachable", None, "Connection refused", 10),
+        ProbeResult("1ms", "u3", "ok", 401, None, 250),
+        ProbeResult("xuanyuan", "u4", "ok", 401, None, 1200),
+    )
+    mirrors_by_name = {
+        "daocloud": Mirror(name="daocloud", url="u1", fronts_prod_images=True),
+        "1panel": Mirror(name="1panel", url="u2", fronts_prod_images=True),
+        "1ms": Mirror(name="1ms", url="u3"),
+        "xuanyuan": Mirror(name="xuanyuan", url="u4"),
+    }
+    summary = summarize(results, threshold=2, mirrors_by_name=mirrors_by_name)
+    assert summary.healthy_count == 2
+    assert summary.healthy_below_threshold is False
+    assert summary.prod_mirror_healthy is False
+
+
+def test_repo_mirrors_fleet_is_current():
+    """NFM-5553: the shipped mirrors.json must not carry dead mirrors.
+
+    ustc (DNS NXDOMAIN since the public service retired) and
+    dockerproxy.com (TLS handshake timeout) died for good and were
+    removed 2026-10-16; keeping them shrank the fleet to 2 live members,
+    so every daocloud blip dropped healthy_count below the AC threshold
+    and red-ed G2.7 (see /var/log/nfm-g2/mirror-health.log). The fleet
+    must keep >=4 members (threshold 2 needs headroom for one blip) with
+    exactly the daocloud+1panel prod pair, and no permanently-dead URL.
+    """
+    mirrors = load_mirrors(str(GATE_DIR / "mirrors.json"))
+    by_name = {mirror.name: mirror for mirror in mirrors}
+    urls = {mirror.url for mirror in mirrors}
+
+    assert "ustc" not in by_name, "ustc mirror is DNS-dead; remove it"
+    assert "dockerproxy" not in by_name, "dockerproxy.com is TLS-dead; remove it"
+    assert "https://docker.mirrors.ustc.edu.cn" not in urls
+    assert "https://dockerproxy.com" not in urls
+
+    assert len(mirrors) >= 4, "fleet needs headroom above the healthy_count>=2 AC"
+    prod = {name for name, mirror in by_name.items() if mirror.fronts_prod_images}
+    assert prod == {"daocloud", "1panel"}

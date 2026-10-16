@@ -26,7 +26,8 @@ This module is the gate-side half of the fix:
     detect). Classifies the result into ``ok`` / ``unexpected_status`` /
     ``tls_timeout`` / ``unreachable``.
   * ``summarize(results, threshold)`` aggregates a probe run: total
-    healthy count, whether ANY prod allowlisted mirror is dark, and a
+    healthy count, whether ANY prod allowlisted mirror is still serving
+    (the prod pull path; NFM-5553 — quorum is any-of, not all-of), and a
     boolean ``healthy_below_threshold`` that drives the alarm writer.
   * ``write_alarm_if_below`` appends an ``alarm`` JSONL record to the
     mirror-health audit log when below threshold OR when the prod
@@ -72,9 +73,10 @@ from .audit import AuditLog
 
 # Default probe path: Docker registry API v2 root. Returns 401 unauth
 # on every working Docker registry; works for all the public mirrors
-# (daocloud, 1panel, dockerproxy, ustc). /auth/token was tried but the
-# handshake times out on the same flaky paths — using /v2/ keeps the
-# probe orthogonal to the failure mode it monitors.
+# (NFM-5553 fleet: daocloud, 1panel, 1ms, xuanyuan, dockerproxy.net).
+# /auth/token was tried but the handshake times out on the same flaky
+# paths — using /v2/ keeps the probe orthogonal to the failure mode it
+# monitors.
 _DEFAULT_PROBE_PATH = "/v2/"
 # Auth sub-resource on Docker registry v2; used as a fallback if /v2/
 # returns something unexpected (some mirrors wrap 401s differently).
@@ -100,8 +102,11 @@ class Mirror:
     can still return 200/401 — the AC's "≥2 mirrors return 200/401"
     passes, but the AC's "real docker pull of nucpot-prod-api:latest
     succeeds" fails. So ``fronts_prod_images=True`` mirrors gate the
-    ``prod_mirror_healthy`` flag on the summary, and a dark prod mirror
-    alone trips the alarm even when the global healthy count is fine.
+    ``prod_mirror_healthy`` flag on the summary, and the LAST live prod
+    mirror going dark trips the alarm even when the global healthy count
+    is fine (NFM-5553: with several prod mirrors configured, the quorum
+    is any-of — one live prod path keeps pulls working, so a single
+    prod-mirror blip must not red the heartbeat).
     """
 
     name: str
@@ -335,7 +340,15 @@ def summarize(
             name: result for name, result in ((r.name, r) for r in results_tuple)
             if mirrors_by_name.get(name, Mirror(name=name, url="")).fronts_prod_images
         }
-        prod_healthy = bool(prod_results) and all(
+        # NFM-5553: the quorum is ANY, not ALL. The flag guards "prod
+        # pulls deadlock", which needs exactly one live prod path; the
+        # old all() turned a single prod-mirror blip (daocloud's chronic
+        # intermittent 502 with 1panel still serving) into a standing
+        # alarm that red-ed G2.7 around the clock. The alarm record's
+        # per-mirror detail still names a degraded prod mirror, so a
+        # blipped primary stays operator-visible without tripping the
+        # heartbeat verdict.
+        prod_healthy = bool(prod_results) and any(
             result.status == "ok" for result in prod_results.values()
         )
     return HealthSummary(
@@ -352,9 +365,10 @@ def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> No
 
     Two conditions trip the alarm:
       1. ``summary.healthy_count < threshold`` (default AC: ≥2 mirrors)
-      2. ``summary.prod_mirror_healthy is False`` (the prod allowlist
+      2. ``summary.prod_mirror_healthy is False`` (EVERY prod allowlist
          mirror is dark; pulls of nucpot-prod-* will deadlock even when
-         fallback mirrors look healthy).
+         fallback mirrors look healthy — under the NFM-5553 any-of
+         quorum one live prod mirror suppresses this arm).
 
     The audit record carries every input the operator needs to triage
     without re-running the probe: per-mirror status names, the global
