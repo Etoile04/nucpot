@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreCompletionMerge — advisory + flag-gated blocking hook (NFM-4847 / NFM-5314 / KR-WF-3).
+"""PreCompletionMerge — advisory + flag-gated blocking hook (NFM-4847 / NFM-5314 / NFM-5562 / KR-WF-3).
 
 Advisory mode (default, out-of-the-box): after a successful issue-status
 write toward ``done``, re-read the issue's expanded blocker chain and warn
@@ -55,6 +55,22 @@ Flag / rollback (spec item 3)
   appends one tab-separated line to ``.pcmr_enforce.log`` at the repo root
   (override with ``PCMR_LOG``; gitignored).  Advisory mode never writes it.
 
+Hardening (NFM-5562, post-soak)
+-------------------------------
+* Target inference is statement-scoped: the write target is the issue URL in
+  the SAME shell statement that carries the done body — literally, or via a
+  shell variable assigned a done body (``-d "$BODY"``).  URLs that merely
+  appear in other statements (GET reads, echoes) no longer mis-attribute the
+  write (live false positive 2026-10-05: NFM-5323 vs its carrier).  Shapes
+  the scoping cannot see (body from file/heredoc, body fetched at runtime)
+  fail open — the gate allows and the advisory skips rather than guessing.
+* Audit lines gained a leading ISO-8601 UTC timestamp column, so a soak
+  window no longer has to be reconstructed from file mtime.
+* The tracked hook command anchors the script at
+  ``${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}``: a
+  ``cd`` below the worktree root can no longer break hook launch (a
+  PreToolUse launch failure is itself blocking).
+
 Modes
 -----
 * hook mode (default): a hook payload on stdin.  ``hook_event_name``
@@ -76,6 +92,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -111,11 +128,16 @@ def audit_log_path(env: Mapping[str, str] | None = None) -> Path:
     return Path(str(source.get("PCMR_LOG") or DEFAULT_LOG))
 
 
+def _utc_now_iso() -> str:
+    """ISO-8601 UTC wall-clock stamp for audit lines (NFM-5562)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def audit(env: Mapping[str, str], line: str) -> None:
-    """Append one enforce-mode decision line; never break the hook for logging."""
+    """Append one timestamped enforce-mode decision line; never break the hook."""
     try:
         with audit_log_path(env).open("a", encoding="utf-8") as handle:
-            handle.write(line.rstrip("\n") + "\n")
+            handle.write(f"{_utc_now_iso()}\t{line.rstrip(chr(10))}\n")
     except OSError:
         pass  # audit is best-effort by construction
 
@@ -123,6 +145,66 @@ def audit(env: Mapping[str, str], line: str) -> None:
 _PATCH_VERB = re.compile(r"\bPATCH\b")
 _ISSUE_URL = re.compile(r"/api/issues/([A-Za-z0-9-]+)")
 _DONE_BODY = re.compile(r"[\"']status[\"']\s*:\s*[\"'](done|completed)[\"']", re.IGNORECASE)
+
+# --- statement-scoped target inference (NFM-5562) -------------------------------
+#
+# Live soak false positive (2026-10-05, NFM-5323 vs its carrier): the target
+# was inferred as the LAST issue URL anywhere in the command, so a trailing
+# GET of a blocked issue re-attributed the write to the co-mentioned issue.
+# Inference now requires the URL and the done body to co-occur within ONE
+# shell statement; a done body assigned to a shell variable keeps the
+# ``-d "$BODY"`` write statement in scope via variable-name tracking.
+
+_SHELL_SEPARATORS = frozenset(";|&\n")
+_ASSIGN_NAME = re.compile(r"(?:^|[;\s])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _split_statements(command: str) -> list[str]:
+    """Split a shell command into statements at ``;`` ``|`` ``&`` and newlines.
+
+    Quote- and escape-aware; a backslash line-continuation stays inside the
+    statement.  Deliberately approximate — heredocs and ``$(...)`` are not
+    parsed, and a mis-split can only LOSE a detection (fail-open), never
+    attribute a write to a statement that does not carry its body.
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in command:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            buf.append(ch)
+            escaped = True
+        elif quote:
+            if ch == quote:
+                quote = None
+            buf.append(ch)
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch in _SHELL_SEPARATORS:
+            statements.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    statements.append("".join(buf))
+    return [s for s in (t.strip() for t in statements) if s]
+
+
+def _done_body_vars(statements: list[str]) -> set[str]:
+    """Shell variables whose assigned value carries a done body."""
+    names: set[str] = set()
+    for stmt in statements:
+        if _DONE_BODY.search(stmt):
+            names.update(_ASSIGN_NAME.findall(stmt))
+    return names
+
+
+def _references_var(statement: str, name: str) -> bool:
+    return re.search(r"\$\{?" + re.escape(name) + r"(?![A-Za-z0-9_])", statement) is not None
 
 
 @dataclass(frozen=True)
@@ -155,8 +237,23 @@ def _from_bash(tool_input: dict[str, Any]) -> str | None:
         return None
     if not _PATCH_VERB.search(command) or not _DONE_BODY.search(command):
         return None
-    match = _ISSUE_URL.findall(command)
-    return match[-1] if match else None
+    statements = _split_statements(command)
+    done_vars = _done_body_vars(statements)
+    write_statements = [
+        stmt
+        for stmt in statements
+        if _PATCH_VERB.search(stmt)
+        and _ISSUE_URL.search(stmt)
+        and (_DONE_BODY.search(stmt) or any(_references_var(stmt, name) for name in done_vars))
+    ]
+    if not write_statements:
+        # No statement pairs an issue URL with a done body (body from a
+        # file/heredoc, or fetched at runtime) — undetectable, so fail open
+        # rather than guess a target from co-mentioned URLs.
+        return None
+    # Multiple done-writes in one compound command: gate the last one, same
+    # "last write wins" reading as before the hardening.
+    return _ISSUE_URL.findall(write_statements[-1])[-1]
 
 
 def target_issue(tool_name: str, tool_input: dict[str, Any]) -> str | None:

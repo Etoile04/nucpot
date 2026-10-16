@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-.}/scripts/hooks/pre_completion_merge.py\"",
+            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}/scripts/hooks/pre_completion_merge.py\"",
             "timeout": 45
           }
         ]
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-.}/scripts/hooks/pre_completion_merge.py\"",
+            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}/scripts/hooks/pre_completion_merge.py\"",
             "timeout": 45
           }
         ]
