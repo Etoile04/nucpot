@@ -227,6 +227,15 @@ variable lives at the **repo** level (`Settings → Secrets and variables →
 Actions → Variables`) so every workflow reads the same value without a
 per-developer override.
 
+> **Amended 2026-10-16 (NFM-5556):** the collector lane's fallback no
+> longer applies. `coverage_kr3.py` and `deploy_event.sh` keep the
+> `<repo>/docker/.deploy-events.jsonl` default, but the collector
+> workflow passes the variable through unset and
+> `scripts/lib/collect_prod_run.sh` defaults to
+> `~/.nfmd/deploy-events.jsonl`, refusing relative or per-checkout
+> paths. Operative invariant:
+> `docs/skills/self-hosted-runner-recovery.md` (checkout lane).
+
 ### C6.1.6 — Idempotency / failure modes
 
 - **Collector crash mid-run.** The processed-run ledger is appended **after**

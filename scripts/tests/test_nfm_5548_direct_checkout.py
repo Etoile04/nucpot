@@ -13,11 +13,12 @@ These tests pin that contract behaviorally rather than by string-matching:
 
 * the checkout step of every self-hosted job is a ``run:`` step (no
   ``actions/checkout`` ``uses:`` left on those lanes) whose script, when
-  actually EXECUTED in a fresh workspace with the standard GITHUB_* env,
-  fetches exactly ``$GITHUB_SHA`` and leaves HEAD at that commit;
-* the executed script also mirrors actions/checkout's clean semantics
-  against a persisted self-hosted workspace: leftover untracked files from
-  a previous run are removed by the ``git clean -ffdx`` before checkout;
+  actually EXECUTED with the standard GITHUB_* env, fetches exactly
+  ``$GITHUB_SHA`` and leaves HEAD at that commit. Since NFM-5556 the
+  checkout lands in a private per-run workdir exported as
+  ``NFMD_CHECKOUT_DIR`` (the shared ``$GITHUB_WORKSPACE`` is never
+  touched — see ``test_nfm_5556_raceproof_checkout.py`` for the race
+  rationale and the workspace-untouched/cleanup contracts);
 * prod-deploy-event-collector declares ``contents: read`` so the token can
   actually authenticate the fetch regardless of the org default flipping.
 
@@ -113,8 +114,14 @@ def fixture_origin(tmp_path):
     return f"file://{tmp_path / 'remote'}/", sha
 
 
-def _run_checkout_script(script: str, fixture_origin: tuple[str, str], workspace: str) -> None:
+def _run_checkout_script(
+    script: str, fixture_origin: tuple[str, str], workspace: str
+) -> str:
+    """Execute the verbatim step body; return the exported NFMD_CHECKOUT_DIR."""
     origin_url, sha = fixture_origin
+    runner_temp = workspace.rstrip("/") + "-runner-temp"
+    github_env = workspace.rstrip("/") + "-github-env"
+    os.makedirs(runner_temp, exist_ok=True)
     env = dict(
         os.environ,
         GITHUB_WORKSPACE=workspace,
@@ -123,6 +130,10 @@ def _run_checkout_script(script: str, fixture_origin: tuple[str, str], workspace
         # Dummy token: off-HTTP the extraheader is inert, which is exactly
         # the SSH-lane auth path production uses on this host.
         GITHUB_TOKEN="dummy-off-http-token",
+        # NFM-5556 seams: the private workdir + the GITHUB_ENV file the
+        # export is appended to (always provided by the real runner).
+        RUNNER_TEMP=runner_temp,
+        GITHUB_ENV=github_env,
         # Redirect https://github.com/ to the fixture origin the same way
         # the host's insteadOf rewrite redirects it to the SSH-over-443
         # lane — the script itself stays byte-identical to the workflow.
@@ -146,6 +157,11 @@ def _run_checkout_script(script: str, fixture_origin: tuple[str, str], workspace
         f"checkout script failed (rc={proc.returncode}):\n"
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
+    with open(github_env) as fh:
+        for line in fh:
+            if line.startswith("NFMD_CHECKOUT_DIR="):
+                return line.split("=", 1)[1].strip()
+    raise AssertionError(f"NFMD_CHECKOUT_DIR not exported to GITHUB_ENV ({github_env})")
 
 
 @pytest.mark.parametrize("workflow_path", sorted(SELF_HOSTED_JOBS))
@@ -175,10 +191,10 @@ def test_self_hosted_checkout_script_executes_and_pins_sha(workflow_path, fixtur
         workspace = tmp_path / f"ws-{job_name}"
         workspace.mkdir()
         script = _checkout_step(workflow, job_name)["run"]
-        _run_checkout_script(script, fixture_origin, str(workspace))
+        checkout_dir = _run_checkout_script(script, fixture_origin, str(workspace))
 
         head = subprocess.run(
-            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            ["git", "-C", checkout_dir, "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
@@ -187,52 +203,8 @@ def test_self_hosted_checkout_script_executes_and_pins_sha(workflow_path, fixtur
             f"{workflow_path}/{job_name}: direct fetch left HEAD at {head}, "
             f"expected {fixture_origin[1]}"
         )
-        assert (workspace / "sentinel.txt").read_text() == "nfm-5548 fixture\n"
-
-
-def test_direct_checkout_cleans_persisted_workspace(fixture_origin, tmp_path):
-    """The script mirrors actions/checkout clean:true on a reused workspace.
-
-    A self-hosted runner workspace persists between runs; leftover untracked
-    files must be gone after the direct checkout, and a stale .git must not
-    leak the previous run's history into the new commit.
-    """
-    workflow = _load_workflow(".github/workflows/prod-deploy-event-collector.yml")
-    workspace = tmp_path / "ws-reused"
-    workspace.mkdir()
-    stale_git = workspace / ".git"
-    stale_git.mkdir()
-    (stale_git / "stale").write_text("from a previous run\n")
-    leftover_dir = workspace / "leftover-dir"
-    leftover_dir.mkdir()
-    (leftover_dir / "junk.txt").write_text("stale\n")
-    (workspace / "untracked-root.txt").write_text("stale\n")
-
-    script = _checkout_step(workflow, "collect")["run"]
-    _run_checkout_script(script, fixture_origin, str(workspace))
-
-    assert not leftover_dir.exists(), "git clean -ffdx did not remove leftover dirs"
-    assert not (workspace / "untracked-root.txt").exists()
-
-    # Stale .git content (git never cleans inside .git) must be inert: the
-    # forced checkout of FETCH_HEAD pins HEAD to the dispatched SHA and the
-    # working tree must be exactly the fetched commit, with nothing stale
-    # leaking into it.
-    head = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert head == fixture_origin[1]
-    status = subprocess.run(
-        ["git", "-C", str(workspace), "status", "--porcelain"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    assert status == "", f"working tree not clean after forced checkout:\n{status}"
-    assert (workspace / "sentinel.txt").read_text() == "nfm-5548 fixture\n"
+        with open(os.path.join(checkout_dir, "sentinel.txt")) as fh:
+            assert fh.read() == "nfm-5548 fixture\n"
 
 
 def test_collector_declares_fetch_permissions():

@@ -67,28 +67,43 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-      PYTHONPATH: ${{ github.workspace }}
+      # PYTHONPATH follows the private per-run checkout via $GITHUB_ENV
+      # (NFM-5556) — github.workspace is the stale shared workspace.
     steps:
-      - name: Checkout (direct git, no action archive)
+      - name: Checkout (direct git, private per-run workdir)
         # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
         # host's direct egress, so `uses: actions/checkout` dies during
         # "Set up job" whenever the runner's action cache is empty — 3
-        # archive-download attempts exhausted, collectors red since
-        # 10:16Z. A plain git fetch removes the action-archive dependency
-        # entirely. On this host https://github.com/... URLs are rewritten
-        # to the SSH-over-443 lane that the deploy pre-flight already
-        # probes (NFM-3842); the extraheader token is belt-and-braces for
-        # hosts without that rewrite. `git clean -ffdx` + `checkout -f`
-        # mirrors actions/checkout's clean:true against the persisted
-        # self-hosted workspace (master JSONL + sync state live under
-        # ~/.nfmd, never inside the workspace).
+        # archive-download attempts exhausted. A plain git fetch removes
+        # the action-archive dependency entirely. On this host
+        # https://github.com/... URLs are rewritten to the SSH-over-443
+        # lane that the deploy pre-flight already probes (NFM-3842); the
+        # extraheader token is belt-and-braces for hosts without that
+        # rewrite.
+        #
+        # NFM-5556 (2026-10-16): the fetch runs in a PRIVATE per-run
+        # workdir (mktemp -d under $RUNNER_TEMP), never in the shared
+        # $GITHUB_WORKSPACE. Several autonomous jobs target that one
+        # persisted directory on this runner (this collector, the
+        # collect-prod-deploy-events sibling, push-triggered CI
+        # checkouts) under independent concurrency groups, and
+        # concurrent init/fetch/checkout sequences against the same .git
+        # die at `git checkout -f FETCH_HEAD` with `fatal: bad object
+        # refs/heads` (exit 128 — 3/3 on f5060144, intermittent since
+        # 10-15). A pristine workdir per fire leaves nothing to race and
+        # no stale refs to inherit; a fresh dir needs no `git clean`.
+        # PYTHONPATH is exported alongside NFMD_CHECKOUT_DIR so any
+        # repo-root import resolves against THIS run's checkout (master
+        # JSONL + sync state live under ~/.nfmd, never inside a workspace).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
+          checkout_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nucpot-checkout.XXXXXX")"
+          echo "NFMD_CHECKOUT_DIR=$checkout_dir" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=$checkout_dir" >> "$GITHUB_ENV"
+          cd "$checkout_dir"
           git init . >/dev/null
-          git clean -ffdx
           auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
           git -c http.https://github.com/.extraheader="$auth" \
             fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
@@ -126,6 +141,7 @@ jobs:
           else
             DRY_RUN_FLAG=""
           fi
+          cd "$NFMD_CHECKOUT_DIR"
           python3 scripts/okr/prod_event_collector.py \
             --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
             --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
@@ -143,3 +159,14 @@ jobs:
             echo "- Workflow run: ${{ github.event.workflow_run.head_branch || 'manual' }}"
             echo "- Result: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean per-run workdir
+        # NFM-5556: the private checkout lives under the runner's shared
+        # _work/_temp on a disk-pressured host — remove it every fire so
+        # per-run dirs cannot accumulate. No-op if the export never ran.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${NFMD_CHECKOUT_DIR:-}" ]; then
+            rm -rf "${NFMD_CHECKOUT_DIR:?}"
+          fi
