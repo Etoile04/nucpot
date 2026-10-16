@@ -74,6 +74,12 @@ and re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.
 
+Reruns are safe at any UTC hour (NFM-5555): when the §6 daemon reload lands
+inside the E-1 burst window (03:25-05:00Z), `lightrag-e1-kickstart.sh`
+immediately kickstarts `com.nfm.g2.lightrag-watchdog` so the in-window 60s
+tick cadence resumes within seconds instead of after a blind 5-8 min gap;
+outside the window the reload keeps its normal one-interval first fire.
+
 ## Verify (AC probe)
 
 ```bash
