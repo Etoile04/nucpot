@@ -317,6 +317,16 @@ for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watch
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done
 
+# NFM-5555: the bootout above killed any in-window E-1 wrapper, and the
+# fresh lightrag-watchdog bootstrap has no RunAtLoad (boot-race convention)
+# — first fire is a full 300s away. When the reload lands inside the E-1
+# burst window, kickstart the label so the wrapper re-enters within seconds
+# instead of blinding the lane kill-to-next-fire (~8 min on 2026-10-16,
+# 03:48-03:56Z, across the chronic 03:30Z wedge hour). The helper no-ops
+# outside the window; the || guard keeps an unexpected helper failure from
+# killing a sanctioned host_setup run mid-flow.
+bash "${SRC}/lightrag-e1-kickstart.sh" || log "WARNING: e1 kickstart helper failed (lane blind until next 300s fire — pre-NFM-5555 behavior)"
+
 # NFM-4805: the mirror-health watchdog's first tick lands up to ~10s after
 # bootstrap (sequential per-mirror probes, 5s timeout each). probe_g2.sh's
 # G2.7 reads the LATEST verdict record (alarm|recovery) — without this wait,
