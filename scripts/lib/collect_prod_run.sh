@@ -66,22 +66,40 @@ gh_api_capture() {
   printf '%s\n' "$out"
 }
 
-# Per ADR §C6.1.5 the JSONL path falls back to the repo default. Honour the
-# operator-supplied env var (set by the workflow from
-# ``vars.NFMD_DEPLOY_EVENTS_PATH``); otherwise let the Python module's
-# ``resolve_jsonl_path()`` apply its own sane default. Critically, do NOT
-# hardcode ``$REPO_ROOT/docker/.deploy-events.jsonl`` here — that would
-# override the env var and risk writer/reader path divergence between the
-# collector and downstream coverage tooling.
-if [ -z "${NFMD_DEPLOY_EVENTS_PATH:-}" ]; then
-  echo "[collect-prod-run] NFMD_DEPLOY_EVENTS_PATH not set — collector will use its repo default"
-fi
+# Collector state must be host-absolute and OUTSIDE the per-run checkout:
+# this script cds into an ephemeral mktemp WORKDIR below, and the workflow's
+# cleanup step deletes $NFMD_CHECKOUT_DIR (which contains this script's
+# REPO_ROOT) at end of run. A relative path — or the old repo-relative
+# default — would be silently created inside a deleted directory: every
+# event logged ``processed``, then destroyed. Default to the host-persistent
+# ~/.nfmd lane the sibling collectors and watchdog already use.
+JSONL_PATH="${NFMD_DEPLOY_EVENTS_PATH:-${HOME}/.nfmd/deploy-events.jsonl}"
+PROCESSED_PATH="${NFMD_DEPLOY_EVENTS_PROCESSED_PATH:-${JSONL_PATH}.processed}"
 
-# Pass empty strings so the Python module does the env-var resolution.
-# The Python module's resolve_processed_path() defaults processed to
-# ``<jsonl>.processed``, so we just pass that env var (or empty) too.
-JSONL_PATH="${NFMD_DEPLOY_EVENTS_PATH:-}"
-PROCESSED_PATH="${NFMD_DEPLOY_EVENTS_PROCESSED_PATH:-}"
+nfmd_refuse_ephemeral_state() {
+  echo "[collect-prod-run] refusing ${1}: '${2}'" >&2
+  echo "[collect-prod-run] collector state must be a host-absolute path outside the per-run checkout (set NFMD_DEPLOY_EVENTS_PATH)" >&2
+  exit 1
+}
+
+case "$JSONL_PATH" in
+  /*) ;;
+  *) nfmd_refuse_ephemeral_state "relative JSONL path" "$JSONL_PATH" ;;
+esac
+case "$PROCESSED_PATH" in
+  /*) ;;
+  *) nfmd_refuse_ephemeral_state "relative processed-ledger path" "$PROCESSED_PATH" ;;
+esac
+if [ -n "${NFMD_CHECKOUT_DIR:-}" ]; then
+  case "$JSONL_PATH" in
+    "$NFMD_CHECKOUT_DIR"|"$NFMD_CHECKOUT_DIR"/*)
+      nfmd_refuse_ephemeral_state "JSONL path inside the per-run checkout" "$JSONL_PATH" ;;
+  esac
+  case "$PROCESSED_PATH" in
+    "$NFMD_CHECKOUT_DIR"|"$NFMD_CHECKOUT_DIR"/*)
+      nfmd_refuse_ephemeral_state "processed-ledger path inside the per-run checkout" "$PROCESSED_PATH" ;;
+  esac
+fi
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT

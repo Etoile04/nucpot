@@ -355,3 +355,132 @@ class TestBashOrchestrator:
         assert len(row[1]) == 64 and all(c in "0123456789abcdef" for c in row[1]), (
             f"second field is sha256 (64 hex), got {row[1]!r}"
         )
+
+    def test_unset_state_path_defaults_to_host_home_dot_nfmd(self, tmp_path: Path) -> None:
+        """With NFMD_DEPLOY_EVENTS_PATH unset, state must land on the
+        host-persistent ~/.nfmd lane — never inside the per-run checkout
+        (deleted by the workflow's cleanup step at end of job) or the
+        ephemeral mktemp WORKDIR this orchestrator cds into.
+        """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        archive_url = "https://api.github.com/fake/download/event.zip"
+        zip_path = tmp_path / "event.zip"
+        _make_event_zip(zip_path, _valid_event())
+        _write_fake_gh(
+            bin_dir,
+            run_ids=[123456789],
+            archive_url_to_zip={archive_url: zip_path},
+        )
+
+        home = tmp_path / "home"
+        home.mkdir()
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(home),
+            "GITHUB_REPOSITORY": "Etoile04/nucpot",
+            "FAKE_GH_BIN_DIR": str(bin_dir),
+        }
+        env.pop("NFMD_DEPLOY_EVENTS_PATH", None)
+        env.pop("NFMD_DEPLOY_EVENTS_PROCESSED_PATH", None)
+
+        result = subprocess.run(
+            ["bash", str(ORCHESTRATOR)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator should have succeeded; rc={result.returncode}\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        jsonl = home / ".nfmd" / "deploy-events.jsonl"
+        processed = home / ".nfmd" / "deploy-events.jsonl.processed"
+        lines = [ln for ln in jsonl.read_text().splitlines() if ln.strip()]
+        assert len(lines) == 1, f"expected 1 JSONL line at {jsonl}, got {lines!r}"
+        assert json.loads(lines[0]) == _valid_event()
+        rows = [ln for ln in processed.read_text().splitlines() if ln.strip()]
+        assert len(rows) == 1 and rows[0].split("\t")[2] == "processed"
+
+    def test_relative_state_path_refused_loudly(self, tmp_path: Path) -> None:
+        """A relative NFMD_DEPLOY_EVENTS_PATH must abort the sweep BEFORE any
+        collection: the orchestrator cds into an ephemeral mktemp WORKDIR, so
+        a relative path would be silently created and deleted — every event
+        logged processed, then destroyed (the NFM-5556 silent-loss mode).
+        """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        archive_url = "https://api.github.com/fake/download/event.zip"
+        zip_path = tmp_path / "event.zip"
+        _make_event_zip(zip_path, _valid_event())
+        _write_fake_gh(
+            bin_dir,
+            run_ids=[123456789],
+            archive_url_to_zip={archive_url: zip_path},
+        )
+
+        home = tmp_path / "home"
+        home.mkdir()
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(home),
+            "GITHUB_REPOSITORY": "Etoile04/nucpot",
+            "NFMD_DEPLOY_EVENTS_PATH": "docker/.deploy-events.jsonl",
+            "FAKE_GH_BIN_DIR": str(bin_dir),
+        }
+
+        result = subprocess.run(
+            ["bash", str(ORCHESTRATOR)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+            cwd=str(tmp_path),
+        )
+        assert result.returncode != 0, (
+            f"relative state path must abort the run; rc={result.returncode}\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert "refusing" in result.stderr and "host-absolute" in result.stderr
+        # Aborted before the API sweep — no workflow id was ever resolved.
+        assert "workflow_id=" not in result.stdout
+        # No state file was created anywhere reachable from the test sandbox.
+        assert not list(tmp_path.rglob(".deploy-events*")), (
+            "a ledger/JSONL was written despite the refusal"
+        )
+
+    def test_state_path_inside_per_run_checkout_refused(self, tmp_path: Path) -> None:
+        """Even an absolute path inside $NFMD_CHECKOUT_DIR must be refused:
+        the per-run checkout is rm -rf'd by the workflow's cleanup step, so
+        state written there never survives the job.
+        """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        checkout_dir = tmp_path / "checkout"
+        (checkout_dir / "docker").mkdir(parents=True)
+
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GITHUB_REPOSITORY": "Etoile04/nucpot",
+            "NFMD_DEPLOY_EVENTS_PATH": str(checkout_dir / "docker" / ".deploy-events.jsonl"),
+            "NFMD_CHECKOUT_DIR": str(checkout_dir),
+            "FAKE_GH_BIN_DIR": str(bin_dir),
+        }
+
+        result = subprocess.run(
+            ["bash", str(ORCHESTRATOR)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode != 0, (
+            f"state path inside the per-run checkout must abort; rc={result.returncode}\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert "per-run checkout" in result.stderr
+        assert not (checkout_dir / "docker" / ".deploy-events.jsonl").exists()

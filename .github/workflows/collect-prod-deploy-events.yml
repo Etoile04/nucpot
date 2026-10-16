@@ -48,32 +48,47 @@ jobs:
       # even on forks; fall back to the per-run GITHUB_TOKEN which already has
       # `actions: read` per the job's permissions block.
       GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-      # ADR §C6.1.5 — repo variable `NFMD_DEPLOY_EVENTS_PATH`. The collector
-      # falls back to <repo>/docker/.deploy-events.jsonl if unset, so this
-      # workflow runs even in a freshly cloned repo without operator config.
-      NFMD_DEPLOY_EVENTS_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PATH || 'docker/.deploy-events.jsonl' }}
+      # ADR §C6.1.5 — repo variable `NFMD_DEPLOY_EVENTS_PATH`, a
+      # host-absolute path on the runner. When unset, the orchestrator
+      # defaults to ~/.nfmd/deploy-events.jsonl and refuses relative or
+      # per-checkout paths loudly — since NFM-5556 the checkout is a
+      # per-run workdir deleted at end of job, so no repo-relative
+      # fallback could persist collector state.
+      NFMD_DEPLOY_EVENTS_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PATH || '' }}
       NFMD_DEPLOY_EVENTS_PROCESSED_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PROCESSED_PATH || '' }}
     steps:
-      - name: Checkout repository (direct git, no action archive)
+      - name: Checkout (direct git, private per-run workdir)
         # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
         # host's direct egress, so `uses: actions/checkout` dies during
         # "Set up job" whenever the runner's action cache is empty — 3
-        # archive-download attempts exhausted, collectors red since
-        # 10:16Z. A plain git fetch removes the action-archive dependency
-        # entirely. On this host https://github.com/... URLs are rewritten
-        # to the SSH-over-443 lane that the deploy pre-flight already
-        # probes (NFM-3842); the extraheader token is belt-and-braces for
-        # hosts without that rewrite. `git clean -ffdx` + `checkout -f`
-        # mirrors actions/checkout's clean:true against the persisted
-        # self-hosted workspace (collector state lives under ~/.nfmd,
-        # never inside the workspace).
+        # archive-download attempts exhausted. A plain git fetch removes
+        # the action-archive dependency entirely. On this host
+        # https://github.com/... URLs are rewritten to the SSH-over-443
+        # lane that the deploy pre-flight already probes (NFM-3842); the
+        # extraheader token is belt-and-braces for hosts without that
+        # rewrite.
+        #
+        # NFM-5556 (2026-10-16): the fetch runs in a PRIVATE per-run
+        # workdir (mktemp -d under $RUNNER_TEMP), never in the shared
+        # $GITHUB_WORKSPACE. Several autonomous jobs target that one
+        # persisted directory on this runner (this collector, the
+        # prod-deploy-event-collector sibling, push-triggered CI
+        # checkouts) under independent concurrency groups, and
+        # concurrent init/fetch/checkout sequences against the same .git
+        # die at `git checkout -f FETCH_HEAD` with `fatal: bad object
+        # refs/heads` (exit 128 — 3/3 on f5060144, intermittent since
+        # 10-15). A pristine workdir per fire leaves nothing to race and
+        # no stale refs to inherit; a fresh dir needs no `git clean`.
+        # Subsequent steps run from $NFMD_CHECKOUT_DIR (collector state
+        # lives under ~/.nfmd, never inside any workspace).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
+          checkout_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nucpot-checkout.XXXXXX")"
+          echo "NFMD_CHECKOUT_DIR=$checkout_dir" >> "$GITHUB_ENV"
+          cd "$checkout_dir"
           git init . >/dev/null
-          git clean -ffdx
           auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
           git -c http.https://github.com/.extraheader="$auth" \
             fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
@@ -84,4 +99,16 @@ jobs:
         # covered by the unit tests under scripts/okr/tests/.
         run: |
           set -euo pipefail
+          cd "$NFMD_CHECKOUT_DIR"
           bash scripts/lib/collect_prod_run.sh
+
+      - name: Clean per-run workdir
+        # NFM-5556: the private checkout lives under the runner's shared
+        # _work/_temp on a disk-pressured host — remove it every fire so
+        # per-run dirs cannot accumulate. No-op if the export never ran.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${NFMD_CHECKOUT_DIR:-}" ]; then
+            rm -rf "${NFMD_CHECKOUT_DIR:?}"
+          fi

@@ -131,24 +131,33 @@ jobs:
     runs-on: [self-hosted, production]
     timeout-minutes: 3
     steps:
-      - name: Checkout (direct git, no action archive)
+      - name: Checkout (direct git, private per-run workdir)
         # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
         # host's direct egress, so `uses: actions/checkout` dies during
         # "Set up job" whenever the runner's action cache is empty (same
-        # failure class as the deploy-event collectors, red since 10:16Z;
-        # this watchdog fires next at 17:17Z). A plain git fetch removes
-        # the action-archive dependency entirely — on this host it rides
-        # the SSH-over-443 lane the deploy pre-flight probes (NFM-3842);
-        # the extraheader token is belt-and-braces for hosts without
-        # that rewrite. `git clean -ffdx` + `checkout -f` mirrors
-        # actions/checkout's clean:true default.
+        # failure class as the deploy-event collectors). A plain git
+        # fetch removes the action-archive dependency entirely — on this
+        # host it rides the SSH-over-443 lane the deploy pre-flight
+        # probes (NFM-3842); the extraheader token is belt-and-braces
+        # for hosts without that rewrite.
+        #
+        # NFM-5556 (2026-10-16): the fetch runs in a PRIVATE per-run
+        # workdir (mktemp -d under $RUNNER_TEMP), never in the shared
+        # $GITHUB_WORKSPACE that the deploy-event collectors and
+        # push-triggered CI checkouts also target — concurrent
+        # init/fetch/checkout sequences against the same .git die with
+        # `fatal: bad object refs/heads`. A pristine workdir per fire
+        # leaves nothing to race and no stale refs to inherit; a fresh
+        # dir needs no `git clean`. Subsequent steps run from
+        # $NFMD_CHECKOUT_DIR.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
+          checkout_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nucpot-checkout.XXXXXX")"
+          echo "NFMD_CHECKOUT_DIR=$checkout_dir" >> "$GITHUB_ENV"
+          cd "$checkout_dir"
           git init . >/dev/null
-          git clean -ffdx
           auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
           git -c http.https://github.com/.extraheader="$auth" \
             fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
@@ -158,7 +167,9 @@ jobs:
         id: watchdog
         env:
           ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-        run: bash tools/post-deploy-cutover-watchdog/watchdog.sh
+        run: |
+          cd "$NFMD_CHECKOUT_DIR"
+          bash tools/post-deploy-cutover-watchdog/watchdog.sh
 
       # NFM-5269/NFM-5270: restart loops + empty bind sources. Read-only
       # docker/host checks; exits 81 to fail this job when a violation is
@@ -168,4 +179,17 @@ jobs:
         if: always()
         env:
           ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-        run: bash tools/post-deploy-cutover-watchdog/container_sanity_check.sh
+        run: |
+          cd "$NFMD_CHECKOUT_DIR"
+          bash tools/post-deploy-cutover-watchdog/container_sanity_check.sh
+
+      - name: Clean per-run workdir
+        # NFM-5556: remove the private checkout every fire — the host is
+        # disk-pressured and this job recurs on cron. No-op if the
+        # export never ran.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${NFMD_CHECKOUT_DIR:-}" ]; then
+            rm -rf "${NFMD_CHECKOUT_DIR:?}"
+          fi

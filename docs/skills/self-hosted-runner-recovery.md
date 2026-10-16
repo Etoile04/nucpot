@@ -27,7 +27,7 @@ If neither pattern matches, the failure is in the workflow content itself
 (not the host) — check the actual job step output, not the action's
 boilerplate.
 
-## Checkout lane (NFM-5548)
+## Checkout lane (NFM-5548, NFM-5556)
 
 Self-hosted jobs on this host must not depend on the `actions/checkout`
 action-archive download: codeload.github.com 429s kill the job during
@@ -41,6 +41,23 @@ files; regression-pinned by
 use `actions/checkout` on this host (e.g. `production-deployment.yml`,
 `run-migration.yml`, `staging-deploy.yml`) remain exposed to this
 failure class.
+
+NFM-5556 invariant: the direct fetch runs in a PRIVATE per-run workdir
+(`mktemp -d` under `$RUNNER_TEMP`, exported as `NFMD_CHECKOUT_DIR` via
+`$GITHUB_ENV`) — never in the shared `$GITHUB_WORKSPACE`. Several
+autonomous jobs target that one persisted directory under independent
+concurrency groups, and concurrent init/fetch/checkout sequences against
+the same `.git` die with `fatal: bad object refs/heads` (exit 128,
+intermittent since 2026-10-15). Repo-relative steps run from
+`$NFMD_CHECKOUT_DIR`, and a final `if: always()` step removes the
+workdir (the host is disk-pressured). Collector state must be
+host-absolute and outside the per-run checkout —
+`collect_prod_run.sh` defaults to `~/.nfmd/deploy-events.jsonl` and
+refuses relative or per-checkout paths loudly instead of silently
+writing state into a directory the cleanup step deletes.
+Regression-pinned by `scripts/tests/test_nfm_5556_raceproof_checkout.py`
+(including a two-collectors-overlapping isolation test) and
+`scripts/okr/tests/test_collect_prod_run_sh.py`.
 
 # Self-Hosted Runner Recovery (macOS ARM64)
 
