@@ -9,6 +9,8 @@ chains, fail-open, silent no-op when off).
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,6 +83,108 @@ def test_bash_patch_other_status_ignored() -> None:
 
 def test_other_tool_ignored() -> None:
     assert pcm.target_issue("Write", {"file_path": "/tmp/x", "content": "done"}) is None
+
+
+# --- statement-scoped target inference (NFM-5562) ---------------------------------
+
+
+def test_bash_get_after_patch_does_not_steal_target() -> None:
+    # Live soak false positive (2026-10-05): the done-write went to a clean
+    # chain while a trailing GET merely read a blocked issue — the old
+    # last-URL-anywhere rule denied the write as targeting the co-mention.
+    command = (
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-CLEAN" '
+        "-d '{\"status\": \"done\"}' && "
+        'curl -s "$PAPERCLIP_API_URL/api/issues/NFM-BLOCKED" | jq .blockedBy'
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-CLEAN"
+
+
+def test_bash_get_before_patch_does_not_steal_target() -> None:
+    command = (
+        'curl -s "$PAPERCLIP_API_URL/api/issues/NFM-BLOCKED" | jq . ; '
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-CLEAN" '
+        "-d '{\"status\": \"done\"}'"
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-CLEAN"
+
+
+def test_bash_done_body_via_variable_still_detected() -> None:
+    # The body lives in an assignment statement; the write statement carries
+    # it as -d "$BODY" — variable tracking keeps the write in scope.
+    command = (
+        "BODY='{\"status\": \"done\"}' ; "
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-5323" -d "$BODY"'
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-5323"
+
+
+def test_bash_done_literal_without_patch_url_is_not_a_write() -> None:
+    command = (
+        "echo '{\"status\": \"done\"}' ; "
+        'curl -s "$PAPERCLIP_API_URL/api/issues/NFM-BLOCKED"'
+    )
+    assert pcm.target_issue("Bash", {"command": command}) is None
+
+
+def test_bash_multiline_patch_then_get_targets_patch_line() -> None:
+    command = (
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-A" -d \'{"status": "done"}\'\n'
+        'curl -s "$PAPERCLIP_API_URL/api/issues/NFM-B"'
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-A"
+
+
+def test_bash_line_continuation_kept_in_one_statement() -> None:
+    command = (
+        "curl -s -X PATCH \\\n  '$PAPERCLIP_API_URL/api/issues/NFM-1' \\\n"
+        "  -d '{\"status\": \"done\"}'"
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-1"
+
+
+def test_bash_separator_inside_quotes_does_not_split() -> None:
+    command = (
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-1" '
+        "-d '{\"status\": \"done\", \"note\": \"a;b&c|d\"}'"
+    )
+    assert pcm.target_issue("Bash", {"command": command}) == "NFM-1"
+
+
+def test_bash_body_from_file_fails_open() -> None:
+    # -d @file carries no literal body in the command — undetectable, so the
+    # gate allows and the advisory skips (documented fail-open shape).
+    command = 'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-1" -d @body.json'
+    assert pcm.target_issue("Bash", {"command": command}) is None
+
+
+def test_pretooluse_enforce_allows_write_with_trailing_read_of_blocked_issue(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Gate-level regression: the exact live shape (clean-chain done-write +
+    # trailing GET of a blocked issue) must now be allowed, and the blocked
+    # co-mention must never even be evaluated.
+    def _lookup(ident: str) -> Ok:
+        assert ident == "NFM-CLEAN", f"must not evaluate co-mentioned {ident}"
+        return _ok(_issue(identifier="NFM-CLEAN"))
+
+    monkeypatch.setattr(pcm, "lookup_issue", _lookup)
+    command = (
+        'curl -s -X PATCH "$PAPERCLIP_API_URL/api/issues/NFM-CLEAN" '
+        "-d '{\"status\": \"done\"}' && "
+        'curl -s "$PAPERCLIP_API_URL/api/issues/NFM-BLOCKED" | jq .blockedBy'
+    )
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+        },
+        env={"PCMR_ENFORCE": "1"},
+    )
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "write allowed" in err
 
 
 # --- verdicts -----------------------------------------------------------------
@@ -399,7 +503,51 @@ def test_enforce_decisions_are_audited(
     )
     assert blocked == 2
     line = log.read_text().splitlines()[-1]
-    assert line.startswith("BLOCK\tNFM-5257\t") and "NFM-5259[in_review]" in line
+    # NFM-5562: leading ISO-8601 UTC timestamp column, then the decision row.
+    stamp, decision, identifier, rest = line.split("\t", 3)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
+    assert decision == "BLOCK" and identifier == "NFM-5257"
+    assert "NFM-5259[in_review]" in rest
+
+
+def test_audit_allow_line_carries_timestamp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log = tmp_path / "soak.log"
+    monkeypatch.setattr(pcm, "lookup_issue", lambda ident: _ok(_issue()))
+    code = pcm.run_hook(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "TaskUpdate",
+            "tool_input": {"taskId": "NFM-1", "status": "done"},
+        },
+        env={"PCMR_ENFORCE": "1", "PCMR_LOG": str(log)},
+    )
+    assert code == 0
+    stamp, decision, identifier, _rest = log.read_text().splitlines()[-1].split("\t", 3)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
+    assert decision == "allow" and identifier == "NFM-1"
+
+
+# --- launch-path anchor (NFM-5562) -------------------------------------------------
+
+
+def test_settings_hook_command_anchors_launch_path() -> None:
+    # The cwd trap (2026-10-05 soak): "./scripts/..." resolves against the
+    # Bash tool's persistent cwd, and a PreToolUse launch failure is itself
+    # blocking.  Every wired hook command must carry the workspace anchor
+    # between ${CLAUDE_PROJECT_ROOT:-...} and the bare "." last resort.
+    settings_path = _HOOKS_DIR.parents[1] / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for event in ("PreToolUse", "PostToolUse")
+        for entry in settings["hooks"][event]
+        for hook in entry["hooks"]
+    ]
+    assert commands, "PCMR hooks must stay wired for both events"
+    for command in commands:
+        assert "${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}" in command
 
 
 def test_advisory_mode_never_audits(
