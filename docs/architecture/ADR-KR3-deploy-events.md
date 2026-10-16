@@ -235,6 +235,16 @@ per-developer override.
 > `~/.nfmd/deploy-events.jsonl`, refusing relative or per-checkout
 > paths. Operative invariant:
 > `docs/skills/self-hosted-runner-recovery.md` (checkout lane).
+>
+> **Corrected 2026-10-16 (NFM-5558):** the "passes the variable through
+> unset" sentence above described review-time config and is stale —
+> the variable was set to a relative value at review, and RE then set
+> the repo variable `NFMD_DEPLOY_EVENTS_PATH` to the host-absolute
+> `/Users/lwj04/.nfmd/deploy-events.jsonl` pre-merge (2026-10-16), as
+> the refusal logic requires. Current contract: the variable is set and
+> host-absolute; unset falls back to `~/.nfmd/deploy-events.jsonl`;
+> relative or per-checkout values are refused loudly by
+> `scripts/lib/collect_prod_run.sh` (`nfmd_refuse_ephemeral_state`).
 
 ### C6.1.6 — Idempotency / failure modes
 
