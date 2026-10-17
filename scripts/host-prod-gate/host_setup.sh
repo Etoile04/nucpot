@@ -144,7 +144,15 @@ fi
 printf '{}\n' > "${DEPLOY_HOME}/.docker/config.json"
 ln -sfn "${USER_HOME}/.docker/cli-plugins/docker-compose" \
   "${DEPLOY_HOME}/.docker/cli-plugins/docker-compose"
-chown -R "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"
+# NFM-5566: the bare chown -R here aborted the whole installer (set -e)
+# once SIP-protected paths appeared inside DEPLOY_HOME after macOS daemons
+# first ran as nfmdeploy (containermanagerd / Mail entries — EPERM even as
+# root; the 2026-10-17 apply died before §4's gate-file installs and the
+# live mirror_health module stayed on the old all() quorum → G2.7
+# false-red). The helper chowns per entry — SIP entries are skipped with a
+# counted WARNING — and stays fatal only when NOTHING is chownable
+# (systemic, not SIP), so set -e keeps its teeth for real misconfig.
+bash "${SRC}/chown-deploy-home.sh" "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"
 
 # =============================================================================
 # 3. read access for the deploy identity (ACLs, guarded + inheritable)
