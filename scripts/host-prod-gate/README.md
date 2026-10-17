@@ -65,6 +65,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `entry-sync.sh` | NFM-5149 host-entry re-propagation: `--check` unprivileged drift probe (agents / CI / SRE canary), `--apply` operator-sudo staged apply of drifted `entries/*.sh` with NFM-4297 SHA binding (HEAD must be origin/main-reachable; working-tree bytes must equal the HEAD blob), per-apply backups + JSONL audit at `/var/log/nfm-g2/entry-sync.log`; no sudoers grant by design — the operator's interactive sudo is the per-release authorization. Runbook: `docs/runbooks/prod-deploy.md` §11 |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
 | `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup; lightrag-watchdog — NFM-4804, the only one whose launchd `UserName` is nfmdeploy rather than root) |
+| `chown-deploy-home.sh` | NFM-5566 SIP-tolerant per-entry chown of `DEPLOY_HOME` (invoked by host_setup.sh §2): chowns everything chownable with `-h` (never dereferences the `Projects/nucpot` symlink into the operator's checkout), skips SIP-protected/EPERM entries with a counted WARNING so the installer always reaches the gate-file installs; fatal only when the walk is empty or nothing is chownable (systemic, not SIP) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |
 | `probe_g2.sh` | AC verification probe (run as the desktop user) |
 | `config.json` | prod scope prefixes (names, not files) |

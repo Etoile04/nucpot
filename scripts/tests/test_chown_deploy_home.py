@@ -103,7 +103,7 @@ class ChownHarness:
         # (a failed chown is a skip, visible via the helper's WARNING).
         self._write(
             "chown",
-            f"{guard}printf '%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$3\" >> {self.calls}\nexit 0\n",
+            f'{guard}printf \'%s\\t%s\\t%s\\n\' "$1" "$2" "$3" >> {self.calls}\nexit 0\n',
         )
 
     def add_sip_entries(self) -> None:
