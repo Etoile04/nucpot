@@ -50,7 +50,7 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `nfm_docker_gate/peercred.py` | AF_UNIX peer identity (macOS LOCAL_PEERCRED/PEERPID, Linux SO_PEERCRED) |
 | `nfm_docker_gate/audit.py` | JSONL audit log |
 | `nfm_docker_gate/watchdog.py` | socket-perms + docker-context watchdog |
-| `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat) |
+| `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat; NFM-5567 2-tick alarm-debounce grace) |
 | `nfm_docker_gate_proxy.py` | launchd entry for either proxy mode |
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
 | `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion; NFM-5397 preflight first refuses rc=78 (EX_CONFIG, before any docker reach) when `/var/log/nfm-g2` deviates from the host_setup.sh §6 shape — dir `0755`, the four pre-created lightrag-watchdog files `0644` (NFM-5523: includes the `.state.e1` preburst marker the daemon writes but cannot create) — since a non-0755 dir kills the watchdog's daemon spawn |

@@ -158,8 +158,11 @@ fi
 # ---- AC-G2.7: NFM-4587 mirror health (≥2 mirrors returning 200/401) ----------
 # probe_g2.sh reads the LATEST VERDICT record from /var/log/nfm-g2/mirror-health.log.
 # The mirror-health watchdog (launchd com.nfm.g2.mirror-health) writes an
-# "alarm" record per tick while below threshold OR while the prod allowlist
-# mirror is dark, and a "recovery" record when the alarm clears or on its
+# "alarm" record while below threshold OR while the prod allowlist mirror
+# is dark — debounced by the NFM-5567 2-tick grace window, so a tripped
+# tick inside the window writes a NON-verdict "grace" record instead
+# (the post-startup first tick bypasses grace) — and a "recovery" record
+# when the alarm clears or on its
 # first healthy tick after startup (NFM-4805: reading only the latest ALARM
 # latched G2.7 red forever — healthy ticks write nothing, so the
 # 2026-09-12T15:03Z alarm kept failing the probe hours after both prod

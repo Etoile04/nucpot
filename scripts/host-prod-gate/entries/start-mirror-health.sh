@@ -7,10 +7,12 @@
 # scripts/host-prod-gate/host_setup.sh; invoked by
 # /Library/LaunchDaemons/com.nfm.g2.mirror-health.plist.
 #
-# Probes every mirror in mirrors.json, classifies the result, and writes
-# an "alarm" JSONL record to /var/log/nfm-g2/mirror-health.log when fewer
-# than the AC threshold are healthy OR when the prod allowlist mirror is
-# dark. probe_g2.sh reads the latest alarm record to verify the heartbeat.
+# Runs nfm_docker_gate.mirror_health, which probes every mirror in
+# mirrors.json and writes verdict ("alarm"/"recovery") plus non-verdict
+# ("grace", NFM-5567 alarm-debounce) JSONL records to
+# /var/log/nfm-g2/mirror-health.log. probe_g2.sh reads the latest
+# verdict record to verify the heartbeat — the module docstring owns
+# the full record semantics.
 # ============================================================================
 set -euo pipefail
 
