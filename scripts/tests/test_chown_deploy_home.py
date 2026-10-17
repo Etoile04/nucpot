@@ -25,6 +25,7 @@ NFM_G2_FIND_BIN overridden only for the degenerate-walk guard.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,7 @@ import pytest
 
 GATE_DIR = Path(__file__).resolve().parents[1] / "host-prod-gate"
 HELPER = GATE_DIR / "chown-deploy-home.sh"
+HOST_SETUP = GATE_DIR / "host_setup.sh"
 
 OWNER = "nfmdeploy:staff"
 
@@ -160,13 +162,17 @@ def test_sip_eperm_entries_are_skipped_and_rest_chowned(chown_h):
     assert result.returncode == 0, result.stderr
     chowned = chown_h.chowned()
     # everything except the SIP stand-ins is chowned, with the right owner
-    assert set(chowned) == _walk_entries(chown_h.home) - {
-        p for p in _walk_entries(chown_h.home) if "sip-guarded" in p
-    }
+    walk = _walk_entries(chown_h.home)
+    sip = {p for p in walk if "sip-guarded" in p}
+    assert set(chowned) == walk - sip
     assert all(flag == "-h" and owner == OWNER for flag, owner in chowned.values())
     assert str(chown_h.home) in chowned, "the home root itself must be chowned"
-    # the skip is counted and reported, not silent
-    assert "WARNING: 3/" in result.stdout
+    # the skip is counted and reported, not silent — the count itself comes
+    # from the fixture tree, never hardcoded (three stand-in paths match the
+    # predicate: the mail file, the containermanagerd bundle dir, and the
+    # file inside it), so the assertion cannot rot with tmp-path numbering
+    # (CR: the literal "2/" form passed only where basetemp contained "2/")
+    assert f"WARNING: {len(sip)}/{len(walk)} entries" in result.stdout
 
 
 def test_clean_tree_chowns_every_entry_no_warning(chown_h):
@@ -234,3 +240,25 @@ def test_missing_root_dir_exits_66(chown_h):
     result = chown_h.run(args=[OWNER, str(chown_h.tmp / "no-such-dir")])
     assert result.returncode == 66
     assert "not a directory" in result.stderr
+
+
+# ---- host_setup wiring (source inspection — host_setup needs root) -----------------
+
+
+def test_host_setup_uses_helper_and_drops_bare_recursive_chown():
+    """The §2 call site must delegate to the helper — a bare recursive
+    chown over DEPLOY_HOME is exactly the 2026-10-17 abort, so any
+    regression to that shape must fail here."""
+    text = HOST_SETUP.read_text(encoding="utf-8")
+    invoke = 'bash "${SRC}/chown-deploy-home.sh" "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"'
+    assert invoke in text, "host_setup.sh does not invoke chown-deploy-home.sh at §2"
+    # the bare chown -R over DEPLOY_HOME is gone (match a COMMAND at line
+    # start, as the original L147 was — not prose about it)
+    assert not re.search(r"^chown -R ", text, re.MULTILINE), (
+        "host_setup.sh still contains a bare chown -R command"
+    )
+    # and the delegation must land BEFORE the §4 gate-file installs — the
+    # incident was dying en route to them (mirrors.json + mirror_health.py)
+    assert text.index(invoke) < text.index('"${SRC}/mirrors.json"'), (
+        "chown delegation must precede the §4 gate-file installs"
+    )
