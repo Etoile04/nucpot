@@ -40,7 +40,7 @@ CHOWN_BIN="${NFM_G2_CHOWN_BIN:-/usr/sbin/chown}"
 FIND_BIN="${NFM_G2_FIND_BIN:-/usr/bin/find}"
 
 say() { printf '[nfm-g2 chown-home] %s\n' "$*"; }
-die() { printf '[nfm-g2 chown-home] FATAL: %s\n' "$*" >&2; exit "${2:-1}"; }
+die() { printf '[nfm-g2 chown-home] FATAL: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 [ $# -eq 2 ] || die "usage: chown-deploy-home.sh <owner:group> <root-dir>" 64
 OWNER="$1"

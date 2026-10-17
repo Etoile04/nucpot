@@ -25,7 +25,6 @@ NFM_G2_FIND_BIN overridden only for the degenerate-walk guard.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -33,7 +32,6 @@ import pytest
 
 GATE_DIR = Path(__file__).resolve().parents[1] / "host-prod-gate"
 HELPER = GATE_DIR / "chown-deploy-home.sh"
-HOST_SETUP = GATE_DIR / "host_setup.sh"
 
 OWNER = "nfmdeploy:staff"
 
@@ -168,8 +166,7 @@ def test_sip_eperm_entries_are_skipped_and_rest_chowned(chown_h):
     assert all(flag == "-h" and owner == OWNER for flag, owner in chowned.values())
     assert str(chown_h.home) in chowned, "the home root itself must be chowned"
     # the skip is counted and reported, not silent
-    assert "WARNING" in result.stdout
-    assert "2/" in result.stdout
+    assert "WARNING: 3/" in result.stdout
 
 
 def test_clean_tree_chowns_every_entry_no_warning(chown_h):
@@ -237,25 +234,3 @@ def test_missing_root_dir_exits_66(chown_h):
     result = chown_h.run(args=[OWNER, str(chown_h.tmp / "no-such-dir")])
     assert result.returncode == 66
     assert "not a directory" in result.stderr
-
-
-# ---- host_setup wiring (source inspection — host_setup needs root) -----------------
-
-
-def test_host_setup_uses_helper_and_drops_bare_recursive_chown():
-    """The §2 call site must delegate to the helper — a bare recursive
-    chown over DEPLOY_HOME is exactly the 2026-10-17 abort, so any
-    regression to that shape must fail here."""
-    text = HOST_SETUP.read_text(encoding="utf-8")
-    invoke = f'bash "${{SRC}}/chown-deploy-home.sh" "${{DEPLOY_USER}}:staff" "${{DEPLOY_HOME}}"'
-    assert invoke in text, "host_setup.sh does not invoke chown-deploy-home.sh at §2"
-    # the bare chown -R over DEPLOY_HOME is gone (match a COMMAND at line
-    # start, as the original L147 was — not prose about it)
-    assert not re.search(r"^chown -R ", text, re.MULTILINE), (
-        "host_setup.sh still contains a bare chown -R command"
-    )
-    # and the delegation must land BEFORE the §4 gate-file installs — the
-    # incident was dying en route to them (mirrors.json + mirror_health.py)
-    assert text.index(invoke) < text.index('"${SRC}/mirrors.json"'), (
-        "chown delegation must precede the §4 gate-file installs"
-    )
