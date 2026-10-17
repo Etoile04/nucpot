@@ -40,6 +40,11 @@ back to fail-open:
   blind + confirmed breakage still pages. Streak counters are per-mode
   and strictly consecutive; a cycle recording a NOTE (refs-unverified <
   REFS_DEGRADE_MIN) never enters any streak.
+- NFM-5572 page-lane retry: a transport-failed page GET (tail-latency
+  timeout / reset / TLS-EOF — the class NFM-5490 hardened for ref HEADs)
+  gets ONE budget-gated retry before counting page-fetch-skipped; a
+  definitive HTTP verdict is never retried away, and a persistent
+  transport failure still fails closed (skipped + correct fetches token).
 - env seams (NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_MONITOR_LOG/STATE/
   PROBE/NOTIFY) keep the suite hermetic — no real network, no real
   LaunchAgent state. Every helper hard-fails if the seams are missing so
@@ -109,6 +114,17 @@ class _MockEdge(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/_next/static/"):
             self._serve_ref()
+            return
+        # NFM-5572: per-page countdown that drops the connection WITHOUT a
+        # response — the client sees a page-GET transport error
+        # (RemoteDisconnected), the 2026-10-17 ep class. Deterministic under
+        # page-stage concurrency: each page is fetched by exactly one worker
+        # and its attempt-then-retry is sequential within that worker.
+        flaky = self.server.config.get("page_flaky", {})
+        remaining = flaky.get(self.path, 0)
+        if remaining > 0:
+            flaky[self.path] = remaining - 1
+            self.close_connection = True
             return
         spec = self._page_spec(self.path)
         if spec is None:
@@ -466,6 +482,45 @@ def test_scan_once_persistent_transport_error_still_degrades(env, mock_site):
     assert r.returncode == 3, r.stdout
     assert "scan-degraded" in r.stdout
     assert "refs-unverified=12" in r.stdout
+
+
+def test_scan_once_transient_page_transport_error_retries_green(env, mock_site):
+    """NFM-5572: a dropped-connection page GET is retried once, not counted
+    page-fetch-skipped on the first transport failure.
+
+    Live ep evidence (2026-10-17, adjudicated in NFM-5571): 7 mode-B
+    page-fetch-skip cycles where ONE page GET died at transport level
+    (diurnal tail timeout / reset / TLS-EOF) while ~150 ref HEADs verified
+    in-budget in the same cycles — one tail outlier cost one blind 5-min
+    cycle, and all 7 recovered on the immediately following cycle. The page
+    lane now carries the NFM-5490 ref-lane retry semantics: a page dropping
+    its first GET and succeeding on the retry must read GREEN with full
+    fetch coverage (no fetches token — a clean scan carries none).
+    """
+    _base, config = mock_site
+    # per-page countdown: "/" drops its first GET; the retry finds a 200
+    config["page_flaky"] = {"/": 1}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 0, r.stdout
+    assert "ok (" in r.stdout
+    assert "page-fetch-skipped" not in r.stdout
+    assert "fetches=" not in r.stdout
+
+
+def test_scan_once_persistent_page_transport_error_still_skips(env, mock_site):
+    """NFM-5572 fail-closed: a page GET failing transport on BOTH attempts
+    still counts as page-fetch-skipped — the retry can only turn a
+    genuinely-dead transport error into a real 200, never a false green.
+    Mode-B semantics unchanged: fetches token must read 4/5 (the other 4
+    pages fetched, this page's chunk refs unverified for the cycle).
+    """
+    _base, config = mock_site
+    config["page_flaky"] = {"/": 99}
+    r = run_script(env, "--scan-once")
+    assert r.returncode == 3, r.stdout
+    assert "scan-degraded" in r.stdout
+    assert "page-fetch-skipped=/" in r.stdout
+    assert "fetches=4/5" in r.stdout
 
 
 def test_scan_once_materials_sized_page_verifies_green(env, mock_site):
