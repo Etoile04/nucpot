@@ -182,6 +182,23 @@ The monitor User-Agent stays byte-identical — it selects the edge's
 monitor-UA HTML variant, and changing it would reset the pin-aging the
 TTL lane watches.
 
+**Page-lane retry (NFM-5572, 2026-10-18):** the 2026-10-17 mode-B census
+(7 `page-fetch-skip` cycles in one day, adjudicated in NFM-5571; every
+event carried refs-unverified=0, i.e. ~150 ref HEADs verified in-budget in
+the same cycles) showed the page GET lane had the exact defect shape
+NFM-5490 fixed for ref HEADs: one transport exception on ONE page GET
+(diurnal tail timeout / connection reset / TLS-EOF) → `page-fetch-skipped`,
+fetches=4/5, that page's chunk refs unverified for one self-healing 5-min
+cycle. `fetch_page()` now retries ONCE on transport exception only, gated
+against PAGE_STAGE_BUDGET (one more full PAGE_TIMEOUT must fit); a
+definitive HTTP verdict is never retried away, and a skip after the retry
+still counts as skipped — the retry can only turn a genuinely-dead
+transport error into a real 200, never a false green. Worst case +15 s per
+page; the 90 s stage budget and 240 s DEADLINE are unchanged. All 7 of the
+10-17 skips recovered on the immediately following cycle, so a single
+retry collapses most events; post-deploy, page-fetch-skip day-counts
+should return to the ≤1/day band (10-14..10-16 base rate).
+
 **Adjudication extraction note (ep-4 playbook addition):** RSC-payload
 (`self.__next_f`) chunk refs are JSON-escaped (`…js\"`). A naive
 `[^"']+` capture includes the trailing backslash → HEADing `URL\` yields

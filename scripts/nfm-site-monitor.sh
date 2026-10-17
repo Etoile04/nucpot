@@ -289,6 +289,13 @@ t0 = time.monotonic()
 def left():
     return DEADLINE - (time.monotonic() - t0)
 
+def page_stage_left():
+    # NFM-5572: wall remaining in the page stage — the fetch_page retry
+    # gate. Page futures are submitted within milliseconds of t0 (module
+    # exec -> pool submit), so this measures PAGE_STAGE_BUDGET from the
+    # effective stage start, mirroring left() for the ref lane.
+    return PAGE_STAGE_BUDGET - (time.monotonic() - t0)
+
 ua = "nfm-site-monitor/1.3 (+NFM-5418 chunk scan, NFM-5446 fail-closed, NFM-5454 flake threshold)"
 ref_re = re.compile(r'/_next/static/[A-Za-z0-9._\-/]+')
 smaxage_re = re.compile(r's-maxage=(\d+)')
@@ -405,9 +412,32 @@ signal.alarm(max(1, int(DEADLINE)))
 def fetch_page(page):
     global fetched, refs_seen, skipped_refs, truncated_refs
     req = urllib.request.Request(base + page, headers={"User-Agent": ua})
-    # ADR-023 (NFM-5542): DIRECT primary — a VPN proxy flap must never read
-    # as "all page fetches failed" (the 10-15 02:12Z false-CRITICAL shape).
-    resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
+    # NFM-5572 (NFM-5571 adjudication): ONE budget-gated retry on TRANSPORT
+    # failures only — the NFM-5490 ref-HEAD semantics ported to the page
+    # lane. 2026-10-17 live evidence: 7 mode-B cycles where a single page
+    # GET died at transport level (diurnal tail timeout / reset / TLS-EOF)
+    # while ~150 ref HEADs verified in-budget in the same cycles — one tail
+    # outlier cost one blind 5-min cycle, every skip self-healing on the
+    # next cycle. A definitive HTTP verdict is NEVER retried away
+    # (HTTPError propagates immediately: the server answered, that skip is
+    # real); the retry can only turn a genuinely-dead transport error into
+    # a real 200, never a false green, and a failed retry still raises so
+    # the page counts skipped (fail-closed). Worst case +PAGE_TIMEOUT (15s)
+    # per page; PAGE_STAGE_BUDGET (90s) and the DEADLINE alarm are unchanged
+    # and still bound the stage.
+    try:
+        # ADR-023 (NFM-5542): DIRECT primary — a VPN proxy flap must never
+        # read as "all page fetches failed" (the 10-15 02:12Z shape).
+        resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
+    except urllib.error.HTTPError:
+        raise  # definitive verdict — never retried away
+    except Exception:
+        # one more full-timeout attempt cannot fit the page-stage budget:
+        # fail-closed NOW — the stage wait would discard the late result
+        # anyway (same gate shape as head_ref's left() <= REF_TIMEOUT)
+        if page_stage_left() <= PAGE_TIMEOUT:
+            raise
+        resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
     try:
         cc = resp.headers.get("cache-control") or ""
         # TTL lane (NFM-5446): pin verdict from HEADERS, captured before the
