@@ -1,8 +1,9 @@
 """Tests for mint_ca.sh — hardened MITM CA per ADR-024 G2.
 
 Bar: name constraints on ALL name types, validity <=30d, pathlen:0,
-static leaves for the allowlisted dest classes, out-of-scope probe leaf,
-ca.key survives minting (destruction is a separate post-negative-test step).
+static leaves for the allowlisted dest classes, three out-of-scope probe
+leaves, ca.key survives minting (destruction is a separate post-negative-test
+step).
 """
 
 import datetime
@@ -38,9 +39,7 @@ def minted(tmp_path_factory):
 
 
 def ca_text(minted):
-    return run(
-        ["openssl", "x509", "-in", str(minted / "ca.cert.pem"), "-noout", "-text"]
-    ).stdout
+    return run(["openssl", "x509", "-in", str(minted / "ca.cert.pem"), "-noout", "-text"]).stdout
 
 
 class TestCaNameConstraints:
@@ -89,13 +88,16 @@ class TestCaShape:
     def test_validity_at_most_30d(self, minted):
         r = run(
             [
-                "openssl", "x509", "-in", str(minted / "ca.cert.pem"), "-noout",
-                "-startdate", "-enddate",
+                "openssl",
+                "x509",
+                "-in",
+                str(minted / "ca.cert.pem"),
+                "-noout",
+                "-startdate",
+                "-enddate",
             ]
         )
-        lines = dict(
-            l.split("=", 1) for l in r.stdout.strip().splitlines() if "=" in l
-        )
+        lines = dict(line.split("=", 1) for line in r.stdout.strip().splitlines() if "=" in line)
         fmt = "%b %d %H:%M:%S %Y %Z"
         nb = datetime.datetime.strptime(lines["notBefore"], fmt)
         na = datetime.datetime.strptime(lines["notAfter"], fmt)
@@ -131,14 +133,14 @@ class TestLeaves:
         def window(p):
             r = run(["openssl", "x509", "-in", str(p), "-noout", "-startdate", "-enddate"])
             lines = dict(
-                l.split("=", 1) for l in r.stdout.strip().splitlines() if "=" in l
+                line.split("=", 1) for line in r.stdout.strip().splitlines() if "=" in line
             )
             fmt = "%b %d %H:%M:%S %Y %Z"
             nb = datetime.datetime.strptime(lines["notBefore"], fmt)
             na = datetime.datetime.strptime(lines["notAfter"], fmt)
             return nb, na
 
-        ca_nb, ca_na = window(minted / "ca.cert.pem")
+        _, ca_na = window(minted / "ca.cert.pem")
         for host in DEFAULT_HOSTS:
             _, leaf_na = window(minted / f"leaf.{host}.crt")
             assert leaf_na <= ca_na
@@ -161,15 +163,19 @@ class TestNameConstraintEnforcement:
 
     def test_in_scope_leaf_verifies(self, minted):
         r = run(
-            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"),
-             str(minted / f"leaf.{DEFAULT_HOSTS[0]}.crt")]
+            [
+                "openssl",
+                "verify",
+                "-CAfile",
+                str(minted / "ca.cert.pem"),
+                str(minted / f"leaf.{DEFAULT_HOSTS[0]}.crt"),
+            ]
         )
         assert r.returncode == 0, r.stdout + r.stderr
 
     def test_out_of_scope_dns_probe_rejected(self, minted):
         r = run(
-            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"),
-             str(minted / "probe.crt")]
+            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"), str(minted / "probe.crt")]
         )
         assert r.returncode != 0
         combined = r.stdout + r.stderr
@@ -177,8 +183,13 @@ class TestNameConstraintEnforcement:
 
     def test_foreign_dirname_probe_rejected(self, minted):
         r = run(
-            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"),
-             str(minted / "probe-dirname.crt")]
+            [
+                "openssl",
+                "verify",
+                "-CAfile",
+                str(minted / "ca.cert.pem"),
+                str(minted / "probe-dirname.crt"),
+            ]
         )
         assert r.returncode != 0
         combined = r.stdout + r.stderr
@@ -188,8 +199,13 @@ class TestNameConstraintEnforcement:
         """In-class DNS + evil email/URI SANs: the reserved permitted
         email/URI subtrees are the enforced exclude-all (openssl error 47)."""
         r = run(
-            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"),
-             str(minted / "probe-san.crt")]
+            [
+                "openssl",
+                "verify",
+                "-CAfile",
+                str(minted / "ca.cert.pem"),
+                str(minted / "probe-san.crt"),
+            ]
         )
         assert r.returncode != 0
         combined = r.stdout + r.stderr

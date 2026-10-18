@@ -18,6 +18,7 @@ Armed, not active: the runner stays on DIRECT egress. Activation is SRE's
 (W4/W5); this daemon merely listens on loopback until then.
 """
 
+import contextlib
 import logging
 import os
 import socket
@@ -44,7 +45,7 @@ RESP_403 = b"HTTP/1.1 403 Forbidden (dest not in allowlist)\r\n\r\n"
 RESP_502 = b"HTTP/1.1 502 Bad Gateway (fail-closed)\r\n\r\n"
 
 
-class UpstreamVerifyFailed(Exception):
+class UpstreamVerifyFailedError(Exception):
     """G3: the upstream certificate chain failed full verification."""
 
 
@@ -85,7 +86,7 @@ def connect_upstream(host, port, timeout=30, connect_address=None):
     Certificate verification ALWAYS uses `host` (SNI + server_hostname).
     `connect_address` (test-only) lets hermetic tests point the TCP leg at a
     loopback endpoint while keeping the real hostname for verification.
-    Raises UpstreamVerifyFailed on any certificate verification failure.
+    Raises UpstreamVerifyFailedError on any certificate verification failure.
     """
     context = upstream_ssl_context()
     address = connect_address or (host, port)
@@ -100,7 +101,7 @@ def connect_upstream(host, port, timeout=30, connect_address=None):
         # G3 fail-closed: bogus chain => no connect-through
         log.warning("upstream-verify-fail host=%s port=%s err=%s", host, port, exc)
         sock.close()
-        raise UpstreamVerifyFailed(str(exc)) from exc
+        raise UpstreamVerifyFailedError(str(exc)) from exc
     except (ssl.SSLError, OSError) as exc:
         log.warning("upstream-handshake-fail host=%s port=%s err=%s", host, port, exc)
         sock.close()
@@ -138,10 +139,8 @@ def _pump(src, dst, label):
     except OSError:
         pass
     finally:
-        try:
+        with contextlib.suppress(OSError):
             dst.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
         log.debug("pump-end %s", label)
 
 
@@ -156,29 +155,29 @@ class EgressProxyHandler(socketserver.BaseRequestHandler):
             return
         parts = request_line.split()
         if len(parts) < 2:
-            self._deny("malformed request line: %r" % request_line)
+            self._deny(f"malformed request line: {request_line!r}")
             return
         method, target = parts[0].upper(), parts[1]
 
         # G4: TLS-only lane — CONNECT to 443 inside the dest classes only.
         if method != "CONNECT":
-            self._deny("non-CONNECT method %s from %s" % (method, peer))
+            self._deny(f"non-CONNECT method {method} from {peer}")
             return
         if ":" not in target:
-            self._deny("CONNECT without port from %s" % peer)
+            self._deny(f"CONNECT without port from {peer}")
             return
         host, _, port = target.rpartition(":")
         try:
             port_num = int(port)
         except ValueError:
-            self._deny("bad port %r from %s" % (port, peer))
+            self._deny(f"bad port {port!r} from {peer}")
             return
         host = host.strip("[]")
         if port_num != UPSTREAM_PORT:
-            self._deny("port %d not allowed (host=%s)" % (port_num, host))
+            self._deny(f"port {port_num} not allowed (host={host})")
             return
         if not host_allowed(host):
-            self._deny("dest %s:%d not in allowlist (from %s)" % (host, port_num, peer))
+            self._deny(f"dest {host}:{port_num} not in allowlist (from {peer})")
             return
 
         chain, key = leaf_paths(self.server.cert_dir, host)
@@ -193,7 +192,7 @@ class EgressProxyHandler(socketserver.BaseRequestHandler):
         connector = self.server.upstream_connector or _default_connector
         try:
             upstream = connector(host, port_num)
-        except Exception as exc:  # noqa: BLE001 — any upstream failure closes
+        except Exception as exc:  # any upstream failure closes the tunnel
             log.warning("upstream-refused host=%s err=%s", host, exc)
             self.request.sendall(RESP_502)
             return
@@ -211,9 +210,11 @@ class EgressProxyHandler(socketserver.BaseRequestHandler):
 
         log.info("allow host=%s from=%s", host, peer)
         t1 = threading.Thread(
-            target=_pump, args=(client_tls, upstream, "c->u %s" % host), daemon=True)
+            target=_pump, args=(client_tls, upstream, f"c->u {host}"), daemon=True
+        )
         t2 = threading.Thread(
-            target=_pump, args=(upstream, client_tls, "u->c %s" % host), daemon=True)
+            target=_pump, args=(upstream, client_tls, f"u->c {host}"), daemon=True
+        )
         t1.start()
         t2.start()
         t1.join()
@@ -221,10 +222,8 @@ class EgressProxyHandler(socketserver.BaseRequestHandler):
 
     def _deny(self, reason):
         log.warning("deny %s", reason)
-        try:
+        with contextlib.suppress(OSError):
             self.request.sendall(RESP_403)
-        except OSError:
-            pass
 
 
 def _default_connector(host, port):
@@ -244,13 +243,16 @@ class EgressServer(socketserver.ThreadingTCPServer):
 def make_server(bind_host, bind_port, cert_dir, upstream_connector=None):
     """G1: refuse any bind that is not exactly the loopback address."""
     if bind_host != DEFAULT_BIND_HOST:
-        sys.exit("refusing non-loopback bind %r (G1: 127.0.0.1 only)" % bind_host)
+        sys.exit(f"refusing non-loopback bind {bind_host!r} (G1: 127.0.0.1 only)")
     if not os.path.isdir(cert_dir):
-        sys.exit("cert dir not found: %s" % cert_dir)
+        sys.exit(f"cert dir not found: {cert_dir}")
     server = EgressServer((bind_host, bind_port), cert_dir, upstream_connector)
     log.info(
         "listening %s:%d cert_dir=%s allowlist=%s (staged: runner stays DIRECT)",
-        bind_host, bind_port, cert_dir, ",".join(ALLOWED_DNS_SUFFIXES),
+        bind_host,
+        bind_port,
+        cert_dir,
+        ",".join(ALLOWED_DNS_SUFFIXES),
     )
     return server
 

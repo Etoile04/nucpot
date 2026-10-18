@@ -76,7 +76,7 @@ def ip(addr, mask):
     a = ipaddress.ip_address(addr).packed
     m = ipaddress.ip_address(mask).packed
     if len(a) != len(m):
-        raise ValueError("address/mask family mismatch: %s %s" % (addr, mask))
+        raise ValueError(f"address/mask family mismatch: {addr} {mask}")
     return _tlv(0x87, a + m)
 
 

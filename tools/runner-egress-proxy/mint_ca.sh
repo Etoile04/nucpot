@@ -7,10 +7,12 @@
 #                          a separate evidenced step AFTER the negative test)
 #   leaf.<host>.crt/.key   static leaves for the allowlisted dest classes
 #   leaf.<host>.chain.crt  leaf + CA, what the proxy serves
-#   probe.crt/.key         OUT-OF-SCOPE leaves for the SecTrust negative tests
+#   probe*.crt/.key        three OUT-OF-SCOPE probe leaves for the
+#                          SecTrust/openssl negative tests (out-of-class DNS,
+#                          foreign subject DN, out-of-scope email/URI SANs)
 #
 # The minter refuses to sign any leaf outside the G4 dest classes except the
-# explicit probe. NO secrets ever leave the install dir.
+# explicit probes. NO secrets ever leave the install dir.
 set -euo pipefail
 
 umask 077
@@ -112,7 +114,7 @@ done
 
 # Out-of-scope probe leaves — signed by the same CA, exist ONLY for the
 # SecTrust negative tests (an out-of-scope leaf MUST be rejected).
-# Both keys are destroyed together with ca.key after the tests pass.
+# All probe keys are destroyed together with ca.key after the tests pass.
 if host_in_class "$PROBE_HOST"; then
   echo "probe host must be OUT of the allowlist classes: $PROBE_HOST" >&2
   exit 1

@@ -18,7 +18,7 @@ pre-authorized ADR-024 triggers (see `docs/adr/ADR-024-*.md` §4).
 | --- | --- |
 | **G1** loopback-only bind | `egress_proxy.py` `make_server()` refuses any bind != 127.0.0.1; plist pins `NFM_EGRESS_BIND=127.0.0.1` |
 | **G2** name-constrained MITM CA, ≤30d, key destroyed post-negative-test, login-keychain `-p ssl` only | `mint_ca.sh` + `nc_der.py` |
-| **G3** upstream full verification, fail-closed, no verify-off | `egress_proxy.py` `upstream_ssl_context()` (`create_default_context`, no `CERT_NONE` anywhere); verify failure ⇒ `UpstreamVerifyFailed`, no connect-through |
+| **G3** upstream full verification, fail-closed, no verify-off | `egress_proxy.py` `upstream_ssl_context()` (`create_default_context`, no `CERT_NONE` anywhere); verify failure ⇒ `UpstreamVerifyFailedError`, no connect-through |
 | **G4** dest-class allowlist, deny-all-else | `egress_proxy.py` `ALLOWED_DNS_SUFFIXES` (github.com, actions.githubusercontent.com) checked at CONNECT → 403; non-CONNECT and non-443 also denied; in-class-but-no-static-leaf → fail-closed 502 (ca.key is gone, nothing can mint) |
 
 ## Files
@@ -61,8 +61,9 @@ security verify-cert -c ~/nfm-egress-proxy/probe-san.crt \
   -c ~/nfm-egress-proxy/ca.cert.pem -p ssl
 # expect: "permitted subtree violation" / CSSMERR_TP_INVALID_CERTIFICATE
 
-# 3. destroy the CA key + probe keys (only after the tests pass)
-rm -P ~/nfm-egress-proxy/ca.key ~/nfm-egress-proxy/probe.key \
+# 3. destroy the CA key + serial + probe keys (only after the tests pass)
+rm -P ~/nfm-egress-proxy/ca.key ~/nfm-egress-proxy/ca.srl \
+      ~/nfm-egress-proxy/probe.key \
       ~/nfm-egress-proxy/probe-dirname.key ~/nfm-egress-proxy/probe-san.key
 
 # 4. enroll the CA — login keychain, ssl policy ONLY (never System, no sudo)
