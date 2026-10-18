@@ -55,6 +55,10 @@ openssl verify -CAfile ~/nfm-egress-proxy/ca.cert.pem ~/nfm-egress-proxy/probe-d
 openssl verify -CAfile ~/nfm-egress-proxy/ca.cert.pem ~/nfm-egress-proxy/probe-san.crt
 security verify-cert -c ~/nfm-egress-proxy/probe.crt \
   -c ~/nfm-egress-proxy/ca.cert.pem -p ssl
+security verify-cert -c ~/nfm-egress-proxy/probe-dirname.crt \
+  -c ~/nfm-egress-proxy/ca.cert.pem -p ssl
+security verify-cert -c ~/nfm-egress-proxy/probe-san.crt \
+  -c ~/nfm-egress-proxy/ca.cert.pem -p ssl
 # expect: "permitted subtree violation" / CSSMERR_TP_INVALID_CERTIFICATE
 
 # 3. destroy the CA key + probe keys (only after the tests pass)
