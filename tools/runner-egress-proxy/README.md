@@ -27,7 +27,7 @@ pre-authorized ADR-024 triggers (see `docs/adr/ADR-024-*.md` §4).
   this host). CONNECT → allowlist gate → local TLS termination with the
   static leaf → re-originated upstream TLS → byte pump.
 - `mint_ca.sh` — mints the 30d name-constrained CA, static leaves for the
-  enumerated dest hosts, and two out-of-scope probe leaves for the negative
+  enumerated dest hosts, and three out-of-scope probe leaves for the negative
   tests. Refuses to overwrite an existing CA; refuses out-of-class leaves.
 - `nc_der.py` — builds the NAME_CONSTRAINTS extension as raw DER (OpenSSL's
   config parser cannot express DirName subtrees there). See its docstring for
@@ -49,16 +49,17 @@ pass — enrollment happens with a keyless CA.
 # 1. mint (into ~/nfm-egress-proxy; refuses overwrite)
 bash tools/runner-egress-proxy/mint_ca.sh ~/nfm-egress-proxy
 
-# 2. NEGATIVE TESTS — both probes MUST be rejected (openssl + Apple SecTrust)
+# 2. NEGATIVE TESTS — all three probes MUST be rejected (openssl + Apple SecTrust)
 openssl verify -CAfile ~/nfm-egress-proxy/ca.cert.pem ~/nfm-egress-proxy/probe.crt
 openssl verify -CAfile ~/nfm-egress-proxy/ca.cert.pem ~/nfm-egress-proxy/probe-dirname.crt
+openssl verify -CAfile ~/nfm-egress-proxy/ca.cert.pem ~/nfm-egress-proxy/probe-san.crt
 security verify-cert -c ~/nfm-egress-proxy/probe.crt \
   -c ~/nfm-egress-proxy/ca.cert.pem -p ssl
 # expect: "permitted subtree violation" / CSSMERR_TP_INVALID_CERTIFICATE
 
 # 3. destroy the CA key + probe keys (only after the tests pass)
 rm -P ~/nfm-egress-proxy/ca.key ~/nfm-egress-proxy/probe.key \
-      ~/nfm-egress-proxy/probe-dirname.key
+      ~/nfm-egress-proxy/probe-dirname.key ~/nfm-egress-proxy/probe-san.key
 
 # 4. enroll the CA — login keychain, ssl policy ONLY (never System, no sudo)
 security add-trusted-cert -p ssl \

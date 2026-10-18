@@ -7,8 +7,9 @@ assembled as raw DER and injected with `nameConstraints = critical, DER:<hex>`.
 
 Encoded bar (G2), measured on this host 2026-10-18 (evidence on NFM-5586):
   permitted: DNS:github.com, DNS:actions.githubusercontent.com,
-             DirName:/O=NFM Egress NC Block   (reserved subtree, see below)
-  excluded:  IP:0.0.0.0/0.0.0.0, IP:::/::, email:., URI:.
+             DirName:/O=NFM Egress NC Block,
+             email/URI reserved host (see below)
+  excluded:  IP:0.0.0.0/0.0.0.0, IP:::/::
 
 DirName delta from the bar's literal `excluded;DirName:/` (empty DN):
 an empty-DN excluded subtree constrains the directoryName form everywhere,
@@ -21,6 +22,18 @@ outside /O=NFM Egress NC Block violates the permitted subtree (measured:
 openssl "permitted subtree violation", Apple INVALID_CERTIFICATE), while
 in-scope leaves verify (openssl OK; Apple NOT_TRUSTED pre-enrollment only).
 
+Email/URI delta from the bar's `excluded;email:.` / `excluded;URI:.`:
+exclude-all forms are NOT enforced by this stack. Measured on OpenSSL 3.6.4
+(and identically on Apple SecTrust): a leaf carrying
+email:anyone@evil.example.com + URI:https://evil.example.com/x verifies OK
+under excluded email:"."/URI:"." AND under the RFC 5280 empty-string form,
+while concrete-hostname exclusions (email:evil.example.com) DO reject
+(openssl error 48). So exclude-all cannot be expressed in the excluded
+list; instead a reserved permitted email/URI host is encoded — the same
+reserved-subtree pattern as DirName — and that IS enforced: the evil
+email/URI leaf fails with openssl error 47 ("permitted subtree violation")
+and Apple INVALID_CERTIFICATE, while in-scope leaves still verify.
+
 GeneralName tags (RFC 5280): dNSName [2] primitive, rfc822Name [1]
 primitive, URI [6] primitive, iPAddress [7] OCTET addr+mask,
 directoryName [4] carrying the full Name DER.
@@ -30,6 +43,7 @@ import ipaddress
 
 PERMITTED_DNS = ("github.com", "actions.githubusercontent.com")
 RESERVED_DIRNAME_BLOCK_ORG = "NFM Egress NC Block"
+RESERVED_EMAIL_URI_HOST = "nc-block.reserved.nfm.invalid"
 
 
 def _tlv(tag, content):
@@ -82,13 +96,13 @@ def dirname_reserved_block():
 def name_constraints_der(permitted_dns=PERMITTED_DNS):
     permitted = b"".join(_subtree(dns(n)) for n in permitted_dns)
     permitted += _subtree(dirname_reserved_block())
+    permitted += _subtree(email(RESERVED_EMAIL_URI_HOST))
+    permitted += _subtree(uri(RESERVED_EMAIL_URI_HOST))
     excluded = b"".join(
         _subtree(base)
         for base in (
             ip("0.0.0.0", "0.0.0.0"),
             ip("::", "::"),
-            email("."),
-            uri("."),
         )
     )
     body = _tlv(0xA0, permitted) + _tlv(0xA1, excluded)

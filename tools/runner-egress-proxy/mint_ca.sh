@@ -7,7 +7,7 @@
 #                          a separate evidenced step AFTER the negative test)
 #   leaf.<host>.crt/.key   static leaves for the allowlisted dest classes
 #   leaf.<host>.chain.crt  leaf + CA, what the proxy serves
-#   probe.crt/.key         OUT-OF-SCOPE leaf for the SecTrust negative test
+#   probe.crt/.key         OUT-OF-SCOPE leaves for the SecTrust negative tests
 #
 # The minter refuses to sign any leaf outside the G4 dest classes except the
 # explicit probe. NO secrets ever leave the install dir.
@@ -152,13 +152,33 @@ openssl x509 -req -sha256 -days "$LEAF_DAYS" \
   -extfile probe-dirname.ext -extensions leaf -out probe-dirname.crt 2>/dev/null
 rm -f probe-dirname.csr probe-dirname.ext
 
+# probe 3: in-class DNS SAN but email/URI SANs outside the reserved
+# permitted email/URI subtrees (the enforced form of "exclude email/URI all"
+# — the excluded email:"."/URI:"." encodings match nothing, see nc_der.py)
+cat > probe-san.ext <<EOF
+[leaf]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:github.com, email:anyone@evil.example.com, URI:https://evil.example.com/x
+EOF
+openssl genrsa -out probe-san.key 2048 2>/dev/null
+openssl req -new -sha256 -key probe-san.key \
+  -subj "/O=NFM Egress NC Block/CN=san-probe" \
+  -out probe-san.csr
+openssl x509 -req -sha256 -days "$LEAF_DAYS" \
+  -in probe-san.csr -CA ca.cert.pem -CAkey ca.key \
+  -extfile probe-san.ext -extensions leaf -out probe-san.crt 2>/dev/null
+rm -f probe-san.csr probe-san.ext
+
 echo "minted in $INSTALL_DIR:"
 echo "  ca.cert.pem        (${CA_DAYS}d, name-constrained all name types, pathlen:0)"
 echo "  ca.key             (kept for the negative tests; destroy AFTER they pass)"
 echo "  leaves             ${LEAF_HOSTS[*]}"
 echo "  probe.crt          (out-of-class DNS SAN — negative test 1)"
 echo "  probe-dirname.crt  (foreign subject DN — negative test 2)"
+echo "  probe-san.crt      (out-of-scope email/URI SANs — negative test 3)"
 echo "NEXT — in order, each evidenced on the issue:"
-echo "  1. negative tests: BOTH probes MUST be rejected (SecTrust / openssl verify)"
-echo "  2. destroy ca.key ca.srl probe.key probe-dirname.key (rm -P)"
+echo "  1. negative tests: ALL probes MUST be rejected (SecTrust / openssl verify)"
+echo "  2. destroy ca.key ca.srl probe.key probe-dirname.key probe-san.key (rm -P)"
 echo "  3. enroll ca.cert.pem login-keychain -p ssl ONLY (never System, no sudo)"

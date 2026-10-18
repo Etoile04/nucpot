@@ -64,11 +64,15 @@ class TestCaNameConstraints:
     def test_excluded_ipv6_all(self, minted):
         assert "IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0" in ca_text(minted)
 
-    def test_excluded_email_all(self, minted):
-        assert "email:." in ca_text(minted)
-
-    def test_excluded_uri_all(self, minted):
-        assert "URI:." in ca_text(minted)
+    def test_permitted_email_uri_reserved_subtrees(self, minted):
+        # Bar delta (measured, see nc_der.py): excluded email:"."/URI:"." (and
+        # the RFC empty-string form) match nothing on OpenSSL 3.6.4 / SecTrust;
+        # the enforced form of "exclude email/URI all" is a reserved permitted
+        # host, behaviorally proven by test_out_of_scope_email_uri_probe_rejected.
+        host = "nc-block.reserved.nfm.invalid"
+        text = ca_text(minted)
+        assert f"email:{host}" in text
+        assert f"URI:{host}" in text
 
 
 class TestCaShape:
@@ -180,6 +184,18 @@ class TestNameConstraintEnforcement:
         combined = r.stdout + r.stderr
         assert "permitted subtree violation" in combined
 
+    def test_out_of_scope_email_uri_probe_rejected(self, minted):
+        """In-class DNS + evil email/URI SANs: the reserved permitted
+        email/URI subtrees are the enforced exclude-all (openssl error 47)."""
+        r = run(
+            ["openssl", "verify", "-CAfile", str(minted / "ca.cert.pem"),
+             str(minted / "probe-san.crt")]
+        )
+        assert r.returncode != 0
+        combined = r.stdout + r.stderr
+        assert "permitted subtree violation" in combined
+
     def test_probe_leaves_exist_for_negative_tests(self, minted):
         assert (minted / "probe.crt").exists()
         assert (minted / "probe-dirname.crt").exists()
+        assert (minted / "probe-san.crt").exists()

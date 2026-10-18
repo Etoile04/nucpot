@@ -67,8 +67,9 @@ def leaf_paths(cert_dir, host):
 def upstream_ssl_context():
     """G3: full verification context. NEVER disables verification.
 
-    NFM_EGRESS_UPSTREAM_CA_BUNDLE optionally replaces the trust anchors
-    (test hook); chain + hostname verification stay fully on.
+    NFM_EGRESS_UPSTREAM_CA_BUNDLE optionally adds a trust anchor on top of
+    the already-loaded system roots (test hook — it can only widen trust,
+    never narrow it); chain + hostname verification stay fully on.
     """
     context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
     bundle = os.environ.get("NFM_EGRESS_UPSTREAM_CA_BUNDLE")
@@ -94,25 +95,36 @@ def connect_upstream(host, port, timeout=30, connect_address=None):
         log.info("upstream-connect-fail host=%s port=%s err=%s", host, port, exc)
         raise
     try:
-        return context.wrap_socket(sock, server_hostname=host)
+        tls = context.wrap_socket(sock, server_hostname=host)
     except ssl.SSLCertVerificationError as exc:
         # G3 fail-closed: bogus chain => no connect-through
         log.warning("upstream-verify-fail host=%s port=%s err=%s", host, port, exc)
+        sock.close()
         raise UpstreamVerifyFailed(str(exc)) from exc
     except (ssl.SSLError, OSError) as exc:
         log.warning("upstream-handshake-fail host=%s port=%s err=%s", host, port, exc)
         sock.close()
         raise
+    tls.settimeout(None)
+    return tls
 
 
 def _read_request_line(sock):
-    """Read up to the request line's CRLF. Returns the first line, decoded."""
+    """Drain the full request headers through the blank line (bounded).
+
+    Returns the request line, or "" if the headers never terminate. All
+    remaining CONNECT headers must be consumed before the TLS wrap reads,
+    otherwise headers still in flight after a segmented client send get
+    parsed as the start of the ClientHello.
+    """
     data = b""
-    while b"\r\n" not in data and len(data) < MAX_REQUEST_LINE:
+    while b"\r\n\r\n" not in data and len(data) < MAX_REQUEST_LINE:
         chunk = sock.recv(MAX_REQUEST_LINE - len(data))
         if not chunk:
             break
         data += chunk
+    if b"\r\n\r\n" not in data:
+        return ""
     return data.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
 
 

@@ -10,6 +10,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import time
 
 import pytest
 
@@ -146,7 +147,7 @@ def bad_upstream(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def proxy(cert_dir, monkeypatch_factory=None):
+def proxy(cert_dir):
     """Running proxy on an ephemeral loopback port."""
     port = free_port()
     server = egress_proxy.make_server("127.0.0.1", port, str(cert_dir))
@@ -205,6 +206,7 @@ class TestUpstreamFailClosed:
         sock = egress_proxy.connect_upstream(
             DEST_HOST, good_upstream.port, timeout=10,
             connect_address=("127.0.0.1", good_upstream.port))
+        assert sock.gettimeout() is None
         sock.sendall(b"ping")
         assert sock.recv(4096) == b"ECHO:ping"
         sock.close()
@@ -243,6 +245,43 @@ class TestTerminatedFlow:
             tls = client_ctx.wrap_socket(raw, server_hostname=DEST_HOST)
             tls.sendall(b"hello-via-proxy")
             assert tls.recv(4096) == b"ECHO:hello-via-proxy"
+            tls.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_segmented_connect_headers_handshake_survives(
+            self, cert_dir, good_upstream, test_ca_env, monkeypatch):
+        """Regression: the request line and remaining headers arrive in
+        separate TCP segments — the proxy must drain all headers through the
+        blank line before wrapping, or the stray headers are read as the
+        ClientHello and the local handshake fails."""
+        crt, _, _ = test_ca_env
+        monkeypatch.setenv("NFM_EGRESS_UPSTREAM_CA_BUNDLE", str(crt))
+
+        def loopback_connector(host, port):
+            return egress_proxy.connect_upstream(
+                host, good_upstream.port, timeout=10,
+                connect_address=("127.0.0.1", good_upstream.port))
+
+        port = free_port()
+        server = egress_proxy.make_server(
+            "127.0.0.1", port, str(cert_dir), upstream_connector=loopback_connector)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client_ctx = ssl.create_default_context(
+                cafile=str(cert_dir / "ca.cert.pem"))
+            raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+            raw.sendall(f"CONNECT {DEST_HOST}:443 HTTP/1.1\r\n".encode())
+            time.sleep(0.3)
+            raw.sendall(f"Host: {DEST_HOST}\r\n\r\n".encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                buf += raw.recv(4096)
+            assert b" 200 " in buf.split(b"\r\n")[0]
+            tls = client_ctx.wrap_socket(raw, server_hostname=DEST_HOST)
+            tls.sendall(b"segmented-send")
+            assert tls.recv(4096) == b"ECHO:segmented-send"
             tls.close()
         finally:
             server.shutdown()
