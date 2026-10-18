@@ -17,6 +17,10 @@ set -euo pipefail
 
 umask 077
 
+# Resolve helpers from the script dir before `cd "$INSTALL_DIR"` below —
+# $(dirname "$0") alone would break once the cwd moves.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 INSTALL_DIR="${1:-$HOME/nfm-egress-proxy}"
 PROBE_HOST="${2:-out-of-scope.probe.nfm.invalid}"
 CA_DAYS=30
@@ -51,7 +55,7 @@ fi
 
 # OpenSSL 3.6's config parser cannot express DirName inside nameConstraints,
 # so the extension is injected as raw DER (see nc_der.py for the encoding).
-NC_HEX=$(python3 "$(dirname "$0")/nc_der.py")
+NC_HEX=$(python3 "$SCRIPT_DIR/nc_der.py")
 
 cat > openssl-ca.cnf <<EOF
 [req]
