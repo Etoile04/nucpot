@@ -32,8 +32,14 @@ cp "$PLIST" "$BACKUP"
 echo "backup: $BACKUP"
 
 echo "== set proxy env (was DIRECT pin) =="
+# Set-or-Add: bare `Set` exits 1 when the key is missing, and `set -e` would
+# abort mid-mutation leaving a half-cutover plist. Idempotent in both
+# directions and safe if a runner update ever drops the env dict entirely.
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$PLIST" 2>/dev/null || true
 set_env() {
-  /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:$1 $2" "$PLIST"
+  if ! /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:$1 $2" "$PLIST" 2>/dev/null; then
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:$1 string $2" "$PLIST"
+  fi
 }
 set_env http_proxy "$PROXY"
 set_env HTTP_PROXY "$PROXY"

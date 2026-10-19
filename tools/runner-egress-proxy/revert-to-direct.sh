@@ -13,8 +13,14 @@ LABEL="actions.runner.Etoile04-nucpot.wenjiedeMac-Studio"
 GUI="gui/$(id -u)"
 
 echo "== restore DIRECT pin env =="
+# Set-or-Add: bare `Set` exits 1 when the key is missing, and `set -e` would
+# abort before the service restart. Also covers the never-cut-over mirror
+# case (keys absent → Add, including empty-string values).
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$PLIST" 2>/dev/null || true
 set_env() {
-  /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:$1 $2" "$PLIST"
+  if ! /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:$1 $2" "$PLIST" 2>/dev/null; then
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:$1 string $2" "$PLIST"
+  fi
 }
 set_env http_proxy ""
 set_env HTTP_PROXY ""
