@@ -92,7 +92,7 @@ jobs:
       # immutable per-run audit trail.
       - name: Build and push base image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/build-base.Dockerfile
