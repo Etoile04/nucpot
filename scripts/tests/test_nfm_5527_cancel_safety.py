@@ -340,17 +340,25 @@ def test_deploy_prod_refusal_never_journals_and_queue_is_visible(
 
 
 def test_workflow_has_post_cancel_reconciliation_step():
-    """After a cancel, the run log must carry the host-side ground truth:
-    journal tail + health deploy_sha, before anyone re-triggers."""
+    """On EVERY deploy-prod conclusion (reaped cancel, unreaped cancel with a
+    green job, TERM failure — NFM-5569: runner cancel delivery is weather),
+    the run log must carry the host-side ground truth: journal tail + health
+    deploy_sha, before anyone re-triggers."""
     steps = _workflow_steps()
-    deploy_idx = next(i for i, s in enumerate(steps) if s.get("id") == "deploy")
+    cutover_idx = next(i for i, s in enumerate(steps) if s.get("id") == "cutover-assert")
     reconcile = next(
-        (s for s in steps[deploy_idx:] if s.get("id") == "post-cancel-reconcile"),
+        (s for s in steps[cutover_idx:] if s.get("id") == "post-cancel-reconcile"),
         None,
     )
-    assert reconcile is not None, "post-cancel-reconcile step must follow the deploy step"
-    assert "cancelled()" in (reconcile.get("if") or ""), "must fire exactly on cancellation"
+    assert reconcile is not None, "post-cancel-reconcile step must follow the cutover-assert step"
+    step_if = reconcile.get("if") or ""
+    assert "always()" in step_if, "must fire on every conclusion — cancel delivery is unreliable (NFM-5569)"
+    assert "cancelled()" not in step_if, "must not gate on cancel delivery — that is the NFM-5569 root cause"
     body = str(reconcile.get("run", ""))
     assert "prod-deploy.journal" in body, "must read the host apply journal"
     assert "deploy_sha" in body, "must read the ground-truth health deploy_sha (NFM-5442)"
     assert "8001/api/v1/health" in body
+    # NFM-5569 clean-path guard: deploy + cutover-assert both success →
+    # informational snapshot, orphan warning suppressed; any other outcome warns.
+    assert "steps.deploy.outcome" in body, "clean-path guard must branch on steps.deploy.outcome"
+    assert "steps.cutover-assert.outcome" in body, "clean-path guard must branch on steps.cutover-assert.outcome"

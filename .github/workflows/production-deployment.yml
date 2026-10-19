@@ -955,26 +955,6 @@ jobs:
           fi
           exit "$DEPLOY_RC"
 
-      # NFM-5527 (evidence run 38419888271, 2026-10-14): a cancelled deploy
-      # job does NOT stop the host-side apply — sudo + the ssh teardown
-      # never signal it, and the apply completed the cutover 23 min AFTER
-      # the external cancel while the run conclusion said `cancelled` and
-      # the in-job cutover guard below was skipped. On cancel, reconcile
-      # FROM THE HOST into this run log: the apply-journal tail (start/end
-      # stamps with sha+epoch) and the ground-truth health deploy_sha
-      # (NFM-5442 rule) — so the record shows what the orphan is doing
-      # before any human re-triggers. Strictly read-only; warnings, never
-      # failures (the job is already terminal).
-      - name: Post-cancel host reconciliation (NFM-5527)
-        id: post-cancel-reconcile
-        if: cancelled()
-        run: |
-          echo "== NFM-5527 post-cancel reconciliation: intended sha ${{ github.sha }} =="
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
-            "echo '-- apply journal (last 6 records) --'; tail -n 6 /usr/local/var/nfm-g2/prod-deploy.journal 2>/dev/null || echo '(no journal records yet — apply pre-NFM-5527 or never started)'; echo '-- ground-truth health deploy_sha --'; curl -fsS --max-time 10 http://localhost:8001/api/v1/health 2>/dev/null | sed -n 's/.*\"deploy_sha\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/deploy_sha=\1/p' || echo '(health probe failed)'" \
-            || echo '(ssh reconciliation failed — host unreachable from runner)'
-          echo "::warning::NFM-5527: job cancelled — the host-side apply may still be RUNNING and can still cut over (evidence 38419888271). The health deploy_sha above is ground truth (NFM-5442): reconcile it against the intended sha and read the journal before re-triggering (runbook §12)."
-
       # NFM-3777-RECURRENCE-3 (issue #1050): every prior defense lived INSIDE
       # the deploy heredoc, so the same silent-skip that ate `docker compose
       # up -d` also ate the defenses. This assertion runs in the JOB context,
@@ -1013,6 +993,42 @@ jobs:
             fi
           done
           echo "CUTOVER_ASSERT_OK: all 4 nucpot-prod containers on ${{ github.sha }}"
+
+      # NFM-5527 / NFM-5569 (evidence runs 38419888271 2026-10-14 and
+      # 39003724012 2026-10-17): a cancelled deploy job does NOT stop the
+      # host-side apply — sudo + the ssh teardown never signal it, and the
+      # apply can complete the cutover long AFTER the external cancel while
+      # the run conclusion says `cancelled`. NFM-5569 finding: the runner
+      # only reaps an in-flight step if the server's JobCancel reaches it
+      # over the broker message long-poll; on 10-17 that channel was in a
+      # GFW timeout/SSL-EOF failure cycle, the cancel was never delivered,
+      # and deploy-prod ran to natural SUCCESS — every step condition
+      # evaluated with cancelled()==false, so a step gated on cancelled()
+      # (or cancelled()||failure()) cannot cover the primary evidence case
+      # (it fires only when the runner happened to receive the cancel, as
+      # on 10-14). This step therefore ALWAYS runs and reconciles FROM THE
+      # HOST into this run log: the apply-journal tail (start/end stamps
+      # with sha+epoch) and the ground-truth health deploy_sha (NFM-5442
+      # rule). Clean-path guard: when the deploy step AND the
+      # outside-script cutover guard both succeeded in-job, the apply
+      # finished and was verified here — the snapshot stays informational
+      # and the orphan warning is suppressed. In every other case (step
+      # reaped, failed, TERM'd, or cutover left unverified) the warning
+      # fires. Strictly read-only; warnings, never failures (the job is
+      # already terminal).
+      - name: Post-deploy host reconciliation (NFM-5527/NFM-5569)
+        id: post-cancel-reconcile
+        if: always()
+        run: |
+          echo "== NFM-5527/NFM-5569 host reconciliation: intended sha ${{ github.sha }}; deploy outcome=${{ steps.deploy.outcome }}; cutover-assert outcome=${{ steps.cutover-assert.outcome }} =="
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "echo '-- apply journal (last 6 records) --'; tail -n 6 /usr/local/var/nfm-g2/prod-deploy.journal 2>/dev/null || echo '(no journal records yet — apply pre-NFM-5527 or never started)'; echo '-- ground-truth health deploy_sha --'; curl -fsS --max-time 10 http://localhost:8001/api/v1/health 2>/dev/null | sed -n 's/.*\"deploy_sha\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/deploy_sha=\1/p' || echo '(health probe failed)'" \
+            || echo '(ssh reconciliation failed — host unreachable from runner)'
+          if [ "${{ steps.deploy.outcome }}" = "success" ] && [ "${{ steps.cutover-assert.outcome }}" = "success" ]; then
+            echo "NFM-5569: deploy + outside-script cutover guard both succeeded in-job — apply completed and verified here; ground truth above is informational."
+            exit 0
+          fi
+          echo "::warning::NFM-5527/NFM-5569: deploy-prod did not complete its in-job verification (deploy=${{ steps.deploy.outcome }}, cutover-assert=${{ steps.cutover-assert.outcome }}) — the host-side apply may still be RUNNING and can still cut over (evidence 38419888271, 39003724012). The health deploy_sha above is ground truth (NFM-5442): reconcile it against the intended sha and read the journal before re-triggering (runbook §12)."
 
       # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest OUTSIDE the
       # deploy script as belt-and-braces (NFM-3777/#1050 lesson: every defense
