@@ -1,5 +1,9 @@
 # NFM-5618 — second gated confirmatory run (full 7-element NSGA-II) — 2026-10-19
 
+```prereg
+ref: NFM-5618
+```
+
 Second gated confirmatory optimization run and the **first on the full
 7-element problem** (NFM-5474 was Zr-only per NFM-4846). Criterion (2) is
 evaluated under the **NFM-5480 condition (a) floored-relative plateau rule**
@@ -23,7 +27,13 @@ the ill-conditioned relative rule whose failure mode is documented in
   → **PASS (1 pass / 0 warn / 0 fail**; signals: confirmatory-label,
   promotion-claim, pinned-seed, pareto-front-dump, convergence-metrics).
 - CI live-fire: prereg-gate workflow on push of this commit — see
-  §Reproduction for the run link (green).
+  §Reproduction for the run link (green). The **first** push
+  (run 39187309081) failed by design: this results document carried the
+  literal `[CONFIRMATORY-RUN]` label with no prereg block, tripping the
+  NFM-5312 hard-fail boundary. Fixed with the short-form citing block at the
+  top of this document (the NFM-5474 pattern); the gate caught a real
+  labeling violation on its own carrier — recorded here as live-fire
+  evidence, not papered over.
 - Sentinel (prereg algorithm key, axis 4): Petrov v3.3 `cb8b292d3` **not**
   on origin/main at run time (main @ `c79dc7409`; the three commits between
   `04edec97c` and `c79dc7409` are ops/docs — mirror-health alarm, NFM-5472
