@@ -21,6 +21,9 @@ MINT = HERE / "mint_ca.sh"
 DEST_HOST = "broker.actions.githubusercontent.com"
 OUT_OF_CLASS = "evil.example.com"
 IN_CLASS_NO_LEAF = "foo.github.com"
+# Bound for every loopback handshake/IO wait — generous because CI hosts
+# run loaded (the pre-fix 10s expired under load; see NFM-5587 de-flake).
+HANDSHAKE_TIMEOUT_S = 30
 
 
 def run(cmd, **kw):
@@ -88,16 +91,36 @@ class TestBindGuard:
 
 
 class LoopbackUpstream:
-    """Loopback TLS server speaking as DEST_HOST under a test CA."""
+    """Loopback TLS server speaking as DEST_HOST under a test CA.
+
+    Two flake defenses (CR finding on NFM-5589, root-caused on NFM-5587):
+
+    1. One handler thread per accepted connection: the module-scoped server
+       is shared across the whole module, and a serial accept loop let one
+       stalled handshake block the next test's connection until its client
+       timed out (`_ssl.c:1063: The handshake operation timed out`). Handler
+       threads are bounded by HANDSHAKE_TIMEOUT_S so a client that never
+       completes cannot leak one forever.
+    2. The loopback upstream is pinned to TLS 1.2. Under TLS 1.3 the tight
+       loopback topology hits a rare race where the client's first
+       post-handshake record is written successfully but never surfaces in
+       the server's kernel receive queue (verified at the stall: empty
+       MSG_PEEK + ssl pending 0 at the 30s timeout; ~3%/connection
+       standalone, TLS 1.2 forced = 0/200). Test-topology artifact only —
+       the production proxy's upstream leg to real github.com endpoints is
+       unaffected and stays TLS 1.3.
+    """
 
     def __init__(self, certfile, keyfile):
         self.port = free_port()
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(certfile, keyfile)
+        # TLS 1.2 pin — class docstring, defense 2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         self.sock = socket.socket()
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("127.0.0.1", self.port))
-        self.sock.listen(4)
+        self.sock.listen(16)
         self.ctx = ctx
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -109,12 +132,17 @@ class LoopbackUpstream:
                 conn, _ = self.sock.accept()
             except OSError:
                 return
-            try:
-                tls = self.ctx.wrap_socket(conn, server_side=True)
-                data = tls.recv(4096)
-                tls.sendall(b"ECHO:" + data)
-                tls.close()
-            except Exception:
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn):
+        try:
+            conn.settimeout(HANDSHAKE_TIMEOUT_S)
+            tls = self.ctx.wrap_socket(conn, server_side=True)
+            data = tls.recv(4096)
+            tls.sendall(b"ECHO:" + data)
+            tls.close()
+        except Exception:
+            with contextlib.suppress(OSError):
                 conn.close()
 
     def close(self):
@@ -202,7 +230,7 @@ def proxy(cert_dir):
 
 
 def connect_dest(addr, request_line):
-    s = socket.create_connection(addr, timeout=10)
+    s = socket.create_connection(addr, timeout=HANDSHAKE_TIMEOUT_S)
     s.sendall(request_line.encode() + b"\r\n\r\n")
     data = b""
     while b"\r\n\r\n" not in data:
@@ -243,7 +271,7 @@ class TestUpstreamFailClosed:
             egress_proxy.connect_upstream(
                 DEST_HOST,
                 bad_upstream.port,
-                timeout=10,
+                timeout=HANDSHAKE_TIMEOUT_S,
                 connect_address=("127.0.0.1", bad_upstream.port),
             )
 
@@ -253,7 +281,7 @@ class TestUpstreamFailClosed:
         sock = egress_proxy.connect_upstream(
             DEST_HOST,
             good_upstream.port,
-            timeout=10,
+            timeout=HANDSHAKE_TIMEOUT_S,
             connect_address=("127.0.0.1", good_upstream.port),
         )
         assert sock.gettimeout() is None
@@ -278,7 +306,7 @@ class TestTerminatedFlow:
             return egress_proxy.connect_upstream(
                 host,
                 good_upstream.port,
-                timeout=10,
+                timeout=HANDSHAKE_TIMEOUT_S,
                 connect_address=("127.0.0.1", good_upstream.port),
             )
 
@@ -289,7 +317,7 @@ class TestTerminatedFlow:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             client_ctx = ssl.create_default_context(cafile=str(cert_dir / "ca.cert.pem"))
-            raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+            raw = socket.create_connection(("127.0.0.1", port), timeout=HANDSHAKE_TIMEOUT_S)
             raw.sendall(f"CONNECT {DEST_HOST}:443 HTTP/1.1\r\nHost: {DEST_HOST}\r\n\r\n".encode())
             buf = b""
             while b"\r\n\r\n" not in buf:
@@ -317,7 +345,7 @@ class TestTerminatedFlow:
             return egress_proxy.connect_upstream(
                 host,
                 good_upstream.port,
-                timeout=10,
+                timeout=HANDSHAKE_TIMEOUT_S,
                 connect_address=("127.0.0.1", good_upstream.port),
             )
 
@@ -328,7 +356,7 @@ class TestTerminatedFlow:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             client_ctx = ssl.create_default_context(cafile=str(cert_dir / "ca.cert.pem"))
-            raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+            raw = socket.create_connection(("127.0.0.1", port), timeout=HANDSHAKE_TIMEOUT_S)
             raw.sendall(f"CONNECT {DEST_HOST}:443 HTTP/1.1\r\n".encode())
             time.sleep(0.3)
             raw.sendall(f"Host: {DEST_HOST}\r\n\r\n".encode())

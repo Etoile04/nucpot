@@ -95,3 +95,28 @@ Single step back to direct egress: remove the proxy env vars from the runner
 service (W4's cutover adds them; until then the runner never had them) and,
 if fully standing down, `launchctl bootout gui/$(id -u)/com.nfm.runner-egress-proxy`
 plus `security remove-trusted-cert ...` for the CA.
+
+Concretely (NFM-5587 W4): the runner's launchd agent
+(`actions.runner.Etoile04-nucpot.wenjiedeMac-Studio`) pins DIRECT egress via
+`http_proxy=""` / `https_proxy=""` / `no_proxy="*"` in its plist. The cutover
+replaces that block with `http_proxy=http://127.0.0.1:8443` /
+`https_proxy=http://127.0.0.1:8443` / `no_proxy=127.0.0.1,localhost` and
+re-bootstraps the service; the kill-switch is the single reverse command
+(restores the DIRECT-pinned plist and re-bootstraps). Plist edits only take
+effect on `bootout` + `bootstrap` — `kickstart -k` alone does not re-read
+them.
+
+Both directions are scripted (`cut-to-proxy.sh`, `revert-to-direct.sh` —
+same directory). The cutover script refuses to run unless the proxy daemon
+is healthy on 127.0.0.1:8443 and backs up the plist first; the kill-switch
+depends on nothing but the plist (works even with the proxy down) and
+restores the exact DIRECT-pin block.
+
+## W4 validation instrument
+
+`.github/workflows/egress-cutover-probe.yml` is the AC6 no-op workflow: a
+`workflow_dispatch` job on `[self-hosted, production]` whose green completion
+proves the full lane (broker dispatch, checkout over TLS, completion
+callbacks) works while the runner is proxied. It stays no-op — product work
+never rides on this workflow.
+
