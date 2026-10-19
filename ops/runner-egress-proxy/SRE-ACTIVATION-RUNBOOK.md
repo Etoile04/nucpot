@@ -92,18 +92,30 @@ curl -sS -o /dev/null -w '%{http_code}\n' -x http://127.0.0.1:8443 \
 # (a stale-generation CA once sat in the keychain; grep for the CA name FALSE-PASSES.
 #  Hash the cert DER on BOTH sides — shasum of the .pem FILE bytes is NOT the cert hash.)
 security dump-trust-settings                               # exactly ONE nfm TRUST entry, ssl policy
-security dump-trust-settings -d                            # admin domain: empty
+security dump-trust-settings -d                            # admin domain — see the anchor note below
 openssl x509 -in ~/nfm-egress-proxy/ca.cert.pem -outform DER | shasum -a 256
 security find-certificate -a -c "NFM runner egress proxy CA (staged lane)" -Z \
   | awk '/^SHA-256 hash:/ {print tolower($3)}'             # one hash per keychain RECORD of this name
-# EVERY -Z hash line must EQUAL the file hash above. Do NOT pipe the concatenated -p PEM
-# through a single `openssl x509` — it parses only the FIRST cert and a stale gen would
-# false-pass. An extra/mismatched record WITHOUT a trust entry (e.g. a W4/NFM-5587 test
-# CA or a stale generation) is not by itself a trust failure — but STOP and reconcile it
-# against the NFM-5587 evidence before activating; only then proceed.
+security find-certificate -a -Z -c "NFM runner egress proxy CA (staged lane)" \
+  /Library/Keychains/System.keychain \
+  | awk '/^SHA-256 hash:/ {print tolower($3)}'             # admin domain: post-anchor state below
+# EVERY -Z hash line must EQUAL the file hash above — in BOTH domains. Do NOT pipe the
+# concatenated -p PEM through a single `openssl x509` — it parses only the FIRST cert and
+# a stale gen would false-pass. An extra/mismatched record WITHOUT a trust entry (e.g. a
+# W4/NFM-5587 test CA or a stale generation) is not by itself a trust failure — but STOP
+# and reconcile it against the NFM-5587 evidence before activating; only then proceed.
+# ADMIN-DOMAIN EXPECTATION (post G2-deviation anchor, ADR-024 §8 / CTO ruling 28cb62a9):
+#   AFTER the system-domain enrollment has run: EXACTLY ONE hash line for the System
+#   keychain, EQUAL to the file hash above. An empty admin domain is ALSO a valid state —
+#   it means enrollment has not run yet (operator card 303ca231 unaccepted) and
+#   activation stays GATED. Do NOT enroll from this runbook: the anchor is an
+#   operator sudo+GUI step pinned by CTO ruling C1 (this exact CA by fingerprint).
+#   Any OTHER admin-domain nfm entry, or a fingerprint mismatch = STOP.
 # Authoring-time state: file hash 08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4;
 # trust held EXACTLY that one CA (an untrusted 5-day W4 test CA record was transiently
-# present during authoring). If a re-mint ever happens (see 2.4), recompute and update §0.
+# present during authoring). If a re-mint ever happens (see 2.4), recompute and update §0
+# — and per ruling C7 the deviation re-ruling is per-CA-generation: a re-minted CA needs
+# its own ruling BEFORE any new anchor.
 
 # 2.4 CA validity (minted 2026-10-18, ≤30 d — an expired CA fails activation silently)
 openssl x509 -enddate -noout -in ~/nfm-egress-proxy/ca.cert.pem
@@ -221,8 +233,15 @@ trust:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.nfm.runner-egress-proxy
-security remove-trusted-cert ~/nfm-egress-proxy/ca.cert.pem   # de-escalation is NOT GUI-gated on this host
+security remove-trusted-cert ~/nfm-egress-proxy/ca.cert.pem   # login domain (NOT GUI-gated on this host)
+sudo security remove-trusted-cert -d -k /Library/Keychains/System.keychain \
+  ~/nfm-egress-proxy/ca.cert.pem                              # admin-domain anchor (ADR-024 §8) — operator sudo
+# verify both domains: dump-trust-settings shows no nfm entry; dump-trust-settings -d is empty
 ```
+
+If the admin-domain anchor was never enrolled (pre-anchor state, §2.3), the `sudo`
+removal is a no-op — run the verify line anyway; `-d` empty is the target state either
+way.
 
 ## 7. Sunset
 
