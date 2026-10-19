@@ -10,7 +10,9 @@ end-to-end) and is not used.
 
 **Staged, not active.** Building and arming this daemon never changes runner
 egress: the runner stays on DIRECT. Activation is SRE-gated by the
-pre-authorized ADR-024 triggers (see `docs/adr/ADR-024-*.md` §4).
+pre-authorized ADR-024 triggers (see `docs/adr/ADR-024-*.md` §4) and follows
+`ops/runner-egress-proxy/SRE-ACTIVATION-RUNBOOK.md` (pre-activation checks,
+cutover, kill-switch).
 
 ## Hardening bar mapping (G1–G4)
 
