@@ -93,9 +93,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' -x http://127.0.0.1:8443 \
 security dump-trust-settings                               # exactly ONE nfm entry, ssl policy
 security dump-trust-settings -d                            # admin domain: empty
 openssl x509 -in ~/nfm-egress-proxy/ca.cert.pem -outform DER | shasum -a 256
-security find-certificate -a -c "NFM runner egress proxy CA (staged lane)" -p \
-  | openssl x509 -outform DER | shasum -a 256              # every enrolled gen must EQUAL the file hash
-# Authoring-time expected (both lines): 08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4
+security find-certificate -a -c "NFM runner egress proxy CA (staged lane)" -Z \
+  | awk '/^SHA-256 hash:/ {print tolower($3)}'             # one hash per enrolled gen — EVERY line
+# must EQUAL the file hash above. Do NOT pipe the concatenated -p PEM through a single
+# `openssl x509` — it parses only the FIRST cert and a stale gen would false-pass.
+# Authoring-time expected (file hash and every enrolled gen): 08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4
 # If a re-mint ever happens (see 2.4), recompute from the file and update §0.
 
 # 2.4 CA validity (minted 2026-10-18, ≤30 d — an expired CA fails activation silently)
