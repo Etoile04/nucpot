@@ -153,17 +153,59 @@ Facts for the adjudication:
   secondary miss gates the run, requires an archived-front GD variant, or is
   accepted with the resampling explanation is NDE's ruling to make.
 
+### Adjudication — terminal (2026-10-19, NFM-5625 verdict `48b3fe8c`)
+
+**Option (c) ACCEPTED — the deviation does not gate the run; no
+archived-front re-run required; the run is credited as converged.** Ruled by
+NDE (own identity) on a fresh bit-identical seed-42 reproduction plus
+discriminating statistics (evidence script
+`experiments/nfm5625_nde_gd_adjudication.py`, commit `9602a467f`), not on
+the filed narrative. Decisive findings:
+
+- **Stationary churn, not drift**: adjacent-window GDs flat at 0.028–0.032
+  across gens 70–100, displacement symmetric (reverse GD 0.0354).
+- **Points never leave the discovered front**: gen-90 and final populations
+  sit 0.0104 / 0.0122 from the 5,839-point union-archive front while sitting
+  0.0370 from each other — the population's *sample* rotates (17/200
+  verbatim survivors under rank-1 crowding replacement); the front does not
+  move.
+- **Threshold below the sampling noise floor**: GD/NN-RMS = 0.87 — the
+  displacement expected between two independent samplings of one front. The
+  0.01 absolute threshold was implicitly calibrated on NFM-5474's 1-D curve
+  front (spacing ~N⁻¹ ≈ 0.005) and does not transfer to this 2-D front
+  manifold (spacing ~N^(−1/2) ≈ 0.035) — dimensional miscalibration, the
+  same ill-conditioning species NFM-5480 established is replaced in the
+  rule, not enforced.
+
+**Binding forward conditions (successor to NFM-5480 (a), for the next
+prereg generation and any ≥3-objective gated run):** (a′) replace the raw
+GD secondary with the resampling-null form (`GD(front@N−10, final) ≤ RMS
+NN-spacing of the final front`; reads 0.0370 ≤ 0.0424 here) or an
+archive-referenced form — state which in the convergence key; (b′) cite
+NFM-5625 and this section; (c′) no grandfathering on the new form; (d′)
+floors g5/g6 still gate promotion; run stays non-promotion/non-dispatch.
+
+**KR-OPT-Q4 S3 (NFM-5312) credited 1.0** by the verdict: full 7-element
+problem, own carrier, gate green end-to-end, sole deviation resolved through
+the prereg's own sanctioned adjudication path — compliance, not
+circumvention.
+
 ## Follow-ups
 
-- NDE adjudication of the GD-secondary deviation (child issue on NFM-5618,
-  condition (c) routing) — gates the `done` flip of NFM-5618.
-- KR-OPT-Q4 S3 (NFM-5312): "S3 stays 0.0 until a real confirmatory
-  optimization run passes the gate end-to-end on its own carrier" — this run
-  passed the dual-check gate end-to-end on its own carrier NFM-5618 (strict
-  local verify PASS + CI green); S3 crediting is subject to the NDE ruling
-  above.
-- Sentinel continues to ride the carrier: Petrov v3.3 `cb8b292d3` remains
-  off origin/main as of run time.
+- ~~NDE adjudication of the GD-secondary deviation~~ — **RESOLVED
+  2026-10-19**: NFM-5625 verdict `48b3fe8c`, Option (c) accepted, run
+  credited as converged (see §Deviation analysis / Adjudication).
+- KR-OPT-Q4 S3 (NFM-5312): **credited 1.0** per the NFM-5625 verdict — this
+  run passed the dual-check gate end-to-end on its own carrier NFM-5618
+  (strict local verify PASS + CI green, one by-design live-fire catch); the
+  condition-(c) routing with a filed, evidence-backed adjudication is
+  compliance, not circumvention.
+- Forward: the next prereg generation adopts the NFM-5625 condition (a′)
+  resampling-null or archive-referenced GD secondary (binding on any
+  ≥3-objective gated run), citing NFM-5625 and this doc.
+- Sentinel note (run-time state, superseded on any future surface change):
+  Petrov v3.3 `cb8b292d3` remained off origin/main for the entire run
+  window.
 
 ## Reproduction
 
