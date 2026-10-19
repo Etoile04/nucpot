@@ -136,9 +136,40 @@ contingency ladder (egress-relocated runner review) — **never a silent
 Listener restarts, the `useV2Flow` flip, and plist/proxy-env changes are proven
 no-ops. **Do not re-try.**
 
+## 8. G2 deviation addendum — system-domain anchor (CTO ruling `28cb62a9`, 2026-10-19)
+
+G2 (§3) pins MITM-CA trust to the login keychain only. Measured on NFM-5587
+(W4 AC6, evidence comment `adec11e2`, 2026-10-19): the runner's .NET 8.0.30
+Apple-PAL TLS validation does not honor USER-domain trust settings in the
+runner's service context — `SecTrust`-equivalent CLI checks pass in both
+interactive and launchd contexts while the runner itself rejects the CA
+(`UntrustedRoot` from the first request). The login-keychain-only posture is
+therefore **unusable for the runner lane on this host**.
+
+The CTO ACCEPTED a scoped deviation (ruling `28cb62a9` on NFM-5587,
+2026-10-19 05:28Z, conditions C1–C7):
+
+- **C1 scope:** one system-domain anchor (`sudo security add-trusted-cert
+  -d -p ssl -k /Library/Keychains/System.keychain`), THIS CA by fingerprint
+  (`08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4`),
+  ssl policy only. No other trust-policy changes; the login entry stays.
+- **C2 non-waivable backstops** (unchanged from §3): <=30 d validity,
+  keyless after mint, name constraints, allowlist.
+- **C3** negative battery re-run THROUGH the system domain before any window.
+- **C4 sequencing:** enroll -> headless verify -> minutes-scale cutover with
+  clean first handshake -> revert -> only then the >=1 h window.
+- **C5 rollback:** wired into the SRE activation runbook §6 (both domains).
+- **C6** this addendum, routed via CPO.
+- **C7** the deviation is **per-CA-generation** — a re-minted CA requires a
+  fresh ruling before any new anchor.
+
+Sunset (§6) and the no-ops list (§7) are unchanged. Full-stand-down removal
+of the anchor is operator-owned sudo (runbook §6).
+
 ---
 
 *Ruling source of record: [CTO-RULING] comment `5ebae38d` on NFM-5582
 (2026-10-18 05:22Z); post-activation validation addendum `5f1b8a2d`
-(2026-10-18 05:28Z). Build execution and acceptance live on NFM-5583
-(AC1–AC7); this document satisfies AC2 / G7.*
+(2026-10-18 05:28Z); G2 deviation ruling `28cb62a9` on NFM-5587
+(2026-10-19 05:28Z, conditions C1–C7, addendum §8). Build execution and
+acceptance live on NFM-5583 (AC1–AC7); this document satisfies AC2 / G7.*
