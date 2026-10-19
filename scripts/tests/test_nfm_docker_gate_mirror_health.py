@@ -756,6 +756,321 @@ def test_summarize_prod_dark_when_every_prod_mirror_down():
     assert summary.prod_mirror_healthy is False
 
 
+# ---- NFM-5567: 2-tick alarm-debounce grace on the alarm arm --------------------
+#
+# G2.7's alarm arm reds on ANY single tripped tick, but the fleet's chronic
+# failure mode is a lone ~30s mirror blip (daocloud TLS timeout) that
+# self-heals by the next tick. The grace window debounces exactly that:
+# a tripped tick inside the window writes a NON-verdict `grace` record
+# (full alarm detail, operator-visible), only the Nth CONSECUTIVE tripped
+# tick writes the alarm. latest_verdict() still reads only alarm/recovery,
+# so G2.7 stays green through a blip without weakening a sustained-outage
+# alarm. NFM-4805 recovery semantics are untouched: the first healthy tick
+# after an ALARM still writes recovery immediately, and a healthy tick
+# resets the debounce counter. The post-startup first tick bypasses grace
+# (restart into a dark fleet alarms at once).
+
+
+def _grace_mirrors():
+    return (
+        Mirror(name="daocloud", url="https://docker.m.daocloud.io", fronts_prod_images=True),
+        Mirror(name="1panel", url="https://docker.1panel.live", fronts_prod_images=True),
+    )
+
+
+def _read_records(audit_path):
+    return [
+        json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()
+    ]
+
+
+def test_run_once_single_blip_writes_grace_not_alarm(tmp_path, monkeypatch):
+    """One tripped tick inside the grace window writes a non-verdict `grace`
+    record, NOT an alarm — latest_verdict() is untouched, so a single ~30s
+    mirror blip cannot red G2.7."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once, latest_verdict
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=False,
+        consecutive_tripped=0,
+        grace_ticks=2,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["grace"]
+    # grace is not a verdict event: no alarm/recovery exists, so the G2.7
+    # reader still sees "never alarmed" (accepted as a pass).
+    assert latest_verdict(str(audit_path)) is None
+
+
+def test_run_once_sustained_trip_alarms_on_tick_n(tmp_path, monkeypatch):
+    """A sustained outage alarms on exactly the Nth (default 2nd) consecutive
+    tripped tick: tick 1 graces, tick 2 alarms — the debounce delays the
+    alarm by one cadence slot, never suppresses it."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once, latest_verdict
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=False,
+        consecutive_tripped=0,
+        grace_ticks=2,
+    )
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=False,
+        consecutive_tripped=1,
+        grace_ticks=2,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["grace", "alarm"]
+    verdict = latest_verdict(str(audit_path))
+    assert verdict is not None and verdict["event"] == "alarm"
+
+
+def test_run_once_blip_then_healthy_resets_counter_no_recovery(tmp_path, monkeypatch):
+    """A blip inside the grace window followed by a healthy tick: no recovery
+    record is written (no alarm preceded it — recovery only fires on the
+    alarmed→healthy transition), and the debounce counter resets, so the
+    NEXT blip graces again instead of alarming (blips do not accumulate)."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    state = {"dark": True}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    # tick 1: tripped blip -> grace
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    # tick 2: healthy -> NO record (grace tick was not an alarm; the healthy
+    # steady-state silence of NFM-4805 applies), counter resets
+    state["dark"] = False
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=1, grace_ticks=2,
+    )
+    # tick 3: tripped again with the RESET counter -> grace again, not alarm
+    state["dark"] = True
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["grace", "grace"]
+
+
+def test_run_once_startup_tripped_bypasses_grace(tmp_path, monkeypatch):
+    """The post-startup first tick bypasses grace: a watchdog restart into a
+    dark fleet alarms immediately (previous_tripped=None), so grace can
+    never mask an outage that spans a restart."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=None,
+        consecutive_tripped=0,
+        grace_ticks=5,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["alarm"]
+
+
+def test_grace_event_carries_alarm_detail_fields(tmp_path, monkeypatch):
+    """The grace record carries the full alarm detail (plus debounce context),
+    so an operator triaging the log sees WHICH mirror blipped without a
+    re-probe — a suppressed alarm must still explain itself."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=False,
+        consecutive_tripped=0,
+        grace_ticks=2,
+    )
+    record = _read_records(audit_path)[0]
+    assert record["event"] == "grace"
+    assert record["healthy_count"] == 0  # both mirrors dark in this scenario
+    assert record["threshold"] == 2
+    assert record["prod_mirror_healthy"] is False  # both prod mirrors dark
+    assert record["unhealthy"] == ["daocloud", "1panel"]
+    detail = record["unhealthy_detail"]
+    assert {entry["name"] for entry in detail} == {"daocloud", "1panel"}
+    assert all(entry["status"] == "tls_timeout" for entry in detail)
+    assert all("http_status" in entry and "error" in entry and "duration_ms" in entry for entry in detail)
+    assert record["consecutive_tripped"] == 1
+    assert record["grace_ticks"] == 2
+
+
+def test_latest_verdict_ignores_grace_records(tmp_path, monkeypatch):
+    """G2.7's reader must stay green through a grace blip: after a recovery
+    verdict, a grace record must NOT become the standing verdict (it is not
+    alarm/recovery), so probe_g2.sh keeps passing on a blipped fleet."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once, latest_verdict
+
+    state = {"dark": False}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    # tick 1: healthy first tick after startup -> recovery verdict
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=None, consecutive_tripped=0, grace_ticks=2,
+    )
+    # tick 2: blip -> grace record appended AFTER the recovery
+    state["dark"] = True
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    verdict = latest_verdict(str(audit_path))
+    assert verdict is not None
+    assert verdict["event"] == "recovery"
+    assert verdict["healthy_count"] == 2
+
+
+def test_run_once_grace_disabled_alarms_immediately(tmp_path, monkeypatch):
+    """grace_ticks=0 (the _run_once function default) keeps the classic
+    alarm-on-every-tripped-tick behavior, so direct callers and any pinned
+    integrations see no change until main() opts in."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def dark(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "timed out", 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", dark)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(),
+        audit,
+        threshold=2,
+        timeout=1.0,
+        previous_tripped=False,
+        consecutive_tripped=0,
+        grace_ticks=0,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["alarm"]
+
+
+def test_main_threads_default_grace_and_startup_records_it(tmp_path, monkeypatch):
+    """End-to-end: main() defaults --grace-ticks to 2, records it on startup,
+    and threads it into the tick loop — a steady-healthy-then-blip sequence
+    appends [startup, recovery, grace] with NO alarm."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import main
+
+    cfg = tmp_path / "mirrors.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mirrors": [
+                    {
+                        "name": "daocloud",
+                        "url": "https://docker.m.daocloud.io",
+                        "fronts_prod_images": True,
+                    },
+                    {"name": "1panel", "url": "https://docker.1panel.live"},
+                ]
+            }
+        )
+    )
+    log = tmp_path / "audit.log"
+
+    state = {"dark": False}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+
+    sleeps = {"count": 0}
+
+    # The blip lands on tick 2: the first sleep (end of tick 1) flips the
+    # fleet dark, the second sleep exits the loop after the grace tick.
+    def fake_sleep(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            state["dark"] = True
+            return
+        raise SystemExit(0)
+
+    monkeypatch.setattr(mirror_health.time, "sleep", fake_sleep)
+
+    try:
+        main(["--config", str(cfg), "--log", str(log), "--interval", "30"])
+    except SystemExit as exit_code:
+        assert exit_code.code == 0, f"main() exited non-zero: {exit_code.code}"
+
+    records = _read_records(log)
+    assert [record.get("event") for record in records] == ["startup", "recovery", "grace"]
+    assert records[0]["grace_ticks"] == 2
+    assert records[2]["consecutive_tripped"] == 1
+
+
 def test_repo_mirrors_fleet_is_current():
     """NFM-5553: the shipped mirrors.json must not carry dead mirrors.
 
