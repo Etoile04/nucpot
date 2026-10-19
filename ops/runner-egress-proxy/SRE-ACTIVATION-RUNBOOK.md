@@ -40,7 +40,8 @@ Trust state at authoring (W3 close, NFM-5586 done 2026-10-19): login keychain
 holds EXACTLY ONE nfm CA entry under the `ssl` policy — sha256 fingerprint
 `08:D4:72:15:63:43:49:56:5E:9D:5C:FF:DF:65:47:14:59:A0:7C:8C:D0:D0:1A:BA:19:29:80:1E:D6:FC:05:D4`
 == the staged `~/nfm-egress-proxy/ca.cert.pem` (minted 2026-10-18 07:28Z,
-validity ≤30 d); admin domain (`dump-trust-settings -d`) is empty.
+expires 2026-11-17 07:28Z, validity ≤30 d); admin domain
+(`dump-trust-settings -d`) is empty.
 
 ## 1. Pre-authorized activation triggers
 
@@ -90,15 +91,19 @@ curl -sS -o /dev/null -w '%{http_code}\n' -x http://127.0.0.1:8443 \
 # 2.3 trust state — FINGERPRINT-MATCH, never presence-match
 # (a stale-generation CA once sat in the keychain; grep for the CA name FALSE-PASSES.
 #  Hash the cert DER on BOTH sides — shasum of the .pem FILE bytes is NOT the cert hash.)
-security dump-trust-settings                               # exactly ONE nfm entry, ssl policy
+security dump-trust-settings                               # exactly ONE nfm TRUST entry, ssl policy
 security dump-trust-settings -d                            # admin domain: empty
 openssl x509 -in ~/nfm-egress-proxy/ca.cert.pem -outform DER | shasum -a 256
 security find-certificate -a -c "NFM runner egress proxy CA (staged lane)" -Z \
-  | awk '/^SHA-256 hash:/ {print tolower($3)}'             # one hash per enrolled gen — EVERY line
-# must EQUAL the file hash above. Do NOT pipe the concatenated -p PEM through a single
-# `openssl x509` — it parses only the FIRST cert and a stale gen would false-pass.
-# Authoring-time expected (file hash and every enrolled gen): 08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4
-# If a re-mint ever happens (see 2.4), recompute from the file and update §0.
+  | awk '/^SHA-256 hash:/ {print tolower($3)}'             # one hash per keychain RECORD of this name
+# EVERY -Z hash line must EQUAL the file hash above. Do NOT pipe the concatenated -p PEM
+# through a single `openssl x509` — it parses only the FIRST cert and a stale gen would
+# false-pass. An extra/mismatched record WITHOUT a trust entry (e.g. a W4/NFM-5587 test
+# CA or a stale generation) is not by itself a trust failure — but STOP and reconcile it
+# against the NFM-5587 evidence before activating; only then proceed.
+# Authoring-time state: file hash 08d47215634349565e9d5cffdf65471459a07c8cd0d01aba1929801ed6fc05d4;
+# trust held EXACTLY that one CA (an untrusted 5-day W4 test CA record was transiently
+# present during authoring). If a re-mint ever happens (see 2.4), recompute and update §0.
 
 # 2.4 CA validity (minted 2026-10-18, ≤30 d — an expired CA fails activation silently)
 openssl x509 -enddate -noout -in ~/nfm-egress-proxy/ca.cert.pem
