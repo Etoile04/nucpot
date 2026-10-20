@@ -792,3 +792,18 @@ done
 echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
 echo "==> DEPLOY SCRIPT CUTOVER END (anchor for NFM-3777 diagnosis)"
 echo "DEPLOY_SCRIPT_COMPLETED_OK sha=${DEPLOY_SHA}"
+
+# NFM-5578 / ADR-013 G5 amendment (NFM-5101 CTO ruling 2026-10-18, Option
+# D): after a SUCCESSFUL deploy, fire the sanctioned G5 cleanup wrapper
+# with args byte-identical to the 20:20Z daily cron. Deliberately AFTER
+# the completion anchor so cutover watchers are never delayed by prune
+# minutes. Never fatal (ruling constraint 1): the helper is exit-0 by
+# construction and a trim failure logs an SRE-visible WARNING while the
+# deploy stays green — the daily cron backstops. Concurrency vs the cron
+# and overlapping deploys is guarded inside the wrapper entry (single
+# flock-class guard, ruling constraint 2).
+if [ -f scripts/post_deploy_trim.sh ]; then
+  bash scripts/post_deploy_trim.sh || echo "WARNING (NFM-5578): post-deploy trim helper itself failed rc=$? — deploy NOT affected; the 20:20Z daily cron backstop converges"
+else
+  echo "==> NOTE (NFM-5578): scripts/post_deploy_trim.sh absent from this checkout — post-deploy G5 trim skipped"
+fi

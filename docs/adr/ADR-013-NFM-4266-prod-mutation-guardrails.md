@@ -63,6 +63,38 @@ Assume a future bypass exists. Bound its dwell time.
 
 All prod mutations route exclusively through one of: (i) GH Actions `production-deployment.yml`; (ii) `deploy_prod.sh` on-host; (iii) an enumerated [NFM-1664](/NFM/issues/NFM-1664) SRE recovery action. Every other actor class — desktop agent sessions, ad-hoc shells, humans at a terminal — is **read-only on prod**. A desktop session with a prod-touching intent must file a Paperclip issue describing the change and execute it through a sanctioned path; terse-prompt continuation (`继续`) over a long-lived session never authorizes prod mutation. This policy is the norm G1/G2 enforce technically; violations after this ADR are deliberate bypasses, not ambiguity.
 
+### G5 amendment — image-reclaim cadence (amended 2026-10-18, NFM-5101 CTO Option D ruling)
+
+The G5 sanctioned deploy path originally left image-reclaim on a **time-driven** once-daily cadence: the [NFM-4270](/NFM/issues/NFM-4270) G2 entry `/usr/local/lib/nfm-g2/run-cleanup.sh`, fired by the `com.nfm.g2.cleanup-daily` launchd cron at 20:20Z ([NFM-4802](/NFM/issues/NFM-4802); its `--until` age-gate semantics descend from [NFM-4224](/NFM/issues/NFM-4224) Option 2). The [NFM-5101](/NFM/issues/NFM-5101) CTO ruling (2026-10-18, adopting the October-measured evidence from [NFM-5574](/NFM/issues/NFM-5574)) closed a cadence mismatch: **ingress is event-driven (per deploy), reclaim was time-driven (per day)**.
+
+**Corrected ingress model** (LE first-hand 2026-10-17; supersedes the September nominal-tag estimate of "~18 GB/day at D=8", which summed per-service tags without shared-layer dedupe):
+
+- Per-deploy marginal: **+2.75 GB/day net** layer-deduped (4.21 GB nominal per generation).
+- keep-5 rollback floor: **~44.2 GB** steady state.
+- Dangling residue: **~2.29 GB per deploy cycle** (previously reclaimed only at the next wrapper beat).
+- Peak pool = floor + D × 2.75 GB; a D=8 rerun day reaches ~66–70 GB ≈ **94% df used pre-cron** with the cron hours away — the exposure this amendment closes. At D≤4 the once-daily cron held (2026-10-17: images net **down** 2.2 GB despite two deploys).
+
+**Options considered (ruling analysis):**
+
+- **A — cut rollback depth keep-5 → keep-3: rejected.** Buys amplitude by trading safety margin for headroom; unnecessary once D exists.
+- **B/C — age-gated `--until 24/48` passes: rejected.** They prune by time, not generation count; in low-cadence periods they cut below the keep-5 floor (the same floor-erosion risk class as A, cadence-dependent) and add churn.
+- **D — per-deploy mid-day trim: adopted.** Reclaim frequency matches accumulation frequency: amplitude collapses to ≤1 generation + residue (±5 GB swing) at any deploy rate, and the per-cycle dangling residue is caught at each beat.
+
+**Ruling (binding).** After each successful prod deploy, fire the G5 cleanup wrapper with args **byte-identical to the installed daily cron**: `--keep-candidates 2 --keep-shas 5`, `--until` off. The **keep-5 rollback depth is unchanged**; the **20:20Z daily cron stays unchanged** as the belt-and-braces backstop; whatever host-side file the repo template manages stays under the NFM-4802 lockstep-drift rule. Original NFM-5101 AC2/AC3 (plist + template gate-value edits) are **superseded** — the amendment ships as the per-deploy hook plus a host-side invocation path, not a gate-value change.
+
+**Binding implementation constraints (delegated verbatim):**
+
+1. Trim failure must never fail or roll back a deploy — log an SRE-visible WARNING; the daily cron backstops.
+2. Concurrency guard (flock-class) against the daily cron and overlapping deploys — no parallel prune runs.
+3. Idempotent — keep-N is convergent; deploy-retry safe.
+4. Args byte-identical to installed cron semantics; prefer a single shared source for the arg set.
+
+**Implementation** ([NFM-5578](/NFM/issues/NFM-5578), dispatched from [NFM-5576](/NFM/issues/NFM-5576)): `scripts/post_deploy_trim.sh` fired from the `deploy_prod.sh` success tail **after** the `DEPLOY_SCRIPT_COMPLETED_OK` anchor (cutover watchers are never delayed by prune minutes); it execs the wrapper directly as the deploy identity, or via the sanctioned `sudo -n -u nfmdeploy` entry otherwise, and is exit-0 by construction (constraint 1). The concurrency guard lives **inside the `run-cleanup.sh` entry** — the single point both prune callers traverse — so the cron path and the hook path share one lock (constraint 2); a busy lock SKIPs (exit 0) because keep-N converges on whichever pass holds it (constraint 3). The hook's arg literals are pinned by `scripts/tests/test_post_deploy_trim.py` against the cron plist's `ProgramArguments` so cron and hook cannot drift apart (constraint 4). The host-side invocation route (operator sudoers vs SRE watch-hook) is a separate operator decision; the repo-side hook works under either.
+
+**SRE battery amendment (part of the ruling).** Add a docker-side (`docker system df`) reading alongside df-based tripwires — APFS lazy-release lags docker-side reclaim by hours (2026-10-17: a 9.1 GB reclaim was still materializing in df 2h+ later), so df-only escalations fire on lag, not real pool growth. AC4's original "under 85% df" target predates the measured model: steady state at D≤4 is ~88–89% with keep-5, unreachable by any keep-N choice alone. Re-baselined verify criterion: **7 days post-ship, no manual reclaim; docker-side image peak ≤ ~52 GB (floor + 1 generation + residue); no df > 92% sustained** — aligned with the [NFM-4369](/NFM/issues/NFM-4369) 88% escalation line.
+
+**Reference chain:** [NFM-4224](/NFM/issues/NFM-4224) (Option-2 age-gate semantics — the rejected B/C lineage), [NFM-4270](/NFM/issues/NFM-4270) (the G2 sanctioned cleanup entry this hook invokes), [NFM-4802](/NFM/issues/NFM-4802) (daily cron + lockstep-drift rule), [NFM-5101](/NFM/issues/NFM-5101) (ruling), [NFM-5574](/NFM/issues/NFM-5574) (measured evidence), [NFM-5576](/NFM/issues/NFM-5576) → [NFM-5578](/NFM/issues/NFM-5578) (implementation).
+
 ### Directional (no work authorized now): workstation/prod-host separation
 
 The structural smell: an interactive, autonomy-leaning desktop harness shares a host and docker socket with prod state. Long-term the right shape is separation (distinct prod host or distinct deploy identity + socket group). Recorded as direction; revisit if G1+G2 prove operationally too costly.
@@ -148,6 +180,7 @@ The composite test for the whole set: replay the NFM-4264 scenario end-to-end fr
 | G1 + G3 (harness layer) | CTO → CPO child issue (NFM-4267) | Hermes `command_allowlist`/approvals/tirith + gateway logging |
 | G2 + G4 (host + repo layer) | CTO → CPO child issue (NFM-4268) | Host gating mechanism + deploy manifest & drift check (cron) |
 | G5 policy | This ADR + [NFM-4266](/NFM/issues/NFM-4266) comment | No code; cited by G1 refusal UX |
+| G5 image-reclaim amendment | This ADR amendment ([NFM-5101](/NFM/issues/NFM-5101) CTO Option D ruling); hook + entry lock implemented by [NFM-5578](/NFM/issues/NFM-5578) | `scripts/post_deploy_trim.sh` from the deploy success tail + the `run-cleanup.sh` entry's shared flock-class guard; cron + keep-5 unchanged; arg set pinned to the cron plist by test |
 | G6 (system proxy assumptions, amendment) | This ADR amendment ([NFM-4582](/NFM/issues/NFM-4582)); durable monitor is [NFM-4579](/NFM/issues/NFM-4579) Part 2 sentinel cron; supersedes [NFM-4225](/NFM/issues/NFM-4225) for prod runner scope | Documentation only; no new code. Runner-side isolation is plist-explicit per [NFM-4567](/NFM/issues/NFM-4567). |
 | G7 (local-MITM CA hardening standard, amendment) | This ADR amendment ([NFM-4582](/NFM/issues/NFM-4582)); issuance and trust enrolment execute under [NFM-4592](/NFM/issues/NFM-4592) AC1/AC2/AC4/AC5/AC7 | Documentation only; codifies the standing bar for any NFMD terminating-proxy CA. The four controls (name constraints, 30-day validity, CA key destroyed after leaf, login-keychain/`-p ssl` scope) are mandatory, not advisory. |
 | Directional separation | This ADR §2 only | No issue until G1+G2 cost data exists |
