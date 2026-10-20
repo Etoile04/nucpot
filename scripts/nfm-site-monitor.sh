@@ -138,6 +138,48 @@
 #     mode=/fetches= evidence token, so the next flap adjudicates
 #     host-egress vs edge in ONE log line.
 #
+# NFM-5667 (2026-10-20) — streak-1 full-edge page rule (NFM-5666 code half;
+# CTO ruling NFM-5664 comment 35aa85eb §4, 2026-10-20T00:15Z):
+#   - Gap: the base-probe lane needs STREAK_THRESHOLD=2 consecutive failing
+#     probes before paging, so a full-edge P0 that recovers inside one probe
+#     interval goes UNPAGED (Ep#4 20:03Z + Ep#5 20:19Z 10-19: both real
+#     upstream-blackhole outages, sentinel line read "6 checks failed, 2 P0,
+#     hard status codes (502/530)" at streak 1 -> WARN only).
+#   - Rule: PAGE at streak 1 IFF ALL FOUR conjuncts hold on the current
+#     failing probe: (1) >=5 of the 6 EDGE checks failed (the two monitored
+#     hostnames; the P2 Supabase third-party check is outside the rule);
+#     (2) >=2 P0 checks among them; (3) the failure set spans BOTH hostnames
+#     (full-edge; NFM-5262 diurnal flaps are partial and latency-class and
+#     never match); (4) dominant failure class is hard edge status codes
+#     (502/530 and other 52x/53x) — latency-timeout-dominant sets are
+#     EXCLUDED and keep the streak>=2 lane. Population basis: 3/3 prior
+#     signature matches were real outages.
+#   - Rate limit: max 1 page / 30 min for this class, from a counter
+#     INDEPENDENT of the streak>=2 lane (S1_PAGE_COOLDOWN; the streak>=2
+#     lane's pacing — REMINDER_RUNS — never consumes it and vice versa).
+#   - Page payload (ruling amendment 1): window timestamps (first-failure at
+#     page time; the green run completes the window on its RECOVERY line),
+#     per-hostname status-class counts, the rolling-30d full-edge episode
+#     count toward ADR-025 D2 trigger T2 with the ledger delta, and the
+#     NFM-5664 ruling reference — pages double as T2 counting evidence.
+#   - T2 ledger basis (ruling §2): BY-EPISODE — distinct full-edge P0
+#     windows separated by >=10 min of green each count once. Episode state
+#     (open/close/ledger) lives in its OWN state file (NFM_MONITOR_S1_STATE)
+#     so the streak>=2 lane's state format and every pre-existing
+#     state_write call site stay byte-identical (AC4). The ledger may be
+#     seeded at cutover by writing ISO timestamps into that file (the SRE
+#     sibling owns the deploy/verify half); unpruned history older than 30d
+#     drops out of the count on the next append.
+#   - The existing streak>=2 lane is UNCHANGED: a streak-1 page latches
+#     pending_page (same missed-page reconciliation) but never resets or
+#     rewrites the streak counter, and a later streak-2 CRITICAL pages per
+#     its own semantics — the streak-1 lane fires at most its one
+#     rate-limited page per match.
+#   - 14-day precision review clause (ruling amendment 2): any false-
+#     positive page reverts the rule to streak>=2 for the affected subclass
+#     pending CTO re-ruling — the NOTE-tagged suppression/keep lines below
+#     accrue the calibration evidence.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -258,6 +300,171 @@ state_write() { # streak first_fail since_remind level internal_streak pending_p
     "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${9}" "${10}" > "$STATE.tmp"
   mv "$STATE.tmp" "$STATE"
 }
+
+# ---- NFM-5667 streak-1 full-edge page rule (NFM-5664 ruling 35aa85eb §4) ---
+# Episode state lives in its OWN file so every pre-existing state_write call
+# site (the streak>=2 lane, AC4) stays byte-identical. Keys:
+#   last_page    — epoch of the last streak-1 page (rate-limit counter;
+#                  0 = never; INDEPENDENT of the streak>=2 lane)
+#   open         — 1 while a full-edge episode window is in progress
+#   win_first    — ISO ts of the window's first failure ("-" = none yet)
+#   close_epoch  — epoch the last window closed green (episode separation)
+#   ledger       — space-separated ISO ts of counted episodes (rolling 30d;
+#                  seedable at cutover, pruned on append)
+S1_STATE="${NFM_MONITOR_S1_STATE:-$HOME/.nfm-site-monitor.s1.state}"
+S1_EDGE_TOTAL=6           # 5 checks on nucpot.dpdns.org + 1 on verify.… (P2 Supabase is outside the rule)
+S1_FAILED_MIN=5           # conjunct 1: >=5 of the 6 edge checks failed
+S1_P0_MIN=2               # conjunct 2: >=2 P0 checks among them
+S1_PAGE_COOLDOWN=1800     # rate limit: max 1 page / 30 min for this class
+S1_EPISODE_GREEN_GAP=600  # ruling §2: >=10 min green separates episodes
+
+s1_get() { # key default
+  if [[ -f "$S1_STATE" ]]; then
+    v="$(grep -E "^$1=" "$S1_STATE" | tail -1 | cut -d= -f2-)"
+    [[ -n "$v" ]] && echo "$v" || echo "$2"
+  else
+    echo "$2"
+  fi
+}
+s1_write() { # last_page open win_first close_epoch ledger
+  mkdir -p "$(dirname "$S1_STATE")" 2>/dev/null || true
+  printf 'last_page=%s\nopen=%s\nwin_first=%s\nclose_epoch=%s\nledger=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" > "$S1_STATE.tmp"
+  mv "$S1_STATE.tmp" "$S1_STATE"
+}
+
+s1_host_of() { # check-name -> main|verify|other (edge-name map; drift-guarded by tests)
+  case "$1" in
+    "Frontend Homepage"|"Frontend Browse Page"|"Backend API Health"|"Backend API Potentials"|"Backend API Reference Values")
+      echo main ;;
+    "AutoVC API Health")
+      echo verify ;;
+    *)
+      echo other ;;
+  esac
+} # end s1_host_of
+
+# Classifier: parse the probe's ❌ rows and set the conjunct tallies.
+# Sets: s1_edge_failed s1_p0_failed s1_main_failed s1_verify_failed
+#       s1_hard s1_latency s1_main_codes s1_verify_codes s1_match
+s1_classify() {
+  s1_edge_failed=0; s1_p0_failed=0; s1_main_failed=0; s1_verify_failed=0
+  s1_hard=0; s1_latency=0
+  s1_main_codes=""; s1_verify_codes=""
+  while IFS= read -r row; do
+    name="$(printf '%s' "$row" | awk -F'|' '{print $2}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^❌[[:space:]]*//')"
+    sev="$(printf '%s' "$row" | awk -F'|' '{print $3}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    detail="$(printf '%s' "$row" | awk -F'|' '{print $5}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    host="$(s1_host_of "$name")"
+    [[ "$host" == "other" ]] && continue   # third-party (P2 Supabase): outside the rule
+    s1_edge_failed=$((s1_edge_failed + 1))
+    [[ "$sev" == "P0" ]] && s1_p0_failed=$((s1_p0_failed + 1))
+    if [[ "$host" == "main" ]]; then s1_main_failed=$((s1_main_failed + 1)); else s1_verify_failed=$((s1_verify_failed + 1)); fi
+    # Failure class: latency-timeout (timeout / latency-over-budget /
+    # connection-class — the NFM-5262 diurnal shape) vs hard edge status
+    # (502/530 and other 52x/53x — CF error pages RETURNED). Anything else
+    # (wrong status/body) is "other" and never counts toward hard.
+    code="$(printf '%s' "$detail" | grep -oE '(HTTP|got) [0-9]{3}' | grep -oE '[0-9]{3}' | head -1)"
+    if [[ "$detail" == *"Timeout after"* || "$detail" == *"exceeds limit"* || "$detail" == *"Connection error"* ]]; then
+      cls="latency"; s1_latency=$((s1_latency + 1))
+    elif [[ -n "$code" ]] && { (( code == 502 )) || (( code >= 520 && code <= 539 )); }; then
+      cls="$code"; s1_hard=$((s1_hard + 1))
+    else
+      cls="other"
+    fi
+    if [[ "$host" == "main" ]]; then
+      s1_main_codes="${s1_main_codes}${cls} "
+    else
+      s1_verify_codes="${s1_verify_codes}${cls} "
+    fi
+  done < <(printf '%s' "$OUT" | grep -E '^\| *❌')
+  s1_match=0
+  if (( s1_edge_failed >= S1_FAILED_MIN )) \
+     && (( s1_p0_failed >= S1_P0_MIN )) \
+     && (( s1_main_failed >= 1 && s1_verify_failed >= 1 )) \
+     && (( s1_hard > s1_latency )); then
+    s1_match=1
+  fi
+}
+
+s1_class_hist() { # "502 502 530 " -> "502x2,530x1"
+  printf '%s' "$1" | tr ' ' '\n' | sed '/^$/d' | sort | uniq -c | awk '{printf "%sx%s,", $2, $1}' | sed 's/,$//'
+}
+
+# Rolling-30d ledger maintenance (calendar math in python — portable, and
+# $PY is already a hard dependency of the probe lane). Modes:
+#   append <ledger> <now_iso>  -> count, delta, new-ledger (episode counted)
+#   count  <ledger> <now_iso>  -> count, +0,   pruned-ledger (no append)
+# Malformed entries are KEPT (fail-closed for evidence), never dropped.
+s1_ledger() { # mode ledger now_iso
+  "$PY" - "$1" "$2" "$3" <<'S1PYEOF'
+import sys
+from datetime import datetime, timedelta
+mode, ledger, now = sys.argv[1], sys.argv[2], sys.argv[3]
+def parse(t):
+    return datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ")
+entries = [e for e in ledger.split() if e]
+try:
+    cutoff = parse(now) - timedelta(days=30)
+    kept = [e for e in entries if parse(e) > cutoff]
+except ValueError:
+    kept = entries
+if mode == "append":
+    kept.append(now)
+    print(len(kept), "+1", " ".join(kept))
+else:
+    print(len(kept), "+0", " ".join(kept))
+S1PYEOF
+}
+
+# Handle a classifier match at streak 1: episode accounting (ruling §2),
+# rate limit (1/30 min), page payload (ruling amendment 1). Exits 2 on a
+# real page; returns (after a NOTE line + s1 state update) when suppressed.
+s1_handle_match() { # streak first_fail since_remind
+  local now_epoch lp open win_first close_ep ledger rate_ok count delta
+  now_epoch="$(date -u +%s)"
+  lp="$(s1_get last_page 0)"
+  open="$(s1_get open 0)"
+  win_first="$(s1_get win_first -)"
+  close_ep="$(s1_get close_epoch 0)"
+  ledger="$(s1_get ledger '')"
+  rate_ok=1
+  (( lp == 0 || now_epoch - lp >= S1_PAGE_COOLDOWN )) || rate_ok=0
+  # Episode accounting (by-episode, >=10 min green separation):
+  #  - open==1                 -> window continues: no new ledger entry
+  #  - open==0, gap >= 10 min  -> DISTINCT episode: ledger append (+prune)
+  #  - open==0, gap <  10 min  -> same episode resumes: no new entry
+  delta="+0"
+  if (( open == 0 )); then
+    if (( close_ep == 0 || now_epoch - close_ep >= S1_EPISODE_GREEN_GAP )); then
+      read -r count delta ledger < <(s1_ledger append "$ledger" "$NOW")
+      win_first="$NOW"
+    else
+      read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+    fi
+  else
+    read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+  fi
+  if (( rate_ok == 1 )); then
+    # Page (ruling amendment 1 payload: window, per-host class counts, t2
+    # ledger delta + rolling-30d count, ruling reference). Latches the SAME
+    # pending_page reconciliation the streak>=2 lane uses; the green run
+    # completes the window on its RECOVERY line.
+    pending="$(state_get pending_page -)"
+    if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+    log "CRITICAL — streak-1 full-edge P0 (NFM-5666 rule, NFM-5664 ruling 35aa85eb §4): ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0, hard=${s1_hard} latency=${s1_latency}) — window ${win_first} -> recovery pending — classes: nucpot.dpdns.org={$(s1_class_hist "$s1_main_codes")} verify.nucpot.dpdns.org={$(s1_class_hist "$s1_verify_codes")} — t2-ledger: episodes=${count} rolling-30d (delta ${delta}; standing was 5/6 at ruling) — rate-limit 1/${S1_PAGE_COOLDOWN}s [$(proxy_state_line)]"
+    notify_page "streak-1 full-edge P0: ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0)"
+    s1_write "$now_epoch" 1 "$win_first" "$close_ep" "$ledger"
+    state_write "$1" "$2" "$3" CRITICAL 0 "$pending" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+    exit 2
+  fi
+  # Rate-limited: no page, but the match/episode evidence still accrues
+  # (calibration for the 14-day precision review, ruling amendment 2).
+  log "NOTE — streak-1 full-edge match NOT paged (rate limit ${S1_PAGE_COOLDOWN}s, last page epoch ${lp}): ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0, hard=${s1_hard} latency=${s1_latency}), t2-ledger episodes=${count} [NFM-5667]"
+  s1_write "$lp" 1 "$win_first" "$close_ep" "$ledger"
+}
+
 
 # ---- NFM-5418 chunk-ref scan ----------------------------------------------
 # Edge-cached HTML outlives the origin build that produced its content-hashed
@@ -810,6 +1017,16 @@ if (( RC == 0 )); then
       log "PAGE-UNACK (still latched) — CRITICAL from $pending never acked by SRE — retro-file [SRE-CRITICAL] then run --ack-page"
     fi
   fi
+  # NFM-5667: a green probe closes any open streak-1 full-edge episode
+  # window — this RECOVERY line completes the page's window timestamps
+  # (first-failure -> recovery) and records the close epoch for the
+  # >=10-min episode-separation rule (ruling §2).
+  if [[ "$(s1_get open 0)" == "1" ]]; then
+    s1_wf="$(s1_get win_first -)"
+    s1_cnt="$(s1_ledger count "$(s1_get ledger '')" "$NOW" | awk '{print $1}')"
+    log "RECOVERY — streak-1 full-edge episode closed: window ${s1_wf} -> ${NOW} — t2-ledger episodes=${s1_cnt} rolling-30d [NFM-5667; NFM-5664 ruling 35aa85eb §2]"
+    s1_write "$(s1_get last_page 0)" 0 "$s1_wf" "$(date -u +%s)" "$(s1_get ledger '')"
+  fi
   state_write 0 - 0 OK 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   exit 0
 fi
@@ -844,6 +1061,18 @@ if (( RC == 1 )); then
   # old tail if no row markers are present.
   faildetail="$(printf '%s' "$OUT" | grep -E '^\| *❌' | sed 's/^| *//; s/ *| */ /g' | tr '\n' '|' | cut -c1-400)"
   [[ -n "$faildetail" ]] || faildetail="$(printf '%s' "$OUT" | grep -viE '^starting|^targets|^$' | tail -3 | tr '\n' '|' | cut -c1-300)"
+
+  # NFM-5667: streak-1 full-edge page rule — evaluated ONLY at streak 1
+  # (streak>=2 keeps the existing lane; when both lanes match the streak-1
+  # lane fires at most its one rate-limited page and never alters
+  # streak>=2 behavior — AC4). Unparseable probe output (p0="-1") cannot
+  # satisfy the conjuncts and stays on the existing lane — fail-closed.
+  if [[ "$p0" != "0" ]] && (( streak == 1 )); then
+    s1_classify
+    if (( s1_match == 1 )); then
+      s1_handle_match "$streak" "$first_fail" "$since_remind"
+    fi
+  fi
 
   if [[ "$p0" != "0" ]] && (( streak >= STREAK_THRESHOLD )); then
     pending="$(state_get pending_page -)"
