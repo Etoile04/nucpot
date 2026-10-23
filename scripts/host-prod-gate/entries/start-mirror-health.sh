@@ -9,10 +9,10 @@
 #
 # Runs nfm_docker_gate.mirror_health, which probes every mirror in
 # mirrors.json and writes verdict ("alarm"/"recovery") plus non-verdict
-# ("grace", NFM-5567 alarm-debounce) JSONL records to
-# /var/log/nfm-g2/mirror-health.log. probe_g2.sh reads the latest
-# verdict record to verify the heartbeat — the module docstring owns
-# the full record semantics.
+# ("grace", NFM-5567 alarm-debounce; "grace_clear", NFM-5699 window
+# closure) JSONL records to /var/log/nfm-g2/mirror-health.log.
+# probe_g2.sh reads the latest verdict record to verify the heartbeat —
+# the module docstring owns the full record semantics.
 # ============================================================================
 set -euo pipefail
 
