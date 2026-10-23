@@ -161,7 +161,9 @@ fi
 # "alarm" record while below threshold OR while the prod allowlist mirror
 # is dark — debounced by the NFM-5567 2-tick grace window, so a tripped
 # tick inside the window writes a NON-verdict "grace" record instead
-# (the post-startup first tick bypasses grace) — and a "recovery" record
+# (the post-startup first tick bypasses grace; a healthy tick that ends a
+# grace-only stretch writes the NON-verdict "grace_clear" closure,
+# NFM-5699) — and a "recovery" record
 # when the alarm clears or on its
 # first healthy tick after startup (NFM-4805: reading only the latest ALARM
 # latched G2.7 red forever — healthy ticks write nothing, so the

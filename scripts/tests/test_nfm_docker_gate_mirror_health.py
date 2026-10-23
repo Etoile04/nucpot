@@ -853,8 +853,10 @@ def test_run_once_sustained_trip_alarms_on_tick_n(tmp_path, monkeypatch):
 def test_run_once_blip_then_healthy_resets_counter_no_recovery(tmp_path, monkeypatch):
     """A blip inside the grace window followed by a healthy tick: no recovery
     record is written (no alarm preceded it — recovery only fires on the
-    alarmed→healthy transition), and the debounce counter resets, so the
-    NEXT blip graces again instead of alarming (blips do not accumulate)."""
+    alarmed→healthy transition), the healthy tick CLOSES the open window with
+    a non-verdict `grace_clear` marker (NFM-5699), and the debounce counter
+    resets, so the NEXT blip graces again instead of alarming (blips do not
+    accumulate)."""
     from nfm_docker_gate import mirror_health
     from nfm_docker_gate.mirror_health import _run_once
 
@@ -874,8 +876,8 @@ def test_run_once_blip_then_healthy_resets_counter_no_recovery(tmp_path, monkeyp
         _grace_mirrors(), audit, threshold=2, timeout=1.0,
         previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
     )
-    # tick 2: healthy -> NO record (grace tick was not an alarm; the healthy
-    # steady-state silence of NFM-4805 applies), counter resets
+    # tick 2: healthy -> grace_clear closes the window (the grace tick was
+    # not an alarm, so no recovery; NFM-5699), counter resets
     state["dark"] = False
     _run_once(
         _grace_mirrors(), audit, threshold=2, timeout=1.0,
@@ -888,7 +890,7 @@ def test_run_once_blip_then_healthy_resets_counter_no_recovery(tmp_path, monkeyp
         previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
     )
     records = _read_records(audit_path)
-    assert [record["event"] for record in records] == ["grace", "grace"]
+    assert [record["event"] for record in records] == ["grace", "grace_clear", "grace"]
 
 
 def test_run_once_startup_tripped_bypasses_grace(tmp_path, monkeypatch):
@@ -1012,6 +1014,207 @@ def test_run_once_grace_disabled_alarms_immediately(tmp_path, monkeypatch):
     )
     records = _read_records(audit_path)
     assert [record["event"] for record in records] == ["alarm"]
+
+
+# ---- NFM-5699: grace_clear closure marker --------------------------------------
+#
+# A grace tick leaves previous_tripped=False, so the grace→healthy
+# transition matched NO record branch — the `grace` record sat as the
+# audit-log tail for days, indistinguishable from a wedged watcher or
+# ongoing degradation (the NFM-5698 CEO recon flag: grace 19:05:44Z was
+# still the log tail 3h20m later while the fleet was 5/5 healthy). A
+# healthy tick that closes an open window now writes a NON-verdict
+# `grace_clear` record; recovery/verdict semantics are untouched.
+
+
+def test_run_once_grace_to_healthy_writes_grace_clear_closure(tmp_path, monkeypatch):
+    """NFM-5699: a healthy tick that closes an open grace window
+    (consecutive_tripped>0, previous_tripped=False — the grace-only state)
+    writes a `grace_clear` record carrying the healthy summary plus the
+    debounce context of the window it closes."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    state = {"dark": True}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    # tick 1: tripped blip inside the window -> grace
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    # tick 2: healthy -> the window closes
+    state["dark"] = False
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=1, grace_ticks=2,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["grace", "grace_clear"]
+    clear = records[1]
+    assert clear["healthy_count"] == 2
+    assert clear["threshold"] == 2
+    assert clear["prod_mirror_healthy"] is True
+    assert clear["consecutive_tripped"] == 1
+    assert clear["grace_ticks"] == 2
+
+
+def test_run_once_steady_state_healthy_stays_silent(tmp_path, monkeypatch):
+    """grace_clear is a transition marker, not per-tick noise: a healthy tick
+    with NO open window (consecutive_tripped=0, previous_tripped=False)
+    writes nothing — the NFM-4805 steady-state silence holds."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    def healthy(mirror, *, timeout=5.0):
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", healthy)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    # no record written — the audit file itself need not exist (lazy create)
+    assert not audit_path.exists() or _read_records(audit_path) == []
+
+
+def test_run_once_alarmed_to_healthy_writes_recovery_not_grace_clear(tmp_path, monkeypatch):
+    """When the previous tick ALARMED, a healthy tick writes `recovery` only —
+    grace_clear never rides on a real verdict transition, so the NFM-4805
+    verdict semantics are untouched by NFM-5699."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once
+
+    state = {"dark": True}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    # tick 1: 2nd consecutive tripped tick -> alarm (debounce satisfied)
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=1, grace_ticks=2,
+    )
+    # tick 2: healthy while previously ALARMED -> recovery, not grace_clear
+    state["dark"] = False
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=True, consecutive_tripped=2, grace_ticks=2,
+    )
+    records = _read_records(audit_path)
+    assert [record["event"] for record in records] == ["alarm", "recovery"]
+
+
+def test_latest_verdict_ignores_grace_clear_records(tmp_path, monkeypatch):
+    """grace_clear stays out of _VERDICT_EVENTS: a log whose newest record is
+    a grace_clear still reads as "no verdict" via latest_verdict() (accepted
+    as a G2.7 pass) — the closure marker is operator trace, not verdict."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import _run_once, latest_verdict
+
+    state = {"dark": True}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+    audit_path = tmp_path / "audit.log"
+    audit = AuditLog(str(audit_path), "mirror-health")
+
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=0, grace_ticks=2,
+    )
+    state["dark"] = False
+    _run_once(
+        _grace_mirrors(), audit, threshold=2, timeout=1.0,
+        previous_tripped=False, consecutive_tripped=1, grace_ticks=2,
+    )
+    assert latest_verdict(str(audit_path)) is None
+
+
+def test_main_blip_then_recovered_appends_grace_clear(tmp_path, monkeypatch):
+    """End-to-end via main(): healthy → blip(grace) → healthy(grace_clear) —
+    the tick loop's carried consecutive_tripped counter (reset AFTER the
+    tick runs) feeds the closure branch, so the log tail closes the window
+    instead of stranding the grace record (the NFM-5698 recon ambiguity)."""
+    from nfm_docker_gate import mirror_health
+    from nfm_docker_gate.mirror_health import main
+
+    cfg = tmp_path / "mirrors.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mirrors": [
+                    {
+                        "name": "daocloud",
+                        "url": "https://docker.m.daocloud.io",
+                        "fronts_prod_images": True,
+                    },
+                    {"name": "1panel", "url": "https://docker.1panel.live"},
+                ]
+            }
+        )
+    )
+    log = tmp_path / "audit.log"
+
+    state = {"dark": False}
+
+    def flapping(mirror, *, timeout=5.0):
+        if state["dark"]:
+            return ProbeResult(mirror.name, mirror.url, "tls_timeout", None, "t", 10)
+        return ProbeResult(mirror.name, mirror.url, "ok", 401, None, 10)
+
+    monkeypatch.setattr(mirror_health, "probe_mirror", flapping)
+
+    sleeps = {"count": 0}
+
+    # tick 1 healthy (recovery), sleep 1 flips dark; tick 2 blip (grace),
+    # sleep 2 flips healthy; tick 3 closes the window (grace_clear), sleep 3
+    # exits the loop.
+    def fake_sleep(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            state["dark"] = True
+            return
+        if sleeps["count"] == 2:
+            state["dark"] = False
+            return
+        raise SystemExit(0)
+
+    monkeypatch.setattr(mirror_health.time, "sleep", fake_sleep)
+
+    try:
+        main(["--config", str(cfg), "--log", str(log), "--interval", "30"])
+    except SystemExit as exit_code:
+        assert exit_code.code == 0, f"main() exited non-zero: {exit_code.code}"
+
+    records = _read_records(log)
+    assert [record.get("event") for record in records] == [
+        "startup",
+        "recovery",
+        "grace",
+        "grace_clear",
+    ]
+    assert records[3]["consecutive_tripped"] == 1
 
 
 def test_main_threads_default_grace_and_startup_records_it(tmp_path, monkeypatch):
