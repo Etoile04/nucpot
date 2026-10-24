@@ -224,3 +224,54 @@ edge in one log line** — a healthy scutil proxy state on a mode-A blind
 cycle points at the direct lane/edge, an unhealthy one at host egress.
 The NFM-5525 confirmation ladder stays as the failure-path cross-check
 for direct-lane transients.
+
+## 8. Path-independent reference battery (NFM-5708 / NFM-5706)
+
+Motivation: the 2026-10-24 15:46–16:33Z multi-route P1 burst was
+indistinguishable from site-side degradation without a MANUAL reference
+battery — both sentinel hostnames ride ONE CN-to-CF-AMS transit path, so
+multi-hostname ≠ multi-path. Post-NFM-5708 the monitor runs a reference
+battery on every real-probe tick and classifies each nucpot DEGRADE tick
+against it.
+
+- **Lanes** (3 parallel lightweight GETs riding the existing 300 s tick —
+  no new schedule/daemon; worst case +REF_TIMEOUT per tick): int'l CF-edge
+  (`www.cloudflare.com`), int'l non-CF (`ghcr.io`), CN-domestic control
+  (`tuna.tsinghua.edu.cn`). Roles are fixed — the classifier depends on
+  them. Egress is DIRECT per [ADR-023](../adr/ADR-023-NFM-5540-sentinel-egress-independence.md)
+  (no-proxy opener primary, wrapper `no_proxy='*'` defense-in-depth), so a
+  VPN flap cannot fake a brownout. Redirects are disabled: a 30x/4xx/5xx
+  is a definitive transport verdict and counts as a healthy path sample;
+  only transport failure reads FAIL.
+- **Baselines** are per-host RELATIVE EMAs in `~/.nfm-site-monitor.ref.state`
+  (own file — the main state family is untouched). A lane is slow iff the
+  sample ≥ 2.5× that host's OWN EMA (`NFM_REF_SLOW_RATIO`), never an
+  absolute latency. Failed probes never touch the baseline but read SLOW
+  once the battery is out of warmup. Warmup is ATTEMPT-based (≥
+  `NFM_REF_BASELINE_MIN`=10 attempts): a permanently unreachable lane
+  cannot hold the battery in warmup forever, and during warmup the battery
+  never suppresses a page.
+- **Classification** rides every nucpot DEGRADE log line as
+  `[NFM-5706 class=<C>; refs: <per-host timings>]`:
+  - `TRANSIT_BROWNOUT` — nucpot slow + ALL int'l refs slow + domestic
+    pristine ⇒ shared CN→int'l transit trouble, NOT site-side: LOG-ONLY
+    WARN, NON-PAGING, no SRE wake (ruling 5206262b(d) + NFM-5705 R5). It
+    gates ONLY the streak≥2 base-lane CRITICAL page; the failure streak
+    keeps counting, so the existing page fires the moment transit recovers
+    or the classification clears — suppression can only DELAY the page,
+    never consume it.
+  - `SITE_SIDE` — refs pristine while nucpot degraded ⇒ the §1 detection
+    contract and watch-line escalation apply unchanged; the class token
+    and reference latencies ride the log lines as evidence.
+  - `UNCLASSIFIED` — battery cannot testify (warmup / mixed / domestic
+    also slow / internal error) ⇒ existing paging path runs fail-open.
+- **SRE diagnostic:** `--ref-probes-once` runs the battery once, prints
+  per-host timings + classification tokens, and updates ONLY the reference
+  baselines — never the main state (rc 0 ran / 3 internal error).
+- Suppressed (brownout) ticks do not advance the reminder clock, so the
+  first post-suppression CRITICAL is labeled correctly.
+- Tunables: `NFM_REF_TIMEOUT`, `NFM_REF_SLOW_RATIO`,
+  `NFM_REF_BASELINE_MIN`, `NFM_REF_{CF,NONCF,DOM}_URL`,
+  `NFM_MONITOR_REF_STATE`. Full threshold derivations and the drift policy
+  (ALPHA=0.125 healthy / ALPHA_SLOW=0.03 above-ratio) live in the
+  NFM-5708 header block of `scripts/nfm-site-monitor.sh`.
