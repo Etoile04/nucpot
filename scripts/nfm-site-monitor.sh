@@ -956,7 +956,7 @@ for t in ths:
 
 try:
     st = load_state()
-    new_state, disp_parts, slow = {}, [], {}
+    new_state, disp_parts, slow, lane_trusted = {}, [], {}, {}
     warmup = 0
     for key, url in LANES:
         ms, err = results[key]
@@ -973,6 +973,7 @@ try:
         except ValueError:
             ema = float("nan")
         trusted = cnt >= BASELINE_MIN
+        lane_trusted[key] = trusted
         # Warmup is ATTEMPT-based: a lane whose host is unreachable from this
         # vantage (e.g. ghcr egress blocked) would otherwise hold the whole
         # battery in warmup forever and silence the classifier permanently.
@@ -1018,7 +1019,7 @@ try:
     elif slow["dom"]:
         batclass = "cn_domestic"
     elif intl_slow == 2:
-        batclass = "intl_brownout"
+        batclass = "intl_brownout" if lane_trusted["dom"] else "mixed"
     elif intl_slow == 0:
         batclass = "clean"
     else:

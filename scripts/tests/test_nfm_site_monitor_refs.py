@@ -346,6 +346,33 @@ def test_dead_intl_lane_exits_warmup_and_brownout_stays_reachable(env, mock_site
     assert not [ln for ln in log_text(env).splitlines() if "site-monitor: CRITICAL" in ln]
 
 
+def test_untrusted_domestic_never_satisfies_pristine(env, mock_site):
+    """Review defect: the dom-pristine conjunct of TRANSIT_BROWNOUT was
+    satisfiable WITHOUT trusted evidence — an untrusted-but-succeeding dom
+    lane reads slow=0 at any latency (its EMA seeded mid-degradation). tuna
+    fails its first BASELINE_MIN attempts (battery exits warmup
+    attempt-based, dom cnt=0), then recovers; with both int'l lanes slow the
+    tick must be UNCLASSIFIED (mixed) and page fail-open at streak 2 —
+    exactly the dom-degraded+intl-slow state the CPO charter maps to
+    CN_DOMESTIC-adjacent fail-open, never suppression."""
+    _base, config = mock_site
+    config["refs"]["/ref-dom"] = {"drop": 99}  # tuna unreachable from t0
+    for _ in range(3):
+        assert run_script(env).returncode == 0  # green; dom att accrues, cnt=0
+    st = ref_state_dict(env)
+    assert st["dom_att"] == "3" and st["dom_count"] == "0"  # untrusted, no baseline
+    config["refs"]["/ref-dom"] = {"lat": 0.2}  # recovers — but baseline still cold
+    _brownout_intl(config)
+    _fail_probe(env, p0=2)
+    r1 = run_script(env)  # streak 1: WARN, class must NOT be TRANSIT_BROWNOUT
+    assert r1.returncode == 1, r1.stdout
+    assert "class=UNCLASSIFIED" in log_text(env)
+    r2 = run_script(env)  # streak 2: pages fail-open — no suppression
+    assert r2.returncode == 2, r2.stdout
+    assert "CRITICAL — public-edge P0 failure confirmed" in log_text(env)
+    assert not [ln for ln in log_text(env).splitlines() if "class=TRANSIT_BROWNOUT" in ln]
+
+
 def test_suppressed_ticks_do_not_advance_reminder_clock(env, mock_site):
     """Review defect: brownout-suppressed ticks are log-only and page
     nobody, so they must not accrue since_remind — otherwise the FIRST
