@@ -252,7 +252,9 @@ against it.
   cannot hold the battery in warmup forever, and during warmup the battery
   never suppresses a page.
 - **Classification** rides every nucpot DEGRADE log line as
-  `[NFM-5706 class=<C>; refs: <per-host timings>]`:
+  `[NFM-5706 class=<C>; refs: <per-host timings>]`. Full hint enum (CPO
+  charter addendum, folding NFM-5707): `TRANSIT_BROWNOUT` / `SITE_SIDE` /
+  `CN_DOMESTIC` / `clean`, with `UNCLASSIFIED` as the fail-open floor:
   - `TRANSIT_BROWNOUT` — nucpot slow + ALL int'l refs slow + domestic
     pristine ⇒ shared CN→int'l transit trouble, NOT site-side: LOG-ONLY
     WARN, NON-PAGING, no SRE wake (ruling 5206262b(d) + NFM-5705 R5). It
@@ -263,8 +265,29 @@ against it.
   - `SITE_SIDE` — refs pristine while nucpot degraded ⇒ the §1 detection
     contract and watch-line escalation apply unchanged; the class token
     and reference latencies ride the log lines as evidence.
-  - `UNCLASSIFIED` — battery cannot testify (warmup / mixed / domestic
-    also slow / internal error) ⇒ existing paging path runs fail-open.
+  - `CN_DOMESTIC` — the CN-domestic control (tuna) itself is degraded ⇒
+    HINT class: int'l comparison is UNRELIABLE in that state (domestic
+    trouble usually slows the int'l lanes too), so the tick is not
+    force-fit into the two main classes. NO suppression — existing paging
+    path runs fail-open exactly like UNCLASSIFIED; the evidence token
+    carries `(intl comparison unreliable)`.
+  - `clean` — battery verdict when ALL lanes are pristine (observable as
+    `batclass=clean` in `--ref-probes-once` output). On a nucpot DEGRADE
+    tick a clean battery maps to `SITE_SIDE`. On a GREEN tick a clean
+    battery logs nothing (OK lines byte-stable); a CONFIDENT non-clean
+    verdict (`intl_brownout` / `cn_domestic`) logs one `NOTE — ref-battery`
+    line — recording only, zero page implications. This covers the
+    "int'l degraded but nucpot clean" observability row.
+  - `UNCLASSIFIED` — battery cannot testify (warmup / mixed int'l
+    evidence / internal error) ⇒ existing paging path runs fail-open.
+- **Replay validation (10-24 window):** the classifier is pinned by a
+  table-driven replay of the documented 2026-10-24 15:35–16:32Z burst
+  (cloudflare 8.25/3.54/3.01 s vs sub-second norm; ghcr.io 2.15 s vs
+  0.77 s baseline; tuna 0.19 s pristine; nucpot degraded ⇒ must classify
+  `TRANSIT_BROWNOUT`) plus the boundary rows (tuna degraded + nucpot
+  degraded ⇒ `CN_DOMESTIC`; all clean ⇒ `clean`/`SITE_SIDE`; int'l
+  degraded + nucpot clean ⇒ green-tick NOTE). Run:
+  `python3 -m pytest scripts/tests/test_nfm5708_replay_20261024.py -v`.
 - **SRE diagnostic:** `--ref-probes-once` runs the battery once, prints
   per-host timings + classification tokens, and updates ONLY the reference
   baselines — never the main state (rc 0 ran / 3 internal error).

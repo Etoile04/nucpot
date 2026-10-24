@@ -14,8 +14,15 @@ nucpot degrade tick:
 - ``SITE_SIDE`` — nucpot slow + refs pristine => the existing watch-line
   escalation path (streak>=2 CRITICAL page) UNCHANGED, with the class + ref
   latencies riding the log line;
+- ``CN_DOMESTIC`` — CPO charter addendum hint class: the CN-domestic control
+  itself is degraded => int'l comparison is UNRELIABLE, so the tick is not
+  force-fit into the two main classes; NO suppression (fail-open paging
+  exactly like UNCLASSIFIED) and the evidence token says so;
+- ``clean`` — battery verdict when ALL lanes are pristine (batclass=clean in
+  --ref-probes-once output; maps to SITE_SIDE on a nucpot degrade tick; a
+  clean battery on a green tick logs nothing, keeping OK lines byte-stable);
 - ``UNCLASSIFIED`` — warmup (baseline not yet trusted), mixed evidence,
-  domestic also slow, or reference-lane internal error => existing path
+  or reference-lane internal error => existing path
   (fail-open toward paging — only confident evidence may suppress a page).
 
 Pinned contracts:
@@ -222,16 +229,22 @@ def test_warmup_degrade_is_unclassified_and_pages(env, mock_site):
     assert "CRITICAL — public-edge P0 failure confirmed" in log_text(env)
 
 
-def test_domestic_slow_blocks_brownout_classification(env, mock_site):
-    """Domestic control NOT pristine (host-egress trouble or CN-domestic
-    path degraded) => cannot attribute to intl transit => UNCLASSIFIED =>
-    existing paging path."""
+def test_cn_domestic_class_pages_fail_open(env, mock_site):
+    """CPO charter addendum: domestic control degraded (host-egress trouble
+    or CN-domestic path degraded — here WITH intl also slow, the ambiguous
+    combo) => HINT class CN_DOMESTIC, never force-fit into
+    TRANSIT_BROWNOUT/SITE_SIDE — int'l comparison is unreliable in that
+    state. NO suppression: existing paging path runs fail-open at streak 2."""
     _base, config = mock_site
     _prime(env, 3)
     _brownout_intl(config)
     config["refs"]["/ref-dom"] = {"lat": BROWNOUT_LAT}
     _fail_probe(env, p0=2)
-    run_script(env)
+    r1 = run_script(env)
+    assert r1.returncode == 1, r1.stdout
+    warn = [ln for ln in log_text(env).splitlines() if "class=CN_DOMESTIC" in ln][-1]
+    assert "intl comparison unreliable" in warn
+    assert "dom_slow=1" in warn
     r2 = run_script(env)
     assert r2.returncode == 2, r2.stdout
     crit = [
@@ -239,8 +252,8 @@ def test_domestic_slow_blocks_brownout_classification(env, mock_site):
         for ln in log_text(env).splitlines()
         if "CRITICAL — public-edge P0 failure confirmed" in ln
     ][-1]
-    assert "class=UNCLASSIFIED" in crit
-    assert "dom_slow=1" in crit
+    assert "class=CN_DOMESTIC" in crit
+    assert "intl comparison unreliable" in crit
 
 
 def test_ref_lane_internal_error_fail_closed(env, mock_site):

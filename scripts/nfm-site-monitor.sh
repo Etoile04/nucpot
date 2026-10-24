@@ -203,13 +203,10 @@
 #     attempt-based, so a permanently unreachable lane cannot hold the
 #     battery in WARMUP forever; during warmup it never suppresses a page).
 #   - Classification (emitted on every nucpot DEGRADE tick in the log line as
-#     "[NFM-5706 class=<C>; refs: <per-host timings>]" — how to read it:
-#     class=TRANSIT_BROWNOUT means shared CN->int'l transit trouble, NOT
-#     site-side (all int'l refs slow + domestic pristine); class=SITE_SIDE
-#     means the reference battery was pristine while nucpot degraded, i.e.
-#     watch-line escalation applies unchanged; class=UNCLASSIFIED means the
-#     battery could not testify (warmup / mixed / domestic also slow / ref
-#     lane internal error) and the existing paging path runs fail-open):
+#     "[NFM-5706 class=<C>; refs: <per-host timings>]" — full hint enum per
+#     the CPO charter addendum (NFM-5708, folding NFM-5707):
+#     TRANSIT_BROWNOUT / SITE_SIDE / CN_DOMESTIC / clean (+ UNCLASSIFIED as
+#     the fail-open floor). How to read it:
 #       TRANSIT_BROWNOUT = nucpot slow + ALL int'l refs slow + domestic
 #         pristine => LOG-ONLY WARN, NON-PAGING, no SRE wake (5206262b(d),
 #         NFM-5705 R5). Gates ONLY the streak>=2 base-lane CRITICAL branch;
@@ -218,6 +215,22 @@
 #       SITE_SIDE = nucpot slow + refs pristine => existing watch-line
 #         escalation per 5206262b as amended — page semantics unchanged,
 #         class + reference latencies ride the log lines as evidence.
+#       CN_DOMESTIC = the CN-domestic control (tuna) itself is degraded =>
+#         HINT class only: int'l comparison is UNRELIABLE in that state (a
+#         dead/slow domestic lane usually means host-egress or CN-domestic
+#         path trouble, which also slows the int'l lanes), so the tick is NOT
+#         force-fit into TRANSIT_BROWNOUT/SITE_SIDE. NO suppression — the
+#         existing paging path runs fail-open exactly like UNCLASSIFIED; the
+#         evidence token carries "(intl comparison unreliable)".
+#       clean = battery verdict when ALL lanes are pristine (observable in
+#         --ref-probes-once output as batclass=clean). On a nucpot DEGRADE
+#         tick a clean battery maps to SITE_SIDE; on a GREEN tick the OK line
+#         stays byte-stable (no token). A CONFIDENT non-clean battery verdict
+#         on a green tick (intl_brownout / cn_domestic) logs one NOTE line —
+#         recording only, zero page implications.
+#       UNCLASSIFIED = battery could not testify (warmup / mixed int'l
+#         evidence / ref lane internal error) — existing paging path,
+#         fail-open.
 #   - ADR-023 compliance: reference lanes are pinned DIRECT via the explicit
 #     no-proxy opener (immune to BOTH the env-var proxy class and the macOS
 #     scutil system proxy) plus the wrapper's no_proxy='*' export. Known
@@ -994,6 +1007,22 @@ try:
         ema_disp = ("%.0fms" % ema) if ema == ema else "-"
         disp_parts.append("%s=%s(ema=%s,slow=%d)" % (host, disp, ema_disp, slow[key]))
     intl_slow = slow["cf"] + slow["ncf"]
+    # Battery-only verdict (CPO charter addendum enum: clean / intl_brownout
+    # / cn_domestic, warmup+mixed as non-confident floors). Warmup dominates:
+    # an untrusted battery never issues a confident hint. cn_domestic beats
+    # intl_brownout — with the domestic control itself degraded, the int'l
+    # comparison is unreliable and must not be force-fit into either main
+    # class. Roles are fixed (cf+ncf int'l, dom domestic), so 2 = int'l N.
+    if warmup:
+        batclass = "warmup"
+    elif slow["dom"]:
+        batclass = "cn_domestic"
+    elif intl_slow == 2:
+        batclass = "intl_brownout"
+    elif intl_slow == 0:
+        batclass = "clean"
+    else:
+        batclass = "mixed"
     tmp = STATE + ".tmp"
     parent = os.path.dirname(STATE)
     if parent:
@@ -1002,12 +1031,13 @@ try:
         for k in sorted(new_state):
             fh.write("%s=%s\n" % (k, new_state[k]))
     os.replace(tmp, STATE)
-    print("%s | intl_slow=%d/%d dom_slow=%d warmup=%d"
-          % (" ".join(disp_parts), intl_slow, 2, slow["dom"], warmup))
+    print("%s | intl_slow=%d/%d dom_slow=%d warmup=%d batclass=%s"
+          % (" ".join(disp_parts), intl_slow, 2, slow["dom"], warmup, batclass))
 except Exception as e:
-    # Internal error: the battery cannot testify — tokens carry warmup=1 so
-    # the bash classifier fails UNCLASSIFIED (never suppresses a page).
-    print("refs-internal-error: %s | intl_slow=-/2 dom_slow=- warmup=1" % e)
+    # Internal error: the battery cannot testify — tokens carry warmup=1 and
+    # batclass=warmup so the bash classifier fails UNCLASSIFIED (never
+    # suppresses a page).
+    print("refs-internal-error: %s | intl_slow=-/2 dom_slow=- warmup=1 batclass=warmup" % e)
     sys.exit(3)
 REFPYEOF
 }
@@ -1015,8 +1045,8 @@ REFPYEOF
 # Parse the battery's machine tokens once per tick. Defaults are the
 # fail-closed vocabulary: any missing/garbled token leaves REF_WARMUP=1 and
 # sentinel values that can never satisfy the brownout conjuncts.
-ref_parse() { # sets REF_INTL_SLOW REF_INTL_TOTAL REF_DOM_SLOW REF_WARMUP from REF_OUT/REF_RC
-  REF_INTL_SLOW=-1; REF_INTL_TOTAL=2; REF_DOM_SLOW=-1; REF_WARMUP=1
+ref_parse() { # sets REF_INTL_SLOW REF_INTL_TOTAL REF_DOM_SLOW REF_WARMUP REF_BATCLASS from REF_OUT/REF_RC
+  REF_INTL_SLOW=-1; REF_INTL_TOTAL=2; REF_DOM_SLOW=-1; REF_WARMUP=1; REF_BATCLASS="warmup"
   (( REF_RC == 0 )) || return 0
   tok="$(printf '%s' "$REF_OUT" | grep -oE 'intl_slow=[0-9]+/[0-9]+' | head -1)"
   if [[ "$tok" == *"="* && "$tok" == */* ]]; then
@@ -1027,20 +1057,24 @@ ref_parse() { # sets REF_INTL_SLOW REF_INTL_TOTAL REF_DOM_SLOW REF_WARMUP from R
   [[ -n "$tok" ]] && REF_DOM_SLOW="${tok#*=}"
   tok="$(printf '%s' "$REF_OUT" | grep -oE 'warmup=[0-9]+' | head -1)"
   [[ -n "$tok" ]] && REF_WARMUP="${tok#*=}"
+  tok="$(printf '%s' "$REF_OUT" | grep -oE 'batclass=[a-z_]+' | head -1)"
+  [[ -n "$tok" ]] && REF_BATCLASS="${tok#*=}"
 }
 
-# Classify a nucpot DEGRADE tick against the reference battery (NFM-5705 R5).
-# Only confident evidence reclassifies; UNCLASSIFIED is the fail-open floor
-# (existing paging path). Domestic slow + int'l slow = host-egress/CN-domestic
-# trouble — unattributable, never suppresses.
-ref_classify() { # sets REF_CLASS (requires REF_* parsed)
+# Classify a nucpot DEGRADE tick against the reference battery (NFM-5705 R5,
+# enum extended per the CPO charter addendum: TRANSIT_BROWNOUT / SITE_SIDE /
+# CN_DOMESTIC / clean, UNCLASSIFIED as the fail-open floor). Only confident
+# evidence reclassifies; UNCLASSIFIED and CN_DOMESTIC both run the existing
+# paging path fail-open — CN_DOMESTIC is a hint (domestic control degraded,
+# int'l comparison unreliable), never a suppression.
+ref_classify() { # sets REF_CLASS (requires REF_BATCLASS parsed)
   REF_CLASS="UNCLASSIFIED"
-  [[ "${REF_WARMUP:-1}" == "1" ]] && return 0
-  if (( REF_INTL_TOTAL > 0 && REF_INTL_SLOW == REF_INTL_TOTAL && REF_DOM_SLOW == 0 )); then
-    REF_CLASS="TRANSIT_BROWNOUT"
-  elif (( REF_INTL_SLOW == 0 && REF_DOM_SLOW == 0 )); then
-    REF_CLASS="SITE_SIDE"
-  fi
+  case "${REF_BATCLASS:-warmup}" in
+    intl_brownout) REF_CLASS="TRANSIT_BROWNOUT" ;;
+    clean)         REF_CLASS="SITE_SIDE" ;;
+    cn_domestic)   REF_CLASS="CN_DOMESTIC" ;;
+    *)             REF_CLASS="UNCLASSIFIED" ;; # warmup / mixed / garbled token
+  esac
 }
 
 # ---- simulate modes (AC-2 test path; no real state mutation) --------------
@@ -1260,6 +1294,14 @@ if (( REF_RC != 0 )); then
   REF_OUT="refs-internal-error (rc=$REF_RC) — battery cannot testify"
 fi
 
+# CPO charter addendum: a CONFIDENT non-clean battery verdict on a GREEN tick
+# (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
+# implications; a clean battery stays silent so green OK lines are
+# byte-stable. This is the "intl degraded but nucpot clean" observability row.
+if (( RC == 0 && REF_RC == 0 )) && [[ "$REF_BATCLASS" == "intl_brownout" || "$REF_BATCLASS" == "cn_domestic" ]]; then
+  log "NOTE — ref-battery (NFM-5706): $REF_BATCLASS observed while nucpot is GREEN — recording only, no page implications — [refs: $REF_OUT]"
+fi
+
 if (( RC == 0 )); then
   internal_streak=0
   prev_streak="$(state_get streak 0)"
@@ -1334,6 +1376,12 @@ if (( RC == 1 )); then
   # SITE_SIDE/UNCLASSIFIED run the existing watch-line path fail-open.
   ref_classify
   REF_EV="[NFM-5706 class=$REF_CLASS; refs: $REF_OUT]"
+  # CN_DOMESTIC hint (CPO charter addendum): domestic control degraded =>
+  # int'l comparison unreliable — say so IN the token; behavior stays
+  # fail-open (existing paging path), never suppression.
+  if [[ "$REF_CLASS" == "CN_DOMESTIC" ]]; then
+    REF_EV="$REF_EV (intl comparison unreliable — CN-domestic control degraded)"
+  fi
 
   # NFM-5667: streak-1 full-edge page rule — evaluated ONLY at streak 1
   # (streak>=2 keeps the existing lane; when both lanes match the streak-1
