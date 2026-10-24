@@ -208,8 +208,11 @@
 #     TRANSIT_BROWNOUT / SITE_SIDE / CN_DOMESTIC / clean (+ UNCLASSIFIED as
 #     the fail-open floor). How to read it:
 #       TRANSIT_BROWNOUT = nucpot slow + ALL int'l refs slow + domestic
-#         pristine => LOG-ONLY WARN, NON-PAGING, no SRE wake (5206262b(d),
-#         NFM-5705 R5). Gates ONLY the streak>=2 base-lane CRITICAL branch;
+#         pristine on a TRUSTED baseline (an untrusted dom lane never
+#         satisfies the conjunct — verdict drops to mixed/UNCLASSIFIED,
+#         paging fail-open) => LOG-ONLY WARN, NON-PAGING, no SRE wake
+#         (5206262b(d), NFM-5705 R5). Gates ONLY the streak>=2 base-lane
+#         CRITICAL branch;
 #         the nucpot failure streak keeps counting, so the moment transit
 #         recovers (or classification clears) the existing page fires.
 #       SITE_SIDE = nucpot slow + refs pristine => existing watch-line
@@ -1019,6 +1022,10 @@ try:
     elif slow["dom"]:
         batclass = "cn_domestic"
     elif intl_slow == 2:
+        # Only a TRUSTED domestic baseline counts as pristine evidence for
+        # suppression: untrusted-but-succeeding reads slow=0 at any latency
+        # (its EMA may be seeded mid-degradation), so the verdict must fail
+        # open to mixed/UNCLASSIFIED instead of suppressing the page.
         batclass = "intl_brownout" if lane_trusted["dom"] else "mixed"
     elif intl_slow == 0:
         batclass = "clean"

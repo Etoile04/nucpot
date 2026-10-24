@@ -256,8 +256,12 @@ against it.
   charter addendum, folding NFM-5707): `TRANSIT_BROWNOUT` / `SITE_SIDE` /
   `CN_DOMESTIC` / `clean`, with `UNCLASSIFIED` as the fail-open floor:
   - `TRANSIT_BROWNOUT` — nucpot slow + ALL int'l refs slow + domestic
-    pristine ⇒ shared CN→int'l transit trouble, NOT site-side: LOG-ONLY
-    WARN, NON-PAGING, no SRE wake (ruling 5206262b(d) + NFM-5705 R5). It
+    pristine on a TRUSTED baseline (an untrusted-but-succeeding dom lane
+    reads slow=0 at any latency — its EMA may be seeded mid-degradation —
+    so it must not satisfy the conjunct; the verdict falls back to
+    mixed ⇒ `UNCLASSIFIED`, paging fail-open) ⇒ shared CN→int'l transit
+    trouble, NOT site-side: LOG-ONLY WARN, NON-PAGING, no SRE wake
+    (ruling 5206262b(d) + NFM-5705 R5). It
     gates ONLY the streak≥2 base-lane CRITICAL page; the failure streak
     keeps counting, so the existing page fires the moment transit recovers
     or the classification clears — suppression can only DELAY the page,
