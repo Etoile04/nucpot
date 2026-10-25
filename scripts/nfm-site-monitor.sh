@@ -189,18 +189,20 @@
 #     path, so multi-hostname != multi-path.
 #   - Lanes (3 lightweight GETs, parallel, riding the EXISTING tick cadence —
 #     no new schedule/daemon; worst case +REF_TIMEOUT on a tick):
-#       cf  = https://www.cloudflare.com   (int'l CF-edge)
-#       ncf = https://ghcr.io              (int'l non-CF)
-#       dom = https://tuna.tsinghua.edu.cn (CN-domestic control)
+#       cf  = https://www.cloudflare.com     (int'l CF-edge)
+#       ncf = https://ghcr.io                (int'l non-CF)
+#       dom = https://mirrors.ustc.edu.cn    (CN-domestic control; NFM-5712
+#             swap from tuna.tsinghua.edu.cn — see the NFM-5712 block)
 #   - Per-host RELATIVE baselines (EMA of healthy samples) live in
 #     ~/.nfm-site-monitor.ref.state — thresholds are sample >= SLOW_RATIO x
 #     that host's OWN baseline, never absolute latencies. A lane is slow iff
 #     sample >= 2.5x baseline (10-24 battery: ghcr 2.15s vs 0.77s = 2.8x,
 #     cloudflare 8.25/3.54/3.01s vs ~0.3s; ratio 2.5 catches both with the
 #     fail-open direction — only suppression needs certainty). Failed probes
-#     never touch the baseline and read SLOW once the battery is out of
-#     warmup (>= BASELINE_MIN=10 probes, ~50 min at 300s cadence; warmup is
-#     attempt-based, so a permanently unreachable lane cannot hold the
+#     never touch the baseline and read UNAVAILABLE — never slow (NFM-5712
+#     three-valued semantics; see the NFM-5712 block). Warmup is
+#     attempt-based (>= BASELINE_MIN=10 attempts, ~50 min at 300s cadence),
+#     so a permanently unreachable lane cannot hold the
 #     battery in WARMUP forever; during warmup it never suppresses a page).
 #   - Classification (emitted on every nucpot DEGRADE tick in the log line as
 #     "[NFM-5706 class=<C>; refs: <per-host timings>]" — full hint enum per
@@ -218,9 +220,11 @@
 #       SITE_SIDE = nucpot slow + refs pristine => existing watch-line
 #         escalation per 5206262b as amended — page semantics unchanged,
 #         class + reference latencies ride the log lines as evidence.
-#       CN_DOMESTIC = the CN-domestic control (tuna) itself is degraded =>
+#       CN_DOMESTIC = the CN-domestic control is degraded (COMPLETED but
+#         slow — NFM-5712: a control that never completed reads
+#         CONTROL_UNAVAILABLE instead, never this class) =>
 #         HINT class only: int'l comparison is UNRELIABLE in that state (a
-#         dead/slow domestic lane usually means host-egress or CN-domestic
+#         slow domestic lane usually means host-egress or CN-domestic
 #         path trouble, which also slows the int'l lanes), so the tick is NOT
 #         force-fit into TRANSIT_BROWNOUT/SITE_SIDE. NO suppression — the
 #         existing paging path runs fail-open exactly like UNCLASSIFIED; the
@@ -247,6 +251,40 @@
 #   - Streak-1 full-edge rule (NFM-5667) and the scan-blind lanes
 #     (NFM-5446/NFM-5497) are UNTOUCHED; the reference battery appends
 #     evidence to the streak-1 page payload but never gates it.
+#
+# NFM-5712 (2026-10-25, G1 fix for NFM-5706; CTO gate G1 on NFM-5705/NFM-5706)
+#   — three-valued control semantics + ustc swap:
+#   - Defect (live since deploy 2026-10-24T21:52Z): tuna.tsinghua.edu.cn is
+#     permanently unreachable from this vantage, and a transport-level FAIL
+#     read slow=1 — so every tick emitted
+#     `tuna…=FAIL(URLError)(ema=-,slow=1) -> dom_slow=1 -> batclass=cn_domestic`
+#     while nucpot was GREEN (30 spurious NOTEs), and a dead control could
+#     never witness the domestic-pristine conjunct, making TRANSIT_BROWNOUT
+#     permanently unemittable — the three-way discriminator the charter
+#     exists to provide was collapsed.
+#   - Control endpoint swap (CTO-decided): tuna.tsinghua.edu.cn ->
+#     mirrors.ustc.edu.cn (200 @ 0.12s from this vantage; single control
+#     host; lane stays DIRECT-pinned per ADR-023).
+#   - Three-valued per-host outcomes: COMPLETED (any received HTTP status —
+#     2xx/3xx/4xx all count as a latency sample) / SLOW (completed but over
+#     the relative per-host-baseline threshold) / UNAVAILABLE
+#     (connection-level failure: URLError, TLS, no response). UNAVAILABLE
+#     never reads slow, never emits cn_domestic, and never satisfies a
+#     pristine conjunct: the control lane maps to batclass=
+#     control_unavailable (recording-only CONTROL_UNAVAILABLE note,
+#     TRANSIT_BROWNOUT unemittable for that tick => UNCLASSIFIED fail-open,
+#     non-paging), and an UNAVAILABLE int'l lane forces mixed/UNCLASSIFIED —
+#     suppression needs certainty, so a transport failure can never
+#     manufacture the ALL-int'l-slow conjunct either.
+#   - Per-endpoint baselines: the state file carries a `<lane>_url` marker;
+#     a lane re-pointed at a different URL starts a FRESH baseline (the
+#     stale tuna-era dom entries — dom_att=80, dom_count=0, EMA never formed
+#     — are safely ignored and dropped on the next state rewrite). During
+#     the new host's warmup the domestic leg records only: no confident
+#     batclass until its EMA forms (BASELINE_MIN completed samples).
+#   - Paging behavior is UNCHANGED: the streak-1 rule (NFM-5667), the
+#     streak>=2 lane, the scan-blind lanes and the tick cadence all stay
+#     exactly as they are; only the battery's evidence vocabulary moved.
 #
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
@@ -892,10 +930,13 @@ ALPHA_SLOW = 0.03   # folded weight for above-ratio samples: a 1-2h brownout
                     # genuine multi-hour drift still converges
 
 # Roles FIXED (classifier depends on them): int'l CF / int'l non-CF / domestic.
+# NFM-5712: the CN-domestic control is mirrors.ustc.edu.cn — tuna proved
+# permanently unreachable from this vantage (CTO probe: ustc 200 @ 0.12s,
+# DECIDED), and a dead control collapses the three-way discriminator.
 LANES = [
     ("cf",  os.environ.get("NFM_REF_CF_URL", "https://www.cloudflare.com")),
     ("ncf", os.environ.get("NFM_REF_NONCF_URL", "https://ghcr.io")),
-    ("dom", os.environ.get("NFM_REF_DOM_URL", "https://tuna.tsinghua.edu.cn")),
+    ("dom", os.environ.get("NFM_REF_DOM_URL", "https://mirrors.ustc.edu.cn")),
 ]
 
 # ADR-023 (NFM-5542 lineage): reference lanes egress DIRECT. The explicit
@@ -943,7 +984,9 @@ def probe(url):
         # Definitive verdict with redirects disabled (30x) or an error status
         # (4xx/5xx): the TLS+HTTP round trip COMPLETED — healthy path sample
         # at the measured latency. The reference's uptime is not what this
-        # lane measures; only transport failure reads FAIL.
+        # lane measures; only transport failure reads UNAVAILABLE (a
+        # distinct token so the battery never emits "FAIL" — grep-FAIL
+        # beat scans stay clean; NFM-5712).
         return int((time.monotonic() - t0) * 1000), None
     except Exception as e:  # timeout / TLS / reset — transport "fail"
         return None, type(e).__name__
@@ -959,10 +1002,11 @@ for t in ths:
 
 try:
     st = load_state()
-    new_state, disp_parts, slow, lane_trusted = {}, [], {}, {}
+    new_state, disp_parts, slow, unavail, lane_trusted = {}, [], {}, {}, {}
     warmup = 0
     for key, url in LANES:
         ms, err = results[key]
+        host = url.split("//", 1)[-1].split("/", 1)[0]
         try:
             cnt = int(st.get(key + "_count", "0"))
         except ValueError:
@@ -975,23 +1019,42 @@ try:
             ema = float(st.get(key + "_ema_ms", "nan"))
         except ValueError:
             ema = float("nan")
+        if st.get(key + "_url") != url:
+            # NFM-5712: baselines are PER ENDPOINT. A lane re-pointed at a
+            # different URL (the G1 fix swaps the control tuna.tsinghua ->
+            # mirrors.ustc.edu.cn) starts a FRESH baseline — a stale
+            # EMA/attempt history from the old host must never judge the new
+            # one. Marker-less pre-NFM-5712 state (the tuna-era entries:
+            # dom_att=80, dom_count=0, EMA never formed) resets the same
+            # way, and the full rewrite below drops the stale keys outright.
+            cnt, att, ema = 0, 0, float("nan")
+        new_state[key + "_url"] = url
         trusted = cnt >= BASELINE_MIN
         lane_trusted[key] = trusted
-        # Warmup is ATTEMPT-based: a lane whose host is unreachable from this
-        # vantage (e.g. ghcr egress blocked) would otherwise hold the whole
-        # battery in warmup forever and silence the classifier permanently.
-        out_of_warmup = att >= BASELINE_MIN
         if ms is None:
-            # A failed probe never touches the baseline (a VPN/host-egress
-            # outage must not poison the reference) but READS slow once the
-            # battery is out of warmup — fail-closed on both roles: a dead
-            # lane is never "pristine" evidence.
-            slow[key] = 1 if (trusted or out_of_warmup) else 0
+            # NFM-5712 three-valued outcome: UNAVAILABLE. A failed probe
+            # never touches the baseline (a VPN/host-egress outage must not
+            # poison the reference) and NEVER reads slow — the pre-5712
+            # conflation made a permanently-dead control emit cn_domestic
+            # every tick while claiming the slow token. Unavailability is
+            # carried explicitly instead: the control lane maps to
+            # batclass=control_unavailable (domestic pristine unverifiable,
+            # so TRANSIT_BROWNOUT stays unemittable) and an int'l lane
+            # forces mixed/UNCLASSIFIED — never pristine, never slow.
+            slow[key] = 0
+            unavail[key] = 1
             new_state[key + "_count"] = str(cnt)
             new_state[key + "_att"] = str(att + 1)
             new_state[key + "_ema_ms"] = ("%.1f" % ema) if ema == ema else "-"
-            disp = "FAIL(%s)" % err
+            # Distinct token, never "FAIL": the battery rides OK-tick NOTE
+            # lines, and naive grep-FAIL beat scans (NFM-4951 class) must
+            # stay clean while only the control is unreachable (CPO/QA
+            # relay 2026-10-25 on NFM-5712).
+            disp = "UNAVAILABLE(%s)" % err
         else:
+            # COMPLETED (any received HTTP status is a latency sample);
+            # SLOW iff over SLOW_RATIO x this host's OWN trusted baseline.
+            unavail[key] = 0
             slow[key] = 1 if (trusted and ema == ema
                               and ms >= ema * SLOW_RATIO) else 0
             if ema != ema:            # no baseline yet — seed it
@@ -1005,28 +1068,51 @@ try:
             new_state[key + "_ema_ms"] = "%.1f" % ema_new
             disp = "%dms" % ms
         new_state[key + "_last"] = disp
+        # Warmup stays ATTEMPT-based (NFM-5708 review defect): a lane whose
+        # host is unreachable from this vantage (e.g. ghcr egress blocked)
+        # must not hold the whole battery in warmup forever and silence the
+        # classifier permanently — but during warmup it only records.
         if att < BASELINE_MIN:
             warmup = 1
-        host = url.split("//", 1)[-1].split("/", 1)[0]
         ema_disp = ("%.0fms" % ema) if ema == ema else "-"
-        disp_parts.append("%s=%s(ema=%s,slow=%d)" % (host, disp, ema_disp, slow[key]))
+        disp_parts.append("%s=%s(ema=%s,slow=%d,unavail=%d)"
+                          % (host, disp, ema_disp, slow[key], unavail[key]))
     intl_slow = slow["cf"] + slow["ncf"]
+    intl_unavail = unavail["cf"] + unavail["ncf"]
     # Battery-only verdict (CPO charter addendum enum: clean / intl_brownout
-    # / cn_domestic, warmup+mixed as non-confident floors). Warmup dominates:
-    # an untrusted battery never issues a confident hint. cn_domestic beats
-    # intl_brownout — with the domestic control itself degraded, the int'l
-    # comparison is unreliable and must not be force-fit into either main
-    # class. Roles are fixed (cf+ncf int'l, dom domestic), so 2 = int'l N.
+    # / cn_domestic, warmup+mixed as non-confident floors; NFM-5712 adds
+    # control_unavailable). Warmup dominates: an untrusted battery never
+    # issues a confident hint. control_unavailable beats cn_domestic — an
+    # UNAVAILABLE control never completed, so it cannot judge latency (the
+    # G1 defect read it as cn_domestic every tick); it also cannot witness
+    # domestic-pristine, so TRANSIT_BROWNOUT stays unemittable that tick.
+    # cn_domestic beats intl_brownout — with the domestic control itself
+    # degraded, the int'l comparison is unreliable and must not be force-fit
+    # into either main class. Roles are fixed (cf+ncf int'l, dom domestic),
+    # so 2 = int'l N.
     if warmup:
         batclass = "warmup"
+    elif unavail["dom"]:
+        # NFM-5712: the control is UNAVAILABLE (connection-level failure) —
+        # recording-only CONTROL_UNAVAILABLE note downstream, classification
+        # UNCLASSIFIED fail-open (never cn_domestic, never pristine).
+        batclass = "control_unavailable"
     elif slow["dom"]:
         batclass = "cn_domestic"
-    elif intl_slow == 2:
+    elif intl_slow == 2 and intl_unavail == 0:
+        # slow is COMPLETED-only, so intl_slow == 2 already implies both
+        # int'l lanes completed; the explicit guard documents the invariant.
         # Only a TRUSTED domestic baseline counts as pristine evidence for
         # suppression: untrusted-but-succeeding reads slow=0 at any latency
         # (its EMA may be seeded mid-degradation), so the verdict must fail
         # open to mixed/UNCLASSIFIED instead of suppressing the page.
         batclass = "intl_brownout" if lane_trusted["dom"] else "mixed"
+    elif intl_unavail:
+        # NFM-5712: an UNAVAILABLE int'l lane is neither slow nor pristine
+        # evidence — the battery cannot testify => mixed/UNCLASSIFIED
+        # fail-open (a transport failure must never manufacture the
+        # ALL-int'l-slow conjunct of TRANSIT_BROWNOUT).
+        batclass = "mixed"
     elif intl_slow == 0:
         batclass = "clean"
     else:
@@ -1039,8 +1125,13 @@ try:
         for k in sorted(new_state):
             fh.write("%s=%s\n" % (k, new_state[k]))
     os.replace(tmp, STATE)
-    print("%s | intl_slow=%d/%d dom_slow=%d warmup=%d batclass=%s"
-          % (" ".join(disp_parts), intl_slow, 2, slow["dom"], warmup, batclass))
+    # NFM-5712: unavailability rides the summary tokens (intl_unavail /
+    # dom_unavail) so a dead lane is greppable without parsing per-host
+    # display; the pre-existing intl_slow/dom_slow/warmup/batclass token
+    # order is preserved (log readers + ref_parse depend on it).
+    print("%s | intl_unavail=%d/2 dom_unavail=%d intl_slow=%d/%d dom_slow=%d warmup=%d batclass=%s"
+          % (" ".join(disp_parts), intl_unavail, unavail["dom"], intl_slow, 2,
+             slow["dom"], warmup, batclass))
 except Exception as e:
     # Internal error: the battery cannot testify — tokens carry warmup=1 and
     # batclass=warmup so the bash classifier fails UNCLASSIFIED (never
@@ -1081,6 +1172,14 @@ ref_classify() { # sets REF_CLASS (requires REF_BATCLASS parsed)
     intl_brownout) REF_CLASS="TRANSIT_BROWNOUT" ;;
     clean)         REF_CLASS="SITE_SIDE" ;;
     cn_domestic)   REF_CLASS="CN_DOMESTIC" ;;
+    control_unavailable)
+                   # NFM-5712: control UNAVAILABLE — domestic-pristine is
+                   # unverifiable, so TRANSIT_BROWNOUT is unemittable; the
+                   # control never completed, so it is NOT CN_DOMESTIC.
+                   # Fail-open like UNCLASSIFIED (existing paging path); the
+                   # recording-only CONTROL_UNAVAILABLE note is logged at the
+                   # call site.
+                   REF_CLASS="UNCLASSIFIED" ;;
     *)             REF_CLASS="UNCLASSIFIED" ;; # warmup / mixed / garbled token
   esac
 }
@@ -1306,8 +1405,16 @@ fi
 # (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
 # implications; a clean battery stays silent so green OK lines are
 # byte-stable. This is the "intl degraded but nucpot clean" observability row.
-if (( RC == 0 && REF_RC == 0 )) && [[ "$REF_BATCLASS" == "intl_brownout" || "$REF_BATCLASS" == "cn_domestic" ]]; then
-  log "NOTE — ref-battery (NFM-5706): $REF_BATCLASS observed while nucpot is GREEN — recording only, no page implications — [refs: $REF_OUT]"
+# NFM-5712: an UNAVAILABLE control (batclass=control_unavailable) records a
+# CONTROL_UNAVAILABLE note instead — the G1 defect's per-tick cn_domestic
+# noise is gone; TRANSIT_BROWNOUT is unemittable for the tick (domestic
+# pristine unverifiable), still zero page implications.
+if (( RC == 0 && REF_RC == 0 )); then
+  if [[ "$REF_BATCLASS" == "control_unavailable" ]]; then
+    log "NOTE — CONTROL_UNAVAILABLE (NFM-5706/NFM-5712): CN-domestic control host unreachable (transport failure) while nucpot is GREEN — recording only, no page implications; TRANSIT_BROWNOUT unemittable this tick (domestic-pristine unverifiable) — [refs: $REF_OUT]"
+  elif [[ "$REF_BATCLASS" == "intl_brownout" || "$REF_BATCLASS" == "cn_domestic" ]]; then
+    log "NOTE — ref-battery (NFM-5706): $REF_BATCLASS observed while nucpot is GREEN — recording only, no page implications — [refs: $REF_OUT]"
+  fi
 fi
 
 if (( RC == 0 )); then
@@ -1389,6 +1496,13 @@ if (( RC == 1 )); then
   # fail-open (existing paging path), never suppression.
   if [[ "$REF_CLASS" == "CN_DOMESTIC" ]]; then
     REF_EV="$REF_EV (intl comparison unreliable — CN-domestic control degraded)"
+  fi
+  # NFM-5712: control UNAVAILABLE — the recording-only CONTROL_UNAVAILABLE
+  # note rides DEGRADE ticks too (truth-table row 3): no TRANSIT_BROWNOUT,
+  # classification UNCLASSIFIED fail-open (non-paging note; the existing
+  # WARN/CRITICAL path below runs exactly as before).
+  if [[ "$REF_BATCLASS" == "control_unavailable" ]]; then
+    log "NOTE — CONTROL_UNAVAILABLE (NFM-5706/NFM-5712): CN-domestic control host unreachable — domestic-pristine precondition unverifiable: TRANSIT_BROWNOUT unemittable this tick; classification UNCLASSIFIED fail-open — recording only, non-paging — [refs: $REF_OUT]"
   fi
 
   # NFM-5667: streak-1 full-edge page rule — evaluated ONLY at streak 1

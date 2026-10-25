@@ -25,12 +25,36 @@ nucpot degrade tick:
   or reference-lane internal error => existing path
   (fail-open toward paging — only confident evidence may suppress a page).
 
+NFM-5712 (G1 fix) — three-valued control semantics. The 2026-10-24T21:52Z
+deploy shipped tuna.tsinghua.edu.cn as the CN-domestic control, which is
+permanently unreachable from this vantage: every tick read
+``FAIL(URLError)(ema=-,slow=1)`` -> ``batclass=cn_domestic`` while nucpot was
+GREEN (30 spurious NOTEs), and a dead control could never witness the
+domestic-pristine conjunct, making TRANSIT_BROWNOUT permanently unemittable.
+Per reference host an outcome is now COMPLETED (any received HTTP status is
+a latency sample) / SLOW (completed over the relative threshold) /
+UNAVAILABLE (connection-level failure):
+
+- the control endpoint is mirrors.ustc.edu.cn (CTO probe 200 @ 0.12s);
+- UNAVAILABLE never reads slow and never emits cn_domestic — it records a
+  ``CONTROL_UNAVAILABLE`` note (recording-only, non-paging) and makes
+  TRANSIT_BROWNOUT unemittable for that tick (domestic pristine is
+  unverifiable => UNCLASSIFIED fail-open);
+- the same three-valued rule holds for the int'l lanes: a transport failure
+  is neither slow nor pristine evidence, so it can never manufacture the
+  ALL-int'l-slow conjunct of TRANSIT_BROWNOUT (suppression needs certainty);
+- baselines are PER ENDPOINT (``<lane>_url`` marker): the tuna->ustc swap
+  starts a fresh domestic baseline — a stale old-host EMA/attempt history is
+  safely ignored and dropped on the next state rewrite.
+
 Pinned contracts:
 
 - baselines live in the ~/.nfm-site-monitor.* family (seamed via
   NFM_MONITOR_REF_STATE), accrue on green ticks, and are RELATIVE (a lane at
   60x its own ~10 ms baseline classifies slow; no absolute latency gates);
-- failed probes never touch the baseline and read slow (conservative);
+- failed probes never touch the baseline and read UNAVAILABLE (NFM-5712
+  three-valued: never slow, never pristine — conservative in the direction
+  that matters, never suppressing on a transport failure);
 - reference lanes are DIRECT-pinned (ADR-023): an env http(s)_proxy pointing
   at a dead port cannot influence them;
 - green ticks log NO classification token (existing OK lines byte-stable);
@@ -272,20 +296,131 @@ def test_ref_lane_internal_error_fail_closed(env, mock_site):
     assert "CRITICAL — public-edge P0 failure confirmed" in log_text(env)
 
 
-def test_failed_intl_probe_reads_slow_not_pristine(env, mock_site):
-    """A hard-failing int'l lane (drop) counts as SLOW, never pristine —
-    with both int'l lanes down + domestic pristine the tick classifies
-    TRANSIT_BROWNOUT only after baselines are trusted (fail reads slow)."""
+def test_failed_intl_probe_is_unavailable_not_slow_evidence(env, mock_site):
+    """NFM-5712 three-valued semantics apply to EVERY lane: a hard-failing
+    (dropped) int'l lane is UNAVAILABLE — neither slow nor pristine
+    evidence. With both int'l lanes down + domestic pristine the battery
+    cannot testify => UNCLASSIFIED fail-open and the streak-2 page fires
+    (a transport failure must never manufacture the ALL-int'l-slow conjunct
+    of TRANSIT_BROWNOUT — suppression needs certainty)."""
     _base, config = mock_site
     _prime(env, 3)
     config["refs"]["/ref-cf"] = {"drop": 99}
     config["refs"]["/ref-ncf"] = {"drop": 99}
     _fail_probe(env, p0=2)
-    r = run_script(env)
-    assert r.returncode == 1, r.stdout
+    r1 = run_script(env)
+    assert r1.returncode == 1, r1.stdout
     warn = [ln for ln in log_text(env).splitlines() if "class=" in ln][-1]
-    assert "class=TRANSIT_BROWNOUT" in warn
-    assert "FAIL" in warn
+    assert "class=UNCLASSIFIED" in warn
+    assert warn.count("UNAVAILABLE(") == 2  # both dropped lanes carry the token
+    assert "intl_slow=0/2" in warn  # UNAVAILABLE lanes contribute no slow
+    assert "intl_unavail=2/2" in warn
+    r2 = run_script(env)
+    assert r2.returncode == 2, r2.stdout  # fail-open page at streak 2
+    assert not [ln for ln in log_text(env).splitlines() if "class=TRANSIT_BROWNOUT" in ln]
+
+
+def test_control_fail_green_tick_records_control_unavailable_note(env, mock_site):
+    """NFM-5712 truth-table row 1 — the live G1 defect: control FAIL while
+    nucpot is GREEN must NOT emit cn_domestic every tick (the 2026-10-24
+    deploy logged 30 spurious NOTEs). It records one CONTROL_UNAVAILABLE
+    note (recording only), the OK line stays intact, and the battery token
+    is control_unavailable. Log hygiene (CPO/QA relay 2026-10-25): the
+    healthy tick carries NO "FAIL" substring anywhere — an unreachable
+    reference reads UNAVAILABLE(<err>), so naive grep-FAIL beat scans
+    (NFM-4951 class) stay clean with no ref-battery exclusion."""
+    _base, config = mock_site
+    _prime(env, 3)  # baselines trusted, domestic included
+    config["refs"]["/ref-dom"] = {"drop": 99}  # control transport-dead
+    r = run_script(env)  # nucpot green
+    assert r.returncode == 0, r.stdout
+    lt = log_text(env)
+    assert "OK — all checks passed" in lt
+    notes = [ln for ln in lt.splitlines() if "CONTROL_UNAVAILABLE" in ln]
+    assert notes, "expected a recording-only CONTROL_UNAVAILABLE note"
+    assert "recording only" in notes[-1]
+    assert "TRANSIT_BROWNOUT unemittable" in notes[-1]
+    assert not [ln for ln in lt.splitlines() if "cn_domestic" in ln]
+    # Scan-cleanliness: the dead control is the ONLY anomaly on this tick,
+    # so nothing in the log may match a naive `grep FAIL`.
+    assert not [ln for ln in lt.splitlines() if "FAIL" in ln], lt
+    assert "UNAVAILABLE(" in notes[-1]  # distinct token carries the error
+    probe = run_script(env, "--ref-probes-once")
+    assert probe.returncode == 0, probe.stdout
+    assert "batclass=control_unavailable" in probe.stdout
+    assert "dom_unavail=1" in probe.stdout
+    assert "slow=0,unavail=1" in probe.stdout
+    assert "FAIL" not in probe.stdout, probe.stdout  # diagnostics too
+
+
+def test_control_fail_intl_slow_nucpot_slow_mandatory_case(env, mock_site):
+    """NFM-5712 MANDATORY truth-table case: control FAIL + int'l refs slow +
+    nucpot slow => NO TRANSIT_BROWNOUT (domestic pristine unverifiable), NO
+    cn_domestic (the control never completed), one CONTROL_UNAVAILABLE note,
+    classification UNCLASSIFIED fail-open — the streak-2 page fires exactly
+    as the pre-battery watch line did."""
+    _base, config = mock_site
+    _prime(env, 3)
+    config["refs"]["/ref-dom"] = {"drop": 99}
+    _brownout_intl(config)
+    _fail_probe(env, p0=2)
+    r1 = run_script(env)  # streak 1 WARN carries the class
+    assert r1.returncode == 1, r1.stdout
+    lt = log_text(env)
+    assert "class=UNCLASSIFIED" in lt
+    assert [ln for ln in lt.splitlines() if "CONTROL_UNAVAILABLE" in ln]
+    assert not [ln for ln in lt.splitlines() if "class=TRANSIT_BROWNOUT" in ln]
+    assert not [ln for ln in lt.splitlines() if "class=CN_DOMESTIC" in ln]
+    r2 = run_script(env)  # streak 2: fail-open page
+    assert r2.returncode == 2, r2.stdout
+    crit = [
+        ln
+        for ln in log_text(env).splitlines()
+        if "CRITICAL — public-edge P0 failure confirmed" in ln
+    ][-1]
+    assert "class=UNCLASSIFIED" in crit
+
+
+def test_dom_completed_slow_green_tick_records_cn_domestic_note(env, mock_site):
+    """NFM-5712 truth-table row 5: the control COMPLETED but slow with both
+    int'l lanes healthy => cn_domestic recording-only NOTE on a green tick
+    (F1 addendum semantics — only a COMPLETED control judges latency)."""
+    _base, config = mock_site
+    _prime(env, 3)
+    config["refs"]["/ref-dom"] = {"lat": BROWNOUT_LAT}  # completes, ~5x slow
+    r = run_script(env)
+    assert r.returncode == 0, r.stdout
+    notes = [ln for ln in log_text(env).splitlines() if "NOTE — ref-battery" in ln]
+    assert notes, "expected a recording-only cn_domestic NOTE"
+    assert "cn_domestic" in notes[-1]
+    assert "no page implications" in notes[-1]
+
+
+def test_control_host_swap_resets_domestic_baseline(env, mock_site):
+    """NFM-5712: baselines are PER ENDPOINT (``<lane>_url`` marker).
+    Re-pointing the dom lane at a new control host (tuna ->
+    mirrors.ustc.edu.cn in production) must start a FRESH domestic baseline:
+    the stale old-host EMA/attempt history is safely ignored (the live
+    defect host carried dom_att=80, dom_count=0, EMA never formed), dropped
+    on the next state rewrite, and the battery re-enters warmup for the new
+    host — recording only until its EMA forms. Other lanes keep their
+    baselines: their endpoints did not change."""
+    _base, config = mock_site
+    _prime(env, 3)
+    st = ref_state_dict(env)
+    assert st["dom_count"] == "3"
+    assert st["dom_url"] == env["NFM_REF_DOM_URL"]
+    config["refs"]["/ref-dom2"] = {"lat": 0.2}
+    env["NFM_REF_DOM_URL"] = env["NFM_REF_DOM_URL"] + "2"  # the ustc swap
+    r = run_script(env, "--ref-probes-once")
+    assert r.returncode == 0, r.stdout
+    assert "warmup=1" in r.stdout  # fresh baseline -> battery warmup again
+    st = ref_state_dict(env)
+    assert st["dom_count"] == "1"  # only the new endpoint's sample
+    assert st["dom_att"] == "1"
+    assert st["dom_url"] == env["NFM_REF_DOM_URL"]
+    assert st["cf_count"] == "4"  # no collateral reset on unchanged lanes
+    assert st["ncf_count"] == "4"
 
 
 def test_partial_intl_slow_stays_unclassified(env, mock_site):
@@ -322,13 +457,16 @@ def test_redirecting_reference_counts_as_healthy_sample(env, mock_site):
     assert "FAIL" not in st["ncf_last"]
 
 
-def test_dead_intl_lane_exits_warmup_and_brownout_stays_reachable(env, mock_site):
-    """Review defect: a lane that NEVER succeeds (ghcr egress blocked from a
-    CN vantage) held the WHOLE battery in warmup forever — warmup must be
-    attempt-based. After BASELINE_MIN probes the battery testifies even with
-    a dead lane: it reads slow (never pristine), and cf-slow + dead-ncf +
-    pristine domestic still classifies TRANSIT_BROWNOUT instead of the
-    classifier being permanently inert."""
+def test_dead_intl_lane_exits_warmup_and_classifies_fail_open(env, mock_site):
+    """Review defect (NFM-5708): a lane that NEVER succeeds (ghcr egress
+    blocked from a CN vantage) held the WHOLE battery in warmup forever —
+    warmup must stay ATTEMPT-based so the battery still testifies with a
+    dead lane. Under NFM-5712 three-valued semantics the dead int'l lane is
+    UNAVAILABLE, not slow: cf-slow + dead-ncf + pristine domestic reads
+    mixed => UNCLASSIFIED and the streak-2 page fires fail-open — a
+    transport failure must never satisfy the ALL-int'l-slow conjunct of
+    TRANSIT_BROWNOUT (the classifier is never inert, but it never
+    suppresses on absent evidence either)."""
     _base, config = mock_site
     config["refs"]["/ref-ncf"] = {"drop": 99}
     for _ in range(3):
@@ -339,24 +477,24 @@ def test_dead_intl_lane_exits_warmup_and_brownout_stays_reachable(env, mock_site
     config["refs"]["/ref-cf"] = {"lat": BROWNOUT_LAT}
     _fail_probe(env, p0=2)
     assert run_script(env).returncode == 1  # streak 1: WARN, class rides line
-    r2 = run_script(env)  # streak 2: dead-ncf reads slow => all intl slow
-    assert r2.returncode == 1, r2.stdout  # suppressed, NOT a page
-    warn = [ln for ln in log_text(env).splitlines() if "class=" in ln][-1]
-    assert "class=TRANSIT_BROWNOUT" in warn
-    assert not [ln for ln in log_text(env).splitlines() if "site-monitor: CRITICAL" in ln]
+    r2 = run_script(env)  # streak 2: NOT suppressed — fail-open page
+    assert r2.returncode == 2, r2.stdout
+    lt = log_text(env)
+    assert "class=UNCLASSIFIED" in lt
+    assert not [ln for ln in lt.splitlines() if "class=TRANSIT_BROWNOUT" in ln]
 
 
 def test_untrusted_domestic_never_satisfies_pristine(env, mock_site):
     """Review defect: the dom-pristine conjunct of TRANSIT_BROWNOUT was
     satisfiable WITHOUT trusted evidence — an untrusted-but-succeeding dom
-    lane reads slow=0 at any latency (its EMA seeded mid-degradation). tuna
-    fails its first BASELINE_MIN attempts (battery exits warmup
+    lane reads slow=0 at any latency (its EMA seeded mid-degradation). The
+    control host fails its first BASELINE_MIN attempts (battery exits warmup
     attempt-based, dom cnt=0), then recovers; with both int'l lanes slow the
     tick must be UNCLASSIFIED (mixed) and page fail-open at streak 2 —
     exactly the dom-degraded+intl-slow state the CPO charter maps to
     CN_DOMESTIC-adjacent fail-open, never suppression."""
     _base, config = mock_site
-    config["refs"]["/ref-dom"] = {"drop": 99}  # tuna unreachable from t0
+    config["refs"]["/ref-dom"] = {"drop": 99}  # control unreachable from t0
     for _ in range(3):
         assert run_script(env).returncode == 0  # green; dom att accrues, cnt=0
     st = ref_state_dict(env)

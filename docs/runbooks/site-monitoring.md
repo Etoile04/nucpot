@@ -237,24 +237,41 @@ against it.
 - **Lanes** (3 parallel lightweight GETs riding the existing 300 s tick —
   no new schedule/daemon; worst case +REF_TIMEOUT per tick): int'l CF-edge
   (`www.cloudflare.com`), int'l non-CF (`ghcr.io`), CN-domestic control
-  (`tuna.tsinghua.edu.cn`). Roles are fixed — the classifier depends on
+  (`mirrors.ustc.edu.cn`; NFM-5712 swap 2026-10-25 — tuna.tsinghua.edu.cn
+  proved permanently unreachable from this vantage). Roles are fixed — the
+  classifier depends on
   them. Egress is DIRECT per [ADR-023](../adr/ADR-023-NFM-5540-sentinel-egress-independence.md)
   (no-proxy opener primary, wrapper `no_proxy='*'` defense-in-depth), so a
   VPN flap cannot fake a brownout. Redirects are disabled: a 30x/4xx/5xx
   is a definitive transport verdict and counts as a healthy path sample;
-  only transport failure reads FAIL.
-- **Baselines** are per-host RELATIVE EMAs in `~/.nfm-site-monitor.ref.state`
-  (own file — the main state family is untouched). A lane is slow iff the
-  sample ≥ 2.5× that host's OWN EMA (`NFM_REF_SLOW_RATIO`), never an
-  absolute latency. Failed probes never touch the baseline but read SLOW
-  once the battery is out of warmup. Warmup is ATTEMPT-based (≥
-  `NFM_REF_BASELINE_MIN`=10 attempts): a permanently unreachable lane
-  cannot hold the battery in warmup forever, and during warmup the battery
-  never suppresses a page.
+  only transport failure reads UNAVAILABLE — a distinct token, so the
+  battery never emits `FAIL` and naive `grep FAIL` beat scans (NFM-4951
+  class) stay clean while only a reference is unreachable.
+- **Baselines** are per-ENDPOINT RELATIVE EMAs in
+  `~/.nfm-site-monitor.ref.state` (own file — the main state family is
+  untouched). A lane is slow iff the sample ≥ 2.5× that host's OWN EMA
+  (`NFM_REF_SLOW_RATIO`), never an absolute latency. Per-host outcome is
+  three-valued (NFM-5712): COMPLETED (any received HTTP status — 2xx/3xx/4xx
+  all count as a latency sample) / SLOW (completed but over the relative
+  threshold) / UNAVAILABLE (connection-level failure: URLError, TLS, no
+  response). A failed probe never touches the baseline and reads
+  UNAVAILABLE — never slow — so a dead lane can never manufacture
+  slow-based classes. Warmup is ATTEMPT-based (≥ `NFM_REF_BASELINE_MIN`=10
+  attempts): a permanently unreachable lane cannot hold the battery in
+  warmup forever, and during warmup the battery never suppresses a page.
+  The state file carries a `<lane>_url` marker per lane: re-pointing a lane
+  at a different URL starts a FRESH baseline (stale prior-host entries are
+  dropped on the next rewrite), so after an endpoint swap expect a fresh
+  warmup (~50 min at 300 s cadence) for the swapped lane, during which the
+  domestic leg records only — warmup dominates the batclass, so the battery
+  emits no confident verdict until the new EMA forms.
 - **Classification** rides every nucpot DEGRADE log line as
   `[NFM-5706 class=<C>; refs: <per-host timings>]`. Full hint enum (CPO
   charter addendum, folding NFM-5707): `TRANSIT_BROWNOUT` / `SITE_SIDE` /
-  `CN_DOMESTIC` / `clean`, with `UNCLASSIFIED` as the fail-open floor:
+  `CN_DOMESTIC` / `clean`, with `UNCLASSIFIED` as the fail-open floor.
+  The internal battery verdict (`batclass=` in `--ref-probes-once`)
+  additionally carries `control_unavailable` — the CN-domestic control
+  lane failed at the transport level (see below):
   - `TRANSIT_BROWNOUT` — nucpot slow + ALL int'l refs slow + domestic
     pristine on a TRUSTED baseline (an untrusted-but-succeeding dom lane
     reads slow=0 at any latency — its EMA may be seeded mid-degradation —
@@ -269,7 +286,9 @@ against it.
   - `SITE_SIDE` — refs pristine while nucpot degraded ⇒ the §1 detection
     contract and watch-line escalation apply unchanged; the class token
     and reference latencies ride the log lines as evidence.
-  - `CN_DOMESTIC` — the CN-domestic control (tuna) itself is degraded ⇒
+  - `CN_DOMESTIC` — the CN-domestic control (ustc) COMPLETED but slow
+    (NFM-5712: a control that failed at the transport level reads
+    UNAVAILABLE, never this class) ⇒
     HINT class: int'l comparison is UNRELIABLE in that state (domestic
     trouble usually slows the int'l lanes too), so the tick is not
     force-fit into the two main classes. NO suppression — existing paging
@@ -281,16 +300,27 @@ against it.
     battery logs nothing (OK lines byte-stable); a CONFIDENT non-clean
     verdict (`intl_brownout` / `cn_domestic`) logs one `NOTE — ref-battery`
     line — recording only, zero page implications. This covers the
-    "int'l degraded but nucpot clean" observability row.
+    "int'l degraded but nucpot clean" observability row. Likewise, an
+    UNAVAILABLE control on an otherwise classifiable tick logs one
+    `NOTE — CONTROL_UNAVAILABLE` line (recording only, non-paging): the
+    domestic-pristine precondition is unverifiable, so `TRANSIT_BROWNOUT`
+    is unemittable that tick and the DEGRADE classification falls to
+    `UNCLASSIFIED` fail-open; an UNAVAILABLE int'l lane likewise forces
+    mixed ⇒ `UNCLASSIFIED` — suppression needs certainty, so a transport
+    failure can never manufacture the ALL-int'l-slow conjunct.
   - `UNCLASSIFIED` — battery cannot testify (warmup / mixed int'l
     evidence / internal error) ⇒ existing paging path runs fail-open.
 - **Replay validation (10-24 window):** the classifier is pinned by a
   table-driven replay of the documented 2026-10-24 15:35–16:32Z burst
   (cloudflare 8.25/3.54/3.01 s vs sub-second norm; ghcr.io 2.15 s vs
   0.77 s baseline; tuna 0.19 s pristine; nucpot degraded ⇒ must classify
-  `TRANSIT_BROWNOUT`) plus the boundary rows (tuna degraded + nucpot
-  degraded ⇒ `CN_DOMESTIC`; all clean ⇒ `clean`/`SITE_SIDE`; int'l
-  degraded + nucpot clean ⇒ green-tick NOTE). Run:
+  `TRANSIT_BROWNOUT`) plus the boundary rows (control completed-but-slow +
+  nucpot degraded ⇒ `CN_DOMESTIC`; all clean ⇒ `clean`/`SITE_SIDE`; int'l
+  degraded + nucpot clean ⇒ green-tick NOTE). The replay pins the 10-24
+  control host (tuna) as historical data; NFM-5712 adds truth-table rows
+  for the three-valued control semantics (control FAIL ⇒ never
+  `CN_DOMESTIC`, `TRANSIT_BROWNOUT` unemittable, one recording-only
+  `CONTROL_UNAVAILABLE` NOTE on green ticks). Run:
   `python3 -m pytest scripts/tests/test_nfm5708_replay_20261024.py -v`.
 - **SRE diagnostic:** `--ref-probes-once` runs the battery once, prints
   per-host timings + classification tokens, and updates ONLY the reference

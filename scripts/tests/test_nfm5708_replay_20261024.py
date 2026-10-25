@@ -5,7 +5,11 @@ Fixture source (NFM-5704/NFM-5705 manual battery, 15:35-16:32Z):
 
 - cloudflare: 8.25 / 3.54 / 3.01 s samples vs a sub-second (~0.30 s) norm
 - ghcr.io:    2.15 s TCP-connect-equivalent sample vs a 0.77 s baseline
-- tuna:       0.19 s — pristine CN-domestic control
+- tuna:       0.19 s — pristine CN-domestic control (the 10-24 control host;
+              production swapped to mirrors.ustc.edu.cn by NFM-5712 after
+              tuna proved permanently unreachable — the replay is
+              host-agnostic through the NFM_REF_DOM_URL seam, and the
+              control-role semantics it pins are the deliverable here)
 - nucpot:     degraded (the multi-route P1 burst)
 
 Required verdict for that window: ``TRANSIT_BROWNOUT``.
@@ -25,10 +29,16 @@ Pinned contracts:
   harness timing noise (a full-suite run inflates mock-lane sleeps enough to
   drop a literal 2.15 s sample below 2.5x its primed EMA — the exact flake
   this fixture exists to avoid);
-- the boundary rows pin the CPO addendum enum: tuna degraded + nucpot
+- the boundary rows pin the CPO addendum enum: control degraded (COMPLETED
+  but slow — NFM-5712: cn_domestic needs a completed control) + nucpot
   degraded => CN_DOMESTIC (fail-open, pages); all clean => clean battery /
   SITE_SIDE on a degrade tick; int'l degraded + nucpot clean => GREEN tick
-  with a recording-only NOTE line and a byte-stable OK line.
+  with a recording-only NOTE line and a byte-stable OK line;
+- the NFM-5712 rows pin the three-valued control semantics: control FAIL
+  (UNAVAILABLE) never emits CN_DOMESTIC and never witnesses the
+  domestic-pristine conjunct, so TRANSIT_BROWNOUT is unemittable for that
+  tick — UNCLASSIFIED fail-open (mandatory case) plus a recording-only
+  CONTROL_UNAVAILABLE note on green ticks.
 
 Replay command (cited in the PR description):
 
@@ -53,15 +63,15 @@ NORM = {"cf": 0.30, "ncf": 0.77, "dom": 0.19}
 RATIO = {"cf": 8.25 / 0.30, "cf_354": 3.54 / 0.30, "cf_301": 3.01 / 0.30, "ncf": 2.15 / 0.77}
 # Pristine lanes are staged at a pristine absolute.
 PRISTINE_CF, PRISTINE_DOM = 0.2, 0.15
-# tuna degraded: 1.5 s is ~7.9x its 0.19 s norm — unambiguous, needs no
-# ratio staging.
+# Control degraded (COMPLETED but slow): 1.5 s is ~7.9x its 0.19 s norm —
+# unambiguous, needs no ratio staging.
 DOM_SLOW = 1.5
 
 # The replay table: every (nucpot, battery) combo the CPO addendum names.
 # int'l lanes stage as documented RATIOS vs the measured EMA; see the module
 # docstring for why literal seconds are not load-portable.
 REPLAY_TABLE = [
-    # THE window: 15:35-16:32Z — cloudflare slow, ghcr slow, tuna pristine,
+    # THE window: 15:35-16:32Z — cloudflare slow, ghcr slow, control pristine,
     # nucpot degraded => TRANSIT_BROWNOUT.
     pytest.param(
         "20261024-1525Z-window",
@@ -92,10 +102,10 @@ REPLAY_TABLE = [
         "TRANSIT_BROWNOUT",
         id="replay-cf-3.01s",
     ),
-    # Boundary: tuna degraded + nucpot degraded => CN_DOMESTIC (hint, NOT
-    # force-fit; int'l comparison unreliable).
+    # Boundary: control degraded (completed-but-slow) + nucpot degraded =>
+    # CN_DOMESTIC (hint, NOT force-fit; int'l comparison unreliable).
     pytest.param(
-        "tuna-degraded-nucpot-degraded",
+        "control-degraded-nucpot-degraded",
         None,
         None,
         True,
@@ -127,7 +137,16 @@ def _prime_at_norms(env, config, n=4):
 
 def _stage_row(env, config, cf_ratio, ncf_ratio, dom_slow):
     """Stage a replay row's window: int'l lanes at their documented RATIO x
-    the MEASURED baseline (load-portable), domestic per the row."""
+    the MEASURED baseline (load-portable), domestic per the row.
+
+    The lane timeout is raised to admit the DOCUMENTED samples: the window's
+    8.25 s cloudflare reading exceeds the harness default NFM_REF_TIMEOUT=5,
+    so pre-NFM-5712 the row "passed" only because a probe timeout conflated
+    with SLOW (fail-reads-slow). Under three-valued semantics a timeout is
+    UNAVAILABLE — the replay must observe a COMPLETED slow sample, exactly
+    as production (NFM_REF_TIMEOUT=10) did when the manual battery measured
+    8.25 s for real."""
+    env["NFM_REF_TIMEOUT"] = "20"
     st = ref_state_dict(env)
     cf = float(st["cf_ema_ms"]) / 1000.0 * cf_ratio if cf_ratio else PRISTINE_CF
     ncf = float(st["ncf_ema_ms"]) / 1000.0 * ncf_ratio if ncf_ratio else NORM["ncf"]
@@ -231,3 +250,51 @@ def test_replay_all_clean_green_tick_is_silent(env, mock_site):
     assert probe.returncode == 0, probe.stdout
     assert "batclass=clean" in probe.stdout
     assert "warmup=0" in probe.stdout
+
+
+# ---------------------------------------- NFM-5712 three-valued control rows
+
+
+def test_replay_control_fail_intl_slow_nucpot_slow_mandatory_case(env, mock_site):
+    """NFM-5712 MANDATORY truth-table row (the G1 defect class): control
+    FAIL + int'l refs slow + nucpot slow => NO TRANSIT_BROWNOUT (domestic
+    pristine unverifiable), NO CN_DOMESTIC (the control never completed) —
+    one CONTROL_UNAVAILABLE note, UNCLASSIFIED fail-open, and the streak-2
+    page fires exactly as the pre-battery watch line did."""
+    _base, config = mock_site
+    _prime_at_norms(env, config)
+    _stage_row(env, config, RATIO["cf"], RATIO["ncf"], False)
+    config["refs"]["/ref-dom"] = {"drop": 99}  # control transport-dead
+    _fail_probe(env, p0=2)
+    r1 = run_script(env)  # streak 1 WARN carries the class
+    assert r1.returncode == 1, r1.stdout
+    lt = log_text(env)
+    assert [ln for ln in lt.splitlines() if "CONTROL_UNAVAILABLE" in ln]
+    assert not [ln for ln in lt.splitlines() if "class=TRANSIT_BROWNOUT" in ln]
+    assert not [ln for ln in lt.splitlines() if "class=CN_DOMESTIC" in ln]
+    r2 = run_script(env)  # streak 2: fail-open page
+    assert r2.returncode == 2, r2.stdout
+    crit = [
+        ln
+        for ln in log_text(env).splitlines()
+        if "CRITICAL — public-edge P0 failure confirmed" in ln
+    ][-1]
+    assert "class=UNCLASSIFIED" in crit
+
+
+def test_replay_control_fail_green_tick_records_control_unavailable(env, mock_site):
+    """NFM-5712 truth-table row 1: control FAIL + nucpot GREEN => one
+    recording-only CONTROL_UNAVAILABLE note, the OK line byte-stable, and
+    the per-tick cn_domestic noise of the live G1 defect (30 NOTEs since the
+    10-24 deploy) is gone."""
+    _base, config = mock_site
+    _prime_at_norms(env, config)
+    config["refs"]["/ref-dom"] = {"drop": 99}
+    r = run_script(env)
+    assert r.returncode == 0, r.stdout
+    lt = log_text(env)
+    assert "OK — all checks passed" in lt
+    notes = [ln for ln in lt.splitlines() if "CONTROL_UNAVAILABLE" in ln]
+    assert notes, "expected a recording-only CONTROL_UNAVAILABLE note"
+    assert "recording only" in notes[-1]
+    assert not [ln for ln in lt.splitlines() if "NOTE — ref-battery" in ln]
