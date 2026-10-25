@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# NFM-5715 ENFORCEMENT DEMO — unreviewed sentinel-script-only change; expected merge-BLOCKED under code-owner review + enforce_admins. Never merge this PR.
 # nfm-site-monitor.sh — NFM-5226 public-edge site monitor sentinel.
 #
 # Why: GitHub Actions scheduled-event delivery for this repo is chronically
