@@ -1,0 +1,15 @@
+# NFM-5715 — mechanical CR-verdict enforcement for the site sentinel.
+#
+# The nucpot-agent GitHub App is the CR shared review identity.
+# Branch protection on main requires an approving review from a Code Owner
+# for changes to these paths, and enforce_admins binds the rule to the
+# repo owner as well (PR #1502 merged admin-side with zero reviews —
+# that bypass is closed). The approving code-owner review IS the CR verdict
+# marker: posted by CR via the app, referencing the Paperclip CR-verdict
+# issue. No review -> merge BLOCKED.
+#
+# Sentinel script + its test files:
+/scripts/nfm-site-monitor.sh @nucpot-agent[bot]
+/scripts/tests/test_nfm_site_monitor.py @nucpot-agent[bot]
+/scripts/tests/test_nfm_site_monitor_refs.py @nucpot-agent[bot]
+/scripts/tests/test_nfm_site_monitor_streak1_page.py @nucpot-agent[bot]
