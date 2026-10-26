@@ -117,9 +117,10 @@ def _parse_probe_by_lane(env, out):
     lanes always print in the fixed cf, ncf, dom order."""
     found = re.findall(_TOKEN, out)
     lanes = {}
-    for (host, ms, _ema, slow, unavail), lane in zip(
-        found, ("cf", "ncf", "dom"), strict=False
-    ):
+    # plain zip() — no strict= kwarg: it is py3.10+ and this suite must
+    # collect on the production-host interpreter (/usr/bin/python3 = 3.9;
+    # CR NFM-5720 F2). Truncation-on-shortest is the default either way.
+    for (host, ms, _ema, slow, unavail), lane in zip(found, ("cf", "ncf", "dom")):
         lanes[lane] = {"host": host, "ms": int(ms), "slow": int(slow), "unavail": int(unavail)}
     bat = re.search(r"batclass=([a-z_]+)", out)
     intl = re.search(r"intl_slow=(\d+)/2 dom_slow=(\d+)", out)
