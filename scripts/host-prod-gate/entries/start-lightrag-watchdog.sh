@@ -94,6 +94,25 @@ OLLAMA_MODEL="${NFM_LIGHTRAG_WATCHDOG_OLLAMA_MODEL:-qwen3.5:4b-nvfp4}"
 OLLAMA_URL="${NFM_LIGHTRAG_WATCHDOG_OLLAMA_URL:-http://127.0.0.1:11434}"
 GEN_TIMEOUT_SEC="${NFM_LIGHTRAG_WATCHDOG_GEN_TIMEOUT_SEC:-45}"
 VERIFY_TIMEOUT_SEC="${NFM_LIGHTRAG_WATCHDOG_VERIFY_TIMEOUT_SEC:-90}"
+# NFM-5744 (H3 remediation delta, window-3 wedge 3): the post-term
+# verify probe is RE-BOUND to a 30s budget. The VERIFY_TIMEOUT_SEC=90
+# line above is retained unedited for byte-diff archaeology; this
+# additive re-binding supersedes it at the single host_remediate verify
+# call site (the only consumer). Why: the verify is observational and
+# fail-open (restart+reprocess run regardless), but window-3 wedge 3
+# (2026-10-25T03:57:26Z) — the first-ever suspect->term+verify-failed
+# episode — burned the FULL 90s budget (03:58:31 term rc=0 -> 04:00:01
+# verify-failed) and recovered in 170s against the operator's 120s
+# suspect->term hard cap (adjudication 4a3275cd). Every prior post-term
+# verify completed in <=1s (10-17/10-20/10-21/10-23 cohort), so 30s
+# keeps ~30x headroom for observed successes while capping the
+# worst-case episode: 45s gen-probe + 15s stop-wait + ~2s term
+# + 30s bounded verify + ~15s restart+reprocess ~= 107s <= 120s.
+# Term sequencing, the healthy-cohort path (never reaches the verify),
+# and every log line shape are unchanged (NFM-5339 instrument pin
+# d782e4d8…c79ffc2 stays valid).
+POST_TERM_VERIFY_TIMEOUT_SEC="${NFM_LIGHTRAG_WATCHDOG_POST_TERM_VERIFY_TIMEOUT_SEC:-30}"
+VERIFY_TIMEOUT_SEC="${POST_TERM_VERIFY_TIMEOUT_SEC}"
 STOP_WAIT_SEC="${NFM_LIGHTRAG_WATCHDOG_STOP_WAIT_SEC:-15}"
 CURL_BIN="${NFM_LIGHTRAG_WATCHDOG_CURL:-/usr/bin/curl}"
 OLLAMA_BIN="${NFM_LIGHTRAG_WATCHDOG_OLLAMA:-ollama}"
