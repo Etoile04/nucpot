@@ -1,6 +1,6 @@
 {
   "env": {
-    "PCMR_ENFORCE": "0"
+    "PCMR_ENFORCE": "1"
   },
   "hooks": {
     "PostToolUse": [
