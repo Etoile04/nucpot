@@ -195,7 +195,8 @@
 #             swap from tuna.tsinghua.edu.cn — see the NFM-5712 block)
 #   - Per-host RELATIVE baselines (EMA of healthy samples) live in
 #     ~/.nfm-site-monitor.ref.state — thresholds are sample >= SLOW_RATIO x
-#     that host's OWN baseline, never absolute latencies. A lane is slow iff
+#     that host's OWN baseline (NFM-5720 adds dual absolute floors per lane
+#     — either-arm; see the NFM-5720 block below). A lane is slow iff
 #     sample >= 2.5x baseline (10-24 battery: ghcr 2.15s vs 0.77s = 2.8x,
 #     cloudflare 8.25/3.54/3.01s vs ~0.3s; ratio 2.5 catches both with the
 #     fail-open direction — only suppression needs certainty). Failed probes
@@ -285,6 +286,53 @@
 #   - Paging behavior is UNCHANGED: the streak-1 rule (NFM-5667), the
 #     streak>=2 lane, the scan-blind lanes and the tick cadence all stay
 #     exactly as they are; only the battery's evidence vocabulary moved.
+#
+# NFM-5720 (2026-10-26, post-G3 carrier for NFM-5706; CTO [CTO-ARCH-OBS]
+# b826f9b0 on NFM-5706, 2026-10-25T20:01Z — sources QA d6ab085c/8ad28898 +
+# CTO adjudication 00bdefaa on NFM-5705) — two false-NEGATIVE classifier
+# refinements from the first instrumented burst day (10-25). No false pages,
+# no false TB-while-clean: the soak invariant class is untouched.
+#   - OBS-1 — EMA ratchet masks absolute degradation (QA finding,
+#     CTO-endorsed): per-host EMA baselines chase sustained degradation (cf
+#     EMA climbed 1232->1763ms across 10-25), so 14:07:25Z printed
+#     slow=0, batclass=clean with cf at an absolute 2150ms (~2.8x the
+#     ~760ms clean baseline) — SITE_SIDE labels over-trust and
+#     TRANSIT_BROWNOUT under-fires during long brownouts. Fix: dual
+#     absolute+relative slow test — a lane is SLOW when the sample exceeds
+#     EITHER the relative arm (EMA x SLOW_RATIO) OR the lane's absolute
+#     floor (ABS_FLOOR: cf 1900 / ghcr 1600 / ustc 575 = 2.5x the
+#     clean-period baselines 760/640/230ms from the 10-25 log of record,
+#     within the CTO's "floors = 2-3x those" range).
+#     Reconciliation note (CR-relevant): the CTO's prose says "flag slow
+#     when sample > max(EMA x ratio, absolute floor)", but max() leaves
+#     the CTO's OWN 14:07:25Z vector unflagged at every floor in the
+#     stated range (2150 < max(4337, 1900..2280) for all of them) — i.e.
+#     the literal max-form implements no fix for the named defect.
+#     Either-arm (equivalently min-of-thresholds) is what satisfies the
+#     AC3 vector; the floor arm equals the relative arm the EMA would
+#     apply had it never ratcheted, so it only ever LOWERS a threshold —
+#     zero false-positive exposure (clean lanes sit far under floors).
+#     Fold consistency: the EMA slow-fold (ALPHA_SLOW) keys on the same
+#     dual test — floor-caught samples must not fold at full ALPHA, which
+#     would accelerate the ratchet this fix bounds.
+#   - OBS-2 — label precedence mislabels all-refs-slow as cn_domestic
+#     (CTO, new): 19:30:04Z printed batclass=cn_domestic with
+#     intl_slow=2/2 AND dom_slow=1 (cf 2012 / ghcr 1993 / ustc 656ms, all
+#     slow). All-three-slow is transit-class shape per the charter
+#     (TRANSIT_BROWNOUT = intl degraded; cn_domestic = dom degraded while
+#     intl clean). Fix: precedence — the intl_slow==2/2 transit conjunct is
+#     now evaluated BEFORE the dom_slow branch (intl class outranks
+#     cn_domestic); the lane_trusted["dom"] fail-open gate survives the
+#     reorder. On the 10-25 log of record this reclassifies 14:00:37Z,
+#     14:29:48Z, 15:14:10Z and 19:30:04Z (green-tick NOTEs) and 14:44:15Z
+#     (P1-only degrade tick — no page implications either way; the TB
+#     suppression branch only gates the streak>=2 P0 CRITICAL) from
+#     cn_domestic to intl_brownout, and 14:07:25Z from clean to mixed
+#     (cf floor-caught) — every reclassified tick has BOTH intl lanes
+#     >= their absolute floors; zero clean ticks flip (replay test
+#     test_nfm5720_classifier_refinements.py).
+#   - Landed AFTER NFM-5706 G3/G4 closed (blocker held the deploy): a
+#     mid-soak classifier change would have rebased the G3 anchor window.
 #
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
@@ -925,9 +973,24 @@ TIMEOUT = float(os.environ.get("NFM_REF_TIMEOUT", "10"))
 SLOW_RATIO = float(os.environ.get("NFM_REF_SLOW_RATIO", "2.5"))
 BASELINE_MIN = int(os.environ.get("NFM_REF_BASELINE_MIN", "10"))
 ALPHA = 0.125       # EMA weight per healthy sample (≈8-tick convergence)
-ALPHA_SLOW = 0.03   # folded weight for above-ratio samples: a 1-2h brownout
+ALPHA_SLOW = 0.03   # folded weight for above-threshold samples: a 1-2h brownout
                     # cannot re-baseline the reference mid-incident, but a
                     # genuine multi-hour drift still converges
+
+# NFM-5720 (OBS-1, CTO b826f9b0 on NFM-5706): per-lane ABSOLUTE slow floors
+# in ms = 2.5x the clean-period EMA baselines measured on the 2026-10-25 log
+# of record (cf ~760ms / ghcr ~640ms / ustc ~230ms; the CTO's "floors ≈ 2-3x
+# those" range, 2.5 chosen to mirror SLOW_RATIO). Either-arm semantics: a
+# sample is SLOW when it exceeds the relative arm (EMA x SLOW_RATIO) OR its
+# lane floor — see the NFM-5720 header block for why the CTO's literal
+# max()-form is reconciled to either-arm against the CTO's own 14:07:25Z
+# test vector (cf 2150ms vs a ratcheted relative arm of 4337ms: no floor in
+# the stated 2-3x range flags it under max(), i.e. max() fixes nothing).
+ABS_FLOOR = {
+    "cf":  float(os.environ.get("NFM_REF_ABS_FLOOR_CF", "1900")),
+    "ncf": float(os.environ.get("NFM_REF_ABS_FLOOR_NONCF", "1600")),
+    "dom": float(os.environ.get("NFM_REF_ABS_FLOOR_DOM", "575")),
+}
 
 # Roles FIXED (classifier depends on them): int'l CF / int'l non-CF / domestic.
 # NFM-5712: the CN-domestic control is mirrors.ustc.edu.cn — tuna proved
@@ -1053,13 +1116,29 @@ try:
             disp = "UNAVAILABLE(%s)" % err
         else:
             # COMPLETED (any received HTTP status is a latency sample);
-            # SLOW iff over SLOW_RATIO x this host's OWN trusted baseline.
+            # SLOW iff over SLOW_RATIO x this host's OWN trusted baseline
+            # (relative arm) OR over the lane's NFM-5720 absolute floor —
+            # either arm. OBS-1: the relative arm alone lets a ratcheted
+            # EMA (cf 1232->1763ms across 10-25) mask absolute degradation
+            # — 14:07:25Z printed slow=0 at cf 2150ms (~2.8x the ~760ms
+            # clean baseline) because 2.5 x the RATCHETED 1735ms EMA is
+            # 4337ms. The floor arm is exactly what the relative arm would
+            # be had the EMA stayed at the clean-period norm, so it can
+            # only ever LOWER a threshold: false-positive class unchanged
+            # (clean lanes sit far under their floors).
             unavail[key] = 0
-            slow[key] = 1 if (trusted and ema == ema
-                              and ms >= ema * SLOW_RATIO) else 0
+            over_rel = ema == ema and ms >= ema * SLOW_RATIO
+            over_abs = ms >= ABS_FLOOR[key]
+            slow[key] = 1 if (trusted and (over_rel or over_abs)) else 0
             if ema != ema:            # no baseline yet — seed it
                 ema_new = float(ms)
-            elif ms >= ema * SLOW_RATIO:
+            elif over_rel or over_abs:
+                # NFM-5720 fold consistency: the slow-fold weight keys on
+                # the SAME dual test as the flag. A floor-caught sample
+                # (over_abs, not over_rel — the 14:07:25Z shape) must also
+                # fold at ALPHA_SLOW, else this fix itself would accelerate
+                # the very ratchet it exists to bound (full-weight ALPHA
+                # folding of degradation samples).
                 ema_new = ema + ALPHA_SLOW * (ms - ema)
             else:
                 ema_new = ema + ALPHA * (ms - ema)
@@ -1082,14 +1161,18 @@ try:
     # Battery-only verdict (CPO charter addendum enum: clean / intl_brownout
     # / cn_domestic, warmup+mixed as non-confident floors; NFM-5712 adds
     # control_unavailable). Warmup dominates: an untrusted battery never
-    # issues a confident hint. control_unavailable beats cn_domestic — an
-    # UNAVAILABLE control never completed, so it cannot judge latency (the
-    # G1 defect read it as cn_domestic every tick); it also cannot witness
-    # domestic-pristine, so TRANSIT_BROWNOUT stays unemittable that tick.
-    # cn_domestic beats intl_brownout — with the domestic control itself
-    # degraded, the int'l comparison is unreliable and must not be force-fit
-    # into either main class. Roles are fixed (cf+ncf int'l, dom domestic),
-    # so 2 = int'l N.
+    # issues a confident hint. control_unavailable beats everything but
+    # warmup — an UNAVAILABLE control never completed, so it cannot judge
+    # latency (the G1 defect read it as cn_domestic every tick); it also
+    # cannot witness domestic-pristine, so TRANSIT_BROWNOUT stays
+    # unemittable that tick.
+    # NFM-5720 (OBS-2) precedence: intl_brownout beats cn_domestic —
+    # all-refs-slow is transit-class shape per the charter (TRANSIT_BROWNOUT
+    # = intl degraded; cn_domestic = dom degraded while intl clean). The
+    # pre-5720 order let dom_slow mask real transit brownouts: 19:30:04Z
+    # printed batclass=cn_domestic with intl_slow=2/2 AND dom_slow=1
+    # (cf 2012 / ghcr 1993 / ustc 656ms, all slow). cn_domestic is now the
+    # precise "dom degraded while intl NOT both slow" class.
     if warmup:
         batclass = "warmup"
     elif unavail["dom"]:
@@ -1097,16 +1180,22 @@ try:
         # recording-only CONTROL_UNAVAILABLE note downstream, classification
         # UNCLASSIFIED fail-open (never cn_domestic, never pristine).
         batclass = "control_unavailable"
-    elif slow["dom"]:
-        batclass = "cn_domestic"
     elif intl_slow == 2 and intl_unavail == 0:
-        # slow is COMPLETED-only, so intl_slow == 2 already implies both
-        # int'l lanes completed; the explicit guard documents the invariant.
-        # Only a TRUSTED domestic baseline counts as pristine evidence for
-        # suppression: untrusted-but-succeeding reads slow=0 at any latency
-        # (its EMA may be seeded mid-degradation), so the verdict must fail
-        # open to mixed/UNCLASSIFIED instead of suppressing the page.
+        # NFM-5720: the transit conjunct is evaluated BEFORE dom_slow (see
+        # the precedence note above). slow is COMPLETED-only, so
+        # intl_slow == 2 already implies both int'l lanes completed; the
+        # explicit guard documents the invariant. The lane_trusted["dom"]
+        # gate survives the reorder: an untrusted control (EMA never formed
+        # from BASELINE_MIN completed samples) cannot testify about the
+        # domestic leg in EITHER direction — untrusted-but-succeeding reads
+        # slow=0 at any latency (its EMA may be seeded mid-degradation) —
+        # so the verdict must fail open to mixed/UNCLASSIFIED instead of
+        # suppressing the page. Suppression needs certainty.
         batclass = "intl_brownout" if lane_trusted["dom"] else "mixed"
+    elif slow["dom"]:
+        # Reached only when intl is NOT both-slow (0 or 1 lane slow): the
+        # charter's cn_domestic — dom degraded while intl clean/partial.
+        batclass = "cn_domestic"
     elif intl_unavail:
         # NFM-5712: an UNAVAILABLE int'l lane is neither slow nor pristine
         # evidence — the battery cannot testify => mixed/UNCLASSIFIED

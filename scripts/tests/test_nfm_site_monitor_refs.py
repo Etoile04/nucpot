@@ -47,6 +47,21 @@ UNAVAILABLE (connection-level failure):
   starts a fresh domestic baseline — a stale old-host EMA/attempt history is
   safely ignored and dropped on the next state rewrite.
 
+NFM-5720 (post-G3 refinements, CTO b826f9b0 on NFM-5706) — false-negative
+class only:
+
+- OBS-1: a lane is SLOW when the sample exceeds EITHER the relative arm
+  (EMA x SLOW_RATIO) OR the lane's absolute floor (``NFM_REF_ABS_FLOOR_*``:
+  cf 1900 / ghcr 1600 / ustc 575 = 2.5x the 10-25 clean-period baselines
+  760/640/230ms). The floor bounds the EMA ratchet (cf 1232->1763ms on
+  10-25 masked an absolute 2150ms ~2.8x clean); it only ever LOWERS a
+  threshold, so the false-positive class is untouched. The EMA slow-fold
+  keys on the same dual test (floor-caught samples fold at ALPHA_SLOW).
+- OBS-2: the intl_slow==2/2 transit conjunct outranks dom_slow —
+  all-refs-slow is transit-class shape (the 19:30:04Z live miss), and
+  cn_domestic means precisely "dom degraded while intl NOT both slow".
+  Full log-of-record replay: test_nfm5720_classifier_refinements.py.
+
 Pinned contracts:
 
 - baselines live in the ~/.nfm-site-monitor.* family (seamed via
@@ -253,16 +268,46 @@ def test_warmup_degrade_is_unclassified_and_pages(env, mock_site):
     assert "CRITICAL — public-edge P0 failure confirmed" in log_text(env)
 
 
-def test_cn_domestic_class_pages_fail_open(env, mock_site):
-    """CPO charter addendum: domestic control degraded (host-egress trouble
-    or CN-domestic path degraded — here WITH intl also slow, the ambiguous
-    combo) => HINT class CN_DOMESTIC, never force-fit into
-    TRANSIT_BROWNOUT/SITE_SIDE — int'l comparison is unreliable in that
-    state. NO suppression: existing paging path runs fail-open at streak 2."""
+def test_all_refs_slow_is_transit_not_cn_domestic(env, mock_site):
+    """NFM-5720 (OBS-2, CTO b826f9b0): all-three-slow is transit-class shape
+    per the charter — the live 19:30:04Z tick printed batclass=cn_domestic
+    with intl_slow=2/2 AND dom_slow=1 (cf 2012 / ghcr 1993 / ustc 656ms),
+    hiding a real transit brownout behind the non-suppressing hint class.
+    The intl_slow==2/2 transit conjunct now outranks dom_slow: the tick
+    classifies TRANSIT_BROWNOUT (suppressing at streak 2 exactly like the
+    pristine-control transit case — suppression needs the trusted control,
+    which a slow-but-completed control still is)."""
     _base, config = mock_site
     _prime(env, 3)
     _brownout_intl(config)
     config["refs"]["/ref-dom"] = {"lat": BROWNOUT_LAT}
+    _fail_probe(env, p0=2)
+    r1 = run_script(env)
+    assert r1.returncode == 1, r1.stdout
+    warn = [ln for ln in log_text(env).splitlines() if "class=" in ln][-1]
+    assert "class=TRANSIT_BROWNOUT" in warn
+    assert "intl_slow=2/2" in warn
+    assert "dom_slow=1" in warn
+    r2 = run_script(env)  # streak 2: transit-class suppression applies
+    assert r2.returncode == 1, r2.stdout
+    lt = log_text(env)
+    assert not [ln for ln in lt.splitlines() if "site-monitor: CRITICAL" in ln]
+    assert not [ln for ln in lt.splitlines() if "class=CN_DOMESTIC" in ln]
+    st = state_dict(env)
+    assert st["level"] == "WARN" and st["streak"] == "2"
+    assert st["pending_page"] in ("-", "")
+
+
+def test_cn_domestic_class_pages_fail_open(env, mock_site):
+    """CPO charter addendum, NFM-5720-precise meaning: domestic control
+    degraded while int'l refs are NOT both slow (dom degraded, intl clean —
+    cf. the 09:04:57Z shape: cf 2074 / ghcr 814 slow=0, ustc 620 slow=1)
+    => HINT class CN_DOMESTIC, never force-fit into
+    TRANSIT_BROWNOUT/SITE_SIDE — int'l comparison is unreliable in that
+    state. NO suppression: existing paging path runs fail-open at streak 2."""
+    _base, config = mock_site
+    _prime(env, 3)
+    config["refs"]["/ref-dom"] = {"lat": BROWNOUT_LAT}  # intl stays pristine
     _fail_probe(env, p0=2)
     r1 = run_script(env)
     assert r1.returncode == 1, r1.stdout
