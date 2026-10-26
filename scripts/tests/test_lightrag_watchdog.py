@@ -52,8 +52,10 @@ proven container-level recovery (restart + reprocess still fire).
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1196,3 +1198,166 @@ def test_e1_window_computation_is_base10_safe(harness) -> None:
     assert "value too great for base" not in proc.stderr, proc.stderr
     log_text = harness["watchdog_log"].read_text()
     assert "d2=skip window=1 reason=under-max-lifetime" in log_text, log_text
+
+
+# ---------------------------------------------------------------------------
+# NFM-5744 — H3 remediation delta (window-3 wedge 3): bound the
+# verify-failed recovery tail so a full suspect->term episode stays
+# within the operator's 120s hard cap.
+#
+# Window-3 wedge 3 (2026-10-25T03:57:26Z) was the first-ever
+# suspect->term+verify-failed episode: the post-term verify generate
+# burned its FULL 90s budget (03:58:31 term rc=0 -> 04:00:01
+# verify-failed; curl --max-time 90) and the episode recovered in 170s.
+# Every prior post-term verify completed in <=1s (10-17/10-20/10-21/
+# 10-23 cohort), and the healthy cohort (12-22s) never reaches the
+# verify at all — so the remediation is a bounded post-term verify
+# budget ONLY: additive knob NFM_LIGHTRAG_WATCHDOG_POST_TERM_VERIFY_TIMEOUT_SEC
+# (default 30s) re-binding VERIFY_TIMEOUT_SEC at its single call site.
+# The term sequencing (45s gen probe, 15s stop wait, SIGTERM chokepoint)
+# is operator-struck and untouched, the healthy-cohort path is untouched,
+# and every watchdog log line shape is unchanged (the NFM-5339
+# instrument pin d782e4d8…c79ffc2 stays valid).
+# ---------------------------------------------------------------------------
+
+# Observed worst-case soft overheads AFTER the bounded verify probe,
+# from the logged episode cohort: term chokepoint dispatch+log (2s in
+# wedge 3) + container restart (3s) + reprocess (12s).
+NFM5744_SOFT_TAIL_S = 17
+# The operator's hard cap for the full suspect->term cohort (adjudication
+# 4a3275cd; NFM-5744 AC2).
+NFM5744_CAP_S = 120
+
+
+def _script_default(source: str, knob: str) -> int:
+    """Parse ``<KNOB>="${NFM_LIGHTRAG_WATCHDOG_<...>:-<default>}"`` from
+    the wrapper source — the same value launchd sees, since the plist
+    carries no EnvironmentVariables (script defaults ARE the policy)."""
+    m = re.search(
+        rf'^{knob}="\$\{{NFM_LIGHTRAG_WATCHDOG_[A-Z_]+:-(\d+)\}}"$',
+        source, re.MULTILINE)
+    assert m, f"knob {knob} not found in wrapper source"
+    return int(m.group(1))
+
+
+def _verify_order_line(order: list[str]) -> str:
+    lines = [ln for ln in order if ln.startswith("curl[2/")]
+    assert len(lines) == 1, f"expected exactly one verify probe, got: {lines}"
+    return lines[0]
+
+
+def test_nfm5744_post_term_verify_budget_is_bounded(harness) -> None:
+    """The window-3 wedge-3 shape (suspect -> stop-failed -> term rc=0 ->
+    verify-failed): the verify probe must run with the bounded 30s
+    budget, not the legacy 90s — burning the full 90s budget is what
+    pushed the episode to 170s against the 120s cap."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="timeout",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "54.2"}, ollama_stop_effect="leave-hung",
+                          term_effect="recover")
+    assert proc.returncode == 2, proc.stderr
+    assert _verify_order_line(harness["order"]()).endswith("max_time=30"), \
+        harness["order"]()
+
+
+def test_nfm5744_verify_budget_knob_is_env_overridable(harness) -> None:
+    """The additive knob stays hermetic-test-overridable like every other
+    host-stage knob (a bare pytest run must never reach a real ollama)."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="timeout",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "54.2"}, ollama_stop_effect="leave-hung",
+                          term_effect="recover",
+                          extra_env={
+                              "NFM_LIGHTRAG_WATCHDOG_POST_TERM_VERIFY_TIMEOUT_SEC": "7",
+                          })
+    assert proc.returncode == 2, proc.stderr
+    assert _verify_order_line(harness["order"]()).endswith("max_time=7"), \
+        harness["order"]()
+
+
+def test_nfm5744_worst_case_verify_failed_episode_fits_120s_cap() -> None:
+    """AC2 arithmetic pin: gen-probe timeout + stop-wait + bounded verify
+    + observed soft tail (term dispatch + restart + reprocess) must fit
+    the operator's 120s suspect->term hard cap. Bumping any timeout
+    knob past the cap fails here, not in the next burst window."""
+    source = SCRIPT.read_text()
+    gen = _script_default(source, "GEN_TIMEOUT_SEC")
+    stop_wait = _script_default(source, "STOP_WAIT_SEC")
+    verify = _script_default(source, "POST_TERM_VERIFY_TIMEOUT_SEC")
+    worst_case = gen + stop_wait + verify + NFM5744_SOFT_TAIL_S
+    assert worst_case <= NFM5744_CAP_S, (
+        f"worst-case verify-failed episode {worst_case}s exceeds the "
+        f"{NFM5744_CAP_S}s cap (gen={gen} stop_wait={stop_wait} "
+        f"verify={verify} soft_tail={NFM5744_SOFT_TAIL_S})")
+
+
+def test_nfm5744_verify_failed_episode_replay_completes_under_cap(
+        harness) -> None:
+    """AC3 replay evidence (hermetic — fake docker/curl/ollama; nothing
+    is induced on the host): the full window-3 wedge-3 episode shape,
+    post-change, under the REAL default budgets. The scripted
+    verify-failed branch must run the complete episode grammar
+    (WEDGE -> suspect -> stop-failed -> term rc=0 -> verify-failed ->
+    restart rc=0 -> reprocess rc=0), keep the exit contract, and finish
+    end-to-end inside the 120s cap."""
+    source = SCRIPT.read_text()
+    verify_budget = _script_default(source, "POST_TERM_VERIFY_TIMEOUT_SEC")
+
+    started = time.monotonic()
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="timeout",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "54.2"}, ollama_stop_effect="leave-hung",
+                          term_effect="recover")
+    elapsed = time.monotonic() - started
+
+    assert proc.returncode == 2, proc.stderr
+    # The verify probe ran under the bounded budget (the window-3 delta).
+    assert _verify_order_line(harness["order"]()).endswith(
+        f"max_time={verify_budget}"), harness["order"]()
+    # Full episode grammar of record (wedge-3 lifecycle, recovered).
+    wlog = harness["watchdog_log"].read_text()
+    for marker in ("probe=WEDGE", "host=wedge-suspect", "host=stop-failed",
+                   "host=term", "host=verify-failed",
+                   "action=restart-lightrag rc=0",
+                   "action=lightrag-reprocess rc=0"):
+        assert marker in wlog, f"missing {marker!r} in:\n{wlog}"
+    # Recovery pair fired, in the sanctioned order.
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
+    assert elapsed < NFM5744_CAP_S, (
+        f"verify-failed episode replay took {elapsed:.1f}s "
+        f"(cap {NFM5744_CAP_S}s)")
+
+
+def test_nfm5744_healthy_cohort_path_unchanged(harness) -> None:
+    """AC4 regression pin: the healthy cohort (generate lands ->
+    host=healthy) never reaches the verify stage and keeps the
+    untouched 45s gen-probe budget — episode observed 12-22s against
+    the <=60s target, and this change must not move it."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="ok")
+    assert proc.returncode == 2, proc.stderr
+    curl_calls = [ln for ln in harness["order"]() if ln.startswith("curl[")]
+    assert curl_calls == [
+        "curl[1/ok]: http://127.0.0.1:11434/api/generate max_time=45",
+    ], curl_calls
+    assert "host=healthy" in harness["watchdog_log"].read_text()
+    assert "host=verify-failed" not in harness["watchdog_log"].read_text()
+
+
+def test_nfm5744_term_verified_path_still_verifies_and_recovers(harness) -> None:
+    """AC4 regression pin: the dominant suspect->term+verified cohort
+    (78-80s episodes) keeps its sequencing — bounded verify budget on
+    the SAME probe, verified logged, restart+reprocess unchanged."""
+    proc = harness["run"](WEDGE_LOG, curl_mode="timeout", curl_verify_mode="ok",
+                          runner_pids=[77444], procs={77444: HOST_RUNNER_CMD},
+                          cpu={77444: "54.2"}, ollama_stop_effect="leave-hung",
+                          term_effect="recover")
+    assert proc.returncode == 2, proc.stderr
+    assert _verify_order_line(harness["order"]()).endswith("max_time=30"), \
+        harness["order"]()
+    wlog = harness["watchdog_log"].read_text()
+    assert "host=term" in wlog and "host=verified" in wlog
+    calls = harness["recovery_calls"].read_text().splitlines()
+    assert calls == ["recovery-called: restart lightrag",
+                     "recovery-called: lightrag-reprocess"], calls
