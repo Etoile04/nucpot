@@ -95,18 +95,66 @@ jobs:
         # PYTHONPATH is exported alongside NFMD_CHECKOUT_DIR so any
         # repo-root import resolves against THIS run's checkout (master
         # JSONL + sync state live under ~/.nfmd, never inside a workspace).
+        #
+        # NFM-5796 (2026-10-31): the fetch is rewritten by the host-global
+        # insteadOf rule into the SSH-over-443 lane, which trickles on
+        # degraded direct-egress windows — the deploy-events sibling
+        # burned 12-25 minutes per red attempt there (4 red runs 10-28 →
+        # 10-30). Every attempt is now time-bounded (outer `timeout -k` +
+        # ssh ConnectTimeout/ServerAlive) and retried; worst case ~6 min,
+        # sized under this job's timeout-minutes: 10.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # NFM-5796: the bound below is load-bearing — if no timeout(1)
+          # exists (macOS coreutils ships it as gtimeout(1)), fail loudly
+          # instead of silently reverting to an unbounded fetch (the exact
+          # NFM-5796 failure mode).
+          timeout_bin="timeout"
+          command -v timeout >/dev/null 2>&1 || timeout_bin="gtimeout"
+          command -v "$timeout_bin" >/dev/null 2>&1 || {
+            echo "::error::neither timeout(1) nor gtimeout(1) on PATH; NFM-5796 fetch bound unavailable"
+            exit 1
+          }
           checkout_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nucpot-checkout.XXXXXX")"
           echo "NFMD_CHECKOUT_DIR=$checkout_dir" >> "$GITHUB_ENV"
           echo "PYTHONPATH=$checkout_dir" >> "$GITHUB_ENV"
           cd "$checkout_dir"
           git init . >/dev/null
           auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-          git -c http.https://github.com/.extraheader="$auth" \
-            fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          # NFM-5796 knobs — production defaults; tests and incident triage
+          # may shrink them via env without editing this file.
+          max_attempts="${NFMD_FETCH_MAX_ATTEMPTS:-3}"
+          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-120}"
+          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-10}"
+          # The host insteadOf rewrite sends the https URL down the
+          # SSH-over-443 lane, so this hardens the real transport: bound
+          # the TCP connect and detect a silently-dead peer mid-transfer.
+          export GIT_SSH_COMMAND="ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
+          rc=1
+          attempt=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            start="$SECONDS"
+            if "$timeout_bin" -k 15 "$per_attempt_secs" \
+                git -c http.https://github.com/.extraheader="$auth" \
+                fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"; then
+              echo "[checkout] fetch OK (attempt ${attempt}/${max_attempts}, $((SECONDS - start))s)"
+              rc=0
+              break
+            else
+              rc=$?
+              echo "[checkout] fetch attempt ${attempt}/${max_attempts} failed rc=${rc} after $((SECONDS - start))s"
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep "$retry_sleep_secs"
+            fi
+            attempt=$((attempt + 1))
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "[checkout] all ${max_attempts} fetch attempts failed (each bounded to ${per_attempt_secs}s); next scheduled fire re-walks the window"
+            exit "$rc"
+          fi
           git checkout -f --progress FETCH_HEAD
 
       - name: Set up Python

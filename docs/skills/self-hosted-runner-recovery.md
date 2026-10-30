@@ -59,6 +59,21 @@ Regression-pinned by `scripts/tests/test_nfm_5556_raceproof_checkout.py`
 (including a two-collectors-overlapping isolation test) and
 `scripts/okr/tests/test_collect_prod_run_sh.py`.
 
+NFM-5796 invariant: every direct-fetch attempt is time-bounded and
+retried. The host-global insteadOf rewrite sends the step's https URL
+down the SSH-over-443 lane, which trickles on degraded direct-egress
+windows (depth-1 fetches ran 12-25 min and died mid-transfer); each
+attempt is now wrapped in `timeout -k` plus ssh
+`ConnectTimeout`/`ServerAlive` hardening, retried up to
+`NFMD_FETCH_MAX_ATTEMPTS` (default 3; also `NFMD_FETCH_PER_ATTEMPT_SECS`
+=120, `NFMD_FETCH_RETRY_SLEEP_SECS` =10), so a fully degraded window
+costs ~6 min instead of 25. This makes `timeout(1)` (or macOS coreutils
+`gtimeout(1)`) a hard host prerequisite: if neither is on the runner
+PATH the checkout fails loudly (`neither timeout(1) nor gtimeout(1) on
+PATH`) rather than silently reverting to an unbounded fetch.
+Regression-pinned by
+`scripts/okr/tests/test_nfm_5796_bounded_fetch.py`.
+
 # Self-Hosted Runner Recovery (macOS ARM64)
 
 ## Symptom (Permission failure mode)
