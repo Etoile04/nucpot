@@ -334,6 +334,44 @@
 #   - Landed AFTER NFM-5706 G3/G4 closed (blocker held the deploy): a
 #     mid-soak classifier change would have rebased the G3 anchor window.
 #
+# NFM-5797 (2026-10-31, SRE; QA request dbda0458 on NFM-5795 + courier
+# NFM-5797) — local-origin discriminator probes:
+#   - Gap: NFM-5795 forensics exonerated the origin for /browse via MANUAL
+#     fresh-conn probes (localhost:3000 => 3ms), and QA adopted the
+#     classification default "refs-clean + in-tick API-green = path-side" —
+#     but the discriminator was offered, never built, so every future
+#     refs-clean P1 single still needs a round-trip courier to classify
+#     (NFM-5797: the Homepage `/` series, x3, is exactly that courier).
+#   - Lanes: TWO fresh-connection GETs per tick to the ORIGIN cloudflared
+#     proxies to (default http://localhost:3000): `/` and `/browse` — the
+#     exact originService targets, `/` included per the NFM-5797 ask
+#     (NFM-5795 probes covered /browse only). Fresh connection per route
+#     (Connection: close) so the measurement is the origin's full-request
+#     latency, not a keep-alive rider. Riding the EXISTING tick cadence —
+#     no new schedule/daemon; worst case +2x ORIGIN_TIMEOUT (3s) on a tick.
+#   - Evidence-ONLY: the lane prints one "ORIGIN — origin: ..." line per
+#     tick, BEFORE the summary line (the OK/WARN/CRITICAL line stays the
+#     tick's newest line, preserving the newest-line liveness read; the
+#     per-tick startup line already establishes the multi-line-tick
+#     class). It NEVER feeds alarms, streaks, classification, state, or
+#     paging: the NFM-5706 battery keeps that role. Reading is manual
+#     (QA/SRE grep): a single-digit-ms origin token under a SITE_SIDE P1
+#     WARN classifies path-side IN-TICK (the NFM-5795 verdict, now
+#     self-served); an origin token at hundreds of ms+ or a non-200 /
+#     ERR tag is the courier-resume signal QA adopted.
+#   - Zero behavior change elsewhere: summary lines stay byte-stable
+#     (green OK lines carry no token — NFM-5708 convention), the
+#     streak-1 rule (NFM-5667), streak>=2 lane and scan-blind lanes
+#     (NFM-5446/NFM-5497) are untouched.
+#   - ADR-023 lineage: curl pinned DIRECT (--noproxy '*') + absolute
+#     binary path (NFM-4579 sparse-PATH); localhost never transits a
+#     proxy anyway, so the pin is defense-in-depth, not load-bearing.
+#   - Env seams (test-only; unset in production => identical behavior):
+#     NFM_ORIGIN_BASE (target origin), NFM_ORIGIN_TIMEOUT (per-route
+#     socket budget), NFM_ORIGIN_CURL (binary seam, test hermeticity).
+#   - Diagnostic: --origin-probes-once prints the token, touches no log
+#     and no state (SRE post-deploy verification without a state write).
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -351,6 +389,10 @@
 #                      per-host timings + classification tokens (SRE
 #                      diagnostic; updates the reference baselines, never
 #                      the main state; rc 0 ran / 3 internal error)
+#   --origin-probes-once — run the NFM-5797 local-origin discriminator once
+#                      and print the per-route token (SRE diagnostic; no
+#                      log write, no state; rc 0 always — ERR tags are
+#                      evidence, not errors)
 #   --ack-page       — SRE heartbeat clears a latched PAGE-UNACK after it has
 #                      retro-filed the [SRE-CRITICAL] issue (logs PAGE-ACK)
 #
@@ -372,6 +414,14 @@ if [[ -x /opt/homebrew/bin/python3 ]]; then
 else
   PY=/usr/bin/python3
 fi
+
+# NFM-5797: local-origin discriminator probes — target, per-route budget,
+# binary. Base is the origin cloudflared proxies to (the tunnel config's
+# originService); `/` and `/browse` are appended per-route. Seams are
+# test-only; unset in production => the documented defaults.
+ORIGIN_BASE="${NFM_ORIGIN_BASE:-http://localhost:3000}"
+ORIGIN_TIMEOUT="${NFM_ORIGIN_TIMEOUT:-3}"
+ORIGIN_CURL="${NFM_ORIGIN_CURL:-/usr/bin/curl}"
 
 # NFM-5542 (ADR-023) D2: pin python egress to direct, defense-in-depth.
 # no_proxy='*' neutralizes ENV-VAR proxies for urllib (the
@@ -1230,6 +1280,38 @@ except Exception as e:
 REFPYEOF
 }
 
+# ---- NFM-5797 local-origin discriminator -----------------------------------
+# Two fresh-connection GETs to ORIGIN_BASE — `/` and `/browse`, the exact
+# originService targets cloudflared proxies to. Evidence-ONLY: prints one
+# machine-greppable token and always exits 0 — a failed route is ERR-tagged
+# evidence, never an error and never an alarm/state input (the NFM-5706
+# battery keeps the classification role; reading rule in the NFM-5797
+# header block). Fresh connection per route (Connection: close) so the
+# number is the origin's full-request latency, not a keep-alive rider;
+# DIRECT-pinned (--noproxy '*') + absolute binary path (NFM-4579).
+origin_probes() { # prints "origin: /=<code>/<ms>ms/<bytes>B browse=..."; rc 0 always
+  local acc="origin:" route res rc
+  for route in / /browse; do
+    res="$("$ORIGIN_CURL" -sS -o /dev/null --noproxy '*' \
+      --max-time "$ORIGIN_TIMEOUT" -H 'Connection: close' \
+      -A 'nfm-site-monitor/1.5 (+NFM-5797 local-origin discriminator)' \
+      -w '%{http_code} %{time_total} %{size_download}' \
+      "${ORIGIN_BASE}${route}" 2>/dev/null)"
+    rc=$?
+    if (( rc == 28 )); then
+      acc="$acc ${route}=ERR(timeout)"
+    elif (( rc == 7 )); then
+      acc="$acc ${route}=ERR(conn-refused)"
+    elif (( rc != 0 )); then
+      acc="$acc ${route}=ERR(curl-rc${rc})"
+    else
+      # "<code> <secs> <bytes>" -> "/=<code>/<integer ms>ms/<bytes>B"
+      acc="$acc ${route}=$(printf '%s' "$res" | awk '{printf "%s/%dms/%dB", $1, $2 * 1000, $3}')"
+    fi
+  done
+  printf '%s' "$acc"
+}
+
 # Parse the battery's machine tokens once per tick. Defaults are the
 # fail-closed vocabulary: any missing/garbled token leaves REF_WARMUP=1 and
 # sentinel values that can never satisfy the brownout conjuncts.
@@ -1299,6 +1381,15 @@ if [[ "${1:-}" == "--ref-probes-once" ]]; then
   ref_out="$(ref_probes)"; ref_rc=$?
   echo "ref-probes rc=$ref_rc: $ref_out"
   exit "$ref_rc"
+fi
+
+# ---- origin-probes-once mode (NFM-5797 SRE diagnostic; no log write, no
+# state — prints the token so post-deploy verification never touches the
+# tick machine) ---------------------------------------------------------------
+if [[ "${1:-}" == "--origin-probes-once" ]]; then
+  origin_out="$(origin_probes)"; origin_rc=$?
+  echo "origin-probes rc=$origin_rc: $origin_out"
+  exit "$origin_rc"
 fi
 
 # ---- ack mode (SRE heartbeat, after retro-filing the [SRE-CRITICAL]) -------
@@ -1489,6 +1580,15 @@ ref_parse
 if (( REF_RC != 0 )); then
   REF_OUT="refs-internal-error (rc=$REF_RC) — battery cannot testify"
 fi
+
+# NFM-5797: local-origin discriminator — every real-probe tick, on green and
+# degrade ticks alike (in-tick classification of refs-clean P1 singles is
+# the point). Emitted BEFORE the summary lines so the OK/WARN/CRITICAL line
+# stays the tick's newest line (newest-line liveness read preserved; the
+# per-tick startup line already establishes the multi-line-tick class).
+# Evidence-only: never feeds alarms, streaks, classification, or state.
+ORIGIN_EV="$(origin_probes 2>/dev/null)"
+log "ORIGIN — $ORIGIN_EV"
 
 # CPO charter addendum: a CONFIDENT non-clean battery verdict on a GREEN tick
 # (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
