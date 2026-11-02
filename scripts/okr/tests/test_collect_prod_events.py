@@ -14,7 +14,9 @@ Contract under test (acceptance criteria from NFM-2111):
   lines and a duplicate ledger row (idempotent on sha256, not run_id).
 - A schema-invalid event is quarantined to ``<jsonl>.quarantine/<run_id>.json``
   with a ``quarantined`` ledger row, and the JSONL is untouched.
-- The ledger format is the exact TSV ``<run_id>\\t<sha256>\\t<status>``.
+- The ledger format is the exact TSV ``<run_id>\\t<sha256>\\t<status>``
+  with an optional 4th coverage-token field (NFM-5829:
+  ``<run_id>\\t<sha256>\\t<status>\\t<coverage>``).
 - Atomic append uses a tempfile + mv (``tmp.jsonl`` write then ``>> jsonl``)
   so a partial write cannot corrupt the JSONL.
 """
@@ -324,10 +326,15 @@ class TestProcessEvent:
     def test_read_processed_skips_malformed_rows(self, tmp_path: Path) -> None:
         """Defensive: ``read_processed`` must not crash on garbage rows
         (blank lines, missing tabs, wrong column count). Covers lines
-        182 and 185 of collect_prod_events.py."""
+        182 and 185 of collect_prod_events.py.
+
+        NFM-5829: 4-field rows (with the coverage token) are now a VALID
+        shape and must be indexed, not skipped — only 2-field or 5+-field
+        rows count as malformed."""
         mod = _import_collector()
         jsonl, processed, _ = _paths(tmp_path)
         valid_sha = mod.compute_sha256(_canonical_json(_valid_event()))
+        coverage_sha = "f" * 64
         processed.write_text(
             # blank line
             "\n"
@@ -335,11 +342,16 @@ class TestProcessEvent:
             "run-x\tsha-y\n"
             # valid row — should be returned
             f"run-good\t{valid_sha}\tprocessed\n"
-            # wrong column count (4 fields)
-            "run-x\tsha-y\tstatus\textra\n"
+            # valid NFM-5829 row with coverage token — should be returned
+            f"run-good\t{coverage_sha}\tprocessed\tnfm-deploy-event-run-good-1\n"
+            # wrong column count (5 fields)
+            "run-x\tsha-y\tstatus\textra\textra2\n"
         )
         ledger = mod.read_processed(processed)
-        assert ledger == {valid_sha: ("run-good", "processed")}
+        assert ledger == {
+            valid_sha: ("run-good", "processed"),
+            coverage_sha: ("run-good", "processed"),
+        }
 
     def test_record_missing_writes_ledger_row(self, tmp_path: Path) -> None:
         """``record_missing`` writes a sentinel-sha + 'missing' row for
