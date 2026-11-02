@@ -129,7 +129,7 @@ jobs:
   watchdog:
     if: github.event.schedule == '17 */6 * * *'
     runs-on: [self-hosted, production]
-    timeout-minutes: 8
+    timeout-minutes: 18
     steps:
       - name: Checkout (direct git, private per-run workdir)
         # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
@@ -157,7 +157,11 @@ jobs:
         # burned 12-25 minutes per red attempt there (4 red runs 10-28 →
         # 10-30). Same defect class on the same runner, so every attempt
         # here is also time-bounded (outer `timeout -k` + ssh
-        # ConnectTimeout/ServerAlive) and retried; worst case ~6 min.
+        # ConnectTimeout/ServerAlive) and retried. NFM-5798 (2026-11-02):
+        # widened to 3×300s attempts with a 30s backoff — the 10-31/11-01
+        # sustained episodes killed 120s attempts mid-pack at 24-138KB/s
+        # trickle rates; worst case ~16.75 min (3 × 315s incl. kill grace
+        # + 2 × 30s backoff), sized under this job's timeout-minutes: 18.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -180,8 +184,8 @@ jobs:
           # NFM-5796 knobs — production defaults; tests and incident triage
           # may shrink them via env without editing this file.
           max_attempts="${NFMD_FETCH_MAX_ATTEMPTS:-3}"
-          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-120}"
-          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-10}"
+          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-300}"
+          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-30}"
           # The host insteadOf rewrite sends the https URL down the
           # SSH-over-443 lane, so this hardens the real transport: bound
           # the TCP connect and detect a silently-dead peer mid-transfer.
