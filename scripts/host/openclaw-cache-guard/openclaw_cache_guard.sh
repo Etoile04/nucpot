@@ -82,9 +82,19 @@ PLANNED=0
 log() { [ "$QUIET" -eq 1 ] || echo "$@"; }
 tag() { if [ "$APPLY" -eq 1 ]; then echo "[prune]"; else echo "[plan]"; fi; }
 
-mtime_of() { stat -f %m "$1"; }
+# stat flavor probe (decide once): BSD (macOS) is `stat -f %m/%z`, GNU
+# (Linux CI runners) is `stat -c %Y/%s`. Mixing them is not cosmetic — GNU
+# `stat -f` means filesystem-status mode, whose default output starts with
+# `File: "…"`, and that text fed into $((NOW - …)) aborts under set -u
+# (NFM-5826 Batch-1 CI, 12 suite failures).
+if stat -c %Y . >/dev/null 2>&1; then
+    mtime_of() { stat -c %Y "$1"; }
+    bytes_of() { stat -c %s "$1"; }
+else
+    mtime_of() { stat -f %m "$1"; }
+    bytes_of() { stat -f %z "$1"; }
+fi
 kb_of() { du -sk "$1" 2>/dev/null | cut -f1; }
-bytes_of() { stat -f %z "$1"; }
 
 # age-gated delete of a dir or file, with reclaimed accounting.
 drop() {
