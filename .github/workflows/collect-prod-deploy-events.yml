@@ -43,6 +43,7 @@ jobs:
     # runner; contention is low because deploy-prod only runs on push/tag/d
     # ispatch while the collector runs every 5 min.
     runs-on: [self-hosted, production]
+    timeout-minutes: 18
     env:
       # Prefer a fine-grained PAT (`secrets.GH_TOKEN`) so the collector works
       # even on forks; fall back to the per-run GITHUB_TOKEN which already has
@@ -92,8 +93,12 @@ jobs:
         # Nothing bounded a bad attempt, so each one burned a quarter
         # hour before going red. Every attempt is now time-bounded
         # (outer `timeout -k` + ssh ConnectTimeout/ServerAlive) and
-        # retried; a fully-degraded window costs ~6 minutes — sized to
-        # fit beside the 5-min cadence — and the next scheduled fire
+        # retried. NFM-5798 (2026-11-02): widened to 3×300s attempts with
+        # a 30s backoff — the 10-31/11-01 sustained episodes killed 120s
+        # attempts mid-pack at 24-138KB/s trickle rates; a fully-degraded
+        # window now costs ~16.75 min (3 × 315s incl. kill grace + 2 × 30s
+        # backoff, cadence punctuality consciously sacrificed), sized under
+        # this job's timeout-minutes: 18, and the next scheduled fire
         # catches up via this collector's 50-run walk-back.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,8 +122,8 @@ jobs:
           # NFM-5796 knobs — production defaults; tests and incident triage
           # may shrink them via env without editing this file.
           max_attempts="${NFMD_FETCH_MAX_ATTEMPTS:-3}"
-          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-120}"
-          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-10}"
+          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-300}"
+          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-30}"
           # The host insteadOf rewrite sends the https URL down the
           # SSH-over-443 lane, so this hardens the real transport: bound
           # the TCP connect and detect a silently-dead peer mid-transfer.
