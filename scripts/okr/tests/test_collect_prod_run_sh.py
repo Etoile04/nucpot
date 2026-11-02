@@ -47,7 +47,7 @@ def _write_fake_gh(
     *,
     workflow_id: int = 300666980,
     run_ids: list[int] | None = None,
-    archive_url_to_zip: dict[str, Path] | None = None,
+    artifacts: list[tuple[str, str, Path]] | None = None,
     fail_on: str | None = None,
     artifact_name: str = "nfm-deploy-event-123456789-1",
 ) -> Path:
@@ -57,21 +57,24 @@ def _write_fake_gh(
     endpoint URL. Only the modes the orchestrator uses are implemented.
     Uses portable bash 3.2-compatible syntax (no associative arrays).
 
-    The default ``artifact_name`` mirrors the real producer-side naming
-    from ``.github/workflows/production-deployment.yml`` line 592:
-    ``nfm-deploy-event-<run_id>-<run_attempt>``. Crucially, the artifact
-    name has no ``.json`` suffix — the ``.json`` file is only inside
-    the uploaded zip. NFM-2144 root cause: an earlier revision of the
-    orchestrator's jq filter required ``endswith(".json")`` and
-    therefore rejected every producer artifact.
+    ``artifacts`` are ``(name, archive_download_url, zip_path)`` triples —
+    the artifact NAME is part of the listing response because the NFM-5829
+    orchestrator dedups per artifact name. The default ``artifact_name``
+    mirrors the real producer-side naming from
+    ``.github/workflows/production-deployment.yml`` (the "Persist event as
+    workflow artifact" upload step): ``nfm-deploy-event-<run_id>-<run_attempt>``.
+    Crucially, the artifact name has no ``.json`` suffix — the ``.json``
+    file is only inside the uploaded zip. NFM-2144 root cause: an earlier
+    revision of the orchestrator's jq filter required ``endswith(".json")``
+    and therefore rejected every producer artifact.
     """
     run_ids = run_ids if run_ids is not None else [123456789]
-    archive_url_to_zip = archive_url_to_zip or {}
-    # Encode the URL→zip map as newline-separated lines in a sidecar
-    # file that the shim reads. Avoids associative arrays.
+    artifacts = artifacts or []
+    # Encode the (name, url, zip) map as newline-separated lines in a
+    # sidecar file that the shim reads. Avoids associative arrays.
     map_file = bin_dir / "archive_map.txt"
     map_file.write_text(
-        "\n".join(f"{u}\t{p}" for u, p in archive_url_to_zip.items()) + "\n",
+        "\n".join(f"{name}\t{url}\t{zip_path}" for name, url, zip_path in artifacts) + "\n",
         encoding="utf-8",
     )
     runs_block = " ".join(str(r) for r in run_ids)
@@ -124,11 +127,12 @@ if [[ "$endpoint" == *"/actions/workflows/"* ]] && [[ "$endpoint" != *"/runs"* ]
   exit 0
 fi
 
-# Run enumeration.
+# Run enumeration. NFM-5829: the orchestrator asks for
+# ``<id>\t<run_attempt>`` pairs; every canned run is at attempt 1.
 if [[ "$endpoint" == *"/runs?per_page=50"* ]]; then
-  if [ "$filter" = ".workflow_runs[].id" ]; then
+  if [[ "$filter" == *"run_attempt"* ]]; then
     for rid in {runs_block}; do
-      printf '%s\\n' "$rid"
+      printf '%s\\t1\\n' "$rid"
     done
     exit 0
   fi
@@ -143,7 +147,8 @@ if [[ "$endpoint" == *"/runs?per_page=50"* ]]; then
   exit 0
 fi
 
-# Artifact listing.
+# Artifact listing (name + archive URL — the NFM-5829 orchestrator
+# dedups per artifact name).
 if [[ "$endpoint" == *"/artifacts"* ]]; then
   map_path="${{FAKE_GH_BIN_DIR}}/archive_map.txt"
   # Use [[ ]] (no shell glob expansion) instead of [ ... = pattern ] which
@@ -153,9 +158,9 @@ if [[ "$endpoint" == *"/artifacts"* ]]; then
   # failure-path test never did.
   if [[ "$filter" == *".archive_download_url"* ]]; then
     if [ -f "$map_path" ]; then
-      while IFS=$'\\t' read -r url zip_path; do
-        [ -z "$url" ] && continue
-        printf '%s\\n' "$url"
+      while IFS=$'\\t' read -r aname aurl azip; do
+        [ -z "$aname" ] && continue
+        printf '%s\\t%s\\n' "$aname" "$aurl"
       done < "$map_path"
     fi
     exit 0
@@ -163,11 +168,10 @@ if [[ "$endpoint" == *"/artifacts"* ]]; then
   printf '{{"artifacts":['
   first=1
   if [ -f "$map_path" ]; then
-    while IFS=$'\\t' read -r url zip_path; do
-      [ -z "$url" ] && continue
+    while IFS=$'\\t' read -r aname aurl azip; do
+      [ -z "$aname" ] && continue
       if [ $first -eq 0 ]; then printf ','; fi
-      name="${{FAKE_ARTIFACT_NAME:-nfm-deploy-event-123456789-1}}"
-      printf '{{"id":1,"name":"%s","archive_download_url":"%s"}}' "$name" "$url"
+      printf '{{"id":1,"name":"%s","archive_download_url":"%s"}}' "$aname" "$aurl"
       first=0
     done < "$map_path"
   fi
@@ -178,10 +182,10 @@ fi
 # Archive download: print the zip bytes for the matching URL.
 map_path="${{FAKE_GH_BIN_DIR}}/archive_map.txt"
 if [ -f "$map_path" ]; then
-  while IFS=$'\\t' read -r url zip_path; do
-    [ -z "$url" ] && continue
-    if [ "$endpoint" = "$url" ]; then
-      cat "$zip_path"
+  while IFS=$'\\t' read -r aname aurl azip; do
+    [ -z "$aname" ] && continue
+    if [ "$endpoint" = "$aurl" ]; then
+      cat "$azip"
       exit 0
     fi
   done < "$map_path"
@@ -296,7 +300,7 @@ class TestBashOrchestrator:
         _write_fake_gh(
             bin_dir,
             run_ids=[123456789],
-            archive_url_to_zip={archive_url: zip_path},
+            artifacts=[("nfm-deploy-event-123456789-1", archive_url, zip_path)],
         )
 
         jsonl = tmp_path / "events.jsonl"
@@ -309,10 +313,6 @@ class TestBashOrchestrator:
             "NFMD_DEPLOY_EVENTS_PATH": str(jsonl),
             "NFMD_DEPLOY_EVENTS_PROCESSED_PATH": str(processed),
             "FAKE_GH_BIN_DIR": str(bin_dir),
-            # The default artifact_name in _write_fake_gh already matches
-            # the real producer pattern, but set this explicitly so the
-            # intent is documented at the test site.
-            "FAKE_ARTIFACT_NAME": "nfm-deploy-event-123456789-1",
         }
 
         result = subprocess.run(
@@ -341,16 +341,20 @@ class TestBashOrchestrator:
         parsed = json.loads(jsonl_lines[0])
         assert parsed == event, f"JSONL line does not match the event we processed: {parsed!r}"
         # The processed ledger gains exactly one row matching
-        # ``<run_id>\t<sha256>\t<processed>``.
+        # ``<run_id>\t<sha256>\t<processed>\t<artifact_name>`` (the NFM-5829
+        # 4th coverage-token field names the artifact that was processed).
         assert processed.exists(), "ledger should exist after a successful collect"
         ledger_lines = [ln for ln in processed.read_text().splitlines() if ln.strip()]
         assert len(ledger_lines) == 1, (
             f"expected exactly 1 ledger row, got {len(ledger_lines)}: {ledger_lines!r}"
         )
         row = ledger_lines[0].split("\t")
-        assert len(row) == 3, f"ledger row must have 3 tab-separated fields: {row!r}"
+        assert len(row) == 4, f"ledger row must have 4 tab-separated fields: {row!r}"
         assert row[0] == "123456789", f"first field is run_id, got {row[0]!r}"
         assert row[2] == "processed", f"third field is status, got {row[2]!r}"
+        assert row[3] == "nfm-deploy-event-123456789-1", (
+            f"fourth field is the artifact coverage token, got {row[3]!r}"
+        )
         # sha256 field is 64 hex chars (matches the spec).
         assert len(row[1]) == 64 and all(c in "0123456789abcdef" for c in row[1]), (
             f"second field is sha256 (64 hex), got {row[1]!r}"
@@ -370,7 +374,7 @@ class TestBashOrchestrator:
         _write_fake_gh(
             bin_dir,
             run_ids=[123456789],
-            archive_url_to_zip={archive_url: zip_path},
+            artifacts=[("nfm-deploy-event-123456789-1", archive_url, zip_path)],
         )
 
         home = tmp_path / "home"
@@ -418,7 +422,7 @@ class TestBashOrchestrator:
         _write_fake_gh(
             bin_dir,
             run_ids=[123456789],
-            archive_url_to_zip={archive_url: zip_path},
+            artifacts=[("nfm-deploy-event-123456789-1", archive_url, zip_path)],
         )
 
         home = tmp_path / "home"

@@ -155,10 +155,11 @@ if [[ "$endpoint" == *"/actions/workflows/"* ]] && [[ "$endpoint" != *"/runs"* ]
   exit 0
 fi
 
-# Run enumeration (newest first).
+# Run enumeration (newest first). NFM-5829: the orchestrator asks for
+# ``<id>\t<run_attempt>`` pairs; every canned run is at attempt 1.
 if [[ "$endpoint" == *"/runs?per_page=50"* ]]; then
   for rid in ${RUN_IDS}; do
-    printf '%s\\n' "$rid"
+    printf '%s\\t1\\n' "$rid"
   done
   exit 0
 fi
@@ -307,7 +308,7 @@ def test_completed_past_grace_is_recorded_missing(sandbox: dict[str, Any]) -> No
 
     assert result.returncode == 0, result.stdout + result.stderr
     rows = _ledger_rows(sandbox["processed"])
-    assert rows == [[str(RUN_ID), SENTINEL, "missing"]], rows
+    assert rows == [[str(RUN_ID), SENTINEL, "missing", "1"]], rows
     assert _jsonl_lines(sandbox["jsonl"]) == []
 
 
@@ -319,7 +320,7 @@ def test_grace_window_is_env_tunable(sandbox: dict[str, Any]) -> None:
     _set_run_state(sandbox, status="completed", conclusion="success", age_secs=300)
     result = _run_orchestrator(sandbox)
     assert result.returncode == 0
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
 
     # Fresh ledger: same conclusion but inside the shrunk grace window.
     sandbox["processed"].unlink()
@@ -369,7 +370,7 @@ def test_listing_failure_on_concluded_run_records_missing(sandbox: dict[str, Any
     result = _run_orchestrator(sandbox)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +395,7 @@ def test_emit_success_but_missing_raises_alert_and_fails_fire(
     )
     combined = result.stdout + result.stderr
     assert "ALERT" in combined
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
     assert _jsonl_lines(sandbox["jsonl"]) == []
 
 
@@ -406,7 +407,7 @@ def test_emit_success_alert_is_env_disableable(sandbox: dict[str, Any]) -> None:
     result = _run_orchestrator(sandbox)
 
     assert result.returncode == 0
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
 
 
 def test_emit_failure_but_missing_records_quietly(sandbox: dict[str, Any]) -> None:
@@ -418,7 +419,7 @@ def test_emit_failure_but_missing_records_quietly(sandbox: dict[str, Any]) -> No
     result = _run_orchestrator(sandbox)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
 
 
 def test_emit_jobs_lookup_failure_still_records_missing(sandbox: dict[str, Any]) -> None:
@@ -431,7 +432,7 @@ def test_emit_jobs_lookup_failure_still_records_missing(sandbox: dict[str, Any])
     result = _run_orchestrator(sandbox)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing"]]
+    assert _ledger_rows(sandbox["processed"]) == [[str(RUN_ID), SENTINEL, "missing", "1"]]
 
 
 # ---------------------------------------------------------------------------

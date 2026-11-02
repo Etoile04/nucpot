@@ -12,12 +12,22 @@ This module is the testable core. The workflow calls it via:
         --run-id <github-run-id> \\
         --event-json /path/to/downloaded.json
 
+Ledger format: ``<run_id>\\t<sha256>\\t<status>`` with an optional 4th
+"coverage token" field (NFM-5829): ``<run_id>\\t<sha256>\\t<status>\\t<coverage>``.
+The token records *which artifact* a row accounts for — the artifact name
+(``nfm-deploy-event-<run_id>-<attempt>``, written by ``process
+--artifact-name``) or the bare attempt digits (``record-missing
+--attempt``). The orchestrator skips a run only when its ledger coverage
+reaches the run's current ``run_attempt``, and downloads only artifacts
+whose names are not yet accounted for — per-attempt dedup, so a re-run's
+attempt-2 event is collected instead of being swallowed by the
+attempt-1 ledger row.
+
 Environment variables:
     NFMD_DEPLOY_EVENTS_PATH          — JSONL to append to (default:
                                        <repo>/docker/.deploy-events.jsonl)
-    NFMD_DEPLOY_EVENTS_PROCESSED_PATH — ledger of processed
-                                        ``<run_id>\\t<sha256>\\t<status>``
-                                        (default: <jsonl>.processed)
+    NFMD_DEPLOY_EVENTS_PROCESSED_PATH — ledger of processed rows (see
+                                        format above; default <jsonl>.processed)
 """
 
 # ruff: noqa: RUF034, SIM105
@@ -31,6 +41,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -175,6 +186,11 @@ def compute_sha256(event_json_text: str) -> str:
 def read_processed(processed_path: Path) -> dict[str, tuple[str, str]]:
     """Read the ledger; return ``{sha256: (run_id, status)}``.
 
+    Accepts both row shapes: the legacy 3-field
+    ``<run_id>\\t<sha256>\\t<status>`` and the NFM-5829 4-field row with a
+    trailing coverage token. Dropping 4-field rows here would un-ledger
+    their shas and double-append those events to the JSONL.
+
     When the same sha appears twice, the **first** row wins. This is
     important for idempotency lookup: callers want the original
     ``processed`` row, not the later ``duplicate`` annotation.
@@ -186,19 +202,44 @@ def read_processed(processed_path: Path) -> dict[str, tuple[str, str]]:
         if not raw.strip():
             continue
         parts = raw.split("\t")
-        if len(parts) != 3:
+        if len(parts) not in (3, 4):
             continue
-        run_id, sha, status = parts
+        run_id, sha, status = parts[0], parts[1], parts[2]
         if sha not in out:
             out[sha] = (run_id, status)
     return out
 
 
-def append_processed_row(processed_path: Path, run_id: str, sha: str, status: str) -> None:
-    """O_APPEND atomic line write. Short rows are atomic under POSIX."""
+def sanitize_coverage_token(token: str) -> str:
+    """Strip characters that could forge extra ledger rows (NFM-5829).
+
+    A tab or newline inside a coverage token would split or terminate the
+    ledger line, letting attacker-controlled or corrupt artifact names
+    inject arbitrary rows. Artifact names cannot legally contain either;
+    drop them rather than trust the source.
+    """
+    return token.replace("\t", "").replace("\n", "").replace("\r", "")
+
+
+def append_processed_row(
+    processed_path: Path,
+    run_id: str,
+    sha: str,
+    status: str,
+    coverage_token: str = "",
+) -> None:
+    """O_APPEND atomic line write. Short rows are atomic under POSIX.
+
+    When ``coverage_token`` is non-empty a 4th field is appended (the
+    NFM-5829 per-artifact coverage contract); empty keeps the legacy
+    3-field row shape.
+    """
     processed_path.parent.mkdir(parents=True, exist_ok=True)
+    row = f"{run_id}\t{sha}\t{status}"
+    if coverage_token:
+        row = f"{row}\t{coverage_token}"
     with processed_path.open("a", encoding="utf-8") as f:
-        f.write(f"{run_id}\t{sha}\t{status}\n")
+        f.write(f"{row}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -313,11 +354,17 @@ def process_event(
     processed_path: Path,
     event_json_text: str,
     run_id: str,
+    artifact_name: str | None = None,
 ) -> str:
     """Process one event. Returns one of:
     ``processed`` (success), ``duplicate`` (already seen), ``quarantined``
     (could not validate). Never raises — a CRASH in a single event must
     not stop the collector from processing the next one.
+
+    When ``artifact_name`` is given (the NFM-5829 orchestrator always
+    passes it), every ledger row written by this call carries it as the
+    4th coverage-token field, so the orchestrator can skip re-downloading
+    an artifact it has already accounted for.
 
     Crash-safety contract (ADR §C6.1.6, code review 2026-07-30):
 
@@ -339,6 +386,7 @@ def process_event(
     processed_path = Path(processed_path)
     lock_path = _lock_path_for(processed_path)
     sha = compute_sha256(event_json_text)
+    token = sanitize_coverage_token(artifact_name) if artifact_name else ""
 
     with _exclusive_lock(lock_path):
         # Parse + validate inside the lock so the validation cost is
@@ -349,14 +397,14 @@ def process_event(
         except json.JSONDecodeError as exc:
             logger.warning("run_id=%s: invalid JSON (%s) — quarantining", run_id, exc)
             quarantine_payload(jsonl_path, run_id, event_json_text)
-            append_processed_row(processed_path, run_id, sha, "quarantined")
+            append_processed_row(processed_path, run_id, sha, "quarantined", token)
             return "quarantined"
 
         ok, err = validate_event(parsed)
         if not ok:
             logger.warning("run_id=%s: schema-invalid (%s) — quarantining", run_id, err)
             quarantine_payload(jsonl_path, run_id, event_json_text)
-            append_processed_row(processed_path, run_id, sha, "quarantined")
+            append_processed_row(processed_path, run_id, sha, "quarantined", token)
             return "quarantined"
 
         # Re-read the ledger INSIDE the lock so the sha check is
@@ -369,14 +417,14 @@ def process_event(
             # so future restarts don't re-evaluate it." Implemented as
             # an append-only ledger; ``read_processed`` returns the
             # first occurrence so future re-runs still see the original.
-            append_processed_row(processed_path, run_id, sha, "duplicate")
+            append_processed_row(processed_path, run_id, sha, "duplicate", token)
             return "duplicate"
 
         line = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
         # Ledger row FIRST (atomic O_APPEND). Only after it has hit
         # disk do we touch the JSONL. See the docstring for the full
         # crash-safety rationale.
-        append_processed_row(processed_path, run_id, sha, "processed")
+        append_processed_row(processed_path, run_id, sha, "processed", token)
         atomic_append_line(jsonl_path, line)
         return "processed"
 
@@ -385,10 +433,92 @@ def record_missing(
     jsonl_path: Path,
     processed_path: Path,
     run_id: str,
+    attempt: int | None = None,
 ) -> None:
-    """Record a ``missing`` ledger row for a run that had no artifact."""
+    """Record a ``missing`` ledger row for a run that had no artifact.
+
+    When ``attempt`` is given it is stamped as the coverage token (NFM-5829):
+    the missing verdict is scoped to that attempt, so a later re-run of the
+    same workflow (attempt+1) reopens the run for collection instead of
+    being swallowed by the row.
+    """
     del jsonl_path  # unused; reserved for symmetry with process_event
-    append_processed_row(processed_path, run_id, MISSING_SHA_SENTINEL, "missing")
+    token = str(int(attempt)) if attempt is not None else ""
+    append_processed_row(processed_path, run_id, MISSING_SHA_SENTINEL, "missing", token)
+
+
+# ---------------------------------------------------------------------------
+# Attempt coverage (NFM-5829)
+# ---------------------------------------------------------------------------
+
+
+def _attempt_from_coverage_token(run_id: str, token: str) -> tuple[int, bool]:
+    """Parse a coverage token → ``(covered_attempt, is_artifact_name)``.
+
+    Two token shapes exist: the artifact name
+    ``nfm-deploy-event-<run_id>-<attempt>`` and bare attempt digits
+    (written by ``record-missing --attempt``). Anything else (foreign or
+    corrupt tokens) covers nothing.
+    """
+    if token.isdigit():
+        return int(token), False
+    match = re.fullmatch(rf"nfm-deploy-event-{re.escape(run_id)}-(\d+)", token)
+    if match:
+        return int(match.group(1)), True
+    return 0, False
+
+
+def coverage_map(processed_path: Path) -> dict[str, tuple[int, set[str]]]:
+    """Per-run attempt coverage from the ledger (NFM-5829).
+
+    Returns ``{run_id: (max_covered_attempt, accounted_artifact_names)}``.
+
+    Row accounting:
+    - 4-field row with an artifact-name token → covers the attempt parsed
+      from the name; the name joins the accounted set (the orchestrator
+      uses it to skip re-downloads).
+    - 4-field row with digit token → covers that attempt (missing rows).
+    - Legacy 3-field row, status ``missing`` → covers nothing (nothing was
+      ever collected; the orchestrator rescans the run once and stamps the
+      attempt on a new row).
+    - Legacy 3-field row, any other status → covers attempt 1 (pre-NFM-5829
+      rows were written for whatever artifact existed at first sight of the
+      run, which was attempt 1 in every recorded case; if a legacy run ever
+      had more attempts already processed, the rescan finds only duplicates
+      and self-heals the names in one pass).
+    """
+    max_attempt: dict[str, int] = {}
+    names: dict[str, set[str]] = {}
+    if not processed_path.exists():
+        return {}
+    for raw in processed_path.read_text().splitlines():
+        if not raw.strip():
+            continue
+        parts = raw.split("\t")
+        if len(parts) not in (3, 4):
+            continue
+        run_id, _sha, status = parts[0], parts[1], parts[2]
+        token = parts[3] if len(parts) == 4 else ""
+        if token:
+            covered, is_name = _attempt_from_coverage_token(run_id, token)
+            if is_name:
+                names.setdefault(run_id, set()).add(token)
+        elif status == "missing":
+            covered = 0
+        else:
+            covered = 1
+        max_attempt[run_id] = max(max_attempt.get(run_id, 0), covered)
+    return {run_id: (max_attempt[run_id], names.get(run_id, set())) for run_id in max_attempt}
+
+
+def run_coverage(processed_path: Path, run_id: str) -> tuple[int, set[str]]:
+    """Coverage for one run: ``(max_covered_attempt, accounted_names)``.
+
+    The orchestrator skips a run iff its current ``run_attempt`` is ≤
+    ``max_covered_attempt`` — a covered attempt cannot have produced an
+    unaccounted artifact, so no artifact-listing API call is spent on it.
+    """
+    return coverage_map(processed_path).get(run_id, (0, set()))
 
 
 def is_run_processed(processed_path: Path, run_id: str) -> bool:
@@ -396,6 +526,10 @@ def is_run_processed(processed_path: Path, run_id: str) -> bool:
 
     Used by the orchestrator to short-circuit re-processing of runs that
     have already been seen (in any status, including ``missing``).
+
+    Note: the orchestrator's NFM-5829 skip is attempt-aware (see
+    :func:`run_coverage`); this helper remains the coarse "seen at all"
+    check for the ``is-run-seen`` CLI.
     """
     if not processed_path.exists():
         return False
@@ -403,7 +537,7 @@ def is_run_processed(processed_path: Path, run_id: str) -> bool:
         if not raw.strip():
             continue
         parts = raw.split("\t")
-        if len(parts) == 3 and parts[0] == run_id:
+        if len(parts) in (3, 4) and parts[0] == run_id:
             return True
     return False
 
@@ -433,6 +567,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the downloaded nfm-deploy-event-*.json file",
     )
     proc.add_argument(
+        "--artifact-name",
+        default=None,
+        help=(
+            "Name of the GHA artifact this event came from (NFM-5829). "
+            "Written as the ledger row's 4th coverage-token field so the "
+            "orchestrator can skip re-downloads."
+        ),
+    )
+    proc.add_argument(
         "--jsonl",
         default=None,
         help="JSONL path (default: $NFMD_DEPLOY_EVENTS_PATH or <repo>/docker/.deploy-events.jsonl)",
@@ -458,8 +601,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Record that a run had no nfm-deploy-event-*.json artifact.",
     )
     rec.add_argument("--run-id", required=True)
+    rec.add_argument(
+        "--attempt",
+        type=int,
+        default=None,
+        help=(
+            "The run_attempt the missing verdict covers (NFM-5829). "
+            "Written as the ledger row's 4th coverage-token field."
+        ),
+    )
     rec.add_argument("--jsonl", default=None)
     rec.add_argument("--processed", default=None)
+
+    covmap = sub.add_parser(
+        "coverage-map",
+        help=(
+            "Emit per-run attempt coverage as TSV: "
+            "<run_id>\\t<max_covered_attempt>\\t<accounted_artifact_names_csv> (NFM-5829)."
+        ),
+    )
+    covmap.add_argument(
+        "--processed",
+        default=None,
+        help="Ledger path (default: $NFMD_DEPLOY_EVENTS_PROCESSED_PATH or <jsonl>.processed)",
+    )
 
     run_seen = sub.add_parser(
         "is-run-seen",
@@ -498,8 +663,13 @@ def main(argv: list[str] | None = None) -> int:
         print("no")
         return 0
 
+    if args.command == "coverage-map":
+        for run_id, (max_attempt, accounted) in sorted(coverage_map(processed_path).items()):
+            print(f"{run_id}\t{max_attempt}\t{','.join(sorted(accounted))}")
+        return 0
+
     if args.command == "record-missing":
-        record_missing(jsonl_path, processed_path, args.run_id)
+        record_missing(jsonl_path, processed_path, args.run_id, attempt=args.attempt)
         print("missing")
         return 0
 
@@ -521,7 +691,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        result = process_event(jsonl_path, processed_path, text, args.run_id)
+        result = process_event(
+            jsonl_path,
+            processed_path,
+            text,
+            args.run_id,
+            artifact_name=args.artifact_name,
+        )
     except Exception as exc:
         logger.exception("collector crashed run_id=%s (%s)", args.run_id, exc)
         result = "error"
