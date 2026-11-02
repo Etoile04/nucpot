@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -66,6 +66,15 @@ const INITIAL_STATE: ViewState = {
 };
 
 const PAGE_SIZE = 20;
+
+// URL writes must land synchronously with the commit that changed state —
+// a passive effect can be starved for seconds behind other tasks under
+// heavy load, and Next's own router writes the address bar from the very
+// task this correction races against (NFM-5827). On the server the view
+// sits behind the page-level Suspense boundary, so the plain effect is
+// used there.
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 // ── URL ↔ state helpers (NFM-3917 / Tier 1D) ──────────────────────────
 //
@@ -259,23 +268,62 @@ export function MaterialsListView() {
   // button will still walk the canonical URL stack since we only ever
   // `replaceState` (no `pushState`).
   //
-  // A ref tracks the last URL we wrote so we don't replaceState on every
-  // re-render — only when state actually changed.
-  const lastUrlRef = useRef<string | null>(null);
-  useEffect(() => {
+  // NFM-5827: the effect deliberately also depends on `searchParams`
+  // (a fresh URLSearchParams identity on every router commit), not just
+  // the local state. Next.js can write the pre-sync URL back to
+  // `window.history` AFTER our first write — delayed segment commits
+  // under load restore e.g. `/materials?page=1` behind the app's back
+  // (the W45 E2E scan's "first-page swipe writes ?page=1" failure
+  // shape; reproduced at base too, so load-sensitive rather than a
+  // window regression). Re-running the sync on every router commit lets
+  // the location-equality guard below detect that drift and re-assert
+  // the canonical URL in the same task as the commit that caused it;
+  // when there is no drift, the guard makes the extra passes free.
+  const canonicalUrlRef = useRef<string>("/materials");
+  useIsomorphicLayoutEffect(() => {
+    if (typeof window === "undefined") return;
     const sp = new URLSearchParams();
     if (categoryId) sp.set("category_id", categoryId);
     if (page > 1) sp.set("page", String(page));
     const qs = sp.toString();
     const target = qs ? `/materials?${qs}` : "/materials";
-    if (typeof window === "undefined") return;
-    if (lastUrlRef.current === target) return;
-    lastUrlRef.current = target;
+    canonicalUrlRef.current = target;
     const currentSearch =
       window.location.pathname + (window.location.search || "");
     if (currentSearch === target) return;
     window.history.replaceState(null, "", target);
-  }, [categoryId, page]);
+  }, [categoryId, page, searchParams]);
+
+  // NFM-5827 drift watchdog.
+  //
+  // The `searchParams` re-run above only fires when the router commit
+  // that restored the stale URL re-renders this component. If Next ever
+  // writes the address bar without a matching commit, nothing would
+  // correct it. This watchdog covers that case: for a bounded 20s after
+  // mount it re-checks every 250ms and re-asserts the canonical URL
+  // whenever the address bar drifted. It is a no-op once settled (one
+  // string compare per tick), and it never fights an in-flight
+  // navigation: the canonical target's path is always `/materials`, so
+  // any other pathname means the view is navigating away and the
+  // correction is skipped.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const correctDrift = () => {
+      if (window.location.pathname !== "/materials") return;
+      const currentSearch =
+        window.location.pathname + (window.location.search || "");
+      if (currentSearch === canonicalUrlRef.current) return;
+      window.history.replaceState(null, "", canonicalUrlRef.current);
+    };
+    const intervalId = window.setInterval(correctDrift, 250);
+    const stopId = window.setTimeout(() => {
+      window.clearInterval(intervalId);
+    }, 20000);
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(stopId);
+    };
+  }, []);
 
   const fetchMaterials = async (): Promise<void> => {
     setState((prev) => ({ ...prev, loading: true, error: null }));

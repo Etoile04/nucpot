@@ -335,6 +335,122 @@ describe("MaterialsListView", () => {
     });
   });
 
+  // ── NFM-5827: URL drift re-assert ────────────────────────────────────
+  //
+  // The W45 E2E scan filed "first-page swipe writes ?page=1" as a window
+  // regression, but the base-vs-head full-suite differential reproduces
+  // the same failure shape at BASE too — it is load-sensitive, not a
+  // regression. The mechanism: Next's router can write the pre-sync URL
+  // back to window.history after the view's first sync (delayed segment
+  // commits under dev-suite load). The sync effect therefore re-runs on
+  // every router commit (fresh `searchParams` identity) and re-asserts
+  // the canonical URL, backed by a bounded drift watchdog.
+
+  it("URL-sync effect: re-asserts the canonical URL after the router restores a stale one", async () => {
+    mockQueryString = "page=1";
+    mockCategoryRequest();
+    const { rerender } = renderComponent();
+
+    // Flush the mount debounce + the first URL-sync pass.
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    vi.useRealTimers();
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalled();
+    });
+
+    // Mount pass wrote the clean canonical URL (page=1 is not surfaced).
+    expect(mockReplaceState.mock.calls.map((c) => String(c[2]))).toContain(
+      "/materials",
+    );
+
+    // Simulate the drift: the router writes the pre-sync URL back behind
+    // the app's back (the stub mirrors it onto window.location like a
+    // real browser would).
+    const callsBeforeDrift = mockReplaceState.mock.calls.length;
+    await act(async () => {
+      window.history.replaceState(null, "", "/materials?page=1");
+    });
+
+    // A router commit re-renders the view with a fresh URLSearchParams
+    // instance (value unchanged — identity is what changes).
+    await act(async () => {
+      rerender(<MaterialsListView />);
+    });
+
+    // The sync effect must have re-run and re-asserted `/materials`.
+    await waitFor(() => {
+      const postDrift = mockReplaceState.mock.calls
+        .slice(callsBeforeDrift)
+        .map((c) => String(c[2]));
+      expect(postDrift).toContain("/materials");
+    });
+    expect(window.location.pathname + window.location.search).toBe(
+      "/materials",
+    );
+  });
+
+  it("URL-sync effect: drift watchdog re-asserts the canonical URL without a re-render", async () => {
+    // The searchParams re-run only fires when the restoring router commit
+    // re-renders the view. The watchdog covers a write with no matching
+    // commit: a bare timer tick must correct the drift with no re-render.
+    mockQueryString = "page=1";
+    mockCategoryRequest();
+    renderComponent();
+
+    // Flush the mount debounce; the watchdog is armed at mount.
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Drift behind the app's back (stub mirrors onto window.location).
+    await act(async () => {
+      window.history.replaceState(null, "", "/materials?page=1");
+    });
+    expect(window.location.pathname + window.location.search).toBe(
+      "/materials?page=1",
+    );
+
+    // One watchdog tick (250ms) — no re-render in between.
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(window.location.pathname + window.location.search).toBe(
+      "/materials",
+    );
+  });
+
+  it("URL-sync effect: drift watchdog stops correcting after its 20s lifetime", async () => {
+    // Bounded-lifetime pin: after the watchdog window expires a drift is
+    // no longer corrected (no perpetual timer on a public page).
+    mockQueryString = "page=1";
+    mockCategoryRequest();
+    renderComponent();
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Outlive the 20s watchdog window (mount already consumed 500ms).
+    await act(async () => {
+      vi.advanceTimersByTime(20500);
+    });
+
+    await act(async () => {
+      window.history.replaceState(null, "", "/materials?page=1");
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // Watchdog is gone — the drifted URL is left untouched.
+    expect(window.location.pathname + window.location.search).toBe(
+      "/materials?page=1",
+    );
+  });
+
   // ── AC-4 regression (NFM-3917 / Tier 1D bug fix) ────────────────────
   //
   // Before the fix, the page was driven by `useSearchParams()` on every
