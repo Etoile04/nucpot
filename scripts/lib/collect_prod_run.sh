@@ -8,7 +8,11 @@
 # Walks the last 50 runs of `production-deployment.yml`, downloads any
 # `nfm-deploy-event-*.json` artifact, and pipes it into
 # `scripts/lib/collect_prod_events.py process`. Runs with no matching
-# artifact are recorded as `missing`.
+# artifact are recorded as `missing` — but only once the run has
+# concluded and aged past NFMD_MISSING_GRACE_SECS: an in-flight producer
+# run stays unwritten (pending) so a later fire collects its event
+# (NFM-5825 — the 10-30T18:11:23Z fire marked the mid-deploy ship
+# 41104046996 terminally missing and its event was lost from the ledger).
 #
 # Path resolution + idempotency live in collect_prod_events.py; this script
 # is just the glue around `gh api`.
@@ -141,6 +145,106 @@ fi
 echo "[collect-prod-run] runs_to_scan=$(echo "$RUN_IDS" | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------------
+# NFM-5825: gated missing-row recording
+# ---------------------------------------------------------------------------
+# A `missing` ledger row is TERMINAL (the ledger skip below never revisits
+# one), so it may only be written once the producer run has actually
+# concluded and had NFMD_MISSING_GRACE_SECS to land its artifact. A fire
+# landing mid-deploy — the 10-30T18:11:23Z fire vs the 18:06:47Z ship of
+# run 41104046996 — sees no artifact because the producer's `if: always()`
+# emit step has not run yet; recording missing then silently drops the
+# event of a successful deploy from the ledger forever.
+#
+# Knobs (env-tunable, NFM-5796 convention):
+#   NFMD_MISSING_GRACE_SECS  — post-conclusion grace before `missing` is
+#                              terminal (default 600s; covers artifact
+#                              upload + API-index lag).
+#   NFMD_MISSING_EMIT_ALERT  — when 1 (default), a `missing` row for a run
+#                              whose "Emit Production Deploy Event" job
+#                              SUCCEEDED raises a loud alert and reds the
+#                              fire: with `if: always()` on the emit job,
+#                              that combination means the event is
+#                              genuinely lost, and nobody reads a 5-minute
+#                              lane's stderr — a red fire is the visible
+#                              signal.
+MISSING_GRACE_SECS="${NFMD_MISSING_GRACE_SECS:-600}"
+MISSING_EMIT_ALERT="${NFMD_MISSING_EMIT_ALERT:-1}"
+MISSING_EMIT_ALERT_RAISED=0
+
+# Seconds since <updated_at> (GHA wire format). Prints -1 when the stamp
+# is missing/unparseable so callers treat "unknown age" as "still fresh".
+_updated_at_age_secs() {
+  python3 - "$1" <<'PY'
+import sys
+from datetime import datetime, timezone
+
+try:
+    stamp = datetime.strptime((sys.argv[1] or "").strip(), "%Y-%m-%dT%H:%M:%SZ")
+    stamp = stamp.replace(tzinfo=timezone.utc)
+except ValueError:
+    print(-1)
+else:
+    print(int((datetime.now(timezone.utc) - stamp).total_seconds()))
+PY
+}
+
+# record_missing_if_terminal <RUN_ID> <reason>
+#
+# Writes the terminal `missing` ledger row ONLY for a run that is
+# `completed` with updated_at at least MISSING_GRACE_SECS in the past.
+# Returns 0 when a row was written, 1 when deferred (caller continues).
+# Any lookup failure defers — the fail-safe direction is "next fire
+# re-checks", never "record missing on a guess".
+record_missing_if_terminal() {
+  local run_id="$1" reason="$2"
+  local snap status conclusion updated_at age_secs
+
+  if ! snap="$(gh_api_capture \
+        '"\(.status)\t\(.conclusion // "unknown")\t\(.updated_at // "unknown")"' \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"; then
+    echo "[collect-prod-run] run_id=${run_id} run-state lookup failed (${reason}) — deferring"
+    return 1
+  fi
+  status="$(printf '%s' "$snap" | cut -f1)"
+  conclusion="$(printf '%s' "$snap" | cut -f2)"
+  updated_at="$(printf '%s' "$snap" | cut -f3)"
+
+  if [ "$status" != "completed" ]; then
+    echo "[collect-prod-run] run_id=${run_id} producer still ${status:-unknown} (${reason}) — deferring, missing is not terminal mid-run (NFM-5825)"
+    return 1
+  fi
+
+  age_secs="$(_updated_at_age_secs "$updated_at")"
+  age_secs="${age_secs:--1}"
+  if [ "$age_secs" -lt "$MISSING_GRACE_SECS" ]; then
+    echo "[collect-prod-run] run_id=${run_id} concluded ${age_secs}s ago (< grace ${MISSING_GRACE_SECS}s; updated_at=${updated_at}) — deferring (NFM-5825)"
+    return 1
+  fi
+
+  # Terminal. Alert when the emit step actually succeeded — with `if:
+  # always()` on the emit job, a concluded run past grace with no
+  # artifact means the event is genuinely lost.
+  if [ "$MISSING_EMIT_ALERT" = "1" ]; then
+    local emit_conclusions
+    if emit_conclusions="$(gh_api_capture \
+          '[.jobs[] | select(.name == "Emit Production Deploy Event") | .conclusion] | join(",")' \
+          "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" 2>/dev/null)" \
+        && printf '%s' "$emit_conclusions" | grep -q 'success'; then
+      echo "[collect-prod-run] ALERT run_id=${run_id}: 'Emit Production Deploy Event' succeeded but no nfm-deploy-event artifact landed — deploy event lost (NFM-5825)" >&2
+      echo "::error::run ${run_id}: emit-step success but artifact missing after ${MISSING_GRACE_SECS}s grace — deploy event lost from ledger" >&2
+      MISSING_EMIT_ALERT_RAISED=1
+    fi
+  fi
+
+  echo "[collect-prod-run] run_id=${run_id} ${reason} on concluded run (conclusion=${conclusion}, age=${age_secs}s) — recording missing"
+  python3 "$COLLECTOR" record-missing \
+    --run-id "$run_id" \
+    --jsonl "$JSONL_PATH" \
+    --processed "$PROCESSED_PATH" || true
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Step 3: For each run, either process its artifacts or record `missing`.
 # ---------------------------------------------------------------------------
 for RUN_ID in $RUN_IDS; do
@@ -148,6 +252,9 @@ for RUN_ID in $RUN_IDS; do
   [ -n "$RUN_ID" ] || continue
 
   # 3a. Skip runs we've already processed (any status, including missing).
+  # Missing rows are terminal BECAUSE they are only written once the run
+  # has concluded and aged past the grace window — see
+  # record_missing_if_terminal above (NFM-5825).
   if [ -f "$PROCESSED_PATH" ]; then
     PREFIX="$(printf '%s\t' "$RUN_ID")"
     if grep -q "^${PREFIX}" "$PROCESSED_PATH" 2>/dev/null; then
@@ -172,20 +279,17 @@ for RUN_ID in $RUN_IDS; do
           | select(.name | startswith("nfm-deploy-event-"))
           | .archive_download_url' \
         "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" 2>/dev/null)"; then
-    echo "[collect-prod-run] run_id=$RUN_ID artifact listing failed — recording missing" >&2
-    python3 "$COLLECTOR" record-missing \
-      --run-id "$RUN_ID" \
-      --jsonl "$JSONL_PATH" \
-      --processed "$PROCESSED_PATH" || true
+    echo "[collect-prod-run] run_id=$RUN_ID artifact listing failed" >&2
+    # Per-run failure stays non-fatal (a single bad run must not break the
+    # sweep), but the ledger row is only written for concluded runs —
+    # an in-flight run with a flaky listing response must stay pending.
+    record_missing_if_terminal "$RUN_ID" "artifact listing failed" || true
     continue
   fi
 
   if [ -z "$ARCHIVE_URLS" ]; then
-    echo "[collect-prod-run] run_id=$RUN_ID no nfm-deploy-event artifact — recording missing"
-    python3 "$COLLECTOR" record-missing \
-      --run-id "$RUN_ID" \
-      --jsonl "$JSONL_PATH" \
-      --processed "$PROCESSED_PATH" || true
+    echo "[collect-prod-run] run_id=$RUN_ID no nfm-deploy-event artifact"
+    record_missing_if_terminal "$RUN_ID" "no nfm-deploy-event artifact" || true
     continue
   fi
 
@@ -222,5 +326,10 @@ for RUN_ID in $RUN_IDS; do
     cd "$WORKDIR"
   done
 done
+
+if [ "$MISSING_EMIT_ALERT_RAISED" -eq 1 ]; then
+  echo "[collect-prod-run] done — exiting non-zero: emit-step success with missing artifact (NFM-5825 alert above)"
+  exit 1
+fi
 
 echo "[collect-prod-run] done"
