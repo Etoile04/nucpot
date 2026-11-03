@@ -12,8 +12,9 @@ dies with ``fatal: bad object refs/heads`` (exit 128), intermittent
 since 10-15; 3/3 on f5060144 during NFM-5555 merge-CI load, identical
 failures earlier on 4d3479300.
 
-Contract pinned here (all three NFM-5548 lanes: both collectors + the
-site-monitor watchdog job):
+Contract pinned here (both NFM-5548 lanes that remain direct-fetch
+carriers: the two collectors — the site-monitor watchdog lane was diverted
+to a hosted orchestrator + zero-fetch executor in NFM-5798 P2):
 
 * the checkout step materializes the repo in a PRIVATE per-run workdir
   (``mktemp -d`` under ``$RUNNER_TEMP``) exported as

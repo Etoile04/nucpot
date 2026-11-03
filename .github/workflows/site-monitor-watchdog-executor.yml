@@ -1,0 +1,88 @@
+name: NucPot Watchdog Executor (self-hosted)
+
+# =============================================================================
+# NFM-5798 P2 Leg A — checkout-free executor half of the watchdog diversion.
+# =============================================================================
+# Triggered ONLY by repository_dispatch from the hosted orchestrator
+# (site-monitor-watchdog-orchestrator.yml), which supplies the script
+# payload as a workflow artifact. This workflow performs zero fetches of
+# any kind — the checkout blackhole class (NFM-5548/5556/5796/5798) cannot
+# fail this lane by construction. The payload scripts are self-contained
+# (docker + python3 + curl + the host-local ~/.nfmd ledger + ALERT_WEBHOOK);
+# they read nothing else from the repo, so the artifact copy is complete.
+#
+# No schedule trigger ON PURPOSE: the literal-cron `if:` guard class that
+# silently skipped the watchdog leg on dispatch (RE smoke 41465022940) is
+# structurally impossible with a dispatch-only trigger. Missed scheduling
+# is covered by the orchestrator's cadence plus the hosted monitor's
+# runs-API staleness alert (>2x the 6h nominal cadence without a
+# successful run here).
+#
+# repository_dispatch fires workflows from the DEFAULT branch only, so this
+# file must be on main to receive dispatches — the Leg A canary (3x
+# workflow_dispatch on the orchestrator across a flap window + one natural
+# fire) exercises exactly this path post-merge.
+# =============================================================================
+
+on:
+  repository_dispatch:
+    types: [nfmd-watchdog-exec]
+
+permissions:
+  # Cross-run artifact download (actions/download-artifact with run-id).
+  actions: read
+
+concurrency:
+  group: nfm-watchdog-executor
+  # A cancelled run could tear a host-side check mid-flight; queue instead
+  # (review 8fecf232 pt 5).
+  cancel-in-progress: false
+
+jobs:
+  executor:
+    runs-on: [self-hosted, production]
+    # Carried from the pre-split watchdog job (NFM-5798 P1 budget).
+    timeout-minutes: 18
+    steps:
+      - name: Download payload from orchestrator run
+        uses: actions/download-artifact@v7
+        with:
+          name: watchdog-payload
+          run-id: ${{ github.event.client_payload.orchestrator_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: payload
+
+      - name: Verify payload manifest
+        id: verify-payload
+        run: |
+          set -euo pipefail
+          cd payload
+          shasum -a 256 -c MANIFEST.sha256
+          echo "payload provenance: orchestrator run ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+
+      - name: Run stale-container watchdog
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: |
+          cd payload
+          bash watchdog.sh
+
+      # NFM-5269/NFM-5270 (unchanged contract): restart loops + empty bind
+      # sources. Read-only docker/host checks; exits 81 to fail this job
+      # when a violation is detected, on top of the Feishu alert. Runs even
+      # when the stale-image check failed first.
+      - name: Run container sanity check (restart loops + bind sources)
+        if: steps.verify-payload.outcome == 'success'
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: |
+          cd payload
+          bash container_sanity_check.sh
+
+      - name: Clean payload
+        # Host is disk-pressured (NFM-5556 hygiene); the payload is
+        # reproducible from any later orchestrator fire.
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "${GITHUB_WORKSPACE}/payload"
