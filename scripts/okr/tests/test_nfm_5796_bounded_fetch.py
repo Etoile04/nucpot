@@ -24,12 +24,20 @@ makes every attempt bounded and retried: outer ``timeout -k`` wrapper plus
 ssh ``ConnectTimeout``/``ServerAlive`` hardening, then N attempts with a
 short backoff. A fully degraded window costs minutes, not 25, and the next
 scheduled fire catches up via the collector's 50-run walk-back. The same
-unbounded fetch body ships in three workflows on this runner, so all three
-get the identical block:
+unbounded fetch body ships in the collector workflows on this runner, so
+they all get the identical block:
 
 - ``collect-prod-deploy-events.yml`` (this issue)
 - ``prod-deploy-event-collector.yml`` (same lane, same body)
-- ``site-monitor.yml`` (same defect class, same runner)
+- ``site-monitor.yml`` — carried the same body until NFM-5798 P2 Leg A
+  (2026-11-03) diverted the lane entirely: the watchdog now rides a hosted
+  orchestrator + checkout-free self-hosted executor
+  (``site-monitor-watchdog-orchestrator.yml`` /
+  ``site-monitor-watchdog-executor.yml``), so no site-monitor job fetches
+  on-host at all. That invariant is guarded by
+  ``test_nfm_5798_p2_watchdog_diversion.py``; this module keeps the bounds
+  contract for the two collectors, where P1's widened envelope remains
+  defense-in-depth for residual on-host fetches.
 
 The knobs are env-tunable so tests can shrink them without editing YAML:
 
@@ -63,10 +71,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # All workflows that carry the inline bounded-fetch checkout body.
+# (site-monitor.yml left this set in NFM-5798 P2 Leg A — its watchdog lane
+# no longer fetches on-host at all; see the module docstring.)
 WORKFLOWS = {
     "collect-prod-deploy-events": REPO_ROOT / ".github/workflows/collect-prod-deploy-events.yml",
     "prod-deploy-event-collector": REPO_ROOT / ".github/workflows/prod-deploy-event-collector.yml",
-    "site-monitor": REPO_ROOT / ".github/workflows/site-monitor.yml",
 }
 
 FETCH_NEEDLE = "fetch --no-tags --depth=1"
@@ -332,6 +341,18 @@ def _run_checkout_body(
 
     script = _extract_body_to_script(workflow_name, tmp_path)
     env = os.environ.copy()
+    # Hermeticity (NFM-5798 P2 Leg A run-context fix): the ACPX session
+    # exports BASH_ENV pointing at a runtime .bashrc whose first line
+    # re-pins PATH[0] to the Paperclip github-runtime dir. bash(1) sources
+    # BASH_ENV on EVERY non-interactive startup, so without stripping it
+    # here the host rewrites the PATH this function carefully constructs
+    # and the extracted body silently runs the host's real git (observed
+    # live 2026-11-03: fake git never invoked, fetches rode the dead
+    # egress lane for the full bound). Strip both startup-env vars and
+    # invoke bash by absolute path so the PATH below is the only
+    # resolution input, as this function's contract states.
+    for rewrite_var in ("BASH_ENV", "ENV"):
+        env.pop(rewrite_var, None)
     if path_dirs:
         path_value = os.pathsep.join(str(d) for d in [bin_dir, *path_dirs])
     else:
@@ -349,7 +370,7 @@ def _run_checkout_body(
     env.update(extra_env or {})
     tmp_path.joinpath("github_env").touch()
     return subprocess.run(
-        ["bash", str(script)],
+        ["/bin/bash", str(script)],
         env=env,
         capture_output=True,
         text=True,

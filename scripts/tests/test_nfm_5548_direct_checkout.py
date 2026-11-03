@@ -3,11 +3,14 @@
 Evidence base (2026-10-15): codeload.github.com started returning 429 to the
 self-hosted collector host's direct egress, so ``uses: actions/checkout`` died
 during "Set up job" whenever the runner's action archive cache was empty
-(3 download attempts exhausted; collectors red since 10:16Z). The three
-workflows that run on that host — collect-prod-deploy-events,
-prod-deploy-event-collector, and the site-monitor watchdog job — now check
-out with a plain ``git fetch`` + ``git checkout FETCH_HEAD``, which removes
-the action-archive dependency entirely.
+(3 download attempts exhausted; collectors red since 10:16Z). The two
+workflows that run on that host — collect-prod-deploy-events and
+prod-deploy-event-collector — now check out with a plain ``git fetch`` +
+``git checkout FETCH_HEAD``, which removes the action-archive dependency
+entirely. (The site-monitor watchdog lane was a third carrier until
+NFM-5798 P2 diverted it to a hosted orchestrator + zero-fetch executor;
+its post-diversion invariants live in
+``test_nfm_5798_p2_watchdog_diversion.py``.)
 
 These tests pin that contract behaviorally rather than by string-matching:
 
@@ -47,7 +50,9 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SELF_HOSTED_JOBS = {
     ".github/workflows/collect-prod-deploy-events.yml": ["collect-prod-events"],
     ".github/workflows/prod-deploy-event-collector.yml": ["collect"],
-    ".github/workflows/site-monitor.yml": ["watchdog"],
+    # site-monitor.yml's watchdog job was diverted to a hosted orchestrator +
+    # zero-fetch self-hosted executor (NFM-5798 P2) — it no longer carries a
+    # direct-fetch checkout; see test_nfm_5798_p2_watchdog_diversion.py.
 }
 
 
@@ -114,9 +119,7 @@ def fixture_origin(tmp_path):
     return f"file://{tmp_path / 'remote'}/", sha
 
 
-def _run_checkout_script(
-    script: str, fixture_origin: tuple[str, str], workspace: str
-) -> str:
+def _run_checkout_script(script: str, fixture_origin: tuple[str, str], workspace: str) -> str:
     """Execute the verbatim step body; return the exported NFMD_CHECKOUT_DIR."""
     origin_url, sha = fixture_origin
     runner_temp = workspace.rstrip("/") + "-runner-temp"
