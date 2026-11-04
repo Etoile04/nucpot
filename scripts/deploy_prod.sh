@@ -636,9 +636,10 @@ health_first_poll http://localhost:3000/ 12 5 || exit 1
 # NFM-5420 task 3 / NFM-5426 — post-cutover Cloudflare edge purge. Static
 # HTML is edge-cached by origin s-maxage; before NFM-5419 that was a 1-year
 # pin, so every deploy that changed chunk hashes left warm colos serving
-# HTML with dead /_next/static refs (NFM-5418). Origin now emits s-maxage=300,
-# which bounds NEW entries, but the previous entry still occupies the cache
-# key until it expires or is purged — so the deploy itself must purge.
+# HTML with dead /_next/static refs (NFM-5418). Origin now emits s-maxage=1800
+# (NFM-5863; was 300), which bounds NEW entries, but the previous entry still
+# occupies the cache key until it expires or is purged — so the deploy itself
+# must purge.
 # purge_everything (not a route list) on purpose: it is the only form that
 # implicitly covers ALIAS paths like the /browse → /potentials rewrite in
 # apps/web/next.config.ts LEGACY_ALIAS_REWRITES, which a canonical-route

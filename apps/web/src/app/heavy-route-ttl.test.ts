@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest"
+
+// NFM-5863: the site-monitor probe cadence (~320-400s observed) exceeds the
+// old s-maxage=300, so every probe landed on (or near) the edge-expiry path
+// and occasionally caught the cold-fill latency class (5.3-9.4s P1 singles,
+// NFM-5862 ledger). The route-level revalidate window IS the emitted
+// s-maxage for these ISR pages, so this contract pins the chosen TTL:
+//
+//   - exactly 1800s (30 min): comfortably above the worst observed probe
+//     gap (~401s, 4.5x margin) while staying clear of the NFM-5418
+//     stale-pin lane ceiling (>3600s WARN) and bounding post-deploy edge
+//     staleness to 30 min (deploy_prod.sh purges everything post-cutover,
+//     NFM-5420/NFM-5426).
+//
+// /browse is the NFM-5228 afterFiles alias of /potentials, so the
+// potentials module contract covers both paths.
+//
+// These import the actual page modules so the assertion tracks the config
+// Next.js really uses, not a copy of the source text.
+import * as homePage from "./page"
+import * as potentialsPage from "./potentials/page"
+import * as materialsPage from "./materials/page"
+
+const NFM_5863_TTL_S = 1800
+const NFM_5418_LANE_CEILING_S = 3600
+const AC2_MIN_S = 900
+
+function revalidateOf(mod: Record<string, unknown>): number {
+  const v = mod.revalidate
+  expect(v, "route must export a numeric `revalidate` (ISR route segment config)").toEqual(
+    expect.any(Number),
+  )
+  return v as number
+}
+
+describe.each([
+  ["home / (and monitored heavy route)", homePage],
+  ["potentials /potentials (+ /browse alias)", potentialsPage],
+  ["materials /materials", materialsPage],
+])("heavy-route edge TTL (%s)", (_label, mod) => {
+  it("uses the NFM-5863 1800s edge-cache window", () => {
+    expect(revalidateOf(mod)).toBe(NFM_5863_TTL_S)
+  })
+
+  it("stays >= AC2 floor (900s) and under the NFM-5418 stale-pin lane ceiling (<3600s)", () => {
+    const revalidate = revalidateOf(mod)
+    expect(revalidate).toBeGreaterThanOrEqual(AC2_MIN_S)
+    expect(revalidate).toBeLessThan(NFM_5418_LANE_CEILING_S)
+  })
+})
