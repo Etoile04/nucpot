@@ -213,6 +213,23 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # NFM-5857: the API suite writes multi-GB temp files (local-disk storage,
+      # backup cap-enforcement and oversized-upload tests). On ubuntu-26.04
+      # hosted VMs that straddles the OS-disk free-space margin: deploy run
+      # 41814087886 (2026-11-04) failed both attempts with "OSError: [Errno 122]
+      # Disk quota exceeded" from tests/test_storage_local_disk.py (92% mark)
+      # onward, while the identical SHA passed in the standalone test-api
+      # workflow minutes earlier. Free the preinstalled toolchains we never use
+      # and move pytest's temp tree to the larger ephemeral disk.
+      - name: Free disk space (NFM-5857)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/lib/jvm /usr/share/swift /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          sudo install -d -m 1777 /mnt/pytest-tmp
+          df -h /
+          df -h /mnt 2>/dev/null || true
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -230,6 +247,10 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run unit tests
+        env:
+          # NFM-5857: pytest's tmp_path tree lands under TMPDIR; keep the
+          # multi-GB suite temp writes off the OS disk.
+          TMPDIR: /mnt/pytest-tmp
         run: uv run pytest
 
       - name: Upload test results
