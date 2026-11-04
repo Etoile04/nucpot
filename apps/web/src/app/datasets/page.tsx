@@ -9,9 +9,13 @@ export const metadata: Metadata = {
 // NFM-5418: without this, a fully-static page emits Next.js's default
 // s-maxage=31536000 HTML header, so the Cloudflare edge pins it for a year
 // and any deploy that changes chunk hashes orphans the cached refs
-// (NFM-5335 class). Match the home page's ISR window instead: the shell
-// revalidates every 5 min behind stale-while-revalidate.
-export const revalidate = 300
+// (NFM-5335 class). NFM-5863 widened the window to 30 min (matching the
+// other site-monitor SCAN_PAGES routes): the emitted s-maxage must sit
+// above the probe cadence (~320-400s observed) so edge probes never land
+// on the cold-fill path, while staying below the NFM-5418 stale-pin lane
+// ceiling of 3600s. The shell revalidates every 30 min behind
+// stale-while-revalidate.
+export const revalidate = 1800
 
 // NFM-5321 (D1/D4, Visual-Truth Gate retro-gate): the hero copy previously
 // leaked internal ticket ids and a contributor's local file path; the page

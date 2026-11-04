@@ -20,6 +20,9 @@ import { describe, expect, it } from "vitest"
 import * as homePage from "./page"
 import * as potentialsPage from "./potentials/page"
 import * as materialsPage from "./materials/page"
+// NFM-5863 AC3: /datasets is the fifth site-monitor SCAN_PAGES edge-HTML
+// route and carries the same short-TTL condition — treated identically.
+import * as datasetsPage from "./datasets/page"
 // The home page's emitted s-maxage is min(route revalidate, inner fetch
 // revalidate), so the home-data fetch window must match the route window —
 // pinned here in-lockstep (see HOME_DATA_REVALIDATE_S in home-data.ts).
@@ -41,6 +44,7 @@ describe.each([
   ["home / (and monitored heavy route)", homePage],
   ["potentials /potentials (+ /browse alias)", potentialsPage],
   ["materials /materials", materialsPage],
+  ["datasets /datasets (5th SCAN_PAGES route, AC3)", datasetsPage],
 ])("heavy-route edge TTL (%s)", (_label, mod) => {
   it("uses the NFM-5863 1800s edge-cache window", () => {
     expect(revalidateOf(mod)).toBe(NFM_5863_TTL_S)
