@@ -10,12 +10,12 @@ fix) · **NFM-5309 (this contract + cadence watchdog)**
 | | Primary (latency-critical) | Supplementary (this workflow) |
 |---|---|---|
 | Component | `~/bin/nfm-site-monitor.sh` launchd agent (NFM-5226) | `.github/workflows/site-monitor.yml` |
-| Cadence | 5 min (host cron — not starvable by GitHub) | Hourly nominal `23 * * * *` + `17 */6` watchdog |
+| Cadence | 5 min (host cron — not starvable by GitHub) | Hourly nominal `23 * * * *` (the `17 */6` watchdog entry moved to `site-monitor-watchdog-orchestrator.yml`, NFM-5798 P2) |
 | Realistic delivery | 5 min (verified) | **~8 events/day** under chronic starvation |
 | Detection contract | ≤10 min worst case (2-probe P0 confirm) | Best-effort; no latency contract |
 | Vantage | The Mac Studio host (inside the tunnel) | **GitHub's network — outside the tunnel** |
 | Alerting | Sentinel log → SRE heartbeat (2h) | GitHub issue (`issues:write`, P0 label) |
-| Covers | All `scripts/health_check.py` targets | Public edge from outside + 6h container sanity (NFM-5269/5270) on the self-hosted runner |
+| Covers | All `scripts/health_check.py` targets | Public edge from outside + watchdog-executor health (runs-API staleness eye, NFM-5798 P2); the 6h container sanity itself now runs via the orchestrator/executor split (§9) |
 
 The lanes fail independently: the GitHub lane is the only *external-vantage*
 probe, which is why it is kept despite starvation — but nothing latency-
@@ -37,9 +37,12 @@ Consequences:
 - Higher-frequency crons buy **nothing** (delivery is ~8/day regardless), so
   NFM-5309 dropped the nominal from `*/10` to hourly. The workflow header now
   documents this; do not "restore" `*/10`.
-- The `17 */6` entry's literal is **load-bearing**: the watchdog job's `if:`
-  string-matches `github.event.schedule == '17 */6 * * *'`. Change one, break
-  the other.
+- The `17 */6` entry's literal **was** load-bearing (the watchdog job's `if:`
+  string-matched `github.event.schedule == '17 */6 * * *'`). NFM-5798 P2
+  Leg A removed that guard with the diversion (§9): the 6h cron now lives in
+  `site-monitor-watchdog-orchestrator.yml` and the executor is
+  dispatch-only — there is no literal pair left to keep in sync, and the
+  dispatch-skip trap (RE smoke 41465022940) is structurally impossible.
 - Demonstrated cost of the blind spot: the 10-01 AutoVC SSL-EOF P0
   (NFM-5277, 18 min) was retro-filed ~2.5 h later instead of live-caught.
 
@@ -65,7 +68,8 @@ only with a fresh `--json` census in hand. Logic is unit-tested in
 
 The re-check criterion "≥50% cadence sustained" was written against the
 `*/10` nominal. Against the honest hourly schedule (28/day nominal with the
-watchdog entry), current delivery (~8/day) is ~29% of nominal — the fraction
+watchdog entry; 24/day since NFM-5798 P2 moved it out — §9), current
+delivery (~8/day) is ~29% of nominal — the fraction
 does not magically improve by lowering the denominator, and it should not be
 gamed by starving the nominal further. Recommended reading: evaluate KR-SRE-5
 Green on (a) the cadence watchdog reading OK continuously, or (b) the next P0
@@ -332,3 +336,48 @@ against it.
   `NFM_MONITOR_REF_STATE`. Full threshold derivations and the drift policy
   (ALPHA=0.125 healthy / ALPHA_SLOW=0.03 above-ratio) live in the
   NFM-5708 header block of `scripts/nfm-site-monitor.sh`.
+
+## 9. Watchdog diversion — hosted orchestrator + checkout-free executor (NFM-5798 P2 Leg A)
+
+The self-hosted watchdog's only failing step was ever its CHECKOUT: the
+hand-rolled bounded git fetch of two self-contained scripts through the
+host's flaky egress lane (NFM-5548 → 5556 → 5796 → 5798; occurrence #8 ran
+a 3-streak, and P1's widened 960s envelope still hard-fails every fetch in
+a dead trough). The checks themselves are read-only docker/host probes that
+need nothing from the repo at runtime, so Leg A moves the FETCH, not the
+job:
+
+- `site-monitor-watchdog-orchestrator.yml` (hosted, ubuntu-latest) — owns
+  the `17 */6` cron (moved verbatim from this workflow) + a
+  `workflow_dispatch` canary door. Checks out at the fire's pinned SHA on
+  GitHub's healthy egress, stages the two payload scripts plus a sha256
+  manifest as the `watchdog-payload` artifact, then `repository_dispatch`es
+  the executor with (run-id, sha) provenance. `contents: write` is required
+  for the dispatch POST.
+- `site-monitor-watchdog-executor.yml` (self-hosted, `[self-hosted,
+  production]`, timeout-minutes 18 carried from the pre-split job) —
+  downloads the artifact over the runner's own job channel
+  (`download-artifact` cross-run with `actions: read`), verifies the
+  manifest, and runs both scripts with the host secrets. ZERO git
+  operations by construction (guarded by
+  `scripts/okr/tests/test_nfm_5798_p2_watchdog_diversion.py`), serialized
+  with `cancel-in-progress: false`. Dispatch-only trigger: the literal-cron
+  `if:` guard that silently skipped the watchdog leg on dispatch (RE smoke
+  41465022940) cannot regress.
+- Blind-spot closure: the hourly hosted `monitor` job reads the Actions
+  runs API for the executor's last SUCCESSFUL run (the run record IS the
+  heartbeat — no write channel) and files/comments an alert under the
+  `monitoring-alert` + `watchdog-stale` labels when no success is newer
+  than 12h (`NFMD_WATCHDOG_STALE_SECS`, 2x the 6h nominal cadence — above
+  the observed ~9h max fire gap under starvation).
+
+Operational notes:
+
+- `repository_dispatch` fires workflows from the DEFAULT branch only — the
+  executor path is exercisable post-merge; the Leg A canary is 3x
+  `workflow_dispatch` on the orchestrator across an egress flap window plus
+  one natural 6h fire green, gating Leg B (the two collectors).
+- The cadence watchdog (§3) counts `site-monitor.yml` runs — monitor-only
+  after the split; watchdog cadence is now observed via the orchestrator's
+  run records and the staleness alert.
+- Rollback = revert (no data migrations, no host state changes).

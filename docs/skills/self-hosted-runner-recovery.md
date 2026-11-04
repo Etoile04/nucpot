@@ -8,8 +8,9 @@ description: >-
   `socket hang up` while downloading setup-* tarballs (filed by NFM-2754).
   Both manifest at `actions/setup-python@v7` and any step that downloads
   from `github.com`. Also records the NFM-5548 checkout-lane invariant:
-  self-hosted collector/watchdog jobs check out via direct git fetch, not
-  `actions/checkout`.
+  self-hosted collector jobs check out via direct git fetch, not
+  `actions/checkout` (the watchdog lane stopped fetching entirely in
+  NFM-5798 P2 — see "Checkout lane" below).
 ---
 
 # Triage decision
@@ -32,15 +33,21 @@ boilerplate.
 Self-hosted jobs on this host must not depend on the `actions/checkout`
 action-archive download: codeload.github.com 429s kill the job during
 "Set up job" whenever the runner's action cache is empty. The collector
-and watchdog lanes — `collect-prod-deploy-events.yml`,
-`prod-deploy-event-collector.yml`, and the `site-monitor.yml` watchdog
-job — check out with a direct `git fetch` of `$GITHUB_SHA` instead
-(authoritative implementation: the checkout steps in those workflow
-files; regression-pinned by
-`scripts/tests/test_nfm_5548_direct_checkout.py`). Workflows that still
-use `actions/checkout` on this host (e.g. `production-deployment.yml`,
-`run-migration.yml`, `staging-deploy.yml`) remain exposed to this
-failure class.
+lanes — `collect-prod-deploy-events.yml` and
+`prod-deploy-event-collector.yml` — check out with a direct `git fetch`
+of `$GITHUB_SHA` instead (authoritative implementation: the checkout
+steps in those workflow files; regression-pinned by
+`scripts/tests/test_nfm_5548_direct_checkout.py`). The former
+`site-monitor.yml` watchdog job also carried this fetch until NFM-5798
+P2 Leg A (2026-11-03) diverted it: a hosted orchestrator
+(`site-monitor-watchdog-orchestrator.yml`) now stages the payload
+scripts as an artifact and dispatches the self-hosted executor
+(`site-monitor-watchdog-executor.yml`), which downloads the artifact
+and performs zero git operations (guarded by
+`scripts/okr/tests/test_nfm_5798_p2_watchdog_diversion.py`). Workflows
+that still use `actions/checkout` on this host (e.g.
+`production-deployment.yml`, `run-migration.yml`, `staging-deploy.yml`)
+remain exposed to this failure class.
 
 NFM-5556 invariant: the direct fetch runs in a PRIVATE per-run workdir
 (`mktemp -d` under `$RUNNER_TEMP`, exported as `NFMD_CHECKOUT_DIR` via
@@ -66,8 +73,13 @@ windows (depth-1 fetches ran 12-25 min and died mid-transfer); each
 attempt is now wrapped in `timeout -k` plus ssh
 `ConnectTimeout`/`ServerAlive` hardening, retried up to
 `NFMD_FETCH_MAX_ATTEMPTS` (default 3; also `NFMD_FETCH_PER_ATTEMPT_SECS`
-=120, `NFMD_FETCH_RETRY_SLEEP_SECS` =10), so a fully degraded window
-costs ~6 min instead of 25. This makes `timeout(1)` (or macOS coreutils
+=300, `NFMD_FETCH_RETRY_SLEEP_SECS` =30), so a fully degraded window
+costs ~16.75 min (3×300s + `timeout -k 15` kill grace + 2×30s backoff)
+instead of an unbounded 25-minute burn. NFM-5798 (2026-11-02) widened
+the 120s/10s originals — the 10-31/11-01 sustained episodes killed 120s
+attempts mid-pack at trickle rates; each carrier job's
+`timeout-minutes: 18` must cover the widened worst case (pinned by
+`test_job_timeout_covers_worst_case_fetch`). This makes `timeout(1)` (or macOS coreutils
 `gtimeout(1)`) a hard host prerequisite: if neither is on the runner
 PATH the checkout fails loudly (`neither timeout(1) nor gtimeout(1) on
 PATH`) rather than silently reverting to an unbounded fetch.
@@ -105,11 +117,13 @@ Workflows in this repo that `runs-on: [self-hosted, production]` (the
 - `staging-deploy.yml`
 - `run-migration.yml`
 - `collect-prod-deploy-events.yml` (legacy alias)
-- `site-monitor.yml` — only its `watchdog` job (bash-only, no `setup-*`
-  action, so the toolcache failure mode does not apply to it)
+- `site-monitor-watchdog-executor.yml` — the self-hosted watchdog
+  executor (NFM-5798 P2; bash-only, no `setup-*` action, so the
+  toolcache failure mode does not apply to it)
 
-The `site-monitor.yml` probe job and all `Batch N CI` / `ci.yml`
-workflows run on `ubuntu-latest` and are **not** affected.
+`site-monitor.yml` (monitor job only since the NFM-5798 P2 split) and
+all `Batch N CI` / `ci.yml` workflows run on `ubuntu-latest` and are
+**not** affected.
 
 ## Diagnosis (Permission failure mode)
 

@@ -19,8 +19,11 @@ name: NucPot Site Monitor
 #     `scripts/health_check.py` targets.
 #   - THIS WORKFLOW: (a) public-edge probes from GitHub's vantage (a network
 #     position the host sentinel cannot cover), (b) GitHub-issue alerting
-#     (issues:write), (c) the 6h stale-container/container-sanity pass
-#     (NFM-3337 AC-3, NFM-5269/5270) on the self-hosted runner.
+#     (issues:write), (c) an hourly runs-API staleness eye over the
+#     watchdog executor (NFM-5798 P2 Leg A — the 6h stale-container/
+#     container-sanity pass itself moved to the hosted orchestrator +
+#     checkout-free executor split; see §9 of
+#     docs/runbooks/site-monitoring.md).
 #
 # Expect ~8 delivered events/day here under chronic starvation; do NOT file
 # "monitor is down" on cadence alone — under-firing is detected by
@@ -29,17 +32,16 @@ name: NucPot Site Monitor
 # and CRITICAL on silence >18h or zero runs/24h.
 #
 # Cron offset: :23 avoids the start-of-hour slot GitHub documents as its
-# highest-load drop window. The `17 */6` entry MUST keep its exact literal —
-# the watchdog job's `if:` gates on `github.event.schedule == '17 */6 * * *'`.
+# highest-load drop window. (The 6h `17 */6` watchdog entry moved to
+# site-monitor-watchdog-orchestrator.yml in NFM-5798 P2 Leg A; the old
+# literal-cron `if:` guard class died with that split — the executor is
+# dispatch-only, so there is no literal pair left to keep in sync.)
 # =============================================================================
 
 on:
   schedule:
     # Hourly public-edge probe (honest since NFM-5309; was */10 — see header)
     - cron: '23 * * * *'
-    # Stale-container watchdog (NFM-3337) — every 6h, offset 17min.
-    # LITERAL IS LOAD-BEARING: watchdog job's `if:` string-matches this.
-    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -50,6 +52,14 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      # Job-level grant: the alert steps need issues:write (workflow-level
+      # default), and the executor staleness eye needs actions:read to
+      # query the runs API (NFM-5798 P2 — no write channel; the run record
+      # is the heartbeat).
+      issues: write
+      contents: read
+      actions: read
 
     steps:
       - name: Checkout
@@ -112,6 +122,87 @@ jobs:
               });
             }
 
+      - name: Watchdog executor staleness check
+        id: exec_stale
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # NFM-5798 P2: the self-hosted watchdog executor's run record IS
+          # its heartbeat (no write channel — review 8fecf232 pt 2). Alert
+          # when no successful executor run in over 2x the 6h nominal
+          # cadence; observed fire gaps have run to ~9h under GitHub's
+          # schedule starvation (NFM-5309), so 12h keeps headroom without
+          # sleeping through a dead lane.
+          stale_secs="${NFMD_WATCHDOG_STALE_SECS:-43200}"
+          wf="site-monitor-watchdog-executor.yml"
+          fetch_created() {
+            gh api "repos/${{ github.repository }}/actions/workflows/$wf" --jq .created_at
+          }
+          created="$(fetch_created || fetch_created)" || {
+            echo "::error::cannot resolve the watchdog executor workflow via the Actions API"
+            exit 1
+          }
+          last_success="$(gh api "repos/${{ github.repository }}/actions/workflows/$wf/runs?status=success&per_page=1" --jq '.workflow_runs[0].created_at // empty')" || {
+            echo "::error::cannot query watchdog executor runs via the Actions API"
+            exit 1
+          }
+          baseline="${last_success:-$created}"
+          now="$(date -u +%s)"
+          base_epoch="$(python3 -c 'import sys, datetime; print(int(datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$baseline")"
+          age=$((now - base_epoch))
+          echo "watchdog executor baseline=${baseline} age=${age}s (stale threshold ${stale_secs}s)"
+          if [ "$age" -gt "$stale_secs" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "age_hours=$((age / 3600))" >> "$GITHUB_OUTPUT"
+            echo "::error::watchdog executor stale: no successful run in ${age}s (> ${stale_secs}s)"
+          fi
+
+      - name: Create issue on stale watchdog executor
+        if: steps.exec_stale.outputs.stale == 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const ageHours = `${{ steps.exec_stale.outputs.age_hours }}`;
+            const now = new Date().toISOString();
+            const labels = ['monitoring-alert', 'watchdog-stale'];
+            const body =
+              `**[NFM-5798 P2] Watchdog executor staleness alert**\n\n` +
+              `The self-hosted watchdog executor ` +
+              `(\`site-monitor-watchdog-executor.yml\`) has had **no successful run in ~${ageHours}h** ` +
+              `(threshold: 12h = 2x its 6h nominal cadence; the run record is its heartbeat).\n\n` +
+              `Detected at ${now}.\n\n` +
+              `### Action Required\n` +
+              `1. Check the hosted orchestrator's recent runs ` +
+              `(\`site-monitor-watchdog-orchestrator.yml\`) — is it firing at all under schedule starvation?\n` +
+              `2. Check the self-hosted runner (wenjiedeMac-Studio) dispatch pickup — ` +
+              `queued executor runs mean the runner is not taking \`nfmd-watchdog-exec\` dispatches.\n` +
+              `3. Escalate to the NFM-5798 lane if the runner is wedged.`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels,
+              state: 'open',
+            });
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `⚠️ **Still stale** at ${now} — no successful executor run in ~${ageHours}h.`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🟠 NucPot watchdog executor stale — no successful run in ~${ageHours}h`,
+                body,
+                labels,
+              });
+            }
+
       - name: Health check summary
         if: always()
         run: |
@@ -121,123 +212,3 @@ jobs:
           echo "- Failed: ${{ steps.health.outputs.failed_checks || '0' }}" >> $GITHUB_STEP_SUMMARY
           echo "- P0 failures: ${{ steps.health.outputs.p0_failures || '0' }}" >> $GITHUB_STEP_SUMMARY
           echo "- All passed: ${{ steps.health.outputs.all_passed || 'unknown' }}" >> $GITHUB_STEP_SUMMARY
-
-  # ----------------------------------------------------------------
-  # Stale-container watchdog (NFM-3337 / NFM-3320 AC-3)
-  # Runs on the Mac Studio self-hosted runner where Docker is available.
-  # ----------------------------------------------------------------
-  watchdog:
-    if: github.event.schedule == '17 */6 * * *'
-    runs-on: [self-hosted, production]
-    timeout-minutes: 8
-    steps:
-      - name: Checkout (direct git, private per-run workdir)
-        # NFM-5548 (2026-10-15): codeload.github.com returns 429 to this
-        # host's direct egress, so `uses: actions/checkout` dies during
-        # "Set up job" whenever the runner's action cache is empty (same
-        # failure class as the deploy-event collectors). A plain git
-        # fetch removes the action-archive dependency entirely — on this
-        # host it rides the SSH-over-443 lane the deploy pre-flight
-        # probes (NFM-3842); the extraheader token is belt-and-braces
-        # for hosts without that rewrite.
-        #
-        # NFM-5556 (2026-10-16): the fetch runs in a PRIVATE per-run
-        # workdir (mktemp -d under $RUNNER_TEMP), never in the shared
-        # $GITHUB_WORKSPACE that the deploy-event collectors and
-        # push-triggered CI checkouts also target — concurrent
-        # init/fetch/checkout sequences against the same .git die with
-        # `fatal: bad object refs/heads`. A pristine workdir per fire
-        # leaves nothing to race and no stale refs to inherit; a fresh
-        # dir needs no `git clean`. Subsequent steps run from
-        # $NFMD_CHECKOUT_DIR.
-        #
-        # NFM-5796 (2026-10-31): the fetch is rewritten by the host-global
-        # insteadOf rule into the SSH-over-443 lane, which trickles on
-        # degraded direct-egress windows — the deploy-events sibling
-        # burned 12-25 minutes per red attempt there (4 red runs 10-28 →
-        # 10-30). Same defect class on the same runner, so every attempt
-        # here is also time-bounded (outer `timeout -k` + ssh
-        # ConnectTimeout/ServerAlive) and retried; worst case ~6 min.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # NFM-5796: the bound below is load-bearing — if no timeout(1)
-          # exists (macOS coreutils ships it as gtimeout(1)), fail loudly
-          # instead of silently reverting to an unbounded fetch (the exact
-          # NFM-5796 failure mode).
-          timeout_bin="timeout"
-          command -v timeout >/dev/null 2>&1 || timeout_bin="gtimeout"
-          command -v "$timeout_bin" >/dev/null 2>&1 || {
-            echo "::error::neither timeout(1) nor gtimeout(1) on PATH; NFM-5796 fetch bound unavailable"
-            exit 1
-          }
-          checkout_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nucpot-checkout.XXXXXX")"
-          echo "NFMD_CHECKOUT_DIR=$checkout_dir" >> "$GITHUB_ENV"
-          cd "$checkout_dir"
-          git init . >/dev/null
-          auth="Authorization: Basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-          # NFM-5796 knobs — production defaults; tests and incident triage
-          # may shrink them via env without editing this file.
-          max_attempts="${NFMD_FETCH_MAX_ATTEMPTS:-3}"
-          per_attempt_secs="${NFMD_FETCH_PER_ATTEMPT_SECS:-120}"
-          retry_sleep_secs="${NFMD_FETCH_RETRY_SLEEP_SECS:-10}"
-          # The host insteadOf rewrite sends the https URL down the
-          # SSH-over-443 lane, so this hardens the real transport: bound
-          # the TCP connect and detect a silently-dead peer mid-transfer.
-          export GIT_SSH_COMMAND="ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
-          rc=1
-          attempt=1
-          while [ "$attempt" -le "$max_attempts" ]; do
-            start="$SECONDS"
-            if "$timeout_bin" -k 15 "$per_attempt_secs" \
-                git -c http.https://github.com/.extraheader="$auth" \
-                fetch --no-tags --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"; then
-              echo "[checkout] fetch OK (attempt ${attempt}/${max_attempts}, $((SECONDS - start))s)"
-              rc=0
-              break
-            else
-              rc=$?
-              echo "[checkout] fetch attempt ${attempt}/${max_attempts} failed rc=${rc} after $((SECONDS - start))s"
-            fi
-            if [ "$attempt" -lt "$max_attempts" ]; then
-              sleep "$retry_sleep_secs"
-            fi
-            attempt=$((attempt + 1))
-          done
-          if [ "$rc" -ne 0 ]; then
-            echo "[checkout] all ${max_attempts} fetch attempts failed (each bounded to ${per_attempt_secs}s); next 6h watchdog fire retries"
-            exit "$rc"
-          fi
-          git checkout -f --progress FETCH_HEAD
-
-      - name: Run stale-container watchdog
-        id: watchdog
-        env:
-          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-        run: |
-          cd "$NFMD_CHECKOUT_DIR"
-          bash tools/post-deploy-cutover-watchdog/watchdog.sh
-
-      # NFM-5269/NFM-5270: restart loops + empty bind sources. Read-only
-      # docker/host checks; exits 81 to fail this job when a violation is
-      # detected, on top of the Feishu alert. Independent of watchdog.sh,
-      # so it runs even when the stale-image check failed first.
-      - name: Run container sanity check (restart loops + bind sources)
-        if: always()
-        env:
-          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-        run: |
-          cd "$NFMD_CHECKOUT_DIR"
-          bash tools/post-deploy-cutover-watchdog/container_sanity_check.sh
-
-      - name: Clean per-run workdir
-        # NFM-5556: remove the private checkout every fire — the host is
-        # disk-pressured and this job recurs on cron. No-op if the
-        # export never ran.
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -n "${NFMD_CHECKOUT_DIR:-}" ]; then
-            rm -rf "${NFMD_CHECKOUT_DIR:?}"
-          fi

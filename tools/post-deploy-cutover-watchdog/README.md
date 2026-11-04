@@ -27,7 +27,11 @@ All signal sources are **read-only** — the watchdog never modifies containers 
 
 ## Cron setup
 
-The watchdog runs via `.github/workflows/site-monitor.yml` on the Mac Studio self-hosted runner:
+The watchdog runs every 6h via the orchestrator/executor split (NFM-5798 P2
+Leg A): `site-monitor-watchdog-orchestrator.yml` (GitHub-hosted) owns the
+cron and ships both scripts as an artifact to
+`site-monitor-watchdog-executor.yml`, which runs them on the Mac Studio
+self-hosted runner with zero git fetches:
 
 ```
 17 */6 * * *   # Every 6 hours, offset 17min
