@@ -20,6 +20,10 @@ import { describe, expect, it } from "vitest"
 import * as homePage from "./page"
 import * as potentialsPage from "./potentials/page"
 import * as materialsPage from "./materials/page"
+// The home page's emitted s-maxage is min(route revalidate, inner fetch
+// revalidate), so the home-data fetch window must match the route window —
+// pinned here in-lockstep (see HOME_DATA_REVALIDATE_S in home-data.ts).
+import { HOME_DATA_REVALIDATE_S } from "@/lib/home/home-data"
 
 const NFM_5863_TTL_S = 1800
 const NFM_5418_LANE_CEILING_S = 3600
@@ -46,5 +50,11 @@ describe.each([
     const revalidate = revalidateOf(mod)
     expect(revalidate).toBeGreaterThanOrEqual(AC2_MIN_S)
     expect(revalidate).toBeLessThan(NFM_5418_LANE_CEILING_S)
+  })
+})
+
+describe("home-data fetch window (clamps / emitted s-maxage)", () => {
+  it("joins the same NFM-5863 1800s window as the / route segment", () => {
+    expect(HOME_DATA_REVALIDATE_S).toBe(NFM_5863_TTL_S)
   })
 })
