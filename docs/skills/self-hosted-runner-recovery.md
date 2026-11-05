@@ -30,61 +30,59 @@ boilerplate.
 
 ## Checkout lane (NFM-5548, NFM-5556)
 
-Self-hosted jobs on this host must not depend on the `actions/checkout`
-action-archive download: codeload.github.com 429s kill the job during
-"Set up job" whenever the runner's action cache is empty. The collector
-lanes — `collect-prod-deploy-events.yml` and
-`prod-deploy-event-collector.yml` — check out with a direct `git fetch`
-of `$GITHUB_SHA` instead (authoritative implementation: the checkout
-steps in those workflow files; regression-pinned by
-`scripts/tests/test_nfm_5548_direct_checkout.py`). The former
-`site-monitor.yml` watchdog job also carried this fetch until NFM-5798
-P2 Leg A (2026-11-03) diverted it: a hosted orchestrator
-(`site-monitor-watchdog-orchestrator.yml`) now stages the payload
-scripts as an artifact and dispatches the self-hosted executor
-(`site-monitor-watchdog-executor.yml`), which downloads the artifact
-and performs zero git operations (guarded by
-`scripts/okr/tests/test_nfm_5798_p2_watchdog_diversion.py`). Workflows
-that still use `actions/checkout` on this host (e.g.
+No self-hosted job in this repo carries a checkout anymore. The former
+direct-git-fetch carriers were diverted lane by lane under NFM-5798 P2:
+
+- Leg A (2026-11-03) — the watchdog: a hosted orchestrator
+  (`site-monitor-watchdog-orchestrator.yml`) stages the payload scripts
+  as an artifact and dispatches the self-hosted executor
+  (`site-monitor-watchdog-executor.yml`), which downloads the artifact
+  and performs zero git operations (guarded by
+  `scripts/okr/tests/test_nfm_5798_p2_watchdog_diversion.py`).
+- Leg B (2026-11-05) — the two collectors: hosted orchestrators
+  (`prod-deploy-event-collector-orchestrator.yml`,
+  `collect-prod-deploy-events-orchestrator.yml`) own the original
+  triggers verbatim (including the `workflow_run` fast path off
+  `Production Deployment`), stage the payload scripts as
+  manifest-verified artifacts, and dispatch the self-hosted executors
+  (`prod-deploy-event-collector-executor.yml`,
+  `collect-prod-deploy-events-executor.yml`), which likewise perform
+  zero git operations (guarded by
+  `scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py`; the
+  global "no bounded-fetch carriers in any workflow" invariant lives in
+  the watchdog module).
+
+Workflows that still use `actions/checkout` on this host (e.g.
 `production-deployment.yml`, `run-migration.yml`, `staging-deploy.yml`)
-remain exposed to this failure class.
+remain exposed to the codeload-429 / action-cache failure class below.
 
-NFM-5556 invariant: the direct fetch runs in a PRIVATE per-run workdir
-(`mktemp -d` under `$RUNNER_TEMP`, exported as `NFMD_CHECKOUT_DIR` via
-`$GITHUB_ENV`) — never in the shared `$GITHUB_WORKSPACE`. Several
-autonomous jobs target that one persisted directory under independent
-concurrency groups, and concurrent init/fetch/checkout sequences against
-the same `.git` die with `fatal: bad object refs/heads` (exit 128,
-intermittent since 2026-10-15). Repo-relative steps run from
-`$NFMD_CHECKOUT_DIR`, and a final `if: always()` step removes the
-workdir (the host is disk-pressured). Collector state must be
-host-absolute and outside the per-run checkout —
-`collect_prod_run.sh` defaults to `~/.nfmd/deploy-events.jsonl` and
-refuses relative or per-checkout paths loudly instead of silently
-writing state into a directory the cleanup step deletes.
-Regression-pinned by `scripts/tests/test_nfm_5556_raceproof_checkout.py`
-(including a two-collectors-overlapping isolation test) and
-`scripts/okr/tests/test_collect_prod_run_sh.py`.
+NFM-5556 invariant (historical since Leg B): the pre-diversion direct
+fetch ran in a PRIVATE per-run workdir (`mktemp -d` under
+`$RUNNER_TEMP`, exported as `NFMD_CHECKOUT_DIR` via `$GITHUB_ENV`) —
+never in the shared `$GITHUB_WORKSPACE`. Concurrent init/fetch/checkout
+sequences against one persisted `.git` die with `fatal: bad object
+refs/heads` (exit 128, intermittent 2026-10-15 era). Collector state was
+kept host-absolute and outside the per-run checkout —
+`collect_prod_run.sh` still defaults to `~/.nfmd/deploy-events.jsonl`
+and refuses relative or per-payload paths loudly. The contract modules
+(`scripts/tests/test_nfm_5548_direct_checkout.py`,
+`scripts/tests/test_nfm_5556_raceproof_checkout.py`) retired with their
+subjects in Leg B — no workflow carries that checkout anymore; a revert
+of Leg B restores both the workflows and the guards.
 
-NFM-5796 invariant: every direct-fetch attempt is time-bounded and
-retried. The host-global insteadOf rewrite sends the step's https URL
-down the SSH-over-443 lane, which trickles on degraded direct-egress
-windows (depth-1 fetches ran 12-25 min and died mid-transfer); each
-attempt is now wrapped in `timeout -k` plus ssh
+NFM-5796 invariant (historical since Leg B): every direct-fetch attempt
+was time-bounded and retried — the host-global insteadOf rewrite sends
+the step's https URL down the SSH-over-443 lane, which trickles on
+degraded direct-egress windows; attempts rode `timeout -k` plus ssh
 `ConnectTimeout`/`ServerAlive` hardening, retried up to
-`NFMD_FETCH_MAX_ATTEMPTS` (default 3; also `NFMD_FETCH_PER_ATTEMPT_SECS`
-=300, `NFMD_FETCH_RETRY_SLEEP_SECS` =30), so a fully degraded window
-costs ~16.75 min (3×300s + `timeout -k 15` kill grace + 2×30s backoff)
-instead of an unbounded 25-minute burn. NFM-5798 (2026-11-02) widened
-the 120s/10s originals — the 10-31/11-01 sustained episodes killed 120s
-attempts mid-pack at trickle rates; each carrier job's
-`timeout-minutes: 18` must cover the widened worst case (pinned by
-`test_job_timeout_covers_worst_case_fetch`). This makes `timeout(1)` (or macOS coreutils
-`gtimeout(1)`) a hard host prerequisite: if neither is on the runner
-PATH the checkout fails loudly (`neither timeout(1) nor gtimeout(1) on
-PATH`) rather than silently reverting to an unbounded fetch.
-Regression-pinned by
-`scripts/okr/tests/test_nfm_5796_bounded_fetch.py`.
+`NFMD_FETCH_MAX_ATTEMPTS` (default 3; `NFMD_FETCH_PER_ATTEMPT_SECS`
+=300, `NFMD_FETCH_RETRY_SLEEP_SECS` =30 since the 2026-11-02 widening —
+worst case ~16.75 min inside the carrier jobs' `timeout-minutes: 18`).
+These bounds survive only as defense-in-depth in git history: Leg B
+removed the last carrier, so no workflow fetches on-host at all
+(`scripts/okr/tests/test_nfm_5796_bounded_fetch.py` retired with its
+subjects; the empty-carrier invariant is pinned by
+`test_nfm_5798_p2_watchdog_diversion.py::test_bounded_fetch_carriers_are_empty_after_leg_b`).
 
 # Self-Hosted Runner Recovery (macOS ARM64)
 
@@ -101,7 +99,9 @@ toolcache, e.g. `actions/setup-node`, `actions/setup-go`) fails with:
 The Python tarball downloads successfully — the failure is in the
 **post-extract install** into `/Users/runner/hostedtoolcache`. Any workflow
 on the affected self-hosted runner that uses a `setup-*` action can hit the
-same line; this is **not** specific to `prod-deploy-event-collector.yml`.
+same line; this is **not** specific to `production-deployment.yml` (the
+NFM-5798-era collector workflows that first exhibited it are gone — the
+Leg B executors use no `setup-*` actions).
 
 This pattern is reproducible: the next scheduled / manual run of any
 self-hosted workflow that calls a `setup-*` action will fail with the
@@ -112,11 +112,13 @@ identical line until the host is repaired.
 Workflows in this repo that `runs-on: [self-hosted, production]` (the
 `wenjiedeMac-Studio` ARM64 runner):
 
-- `prod-deploy-event-collector.yml` (C6.1 OKR collector, NFM-2109)
+- `prod-deploy-event-collector-executor.yml` (C6.1 OKR collector
+  executor, NFM-2109 + NFM-5798 P2 Leg B split)
 - `production-deployment.yml`
 - `staging-deploy.yml`
 - `run-migration.yml`
-- `collect-prod-deploy-events.yml` (legacy alias)
+- `collect-prod-deploy-events-executor.yml` (NFM-2111 collector
+  executor, Leg B split)
 - `site-monitor-watchdog-executor.yml` — the self-hosted watchdog
   executor (NFM-5798 P2; bash-only, no `setup-*` action, so the
   toolcache failure mode does not apply to it)
@@ -200,7 +202,7 @@ sudo -u runner sh -c 'mkdir -p /Users/runner/hostedtoolcache && echo writable'
 Then re-run any self-hosted workflow (or wait for the next cron tick):
 
 ```bash
-gh workflow run prod-deploy-event-collector.yml \
+gh workflow run prod-deploy-event-collector-orchestrator.yml \
   --repo Etoile04/nucpot --ref main
 gh run watch --repo Etoile04/nucpot
 ```
@@ -384,7 +386,7 @@ curl -v --max-time 10 https://github.com
 Then re-run any self-hosted workflow:
 
 ```bash
-gh workflow run prod-deploy-event-collector.yml \
+gh workflow run prod-deploy-event-collector-orchestrator.yml \
   --repo Etoile04/nucpot --ref main
 gh run watch --repo Etoile04/nucpot
 ```

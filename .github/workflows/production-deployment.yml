@@ -1160,7 +1160,7 @@ jobs:
       #
       # Two-step durability hop: this step writes one JSONL line to a
       # per-run path on the runner, then the next step uploads it as a GHA
-      # artifact. The collector workflow (prod-deploy-event-collector.yml)
+      # artifact. The collector workflow (prod-deploy-event-collector-orchestrator.yml)
       # downloads prod-deploy-event-* artifacts and appends to the master
       # JSONL on the Mac Studio.
       #

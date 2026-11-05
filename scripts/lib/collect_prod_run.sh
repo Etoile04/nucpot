@@ -2,7 +2,7 @@
 # =============================================================================
 # collect-prod-deploy-events — bash orchestrator (NFM-2111, ADR-KR3-A1 §C6.1)
 # =============================================================================
-# Called by `.github/workflows/collect-prod-deploy-events.yml` on the
+# Called by `.github/workflows/collect-prod-deploy-events-executor.yml` on the
 # [self-hosted, prod-collector] runner (Mac Studio, persistent host).
 #
 # Walks the last 50 runs of `production-deployment.yml`, downloads any

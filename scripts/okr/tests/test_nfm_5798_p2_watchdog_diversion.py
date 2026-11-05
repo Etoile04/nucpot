@@ -28,9 +28,10 @@ The diversion moves the FETCH, not the job:
   (the run record IS the heartbeat — no write channel, review pt 2) and
   alerts when it goes stale (> 2x the 6h nominal cadence).
 
-P1's widened bounded-fetch bounds (merged ``984af749fb``) remain on the
-two collector workflows as defense-in-depth; this file additionally pins
-that no OTHER workflow grew a bounded fetch.
+NFM-5798 P2 Leg B (2026-11-05) diverted the two collector lanes the same
+way, removing the last bounded-fetch carriers from the tree; this file now
+pins that NO workflow grew (or regrew) a bounded fetch — P1's widened
+bounds survive as defense-in-depth in git history only (revert = restore).
 """
 
 from __future__ import annotations
@@ -65,13 +66,8 @@ PAYLOAD_SCRIPTS = (
 
 FETCH_NEEDLE = "fetch --no-tags --depth=1"
 LITERAL_CRON_GUARD = "github.event.schedule == '17 */6 * * *'"
-# The only collector workflows may carry the bounded-fetch checkout body.
-EXPECTED_FETCH_CARRIERS = frozenset(
-    {
-        "collect-prod-deploy-events.yml",
-        "prod-deploy-event-collector.yml",
-    }
-)
+# No workflow may carry the bounded-fetch checkout body after Leg B.
+EXPECTED_FETCH_CARRIERS = frozenset()
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -153,8 +149,8 @@ def test_site_monitor_has_no_on_host_fetch() -> None:
                 "no site-monitor job may fetch on-host after the diversion"
             )
             assert "NFMD_FETCH_PER_ATTEMPT_SECS" not in body, (
-                f"job {job_key} still carries bounded-fetch knobs; they belong "
-                "only to the two collector carriers now"
+                f"job {job_key} still carries bounded-fetch knobs; no "
+                "workflow may carry them after the Leg B collector diversion"
             )
 
 
@@ -187,17 +183,21 @@ def test_literal_cron_guard_removed_from_site_monitor() -> None:
     )
 
 
-def test_bounded_fetch_carriers_are_exactly_two_collectors() -> None:
-    """P1's widened bounds stay on the two collectors as defense-in-depth —
-    and on NOTHING else (a silent re-growth of the on-host fetch class in a
-    third workflow would re-open the blackhole lane without a guard)."""
+def test_bounded_fetch_carriers_are_empty_after_leg_b() -> None:
+    """NFM-5798 P2 Leg B diverted the two collector lanes, removing the last
+    bounded-fetch carriers. NO workflow may carry the bounded-fetch checkout
+    body anymore — a silent re-growth of the on-host fetch class in ANY
+    workflow would re-open the blackhole lane without a guard. (P1's widened
+    bounds remain defense-in-depth in git history; reverting Leg B restores
+    both the carriers and this test's predecessor.)"""
     carriers: set[str] = set()
     for path in sorted(WORKFLOW_DIR.glob("*.yml")):
         if FETCH_NEEDLE in path.read_text(encoding="utf-8"):
             carriers.add(path.name)
-    assert carriers == set(EXPECTED_FETCH_CARRIERS), (
-        f"bounded-fetch carriers are {sorted(carriers)}, expected exactly "
-        f"{sorted(EXPECTED_FETCH_CARRIERS)}"
+    assert carriers == set(), (
+        f"bounded-fetch carriers are {sorted(carriers)}; after the Leg B "
+        "collector diversion no workflow may fetch on-host — self-hosted "
+        "executors are checkout-free and hosted jobs ride actions/checkout"
     )
 
 

@@ -1,0 +1,131 @@
+name: Prod Deploy Event Collector Executor (self-hosted)
+
+# =============================================================================
+# NFM-5798 P2 Leg B — checkout-free executor half of the prod deploy-event
+# collector diversion.
+# =============================================================================
+# Triggered ONLY by repository_dispatch from the hosted orchestrator
+# (prod-deploy-event-collector-orchestrator.yml), which supplies the
+# collector script as a workflow artifact. This workflow performs zero
+# fetches of any kind — the checkout blackhole class (NFM-5548/5556/5796/
+# 5798) cannot fail this lane by construction. The collector script is
+# self-contained (stdlib-only Python driving `gh api` / `gh run download`
+# plus the loopback SSH hop); it reads nothing else from the repo, so the
+# artifact copy is complete.
+#
+# The host-bound resources stay exactly where they were: the master JSONL,
+# sync state, and the loopback SSH target are host-local paths passed to
+# the collector here — the hosted orchestrator never touches them (design
+# 4f469b4f).
+#
+# No schedule trigger ON PURPOSE: the orchestrator owns the */15 backstop
+# and the Production Deployment workflow_run fast path; this workflow runs
+# only when the orchestrator hands it a verified payload.
+#
+# repository_dispatch fires workflows from the DEFAULT branch only, so this
+# file must be on main to receive dispatches.
+# =============================================================================
+
+on:
+  repository_dispatch:
+    types: [nfmd-prod-collector-exec]
+
+permissions:
+  # Cross-run artifact download (actions/download-artifact with run-id)
+  # plus the collector's gh api / gh run download queries.
+  actions: read
+  contents: read
+
+concurrency:
+  # Serialise collector invocations so two simultaneous executors cannot
+  # race each other (carried from the pre-split collector's group). The
+  # collect() function re-checks last_synced_run_id under the flock — this
+  # group is belt-and-braces.
+  group: prod-deploy-event-collector-executor
+  # A cancelled run could tear a master-ledger append or a sync-state
+  # advance mid-flight; queue instead (Leg A review 8fecf232 pt 5). The
+  # 11-04 queue-timeout evictions (41866246466 / 41866273808) prove queued
+  # runs do get cancelled externally, so this is load-bearing.
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect prod deploy events
+    runs-on: [self-hosted, production]
+    # Carried from the pre-split collector job (NFM-5798 P1 budget).
+    timeout-minutes: 18
+    steps:
+      - name: Download payload from orchestrator run
+        uses: actions/download-artifact@v7
+        with:
+          name: prod-collector-payload
+          run-id: ${{ github.event.client_payload.orchestrator_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Per-run staging dir (NFM-5556 isolation): the shared workspace is
+          # written by several independently-grouped jobs on this host.
+          path: ${{ runner.temp }}/payload-${{ github.run_id }}
+
+      - name: Verify payload manifest
+        id: verify-payload
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
+          shasum -a 256 -c MANIFEST.sha256
+          echo "payload provenance: orchestrator run ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+
+      - name: Verify SSH key present
+        run: |
+          test -f ~/.ssh/deploy_key || {
+            echo "::error::~/.ssh/deploy_key missing on the self-hosted runner."
+            exit 1
+          }
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Verify jq available on host
+        # The remote script uses jq to JSON-decode the payload. If the
+        # Mac Studio doesn't have jq, fail loud here so we don't
+        # silently lose fragments.
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
+            "command -v jq >/dev/null 2>&1 || { echo '::error::jq missing on host'; exit 1; }"
+
+      - name: Run collector
+        # Only verified payload bytes may execute (Leg A provenance
+        # invariant). The collector itself decides validate-vs-append via
+        # --dry-run, mapped from the orchestrator's dispatch payload.
+        if: steps.verify-payload.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+          DRY_RUN: ${{ github.event.client_payload.dry_run == 'true' }}
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "$DRY_RUN" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
+          python3 prod_event_collector.py \
+            --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
+            --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
+            --repo "${{ github.repository }}" \
+            --ssh-target lwj04@127.0.0.1 \
+            $DRY_RUN_FLAG
+
+      - name: Annotate summary
+        if: always()
+        run: |
+          {
+            echo "## Prod deploy-event collector"
+            echo ""
+            echo "- Trigger: ${{ github.event_name }} (${{ github.event.action }})"
+            echo "- Orchestrator run: ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean payload
+        # The host is disk-pressured (NFM-5556 hygiene); the payload is
+        # reproducible from any later orchestrator fire.
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"

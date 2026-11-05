@@ -1,0 +1,90 @@
+# =============================================================================
+# NFM-5798 P2 Leg B — GitHub-hosted diversion of the prod deploy-event
+# collector (the checkout half only; the ledger work stays host-side).
+# =============================================================================
+# The self-hosted collector's only failing step was ever its checkout: the
+# hand-rolled bounded git fetch of the collector script through the host's
+# flaky egress lane (NFM-5548 → 5556 → 5796 → 5798; the 11-04 runner outage
+# starved this lane 12h+ with runs stacked behind an offline host, and P1's
+# widened 960s envelope still hard-fails every fetch in a dead trough). The
+# collector work itself is host-bound — the master JSONL, sync state, and
+# the loopback SSH hop live on the Mac Studio — so Leg B moves the FETCH,
+# not the job, exactly like the Leg A watchdog pilot:
+#
+#   - THIS workflow (hosted): checks out at the fire's SHA on GitHub's
+#     healthy egress, stages the collector script plus a sha256 manifest
+#     as a workflow artifact, then repository_dispatches the self-hosted
+#     executor with (run-id, sha, dry_run) provenance.
+#   - prod-deploy-event-collector-executor.yml (self-hosted): downloads the
+#     artifact over the runner's own job channel — zero fetches by
+#     construction.
+#
+# All three trigger sources move here VERBATIM from the pre-split
+# prod-deploy-event-collector.yml:
+#   - workflow_run off Production Deployment [completed]: the
+#     seconds-after-deploy fast path. Dropping this would silently retire
+#     fast-path pickup and leave only the cron backstop (the Leg A
+#     literal-if trap class — RE Leg B trap 1).
+#   - schedule: */15 minutes (ADR-KR3-A2 §Failure-mode 3 recovery budget).
+#   - workflow_dispatch with the dry_run input, which rides the dispatch
+#     payload so manual validate-only fires stay validate-only.
+# =============================================================================
+
+name: Prod Deploy Event Collector Orchestrator
+
+on:
+  workflow_run:
+    workflows: ["Production Deployment"]
+    types: [completed]
+  schedule:
+    # 15-minute cadence per ADR §Failure-mode 3 recovery budget. Moved
+    # verbatim from prod-deploy-event-collector.yml by NFM-5798 P2 Leg B.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate + plan only; do not append or advance state."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  # The dispatch POST to the executor needs contents: write (Leg A review
+  # 8fecf232 pt 3); the checkout rides the same token.
+  contents: write
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (hosted — healthy egress lane)
+        uses: actions/checkout@v7
+
+      - name: Stage collector payload
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          cp scripts/okr/prod_event_collector.py payload/
+          (cd payload && sha256sum prod_event_collector.py > MANIFEST.sha256)
+          echo "payload staged from $GITHUB_SHA:"
+          cat payload/MANIFEST.sha256
+
+      - name: Upload payload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: prod-collector-payload
+          path: payload/
+          retention-days: 7
+
+      - name: Dispatch self-hosted executor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/dispatches" \
+            -f event_type=nfmd-prod-collector-exec \
+            -F 'client_payload[orchestrator_run_id]=${{ github.run_id }}' \
+            -F 'client_payload[sha]=${{ github.sha }}' \
+            -f 'client_payload[dry_run]=${{ inputs.dry_run || false }}'
+          echo "dispatched nfmd-prod-collector-exec (orchestrator run ${{ github.run_id }} @ ${{ github.sha }})"
