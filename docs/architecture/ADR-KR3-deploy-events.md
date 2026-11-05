@@ -439,3 +439,21 @@ permissive since PR #1416: identical underlying warmup behaviour yields
 the deadline loop). KR-3 aggregation (coverage_kr3) already filters by
 environment; it must not sum this field across environments as if the
 predicate were uniform.
+
+---
+
+## Amendment note — 2026-11-05 (NFM-5798 P2 Leg B): collector checkout diverted
+
+The C6.1 stage-2 collector workflow this ADR specified
+(`collect-prod-deploy-events.yml`, `*/5` schedule, self-hosted with a direct
+git fetch checkout) was split under NFM-5798 P2 Leg B: the `*/5` schedule
+and `workflow_dispatch` moved verbatim to a hosted orchestrator
+(`collect-prod-deploy-events-orchestrator.yml`), which stages
+`scripts/lib/collect_prod_run.sh` + `scripts/lib/collect_prod_events.py`
+(repo-relative layout preserved) as a manifest-verified artifact and
+dispatches the self-hosted executor
+(`collect-prod-deploy-events-executor.yml`). The executor performs zero git
+operations; the `NFMD_DEPLOY_EVENTS_PATH` / `NFMD_DEPLOY_EVENTS_PROCESSED_PATH`
+repo vars and the persistent host-local JSONL ledger are unchanged. The
+original workflow file is deleted; rollback = revert. Guards:
+`scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py`.

@@ -256,3 +256,21 @@ The implementation issue must include:
 
 CPO will sign off on the implementation after Lead Engineer hands it to
 Code Reviewer and the implementation passes E2E.
+---
+
+## Amendment note — 2026-11-05 (NFM-5798 P2 Leg B): collector checkout diverted
+
+The collector workflow this ADR introduced (`prod-deploy-event-collector.yml`,
+runs-on `[self-hosted, production]` with a direct git fetch checkout) was
+split under NFM-5798 P2 Leg B: the trigger set (`workflow_run` off
+Production Deployment, `*/15` cron, `workflow_dispatch` + `dry_run`) moved
+verbatim to a hosted orchestrator
+(`prod-deploy-event-collector-orchestrator.yml`), which stages the collector
+script as a manifest-verified artifact and dispatches the self-hosted
+executor (`prod-deploy-event-collector-executor.yml`). The executor performs
+zero git operations; the master JSONL, sync state, and loopback SSH hop
+remain host-local exactly as this ADR specified. Motivation: the checkout
+was the only failing step across the egress blackhole episodes
+(NFM-5548 → 5556 → 5796 → 5798) and starved this lane 12h+ during the
+2026-11-04 runner outage. The original workflow file is deleted; rollback =
+revert. Guards: `scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py`.

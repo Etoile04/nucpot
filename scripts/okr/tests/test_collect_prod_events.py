@@ -2,10 +2,12 @@
 deploy-event collector (NFM-2111).
 
 The collector is the durable half of ADR-KR3-A1 §C6.1's two-stage design.
-A self-hosted workflow (`.github/workflows/collect-prod-deploy-events.yml`)
-downloads ``nfm-deploy-event-*.json`` artifacts uploaded by the producer
-sibling, validates them against §3.1, and atomically appends one line per
-event to ``$NFMD_DEPLOY_EVENTS_PATH``.
+Since NFM-5798 P2 Leg B the checkout rides a hosted orchestrator and the
+self-hosted executor (`.github/workflows/collect-prod-deploy-events-executor.yml`)
+runs the payload checkout-free, downloading ``nfm-deploy-event-*.json``
+artifacts uploaded by the producer sibling, validating them against §3.1,
+and atomically appending one line per event to
+``$NFMD_DEPLOY_EVENTS_PATH``.
 
 Contract under test (acceptance criteria from NFM-2111):
 - A valid event appends exactly one JSONL line and writes one

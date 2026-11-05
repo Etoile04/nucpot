@@ -376,8 +376,51 @@ Operational notes:
 - `repository_dispatch` fires workflows from the DEFAULT branch only — the
   executor path is exercisable post-merge; the Leg A canary is 3x
   `workflow_dispatch` on the orchestrator across an egress flap window plus
-  one natural 6h fire green, gating Leg B (the two collectors).
+  one natural 6h fire green, gating Leg B (the two collectors). The gate
+  completed and was CR-ratified on 2026-11-05 (NFM-5798: natural fires 3/3
+  green, dispatch-entry coverage 3/3, executor execution proven on-host).
 - The cadence watchdog (§3) counts `site-monitor.yml` runs — monitor-only
   after the split; watchdog cadence is now observed via the orchestrator's
   run records and the staleness alert.
 - Rollback = revert (no data migrations, no host state changes).
+
+## 10. Collector diversion — hosted orchestrator + checkout-free executors (NFM-5798 P2 Leg B)
+
+Leg B (2026-11-05, operator card `3e23aa54`) applied the §9 split to both
+collector lanes — the 11-04 runner outage's starved lane (12h+ with no
+collector success, four runs stacked behind an offline host):
+
+- `prod-deploy-event-collector-orchestrator.yml` (hosted) — owns ALL three
+  original triggers verbatim: the `workflow_run` fast path off
+  `Production Deployment` `[completed]` (seconds-after-deploy pickup),
+  the `*/15` cron backstop, and the `workflow_dispatch` door whose
+  `dry_run` input rides the dispatch payload. Stages
+  `scripts/okr/prod_event_collector.py` + sha256 manifest as the
+  `prod-collector-payload` artifact.
+- `collect-prod-deploy-events-orchestrator.yml` (hosted) — owns the `*/5`
+  schedule + `workflow_dispatch` verbatim. Stages
+  `scripts/lib/collect_prod_run.sh` + `scripts/lib/collect_prod_events.py`
+  PRESERVING the `scripts/lib/` layout (the bash glue derives its repo
+  root two directories above itself) as the `collect-events-payload`
+  artifact.
+- `prod-deploy-event-collector-executor.yml` /
+  `collect-prod-deploy-events-executor.yml` (self-hosted,
+  `[self-hosted, production]`, `timeout-minutes: 18` carried) —
+  dispatch-only, zero git operations, manifest-verified payload
+  (`cancel-in-progress: false` is load-bearing: the executors append the
+  host-local ledgers, and queued runs DO get cancelled externally). The
+  host-bound resources stay host-side: master JSONL + sync state +
+  loopback SSH target in executor 1, `NFMD_DEPLOY_EVENTS_PATH` /
+  `NFMD_DEPLOY_EVENTS_PROCESSED_PATH` repo vars in executor 2.
+
+The old flat collector workflows are deleted — their triggers moved to
+the orchestrators and nothing consumed their names via `workflow_run`.
+With them go the last bounded-fetch carriers in the repo: the
+NFM-5548/5556/5796/5796-contract guard modules retired with their
+subjects, and the global "no workflow fetches on-host" invariant is
+pinned by
+`scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py` +
+`test_nfm_5798_p2_watchdog_diversion.py`. P1's widened bounds remain
+defense-in-depth in git history (rollback = revert restores the
+workflows and guards together). Recovery playbook: see
+`docs/skills/self-hosted-runner-recovery.md`.

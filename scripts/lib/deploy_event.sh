@@ -153,11 +153,13 @@ _deploy_event_emit_impl() {
   # NFM-5253 (NFM-4848): deploy_epoch is ADDITIVE — appended after the
   # frozen §3.1 fields, never reordering them. The current collector
   # (scripts/okr/prod_event_collector.py::validate_fragment, wired by
-  # .github/workflows/prod-deploy-event-collector.yml) checks only for
+  # .github/workflows/prod-deploy-event-collector-executor.yml since
+  # NFM-5798 P2 Leg B) checks only for
   # MISSING §3.1 fields, and the sha256(event_json) idempotency ledger
   # hashes the whole line, so both keep working. KNOWN GAP: the older
-  # collector path (.github/workflows/collect-prod-deploy-events.yml →
-  # scripts/lib/collect_prod_events.py::validate_event) rejects extra
+  # collector path (scripts/lib/collect_prod_events.py::validate_event,
+  # carried by the collect-prod-deploy-events executor since Leg B)
+  # rejects extra
   # fields and quarantines epoch-bearing prod fragments; that path must
   # be retired or taught additive tolerance. Absent or non-numeric →
   # omitted entirely (legacy line shape).

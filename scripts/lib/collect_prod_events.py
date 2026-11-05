@@ -1,6 +1,6 @@
 """KR-COMPANY-3 production deploy-event collector (NFM-2111, ADR-KR3-A1 §C6.1).
 
-The self-hosted collector (``.github/workflows/collect-prod-deploy-events.yml``)
+The self-hosted collector (``.github/workflows/collect-prod-deploy-events-executor.yml``)
 downloads ``nfm-deploy-event-*.json`` artifacts uploaded by the producer,
 validates them against §3.1, and atomically appends one event line to the
 persistent JSONL. Idempotency is keyed on ``sha256(event_json_text)`` so a
