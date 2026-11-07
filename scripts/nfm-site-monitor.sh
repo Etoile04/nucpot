@@ -444,6 +444,34 @@
 #     from 2026-11-06T18:14:58Z) is NFM-5871's — untouched; origin/cached
 #     probe targets and cadence unchanged.
 #
+# NFM-5892 (2026-11-07, SRE; CPO dispatch from NFM-5891/NFM-5890) — restore
+# s1 episode booking on the streak>=2 CRITICAL paths:
+#   - Defect (e9, 2026-11-07 03:20Z -> 03:33Z): the first REAL episode to
+#     enter full-edge via lane-by-lane escalation (streak-1
+#     PARTIAL_DEGRADED-shaped 4/6 -> streak-2 full-edge 5/6) paged via the
+#     streak>=2 lane with NO s1 call — no t2-ledger append, no episode
+#     count, no rate-limit marker, no open window. The §4 machinery
+#     (NFM-5664 ruling 35aa85eb) was evaluated only at streak==1, so every
+#     rule keyed on episode counts / delta accounting was blind to the
+#     episode (ledger recorded 8, true 9, pre-backfill).
+#   - Fix: on the streak>=2 CRITICAL paths (public-edge + PARTIAL_DEGRADED
+#     + their ongoing-reminder variants), when the s1 conjuncts match AND
+#     no window is open, s1_book_streak2 books the episode AT the CRITICAL
+#     tick (ledger append + last_page rate-limit marker + open=1/
+#     win_first) and the t2-ledger count + ruling §4 ref + rate-limit
+#     marker ride the CRITICAL line via $s2_book_ev (empty string => the
+#     line is byte-identical when nothing books).
+#   - No double-page: the page stays on the streak>=2 lane; the stamped
+#     last_page is what suppresses the streak-1 lane's own page if the
+#     same episode re-enters at streak 1 within the 1/1800s cooldown.
+#     Booking is idempotent while a window is open (open==1 gate —
+#     reminder ticks never re-append). The streak-1 path is byte-for-byte
+#     unchanged (NFM-5667 rule + its tests).
+#   - TRANSIT_BROWNOUT ticks never book (the branch exits before the call:
+#     transit-side suppression is by definition not a site-side episode).
+#     The close path is unchanged — once open=1, the next green tick books
+#     the episode close with its existing RECOVERY line.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -756,6 +784,39 @@ s1_handle_match() { # streak first_fail since_remind
   s1_write "$lp" 1 "$win_first" "$close_ep" "$ledger"
 }
 
+# NFM-5892: streak>=2 episode booking — the §4 machinery (ledger append +
+# last_page rate-limit marker + open=1/win_first) for episodes whose FIRST
+# full-edge-shaped tick arrives at streak>=2 (the e9 class — header NFM-5892
+# block). Called from the streak>=2 CRITICAL lane AFTER the TRANSIT_BROWNOUT
+# early-exit with s1_match already classified. Booking is gated on an
+# open==0 window (idempotent: reminder ticks never re-append) and reuses
+# the ruling §2 by-episode separation (a window re-opening after <10 min
+# green is the SAME episode — count, no append). The PAGE itself stays on
+# the calling streak>=2 lane (never a double-page); stamping last_page is
+# what suppresses the streak-1 lane's own page if the same episode
+# re-enters at streak 1 within the cooldown. The evidence suffix (t2-ledger
+# count + ruling §4 ref + rate-limit marker) is emitted by the caller in
+# its CRITICAL line — "" when nothing booked, keeping the line
+# byte-identical.
+# Sets: s2_book_ev
+s1_book_streak2() {
+  s2_book_ev=""
+  if [[ "$(s1_get open 0)" == "1" ]]; then return 0; fi
+  local now_epoch win_first close_ep ledger count delta
+  now_epoch="$(date -u +%s)"
+  win_first="$(s1_get win_first -)"
+  close_ep="$(s1_get close_epoch 0)"
+  ledger="$(s1_get ledger '')"
+  delta="+0"
+  if (( close_ep == 0 || now_epoch - close_ep >= S1_EPISODE_GREEN_GAP )); then
+    read -r count delta ledger < <(s1_ledger append "$ledger" "$NOW")
+    win_first="$NOW"
+  else
+    read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+  fi
+  s2_book_ev=" — t2-ledger: episodes=${count} rolling-30d (delta ${delta}; standing was 5/6 at ruling) — rate-limit 1/${S1_PAGE_COOLDOWN}s [NFM-5664 ruling 35aa85eb §4; NFM-5892]"
+  s1_write "$now_epoch" 1 "$win_first" "$close_ep" "$ledger"
+}
 
 # ---- NFM-5418 chunk-ref scan ----------------------------------------------
 # Edge-cached HTML outlives the origin build that produced its content-hashed
@@ -1899,6 +1960,22 @@ if (( RC == 1 )); then
         "$skip_a_next" "$skip_b_next" "$blind_p0_next"
       exit 1
     fi
+    # NFM-5892: book the full-edge episode AT this streak>=2 CRITICAL tick
+    # when the s1 conjuncts match (s1_match=1) and no window is open — the
+    # e9 class: episodes entering full-edge via lane-by-lane escalation
+    # (tunnel dark -> cached edge dark next tick) previously paged with NO
+    # ledger append, NO t2-ledger count, NO rate-limit marker and NO open
+    # window (the NFM-5664 §4 machinery was streak-1-only). Reached only
+    # past the TRANSIT_BROWNOUT early-exit above (transit-side ticks are
+    # not site-side episodes and never book). The page stays on THIS lane
+    # (never a double-page); idempotent while a window is open. Evidence
+    # suffix rides the CRITICAL lines below via $s2_book_ev ("" => lines
+    # byte-identical when nothing books).
+    s2_book_ev=""
+    s1_classify
+    if (( s1_match == 1 )); then
+      s1_book_streak2
+    fi
     # NFM-5876: PARTIAL_DEGRADED page rule — the edge-tunnel lane is dark
     # while the origin and the cached edge stay green (tunnel degradation
     # currently shielded by cache). WARN at streak 1 (the PD-specific WARN
@@ -1915,9 +1992,9 @@ if (( RC == 1 )); then
       fi
       if (( since_remind >= REMINDER_RUNS )); then
         since_remind=0
-        log "CRITICAL (ongoing reminder, first failure $first_fail) — PARTIAL_DEGRADED persists (edge-tunnel dark, users shielded by cached edge; NFM-5876 page rule: WARN streak 1, page streak ${PD_PAGE_STREAK}) — $failed check(s) failed ($p0 P0) — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail $REF_EV [$(proxy_state_line)]"
+        log "CRITICAL (ongoing reminder, first failure $first_fail) — PARTIAL_DEGRADED persists (edge-tunnel dark, users shielded by cached edge; NFM-5876 page rule: WARN streak 1, page streak ${PD_PAGE_STREAK}) — $failed check(s) failed ($p0 P0) — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
       else
-        log "CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline for the new class): edge-tunnel dark while origin-direct and cached edge stay green — streak $streak, first failure $first_fail — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — users currently shielded by cached edge HTML — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV [$(proxy_state_line)]"
+        log "CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline for the new class): edge-tunnel dark while origin-direct and cached edge stay green — streak $streak, first failure $first_fail — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — users currently shielded by cached edge HTML — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
       fi
       notify_page "PARTIAL_DEGRADED: edge-tunnel dark, cached edge shielding users (streak $streak)"
       state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
@@ -1930,9 +2007,9 @@ if (( RC == 1 )); then
     fi
     if (( since_remind >= REMINDER_RUNS )); then
       since_remind=0
-      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV [$(proxy_state_line)]"
+      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
     else
-      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV [$(proxy_state_line)]"
+      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
     fi
     notify_page "P0 public-edge failure: $failed check(s) down ($p0 P0)"
     state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
