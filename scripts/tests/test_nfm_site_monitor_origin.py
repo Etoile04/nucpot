@@ -13,8 +13,11 @@ evidence line per tick BEFORE the summary line.
 
 Pinned contracts:
 
-- evidence-ONLY: the lane never feeds alarms, streaks, classification,
-  state, or paging; ``--origin-probes-once`` touches no log and no state;
+- evidence-ONLY (AMENDED NFM-5876, 2026-11-07): the lane never feeds
+  streaks, state, or paging, and ``--origin-probes-once`` still touches no
+  log and no state — but it now ALSO gates the three-lane classifier's
+  PARTIAL_DEGRADED conjunct (origin-direct must be green for PD; see
+  test_nfm_site_monitor_three_lane.py and the runbook §11);
 - a failed route is an ERR-tagged EVIDENCE token and rc stays 0 (conn-refused
   / timeout / curl-rc classes) — the origin being down is not a sentinel
   error, the base probe owns availability;

@@ -424,3 +424,83 @@ pinned by
 defense-in-depth in git history (rollback = revert restores the
 workflows and guards together). Recovery playbook: see
 `docs/skills/self-hosted-runner-recovery.md`.
+
+## 11. Three probe lanes & the PARTIAL_DEGRADED classification (NFM-5876)
+
+Child of NFM-5872 (CTO ruling R4-3 on NFM-5862, 2026-11-07). The sentinel's
+per-tick classification now runs over THREE probe lanes, measured every tick
+with no new probe requests:
+
+| Lane | Probes | Mechanism / egress |
+|---|---|---|
+| **origin-direct** | `http://localhost:3000/` + `/browse` (the originService targets) | NFM-5797 discriminator, curl `--noproxy '*'`; localhost never transits a proxy (pin is defense-in-depth) |
+| **edge-tunnel** | `https://nucpot.dpdns.org/api/v1/health` — the **uncached API path through the edge hostname**; proven to transit the tunnel (returned 530 during the NFM-5862 e7/e8 windows) | the EXISTING "Backend API Health" P0 target — verified + extended per the scope guard, not duplicated; `NO_PROXY_OPENER` direct fetch under the wrapper's `no_proxy='*'` export (ADR-023/NFM-5542) |
+| **edge-cached** | Frontend Homepage + Frontend Browse Page HTML (edge-cached, `s-maxage=1800`); a chunk-scan `edge-html-desync` synthesis also counts as cached-lane failure | same direct-pinned python fetch (ADR-023) |
+
+Contract amendment (NFM-5797 → NFM-5876): the origin lane was evidence-ONLY;
+it now also gates the PARTIAL_DEGRADED conjunct (origin must be green for
+PD). It still never feeds streaks, state, or paging of its own.
+
+### Per-tick verdict line (AC1)
+
+Every real-probe tick (green and degrade alike) logs, before the summary
+line:
+
+```
+LANES — origin=ok edge-tunnel=ok edge-cached=ok verdict=ALL_OK [NFM-5876]
+LANES — origin=ok edge-tunnel=fail(HTTP 530:) edge-cached=ok verdict=PARTIAL_DEGRADED [NFM-5876]
+```
+
+The OK/WARN/CRITICAL summary line stays the tick's newest line (liveness
+read) and green OK lines stay byte-stable (NFM-5708 convention). The
+scan-blind exits (NFM-5446/NFM-5497) keep their early-exit shape — no LANES
+line on those CRITICAL exits.
+
+### Classification matrix
+
+| origin | edge-tunnel | edge-cached | Verdict | Behavior |
+|---|---|---|---|---|
+| ok | fail | ok | **PARTIAL_DEGRADED** | tunnel dark, users shielded by cache — see page rule below |
+| * | fail | fail | FULL_EDGE_OUTAGE | existing CRITICAL path byte-identical (streak≥2 lane + NFM-5666/5667 streak-1 rule untouched) |
+| ok | ok | ok | ALL_OK | OK (unchanged) |
+| fail | ok | ok | ORIGIN_DEGRADED | evidence only (probe green); existing path |
+| * | ok | fail | CACHED_DEGRADED | existing P1/P0 path (latency, stale pins, desync synthesis) |
+| fail | fail | ok | MIXED | fail-open: existing path (PD requires origin green) |
+| unknown | * | * | UNCLASSIFIED | fail-open: garbled tables keep the existing p0-unknown path |
+
+Fail-closed direction: PD can only relabel an already-failing P0 probe, and
+only when the cache shield is PROVEN (both cached lanes green from this
+vantage) and the origin is green. PD and the streak-1 full-edge rule are
+mutually exclusive by construction: PD requires both cached lanes green,
+capping edge failures at 4/6 — under the streak-1 conjunct of ≥5/6.
+
+### PARTIAL_DEGRADED page rule (NFM-5666 discipline for the new class)
+
+- **WARN immediately** at streak 1 (`WARN — PARTIAL_DEGRADED … page at
+  streak 2`).
+- **PAGE at streak 2**: `CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule …)`
+  + local notification + `pending_page` latch — so the NFM-5262
+  missed-page reconciliation (retro-file on self-recovery, `--ack-page`)
+  applies unchanged; REMINDER_RUNS reminder cadence while it persists.
+- TRANSIT_BROWNOUT precedence: the NFM-5706 brownout suppression is
+  evaluated first and still gates any page — an active brownout can only
+  DELAY a PD page, never consume it.
+- This is the NFM-5666 page-rule family extended by one class: full-edge
+  streak-1 (NFM-5666/5667), full-edge streak≥2 (NFM-5226 base lane), and
+  now PARTIAL_DEGRADED streak-2 (NFM-5876).
+
+### State, warmup, scope
+
+- No new state file: PD rides the existing streak/since_remind/pending_page
+  machinery, so RECOVERY, PAGE-UNACK and `--ack-page` behave uniformly
+  across alert classes.
+- No timed warmup of any kind (NFM-5862 ruling item b): the lane rides the
+  existing 300s cadence and the existing Backend API Health retry +
+  confirmation budget (NFM-5279/NFM-5525 ladder unchanged).
+- Scope guards: origin/cached probe targets and cadence unchanged; the
+  pre-existing PAGE-UNACK latch (e7 CRITICAL, 2026-11-06T18:14:58Z) is
+  NFM-5871's, untouched here.
+- Tests: `scripts/tests/test_nfm_site_monitor_three_lane.py` (PD truth
+  table, fail-closed negatives, full-edge/all-OK regression, scan-synthesis
+  classification). Soak gate: NFM-5877 (48h, zero false PARTIAL_DEGRADED
+  pages).
