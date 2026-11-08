@@ -582,6 +582,14 @@ services:
       # "Cannot read properties of null (reading 'auth')" → HTTP 500.
       # Value lives in docker/.env.prod (gitignored), never in this file.
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      # NFM-5898: post-cutover ISR warm-up token. deploy_prod.sh generates a
+      # per-deploy value, exports it for compose interpolation (before the
+      # `compose up` cutover), and presents the same value after the health
+      # gates to POST /api/revalidate-landing — the forced on-demand
+      # revalidation that kills the build-anchored ~30min cold window on '/'
+      # and '/browse'. Empty default keeps the endpoint fail-closed for
+      # ad-hoc compose invocations; the token never lives in any env file.
+      ISR_WARMUP_TOKEN: "${ISR_WARMUP_TOKEN:-}"
     volumes:
       # NFM-4087 (BUG-06): read-only view of the shared upload volume so
       # /uploads/<id>.<ext> potential files written by the api service are
