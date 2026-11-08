@@ -372,6 +372,106 @@
 #   - Diagnostic: --origin-probes-once prints the token, touches no log
 #     and no state (SRE post-deploy verification without a state write).
 #
+# NFM-5876 (2026-11-07, SRE; CPO dispatch, child of NFM-5872 — CTO ruling
+# R4-3 on NFM-5862, 2026-11-07) — edge-tunnel probe lane + three-lane
+# PARTIAL_DEGRADED classification:
+#   - Gap: during partial tunnel degradation (NFM-5862 e7/e8 windows) the
+#     cached-HTML edge lane stayed green while the tunnel was dark — cache
+#     absorption masks tunnel loss, so tunnel degradation was either
+#     invisible or misclassified as a full-edge outage, and detection
+#     latency for a degrading tunnel was unbounded until users already saw
+#     errors.
+#   - Lane inventory — all three lanes are measured EVERY tick with NO new
+#     probe requests. Scope guard honored: the edge-tunnel lane EXTENDS
+#     the existing "Backend API Health" P0 target, which is exactly the
+#     CTO-specified URL https://nucpot.dpdns.org/api/v1/health — the
+#     uncached API path THROUGH the edge hostname, proven to transit the
+#     tunnel (it returned 530 during e7/e8) — verified + extended, not
+#     duplicated:
+#       origin-direct — NFM-5797 discriminator (localhost:3000 `/` +
+#         `/browse`, curl --noproxy '*'). Contract AMENDED by this lane:
+#         it was evidence-ONLY; it now ALSO gates the PARTIAL_DEGRADED
+#         conjunct (origin must be green for PD). It still never feeds
+#         streaks, state, or paging of its own.
+#       edge-tunnel  — the Backend API Health P0 target (uncached API via
+#         the edge; NO_PROXY_OPENER direct fetch, ADR-023/NFM-5542).
+#       edge-cached  — the Frontend Homepage + Frontend Browse Page HTML
+#         targets (edge-cached, s-maxage=1800); a chunk-scan
+#         edge-html-desync synthesis also counts as cached-lane failure.
+#   - Per-tick verdict: one "LANES — origin=... edge-tunnel=...
+#     edge-cached=... verdict=..." line per tick (green + degrade alike),
+#     BEFORE the summary line — the OK/WARN/CRITICAL line stays the tick's
+#     newest line (liveness read) and green OK lines stay byte-stable
+#     (NFM-5708 convention). Verdict matrix (unknown lanes never classify
+#     — fail-open; a garbled probe table keeps the existing p0="-1"
+#     page-worthy path in charge):
+#       origin ok + tunnel FAIL + cached ok -> PARTIAL_DEGRADED (tunnel
+#         dark, users shielded by cache): WARN immediately at streak 1;
+#         PAGE at streak 2 (NFM-5666 page discipline for the new class) —
+#         CRITICAL line + notify + pending_page latch, so the NFM-5262
+#         missed-page reconciliation applies unchanged; REMINDER_RUNS
+#         reminder cadence while it persists.
+#       tunnel FAIL + cached FAIL           -> FULL_EDGE_OUTAGE: existing
+#         CRITICAL path byte-identical (streak>=2 lane + the NFM-5666/
+#         NFM-5667 streak-1 full-edge rule untouched; PD and s1 matches
+#         are mutually exclusive — PD requires BOTH cached lanes green,
+#         which caps edge failures at 4/6 < the s1 conjunct of 5/6).
+#       all other combinations              -> existing semantics
+#         (ORIGIN_DEGRADED / CACHED_DEGRADED / MIXED / UNCLASSIFIED /
+#         ALL_OK are evidence verdicts only; zero behavior change).
+#   - Egress discipline (design item 3): the edge-tunnel lane rides the
+#     existing direct-pinned python fetch (NO_PROXY_OPENER under the
+#     wrapper's no_proxy='*' export — ADR-023/NFM-5542), never the scutil
+#     127.0.0.1:7892 proxy; the origin lane's curl is --noproxy '*' pinned
+#     (NFM-5797 lineage).
+#   - TRANSIT_BROWNOUT precedence: the NFM-5706 brownout suppression is
+#     evaluated FIRST and still gates any page — an active brownout
+#     classification can only DELAY a PD page, never consume it (the
+#     streak keeps counting). In practice cached-HTML staying green from
+#     this vantage during a transit brownout is unlikely, so the classes
+#     rarely overlap.
+#   - State: none new — PD rides the existing streak/since_remind/
+#     pending_page state (the streak>=2 lane's machinery), so RECOVERY,
+#     PAGE-UNACK and --ack-page behave uniformly across alert classes.
+#   - Env seams: none new — classification reads the probe's own table
+#     (captured pre-scan-synthesis in PROBE_ROWS) + the existing ORIGIN_EV
+#     token. NFM-5862 ruling item (b) respected: no timed warmup of any
+#     kind; the lane rides the existing 300s cadence and the existing
+#     Backend API Health retry + confirmation budget (NFM-5279/NFM-5525
+#     ladder unchanged). Scan-blind exits (NFM-5446/NFM-5497) keep their
+#     early-exit shape — no LANES line on those CRITICAL exits.
+#   - Scope guards honored: the pre-existing PAGE-UNACK latch (e7 CRITICAL
+#     from 2026-11-06T18:14:58Z) is NFM-5871's — untouched; origin/cached
+#     probe targets and cadence unchanged.
+#
+# NFM-5892 (2026-11-07, SRE; CPO dispatch from NFM-5891/NFM-5890) — restore
+# s1 episode booking on the streak>=2 CRITICAL paths:
+#   - Defect (e9, 2026-11-07 03:20Z -> 03:33Z): the first REAL episode to
+#     enter full-edge via lane-by-lane escalation (streak-1
+#     PARTIAL_DEGRADED-shaped 4/6 -> streak-2 full-edge 5/6) paged via the
+#     streak>=2 lane with NO s1 call — no t2-ledger append, no episode
+#     count, no rate-limit marker, no open window. The §4 machinery
+#     (NFM-5664 ruling 35aa85eb) was evaluated only at streak==1, so every
+#     rule keyed on episode counts / delta accounting was blind to the
+#     episode (ledger recorded 8, true 9, pre-backfill).
+#   - Fix: on the streak>=2 CRITICAL paths (public-edge + PARTIAL_DEGRADED
+#     + their ongoing-reminder variants), when the s1 conjuncts match AND
+#     no window is open, s1_book_streak2 books the episode AT the CRITICAL
+#     tick (ledger append + last_page rate-limit marker + open=1/
+#     win_first) and the t2-ledger count + ruling §4 ref + rate-limit
+#     marker ride the CRITICAL line via $s2_book_ev (empty string => the
+#     line is byte-identical when nothing books).
+#   - No double-page: the page stays on the streak>=2 lane; the stamped
+#     last_page is what suppresses the streak-1 lane's own page if the
+#     same episode re-enters at streak 1 within the 1/1800s cooldown.
+#     Booking is idempotent while a window is open (open==1 gate —
+#     reminder ticks never re-append). The streak-1 path is byte-for-byte
+#     unchanged (NFM-5667 rule + its tests).
+#   - TRANSIT_BROWNOUT ticks never book (the branch exits before the call:
+#     transit-side suppression is by definition not a site-side episode).
+#     The close path is unchanged — once open=1, the next green tick books
+#     the episode close with its existing RECOVERY line.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -530,6 +630,13 @@ S1_P0_MIN=2               # conjunct 2: >=2 P0 checks among them
 S1_PAGE_COOLDOWN=1800     # rate limit: max 1 page / 30 min for this class
 S1_EPISODE_GREEN_GAP=600  # ruling §2: >=10 min green separates episodes
 
+# NFM-5876: PARTIAL_DEGRADED page rule — WARN immediately (streak 1), page
+# at streak 2 (NFM-5666 page discipline for the new class). The page itself
+# rides the streak>=2 lane's machinery (CRITICAL line + notify + pending_page
+# latch + REMINDER_RUNS reminder cadence), so reader-side behavior stays
+# uniform across alert classes.
+PD_PAGE_STREAK=2
+
 s1_get() { # key default
   if [[ -f "$S1_STATE" ]]; then
     v="$(grep -E "^$1=" "$S1_STATE" | tail -1 | cut -d= -f2-)"
@@ -677,6 +784,39 @@ s1_handle_match() { # streak first_fail since_remind
   s1_write "$lp" 1 "$win_first" "$close_ep" "$ledger"
 }
 
+# NFM-5892: streak>=2 episode booking — the §4 machinery (ledger append +
+# last_page rate-limit marker + open=1/win_first) for episodes whose FIRST
+# full-edge-shaped tick arrives at streak>=2 (the e9 class — header NFM-5892
+# block). Called from the streak>=2 CRITICAL lane AFTER the TRANSIT_BROWNOUT
+# early-exit with s1_match already classified. Booking is gated on an
+# open==0 window (idempotent: reminder ticks never re-append) and reuses
+# the ruling §2 by-episode separation (a window re-opening after <10 min
+# green is the SAME episode — count, no append). The PAGE itself stays on
+# the calling streak>=2 lane (never a double-page); stamping last_page is
+# what suppresses the streak-1 lane's own page if the same episode
+# re-enters at streak 1 within the cooldown. The evidence suffix (t2-ledger
+# count + ruling §4 ref + rate-limit marker) is emitted by the caller in
+# its CRITICAL line — "" when nothing booked, keeping the line
+# byte-identical.
+# Sets: s2_book_ev
+s1_book_streak2() {
+  s2_book_ev=""
+  if [[ "$(s1_get open 0)" == "1" ]]; then return 0; fi
+  local now_epoch win_first close_ep ledger count delta
+  now_epoch="$(date -u +%s)"
+  win_first="$(s1_get win_first -)"
+  close_ep="$(s1_get close_epoch 0)"
+  ledger="$(s1_get ledger '')"
+  delta="+0"
+  if (( close_ep == 0 || now_epoch - close_ep >= S1_EPISODE_GREEN_GAP )); then
+    read -r count delta ledger < <(s1_ledger append "$ledger" "$NOW")
+    win_first="$NOW"
+  else
+    read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+  fi
+  s2_book_ev=" — t2-ledger: episodes=${count} rolling-30d (delta ${delta}; standing was 5/6 at ruling) — rate-limit 1/${S1_PAGE_COOLDOWN}s [NFM-5664 ruling 35aa85eb §4; NFM-5892]"
+  s1_write "$now_epoch" 1 "$win_first" "$close_ep" "$ledger"
+}
 
 # ---- NFM-5418 chunk-ref scan ----------------------------------------------
 # Edge-cached HTML outlives the origin build that produced its content-hashed
@@ -1312,6 +1452,88 @@ origin_probes() { # prints "origin: /=<code>/<ms>ms/<bytes>B browse=..."; rc 0 a
   printf '%s' "$acc"
 }
 
+# ---- NFM-5876 three-lane classification -------------------------------------
+# Parses the three lanes from data the tick already collected: PROBE_ROWS
+# (the raw health_check.py table — edge-tunnel = "Backend API Health", the
+# CTO-specified uncached API path through the edge, verified + extended per
+# the scope guard, not duplicated; edge-cached = Frontend Homepage + Frontend
+# Browse Page) and ORIGIN_EV (the NFM-5797 discriminator token — origin-direct).
+# Sets LANE_ORIGIN / LANE_TUNNEL / LANE_CACHED / LANE_TUNNEL_EV /
+# LANE_TUNNEL_TOK / LANE_VERDICT. Matrix + page rule documented in the header
+# NFM-5876 block; unknown lanes never classify (fail-open).
+lane_row_state() { # $1 = check name -> ok|fail|unknown from the raw probe table
+  local row
+  # Row shape is "| <icon> <name> | <sev> | ..." so the anchor is
+  # " <name> |" (space-name-space-pipe) — NOT "| <name> |" (the icon sits
+  # between the pipe and the name). Emoji read as literals; the
+  # detail column never carries that shape, so the anchor is unique to
+  # the name field.
+  row="$(printf '%s' "$PROBE_ROWS" | grep -F " $1 |" | head -1)"
+  if [[ -z "$row" ]]; then
+    echo unknown
+  elif [[ "$row" == *"✅"* ]]; then
+    echo ok
+  elif [[ "$row" == *"❌"* ]]; then
+    echo fail
+  else
+    echo unknown
+  fi
+}
+
+lane_origin_state() { # ORIGIN_EV -> ok|fail (both routes must answer 200)
+  if [[ "$ORIGIN_EV" == *" /=200/"* && "$ORIGIN_EV" == *"/browse=200/"* ]]; then
+    echo ok
+  else
+    echo fail
+  fi
+}
+
+lane_tunnel_detail() { # tunnel check's ❌ detail column (PD page payload)
+  printf '%s' "$PROBE_ROWS" | grep -E '^\| *❌' | grep -F " Backend API Health |" | head -1 \
+    | awk -F'|' '{print $5}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | cut -c1-80
+}
+
+three_lane_classify() { # sets the LANE_* variables from PROBE_ROWS + ORIGIN_EV
+  LANE_ORIGIN="$(lane_origin_state)"
+  LANE_TUNNEL="$(lane_row_state "Backend API Health")"
+  # edge-cached is three-valued: ok = both HTML lanes ✅ AND no desync
+  # synthesis (a chunk-scan edge-html-desync row counts as cached-lane
+  # failure); fail = an explicit ❌ among them; unknown = parseable gap.
+  # Tokens are LOWERCASE throughout — the log carries a naive `grep FAIL`
+  # cleanliness contract on green/control-degraded ticks (NFM-4951 class,
+  # test_nfm_site_monitor_refs) and uppercase FAIL in a lane token would
+  # break it.
+  local homepage browse desync
+  homepage="$(lane_row_state "Frontend Homepage")"
+  browse="$(lane_row_state "Frontend Browse Page")"
+  desync="$(printf '%s' "$OUT" | grep -E '^\| *❌' | grep -F "edge-html-desync" | head -1)"
+  if [[ "$homepage" == "ok" && "$browse" == "ok" && -z "$desync" ]]; then
+    LANE_CACHED="ok"
+  elif [[ "$homepage" == "fail" || "$browse" == "fail" || -n "$desync" ]]; then
+    LANE_CACHED="fail"
+  else
+    LANE_CACHED="unknown"
+  fi
+  LANE_TUNNEL_EV="$(lane_tunnel_detail)"
+  LANE_TUNNEL_TOK="$LANE_TUNNEL"
+  [[ "$LANE_TUNNEL" == "fail" ]] && LANE_TUNNEL_TOK="fail(${LANE_TUNNEL_EV:-unknown})"
+  if [[ "$LANE_TUNNEL" == "unknown" ]]; then
+    LANE_VERDICT="UNCLASSIFIED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "ok" ]]; then
+    LANE_VERDICT="ALL_OK"
+  elif [[ "$LANE_TUNNEL" == "fail" && "$LANE_CACHED" == "fail" ]]; then
+    LANE_VERDICT="FULL_EDGE_OUTAGE"
+  elif [[ "$LANE_TUNNEL" == "fail" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "ok" ]]; then
+    LANE_VERDICT="PARTIAL_DEGRADED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "fail" ]]; then
+    LANE_VERDICT="ORIGIN_DEGRADED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "fail" ]]; then
+    LANE_VERDICT="CACHED_DEGRADED"
+  else
+    LANE_VERDICT="MIXED"
+  fi
+}
+
 # Parse the battery's machine tokens once per tick. Defaults are the
 # fail-closed vocabulary: any missing/garbled token leaves REF_WARMUP=1 and
 # sentinel values that can never satisfy the brownout conjuncts.
@@ -1446,6 +1668,11 @@ fi
 
 OUT="$("$PY" "$PROBE" 2>&1)"
 RC=$?
+# NFM-5876: raw per-check table, captured BEFORE chunk-scan synthesis can
+# replace OUT (scan findings synthesize a single edge-html-desync row) — the
+# three-lane classifier reads the probe's own verdicts from here, so a
+# scan-synthesized tick still classifies from the real probe lanes.
+PROBE_ROWS="$OUT"
 
 # NFM-5418: with the base probe green, verify edge HTML chunk refs resolve.
 # A failure here is synthesized into the base probe's failure format
@@ -1590,6 +1817,14 @@ fi
 ORIGIN_EV="$(origin_probes 2>/dev/null)"
 log "ORIGIN — $ORIGIN_EV"
 
+# NFM-5876: three-lane classification verdict — every real-probe tick (green
+# + degrade alike), BEFORE the summary line so the OK/WARN/CRITICAL line
+# stays the tick's newest line (liveness read; green OK lines stay
+# byte-stable, NFM-5708 convention). AC1: the lane result + verdict are
+# visible per tick in this log.
+three_lane_classify
+log "LANES — origin=$LANE_ORIGIN edge-tunnel=$LANE_TUNNEL_TOK edge-cached=$LANE_CACHED verdict=$LANE_VERDICT [NFM-5876]"
+
 # CPO charter addendum: a CONFIDENT non-clean battery verdict on a GREEN tick
 # (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
 # implications; a clean battery stays silent so green OK lines are
@@ -1725,15 +1960,56 @@ if (( RC == 1 )); then
         "$skip_a_next" "$skip_b_next" "$blind_p0_next"
       exit 1
     fi
+    # NFM-5892: book the full-edge episode AT this streak>=2 CRITICAL tick
+    # when the s1 conjuncts match (s1_match=1) and no window is open — the
+    # e9 class: episodes entering full-edge via lane-by-lane escalation
+    # (tunnel dark -> cached edge dark next tick) previously paged with NO
+    # ledger append, NO t2-ledger count, NO rate-limit marker and NO open
+    # window (the NFM-5664 §4 machinery was streak-1-only). Reached only
+    # past the TRANSIT_BROWNOUT early-exit above (transit-side ticks are
+    # not site-side episodes and never book). The page stays on THIS lane
+    # (never a double-page); idempotent while a window is open. Evidence
+    # suffix rides the CRITICAL lines below via $s2_book_ev ("" => lines
+    # byte-identical when nothing books).
+    s2_book_ev=""
+    s1_classify
+    if (( s1_match == 1 )); then
+      s1_book_streak2
+    fi
+    # NFM-5876: PARTIAL_DEGRADED page rule — the edge-tunnel lane is dark
+    # while the origin and the cached edge stay green (tunnel degradation
+    # currently shielded by cache). WARN at streak 1 (the PD-specific WARN
+    # branch below), PAGE at streak 2 (NFM-5666 page discipline for the new
+    # class). Evaluated AFTER TRANSIT_BROWNOUT — the brownout suppression
+    # can only delay a page, never consume it — and BEFORE the full-edge
+    # CRITICAL, which stays byte-identical for FULL_EDGE_OUTAGE verdicts.
+    # PD and the streak-1 full-edge rule are mutually exclusive (PD requires
+    # both cached lanes green, capping edge failures at 4/6 < conjunct 5).
+    if [[ "$LANE_VERDICT" == "PARTIAL_DEGRADED" ]]; then
+      pending="$(state_get pending_page -)"
+      if [[ "$pending" == "-" || -z "$pending" ]]; then
+        pending="$NOW"   # latch: survives recovery until the heartbeat acks
+      fi
+      if (( since_remind >= REMINDER_RUNS )); then
+        since_remind=0
+        log "CRITICAL (ongoing reminder, first failure $first_fail) — PARTIAL_DEGRADED persists (edge-tunnel dark, users shielded by cached edge; NFM-5876 page rule: WARN streak 1, page streak ${PD_PAGE_STREAK}) — $failed check(s) failed ($p0 P0) — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      else
+        log "CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline for the new class): edge-tunnel dark while origin-direct and cached edge stay green — streak $streak, first failure $first_fail — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — users currently shielded by cached edge HTML — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      fi
+      notify_page "PARTIAL_DEGRADED: edge-tunnel dark, cached edge shielding users (streak $streak)"
+      state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
+        "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+      exit 2
+    fi
     pending="$(state_get pending_page -)"
     if [[ "$pending" == "-" || -z "$pending" ]]; then
       pending="$NOW"   # latch: survives recovery until the heartbeat acks
     fi
     if (( since_remind >= REMINDER_RUNS )); then
       since_remind=0
-      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV [$(proxy_state_line)]"
+      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
     else
-      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV [$(proxy_state_line)]"
+      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
     fi
     notify_page "P0 public-edge failure: $failed check(s) down ($p0 P0)"
     state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
@@ -1746,7 +2022,14 @@ if (( RC == 1 )); then
     state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
       "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   else
-    log "WARN — failure streak $streak/$STREAK_THRESHOLD ($failed check(s) failed, $p0 P0) — confirming before CRITICAL — $faildetail $REF_EV"
+    # NFM-5876: a PARTIAL_DEGRADED tick warns IMMEDIATELY at streak 1 (the
+    # new class's first half of the page rule); the generic streak-1 WARN
+    # text stays byte-identical for every other verdict.
+    if [[ "$LANE_VERDICT" == "PARTIAL_DEGRADED" ]]; then
+      log "WARN — PARTIAL_DEGRADED (edge-tunnel dark, users shielded by cached edge): streak ${streak}/${PD_PAGE_STREAK} — immediate WARN per NFM-5876; page at streak ${PD_PAGE_STREAK} — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail $REF_EV"
+    else
+      log "WARN — failure streak $streak/$STREAK_THRESHOLD ($failed check(s) failed, $p0 P0) — confirming before CRITICAL — $faildetail $REF_EV"
+    fi
     state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
       "$skip_a_next" "$skip_b_next" "$blind_p0_next"
   fi
