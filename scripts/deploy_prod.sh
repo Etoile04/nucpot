@@ -669,7 +669,8 @@ health_first_poll http://localhost:3000/ 12 5 || exit 1
 # =============================================================================
 echo "==> NFM-5898 ISR warm-up: cold-window capture + forced revalidation of '/' and '/browse'"
 nfmd5898_cap_dir="${NFM_CUTOVER_SNAPSHOT_DIR}/coldwindow-nfm-5898"
-mkdir -p "${nfmd5898_cap_dir}"
+mkdir -p "${nfmd5898_cap_dir}" \
+  || echo "  WARNING (NFM-5898): mkdir ${nfmd5898_cap_dir} failed (exit $?) — cold-window capture unavailable" >&2
 nfmd5898_fetch() {
   # $1 = URL, $2 = output file — single bounded GET, advisory-only on failure
   # (NFM-5208 diagnostics precedent: a capture gap must log, never abort).
@@ -701,7 +702,11 @@ else
     fi
     if [ "${nfmd5898_attempt}" -lt 2 ]; then
       echo "  ISR warm-up POST attempt ${nfmd5898_attempt}/2 failed (curl exit ${nfmd5898_post_rc}); retrying in ${NFM5898_RETRY_DELAY_S:-5}s"
-      sleep "${NFM5898_RETRY_DELAY_S:-5}"
+      # `|| true`: the knob is an env/test hook and may hold a value sleep
+      # rejects (non-numeric, GNU "5s" suffix on BSD). Under set -euo
+      # pipefail a failed sleep must not errexit the deploy post-health-gate
+      # — the advisory-only failure policy is total for this block.
+      sleep "${NFM5898_RETRY_DELAY_S:-5}" || true
     else
       echo "  ISR warm-up POST attempt 2/2 failed (curl exit ${nfmd5898_post_rc})"
     fi

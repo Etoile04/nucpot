@@ -1111,10 +1111,16 @@ origin):
 Failure policy (NFM-5149 / NFM-5426 precedent): **advisory-only**. A failed
 warm-up prints `ISR_WARMUP_FAILED` and never retro-reds a healthy deploy —
 but it means the cold window is unmitigated for that deploy, so an SRE
-reading the log should check the next site-monitor tick.
+reading the log should check the next site-monitor tick. The policy is
+enforced by construction: the block runs under the deploy script's
+`set -euo pipefail`, and every fallible command inside it (captures, the
+retry `sleep`, the capture `mkdir`) is individually guarded, so a warm-up
+hiccup can never abort the deploy between the health gate and the CF purge.
 
 Behavioral guards: `scripts/tests/test_deploy_prod_isr_warmup.py` (block
-ordering, token plumbing, capture-before-warmup, loud non-fatal failure).
+ordering, token plumbing, capture-before-warmup, loud non-fatal failure —
+executed under the script's `set -euo pipefail` options, including the
+unusable-retry-delay case).
 
 ### 13.3. References
 

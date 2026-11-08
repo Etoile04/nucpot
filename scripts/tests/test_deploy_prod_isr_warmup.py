@@ -91,7 +91,15 @@ def _run_block(
     snapshot_dir = tmp_path / "snapshot"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     block_file = tmp_path / "warmup_block.sh"
-    block_file.write_text(_extract_warmup_block(), encoding="utf-8")
+    # The real deploy script runs `set -euo pipefail` (deploy_prod.sh, near
+    # the top). Execute the fragment under the SAME shell options, otherwise
+    # errexit-dependent behavior — the advisory-only failure policy — is not
+    # actually exercised: without set -e a nonzero `sleep`/`mkdir` mid-block
+    # is silently swallowed and the post-health-gate tail-skip class (abort
+    # before the CF purge) cannot be caught by any guard here.
+    block_file.write_text(
+        "set -euo pipefail\n" + _extract_warmup_block(), encoding="utf-8"
+    )
     env = {
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -208,6 +216,29 @@ def test_warmup_post_failure_is_loud_and_nonfatal(tmp_path: Path) -> None:
     gets = [c for c in calls if "-X POST" not in c and "revalidate-landing" not in c]
     warm_gets = [c for c in gets if "warm-" in c]
     assert warm_gets == []
+
+
+def test_warmup_post_failure_survives_unusable_retry_delay(tmp_path: Path) -> None:
+    result, calls = _run_block(
+        tmp_path,
+        env_overrides={
+            "ISR_WARMUP_TOKEN": "testtok",
+            "NFM5898_RETRY_DELAY_S": "not-a-number",
+        },
+        post_rc=7,
+    )
+    # CR (NFM-5898 review): NFM5898_RETRY_DELAY_S is an env knob and may hold
+    # a value `sleep` rejects (non-numeric, or a GNU-style "5s" suffix on the
+    # BSD deploy host). Under set -e an unguarded sleep on the retry path
+    # would errexit the deploy AFTER the web health gate and BEFORE the
+    # NFM-5420 CF purge — the tail-skip class the advisory-only failure
+    # policy exists to prevent. The retry delay must never be fatal: both
+    # POST attempts still run, the loud anchor still fires, exit stays 0.
+    assert result.returncode == 0
+    posts = [c for c in calls if "revalidate-landing" in c]
+    assert len(posts) == 2
+    assert "ISR_WARMUP_FAILED" in result.stderr
+    assert "ISR_WARMUP_COMPLETED_OK" not in result.stdout
 
 
 def test_missing_token_skips_post_but_still_captures_cold(tmp_path: Path) -> None:
