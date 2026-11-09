@@ -1069,3 +1069,65 @@ Manual runs that want the old fail-fast behavior export
 - [NFM-5526](../../issues/NFM-5526) — the QA battery that compensated the
   skipped in-job cutover guard for run 38419888271.
 
+## 13. Post-cutover ISR warm-up (NFM-5898)
+
+### 13.1. Why this exists
+
+NFM-5897 (SRE root cause, 2026-11-08): every deploy served the web image's
+**build-time prerender** of `/` and `/browse` for up to ~30 min after the
+cutover. The ISR freshness clock is anchored at `next build`
+(`revalidate = 1800`), and the build stage cannot reach the API (the compose
+network does not exist inside docker build), so `home-data.ts` fail-soft
+bakes empty sections — the 77150B cold payload, byte-stable across two
+cutovers, vs the 126848B prod-data render.
+
+A warm-up GET cannot fix this: it cache-HITs the same build-anchored entry.
+The deploy therefore **forces** on-demand revalidation via the token-guarded
+`POST /api/revalidate-landing` handler
+(`apps/web/src/app/api/revalidate-landing/route.ts` → `revalidatePath('/')`
++ `revalidatePath('/potentials')`; `/browse` shares the `/potentials` ISR
+entry through the NFM-5228 alias rewrite).
+
+### 13.2. What runs, in what order
+
+Inside `scripts/deploy_prod.sh`, after the web health gate and BEFORE the
+NFM-5420 CF purge (the edge's first refetch after purge must hit a warm
+origin):
+
+1. **Cold-window capture** — the served build-time prerender of `/` and
+   `/browse` is saved to
+   `/tmp/nfm-cutover-<sha>/coldwindow-nfm-5898/cold-*.html`, closing the
+   NFM-5897 residual (the 77150B body was never content-captured). The
+   post-warm-up bodies and per-route diffs land beside them.
+2. **Forced revalidation** — one `POST /api/revalidate-landing` with the
+   per-deploy `ISR_WARMUP_TOKEN` (generated in-script before `compose up`;
+   never provisioned in any env file; empty default keeps the endpoint
+   fail-closed). One retry after 5s.
+3. **Warm capture + byte report** — `GET /` and `GET /browse` regenerate
+   against the live API; the deploy log carries a
+   `cold prerender <n>B -> warm regen <m>B` line per route and the
+   `ISR_WARMUP_COMPLETED_OK` anchor.
+
+Failure policy (NFM-5149 / NFM-5426 precedent): **advisory-only**. A failed
+warm-up prints `ISR_WARMUP_FAILED` and never retro-reds a healthy deploy —
+but it means the cold window is unmitigated for that deploy, so an SRE
+reading the log should check the next site-monitor tick. The policy is
+enforced by construction: the block runs under the deploy script's
+`set -euo pipefail`, and every fallible command inside it (captures, the
+retry `sleep`, the capture `mkdir`) is individually guarded, so a warm-up
+hiccup can never abort the deploy between the health gate and the CF purge.
+
+Behavioral guards: `scripts/tests/test_deploy_prod_isr_warmup.py` (block
+ordering, token plumbing, capture-before-warmup, loud non-fatal failure —
+executed under the script's `set -euo pipefail` options, including the
+unusable-retry-delay case).
+
+### 13.3. References
+
+- [NFM-5898](../../issues/NFM-5898) — the mitigation card (LE).
+- [NFM-5897](../../issues/NFM-5897) — the root-cause thread (two
+  cutovers × build-anchored ISR cold window; transition table).
+- `apps/web/src/app/heavy-route-ttl.test.ts` — why the 1800s TTL itself is
+  pinned and must NOT be lowered to "fix" this (it sits above the
+  site-monitor probe cadence by contract, NFM-5863).
+

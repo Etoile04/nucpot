@@ -526,6 +526,17 @@ bash tools/post-deploy-cutover-assert/assert.sh \
   --phase before \
   --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}"
 
+# NFM-5898 — per-deploy ISR warm-up token. Generated HERE (never provisioned
+# in docker/.env.prod) so the secret lives only for this deploy session: it
+# is interpolated into the web container's environment by compose
+# (ISR_WARMUP_TOKEN passthrough in docker-compose.prod.yml) and reused by the
+# post-health-gate warm-up block below. An empty value would leave the
+# endpoint fail-closed (503) and the cold window unmitigated, so generate
+# unconditionally; openssl exists on the deploy host, /dev/urandom is the
+# fallback. Both sides of the endpoint's comparison are hashed before
+# timingSafeEqual, and the token never appears in any log line.
+export ISR_WARMUP_TOKEN="$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
 # Restart ALL containers using the SHA-tagged images. PROD_IMAGE_TAG resolves
 # each service's `image:` to the matching SHA-tagged image we just built.
 # Schema authority is unchanged: Alembic-only via apps/api/migrations/,
@@ -632,6 +643,98 @@ fi
 
 echo "Checking Web health..."
 health_first_poll http://localhost:3000/ 12 5 || exit 1
+
+# =============================================================================
+# NFM-5898 — post-cutover ISR warm-up: kill the ~30min cold window on '/' and
+# '/browse'. Every deploy serves the web image's BUILD-TIME prerender for
+# these routes: the ISR freshness clock is anchored at `next build`
+# (revalidate = 1800), and the build stage cannot reach the API (the compose
+# network does not exist inside docker build), so home-data.ts fail-soft
+# bakes empty sections — the 77150B cold payload SRE decoded on the NFM-5897
+# thread. A warm-up GET alone cache-HITs the same build-anchored entry; the
+# routes need FORCED on-demand revalidation via the token-guarded
+# POST /api/revalidate-landing handler
+# (apps/web/src/app/api/revalidate-landing/route.ts). '/browse' shares the
+# /potentials ISR entry (NFM-5228 afterFiles alias rewrite), so one
+# revalidate covers both site-monitor targets (scripts/health_check.py).
+#
+# Ordering contract (scripts/tests/test_deploy_prod_isr_warmup.py): AFTER the
+# web health gate (origin verified live) and BEFORE the NFM-5420 CF purge —
+# the edge's first refetch after purge must hit a warm origin.
+#
+# Failure policy (NFM-5149 / NFM-5426 precedent): advisory-only. By this
+# point the origin cutover is complete and verified; a failed warm-up must
+# never retro-red a healthy deploy. Loud anchors for log triage:
+# ISR_WARMUP_COMPLETED_OK / ISR_WARMUP_FAILED / ISR_WARMUP_SKIPPED.
+# =============================================================================
+echo "==> NFM-5898 ISR warm-up: cold-window capture + forced revalidation of '/' and '/browse'"
+nfmd5898_cap_dir="${NFM_CUTOVER_SNAPSHOT_DIR}/coldwindow-nfm-5898"
+mkdir -p "${nfmd5898_cap_dir}" \
+  || echo "  WARNING (NFM-5898): mkdir ${nfmd5898_cap_dir} failed (exit $?) — cold-window capture unavailable" >&2
+nfmd5898_fetch() {
+  # $1 = URL, $2 = output file — single bounded GET, advisory-only on failure
+  # (NFM-5208 diagnostics precedent: a capture gap must log, never abort).
+  curl -fsS --max-time 30 -o "$2" "$1" \
+    || echo "  WARNING (NFM-5898): GET $1 failed (curl exit $?) — capture incomplete" >&2
+}
+# Cold-window capture FIRST: the served build-time prerender, byte-for-byte
+# what the first post-cutover site-monitor ticks see (NFM-5897 residual: the
+# 77150B body was never content-captured).
+nfmd5898_fetch "http://127.0.0.1:3000/" "${nfmd5898_cap_dir}/cold-index.html"
+nfmd5898_fetch "http://127.0.0.1:3000/browse" "${nfmd5898_cap_dir}/cold-browse.html"
+
+if [ -z "${ISR_WARMUP_TOKEN:-}" ]; then
+  echo "ISR_WARMUP_SKIPPED: ISR_WARMUP_TOKEN not exported — endpoint is fail-closed, cold window unmitigated" >&2
+else
+  # Block internals stay lowercase: the NFM5898_* namespace is reserved for
+  # env knobs (test hooks like NFM5898_RETRY_DELAY_S), and a reassigned
+  # inherited env var keeps its export attribute — an uppercase runtime
+  # variable here would leak its value into every child process.
+  nfmd5898_post_rc=1
+  nfmd5898_post_body=""
+  for nfmd5898_attempt in 1 2; do
+    nfmd5898_post_rc=0
+    nfmd5898_post_body="$(curl -fsS --max-time 30 -X POST \
+      -H "x-nfm-warmup-token: ${ISR_WARMUP_TOKEN}" \
+      http://127.0.0.1:3000/api/revalidate-landing 2>/dev/null)" || nfmd5898_post_rc=$?
+    if [ "${nfmd5898_post_rc}" -eq 0 ]; then
+      break
+    fi
+    if [ "${nfmd5898_attempt}" -lt 2 ]; then
+      echo "  ISR warm-up POST attempt ${nfmd5898_attempt}/2 failed (curl exit ${nfmd5898_post_rc}); retrying in ${NFM5898_RETRY_DELAY_S:-5}s"
+      # `|| true`: the knob is an env/test hook and may hold a value sleep
+      # rejects (non-numeric, GNU "5s" suffix on BSD). Under set -euo
+      # pipefail a failed sleep must not errexit the deploy post-health-gate
+      # — the advisory-only failure policy is total for this block.
+      sleep "${NFM5898_RETRY_DELAY_S:-5}" || true
+    else
+      echo "  ISR warm-up POST attempt 2/2 failed (curl exit ${nfmd5898_post_rc})"
+    fi
+  done
+  if [ "${nfmd5898_post_rc}" -ne 0 ]; then
+    echo "ISR_WARMUP_FAILED: POST /api/revalidate-landing did not succeed after 2 attempts (last curl exit ${nfmd5898_post_rc}) — '/' and '/browse' serve the build prerender until build+1800s" >&2
+  else
+    echo "==> ISR warm-up revalidated: ${nfmd5898_post_body}"
+    # Warm capture: the first GETs after the purge render against the live
+    # API inside the container network — the prod-data payload the monitor
+    # baselines (126848B / 86823B class).
+    nfmd5898_fetch "http://127.0.0.1:3000/" "${nfmd5898_cap_dir}/warm-index.html"
+    nfmd5898_fetch "http://127.0.0.1:3000/browse" "${nfmd5898_cap_dir}/warm-browse.html"
+    for nfmd5898_route in index browse; do
+      if [ -f "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" ] && [ -f "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" ]; then
+        nfmd5898_cold_b="$(wc -c < "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" | tr -d ' ')"
+        nfmd5898_warm_b="$(wc -c < "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" | tr -d ' ')"
+        echo "==> NFM-5898 ${nfmd5898_route}: cold prerender ${nfmd5898_cold_b}B -> warm regen ${nfmd5898_warm_b}B"
+        diff -u "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" \
+          "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" \
+          > "${nfmd5898_cap_dir}/${nfmd5898_route}.diff" 2>/dev/null || true
+      else
+        echo "  WARNING (NFM-5898): ${nfmd5898_route} capture incomplete — cold/warm pair missing, byte report skipped" >&2
+      fi
+    done
+    echo "ISR_WARMUP_COMPLETED_OK sha=${DEPLOY_SHA} cap_dir=${nfmd5898_cap_dir}"
+  fi
+fi
 
 # NFM-5420 task 3 / NFM-5426 — post-cutover Cloudflare edge purge. Static
 # HTML is edge-cached by origin s-maxage; before NFM-5419 that was a 1-year
