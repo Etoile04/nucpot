@@ -24,17 +24,41 @@ name: Prod Deploy Event Collector Executor (self-hosted)
 #
 # repository_dispatch fires workflows from the DEFAULT branch only, so this
 # file must be on main to receive dispatches.
+#
+# NFM-5936 adds ONE manual door: workflow_dispatch exists solely as the
+# alert self-test (it fires the dedup-keyed fallback alert through the
+# real executor context and exits — no collection). The door REQUIRES an
+# `orchestrator_run_id` input naming the orchestrator run whose payload
+# artifact it executes, so the provenance invariant ("only verified
+# artifact bytes may execute") holds in dispatch mode too — a manual fire
+# without an orchestrator artifact has nothing to run, exactly the gap
+# the original dispatch-only pin guarded. Normal collection still rides
+# repository_dispatch ONLY.
 # =============================================================================
 
 on:
   repository_dispatch:
     types: [nfmd-prod-collector-exec]
+  workflow_dispatch:
+    inputs:
+      orchestrator_run_id:
+        description: "Run id of the orchestrator run whose prod-collector-payload artifact this self-test executes (mandatory provenance)."
+        required: true
+        type: string
+      self_test:
+        description: "Fire ONE dedup-keyed fallback alert (NFM-5936); no collection, no host-state writes."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   # Cross-run artifact download (actions/download-artifact with run-id)
   # plus the collector's gh api / gh run download queries.
   actions: read
   contents: read
+  # NFM-5936: the dedup-keyed gh-issue alert fallback creates/comments
+  # issues when ALERT_WEBHOOK is unset. No other scope is added.
+  issues: write
 
 concurrency:
   # Serialise collector invocations so two simultaneous executors cannot
@@ -54,12 +78,23 @@ jobs:
     runs-on: [self-hosted, production]
     # Carried from the pre-split collector job (NFM-5798 P1 budget).
     timeout-minutes: 18
+    env:
+      # NFM-5936: true ONLY on a manual workflow_dispatch self-test fire
+      # (alert-path probe, no collection). Normal collection — including a
+      # self_test-flagged orchestrator dispatch that lands on main's
+      # executor before this file merges — keeps the value false and runs
+      # the dispatch payload verbatim.
+      COLLECTOR_SELF_TEST: ${{ github.event.client_payload.self_test == 'true' || inputs.self_test == true }}
     steps:
       - name: Download payload from orchestrator run
         uses: actions/download-artifact@v7
         with:
           name: prod-collector-payload
-          run-id: ${{ github.event.client_payload.orchestrator_run_id }}
+          # repository_dispatch carries the orchestrator run id in the
+          # payload; the NFM-5936 manual self-test door carries it as the
+          # required `orchestrator_run_id` input. Both name the same kind
+          # of source: an orchestrator run with a verified payload artifact.
+          run-id: ${{ github.event.client_payload.orchestrator_run_id || inputs.orchestrator_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Per-run staging dir (NFM-5556 isolation): the shared workspace is
           # written by several independently-grouped jobs on this host.
@@ -67,13 +102,19 @@ jobs:
 
       - name: Verify payload manifest
         id: verify-payload
+        env:
+          ORCH_RUN_ID: ${{ github.event.client_payload.orchestrator_run_id || inputs.orchestrator_run_id }}
+          ORCH_SHA: ${{ github.event.client_payload.sha || 'manual-self-test' }}
         run: |
           set -euo pipefail
           cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
           shasum -a 256 -c MANIFEST.sha256
-          echo "payload provenance: orchestrator run ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+          echo "payload provenance: orchestrator run ${ORCH_RUN_ID} @ ${ORCH_SHA}"
 
       - name: Verify SSH key present
+        # Host-bound prerequisites gate OFF in self-test mode: the alert
+        # probe must not depend on anything the alert path doesn't use.
+        if: github.event.client_payload.self_test != 'true' && inputs.self_test != true
         run: |
           test -f ~/.ssh/deploy_key || {
             echo "::error::~/.ssh/deploy_key missing on the self-hosted runner."
@@ -85,6 +126,7 @@ jobs:
         # The remote script uses jq to JSON-decode the payload. If the
         # Mac Studio doesn't have jq, fail loud here so we don't
         # silently lose fragments.
+        if: github.event.client_payload.self_test != 'true' && inputs.self_test != true
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key lwj04@127.0.0.1 \
             "command -v jq >/dev/null 2>&1 || { echo '::error::jq missing on host'; exit 1; }"
@@ -92,7 +134,8 @@ jobs:
       - name: Run collector
         # Only verified payload bytes may execute (Leg A provenance
         # invariant). The collector itself decides validate-vs-append via
-        # --dry-run, mapped from the orchestrator's dispatch payload.
+        # --dry-run, mapped from the orchestrator's dispatch payload;
+        # NFM-5936's --self-test-alert fires one fallback alert and exits.
         if: steps.verify-payload.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,22 +146,33 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
+          SELF_TEST_FLAG=""
+          if [ "$COLLECTOR_SELF_TEST" = "true" ]; then
+            SELF_TEST_FLAG="--self-test-alert"
+          fi
           cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
           python3 prod_event_collector.py \
             --sync-state /Users/lwj04/.nfmd/prod-event-sync-state.json \
             --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
             --repo "${{ github.repository }}" \
             --ssh-target lwj04@127.0.0.1 \
-            $DRY_RUN_FLAG
+            $DRY_RUN_FLAG $SELF_TEST_FLAG
 
       - name: Annotate summary
         if: always()
+        env:
+          ORCH_RUN_ID: ${{ github.event.client_payload.orchestrator_run_id || inputs.orchestrator_run_id }}
         run: |
           {
             echo "## Prod deploy-event collector"
             echo ""
             echo "- Trigger: ${{ github.event_name }} (${{ github.event.action }})"
-            echo "- Orchestrator run: ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+            if [ "$COLLECTOR_SELF_TEST" = "true" ]; then
+              echo "- Mode: alert self-test (NFM-5936) — no collection, no host-state writes"
+            else
+              echo "- Mode: collect"
+            fi
+            echo "- Orchestrator run: ${ORCH_RUN_ID}"
             echo "- Result: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
