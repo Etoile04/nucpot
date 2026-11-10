@@ -11,10 +11,17 @@ Contract under test (acceptance criteria from NFM-5935):
   would violate append order is a fatal, state-preserving abort.
 - flush_under_lock re-reads master under the collector's flock and
   re-filters the batch if master drifted, so no duplicate event_id can
-  land even when a collector tick appends concurrently.
+  land even when a collector tick appends concurrently; against a tail
+  that moved under the lock it re-validates ts ordering and state
+  monotonicity before the first byte is written (NFM-5941 hardening).
 - check_postconditions: duplicate event_ids fail; state at (or
   legitimately past) the catch-up point passes; the pre-backfill state
-  does NOT pass.
+  does NOT pass; the no_artifact bucket inside bad_reasons enters the
+  window accounting exactly once (NFM-5941 blocker regression).
+- list_window_runs aborts loudly when the window outgrows the page cap
+  instead of silently dropping the oldest runs (NFM-5941).
+- legacy events merged into master satisfy the §3.1 SCHEMA_FIELDS set
+  (NFM-5941 LOW hardening).
 """
 
 from __future__ import annotations
@@ -147,10 +154,16 @@ class TestReadJsonl:
 
 class TestCheckPostconditions:
     def _summary(self, lines: int = 122, uniq: int = 122) -> dict[str, Any]:
+        # Real-path shape: classify_fragments files artifact-less runs in the
+        # no_artifact bucket INSIDE bad_reasons — the pre-fix fixture omitted it,
+        # which masked the double-count (NFM-5941 blocker).
         return {
             "master_after": {"lines": lines, "uniq_ids": uniq, "sha256": "x"},
             "per_status_counts": {bf.STATUS_NEW: 100, bf.STATUS_OVERLAP_LEGACY: 74, bf.STATUS_NO_ARTIFACT: 90},
-            "bad_reasons": {"invalid fragment: x": {"count": 0, "run_ids": []}},
+            "bad_reasons": {
+                bf.STATUS_NO_ARTIFACT: {"count": 90, "run_ids": [42_550_621_741]},
+                "invalid fragment: x": {"count": 0, "run_ids": []},
+            },
             "window_runs": 264,
         }
 
@@ -181,6 +194,43 @@ class TestCheckPostconditions:
         summary["window_runs"] = 999
         failures = bf.check_postconditions(summary, state, 42_550_621_741)
         assert any("does not balance" in f for f in failures)
+
+    def test_no_artifact_bucket_is_not_double_counted(self) -> None:
+        """CR NFM-5941 regression, empirically reproduced shape there: 3 NEW +
+        2 overlap_legacy + 1 no_artifact (non-empty no_artifact bucket inside
+        bad_reasons), state at target — must postcondition-PASS. The pre-fix
+        code counted the no_artifact run in both `bad` and the explicit
+        counts term and false-failed this exact ledger."""
+        state = SyncState(last_synced_run_id=42_550_621_741, last_synced_at="2026-11-10T09:00:00Z")
+        summary = {
+            "master_after": {"lines": 127, "uniq_ids": 127, "sha256": "x"},
+            "per_status_counts": {bf.STATUS_NEW: 3, bf.STATUS_OVERLAP_LEGACY: 2, bf.STATUS_NO_ARTIFACT: 1},
+            "bad_reasons": {
+                bf.STATUS_NO_ARTIFACT: {"count": 1, "run_ids": [42_550_621_741]},
+            },
+            "window_runs": 6,
+        }
+        assert bf.check_postconditions(summary, state, 42_550_621_741) == []
+
+    def test_genuinely_invalid_bucket_balances_with_no_artifact(self) -> None:
+        """invalid-fragment runs enter `bad` exactly once; no_artifact enters
+        via counts exactly once — 3 NEW + 2 overlap + 1 invalid + 1 no_artifact."""
+        state = SyncState(last_synced_run_id=42_550_621_742, last_synced_at="2026-11-10T09:00:00Z")
+        summary = {
+            "master_after": {"lines": 128, "uniq_ids": 128, "sha256": "x"},
+            "per_status_counts": {
+                bf.STATUS_NEW: 3,
+                bf.STATUS_OVERLAP_LEGACY: 2,
+                bf.STATUS_BAD: 1,
+                bf.STATUS_NO_ARTIFACT: 1,
+            },
+            "bad_reasons": {
+                bf.STATUS_NO_ARTIFACT: {"count": 1, "run_ids": [42_550_621_741]},
+                "invalid fragment: not json": {"count": 1, "run_ids": [42_550_621_742]},
+            },
+            "window_runs": 7,
+        }
+        assert bf.check_postconditions(summary, state, 42_550_621_742) == []
 
 
 class TestVerifyBackups:
@@ -262,6 +312,61 @@ class TestFlushUnderLock:
         assert result["appended"] == 0
         assert len(master.read_text(encoding="utf-8").splitlines()) == 1
 
+    def test_drift_with_newer_ts_aborts_state_preserving(self, tmp_path: Path) -> None:
+        """NFM-5941 hardening: a collector tick appending a newer-ts line under
+        the lock makes a ts-ordered append impossible — fatal abort BEFORE any
+        write, master tail and state both untouched."""
+        master = tmp_path / "master-deploy-events.jsonl"
+        state = tmp_path / "state.json"
+        ev_old = make_event(ts="2026-09-07T17:11:01Z")
+        ev_collector = make_event(ts="2026-11-10T04:35:00Z")  # post-window deploy lands under the lock
+        ev_batch = make_event(ts="2026-09-08T00:00:00Z")
+        master.write_text(bf.compact_event(ev_old) + "\n", encoding="utf-8")
+        stale_sha = bf.sha256_text(master.read_text(encoding="utf-8"))
+        master.write_text(bf.compact_event(ev_old) + "\n" + bf.compact_event(ev_collector) + "\n", encoding="utf-8")
+        batch = [(42, "2026-09-08T00:00:00Z", bf.compact_event(ev_batch))]
+        target = SyncState(last_synced_run_id=42, last_synced_at="2026-11-10T09:00:00Z", bad_run_ids=[])
+        with pytest.raises(bf.BackfillError, match="append-order violation"):
+            bf.flush_under_lock(master, state, batch, target, stale_sha)
+        assert len(master.read_text(encoding="utf-8").splitlines()) == 2  # old + collector's, nothing of ours
+        assert not state.exists()
+
+    def test_state_advance_past_target_under_lock_aborts(self, tmp_path: Path) -> None:
+        """NFM-5941 hardening: never write state DOWN over a legitimate collector
+        advance — the collector's skip bound would re-integrate those runs into
+        duplicate event_ids (it does not dedup)."""
+        master = tmp_path / "master-deploy-events.jsonl"
+        state = tmp_path / "state.json"
+        ev_old = make_event(ts="2026-09-07T17:11:01Z")
+        ev_batch = make_event(ts="2026-09-08T00:00:00Z")
+        master.write_text(bf.compact_event(ev_old) + "\n", encoding="utf-8")
+        loaded_sha = bf.sha256_text(master.read_text(encoding="utf-8"))
+        state.write_text(
+            SyncState(last_synced_run_id=99, last_synced_at="2026-11-10T08:00:00Z", bad_run_ids=[]).to_json() + "\n",
+            encoding="utf-8",
+        )
+        batch = [(42, "2026-09-08T00:00:00Z", bf.compact_event(ev_batch))]
+        target = SyncState(last_synced_run_id=42, last_synced_at="2026-11-10T09:00:00Z", bad_run_ids=[])
+        with pytest.raises(bf.BackfillError, match="advanced past our target"):
+            bf.flush_under_lock(master, state, batch, target, loaded_sha)
+        assert len(master.read_text(encoding="utf-8").splitlines()) == 1  # nothing appended
+        assert SyncState.from_json(state.read_text(encoding="utf-8")).last_synced_run_id == 99  # not written down
+
+    def test_missing_state_file_is_treated_as_zero(self, tmp_path: Path) -> None:
+        """A missing state file (fresh fixture/tests) must not crash the
+        monotonicity check — default SyncState (run_id 0) never aborts."""
+        master = tmp_path / "master-deploy-events.jsonl"
+        state = tmp_path / "state.json"
+        ev_old = make_event(ts="2026-09-07T17:11:01Z")
+        ev_new = make_event(ts="2026-09-08T00:00:00Z")
+        master.write_text(bf.compact_event(ev_old) + "\n", encoding="utf-8")
+        sha = bf.sha256_text(master.read_text(encoding="utf-8"))
+        batch = [(42, "2026-09-08T00:00:00Z", bf.compact_event(ev_new))]
+        target = SyncState(last_synced_run_id=42, last_synced_at="2026-11-10T09:00:00Z", bad_run_ids=[])
+        result = bf.flush_under_lock(master, state, batch, target, sha)
+        assert result["appended"] == 1
+        assert SyncState.from_json(state.read_text(encoding="utf-8")).last_synced_run_id == 42
+
 
 class TestWatchAndRepair:
     def _fast(self, monkeypatch: pytest.MonkeyPatch, polls: int = 2) -> None:
@@ -309,6 +414,50 @@ class TestWatchAndRepair:
         monkeypatch.setattr(bf.time, "sleep", advance_once)
         assert bf.watch_and_repair(state, bf.master_lock_path(master), expected, target) == 0
         assert SyncState.from_json(state.read_text(encoding="utf-8")).last_synced_run_id == 50
+
+
+class TestListWindowRuns:
+    @staticmethod
+    def _run(i: int) -> dict[str, Any]:
+        return {"id": str(1_000_000 + i), "name": "Production Deployment"}
+
+    def test_pagination_stops_on_short_page_and_filters_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page_one = [self._run(i) for i in range(99)] + [{"id": "555", "name": "CI Lint"}]
+        pages = [
+            {"workflow_runs": page_one},
+            {"workflow_runs": [self._run(i) for i in range(100, 130)]},
+        ]
+        monkeypatch.setattr(bf, "gh_get_json", lambda url, token: pages.pop(0))
+        runs = bf.list_window_runs("Etoile04/nucpot", "2026-09-07T16:36:38Z", "tok")
+        assert [int(r["id"]) for r in runs] == list(range(1_000_000, 1_000_099)) + list(range(1_000_100, 1_000_130))
+
+    def test_page_cap_aborts_instead_of_silent_stop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NFM-5941: a window that outgrows the page cap must abort loudly —
+        silently stopping drops the OLDEST window runs while state still
+        advances past them."""
+
+        def full_page(url: str, token: str) -> dict[str, Any]:
+            return {"workflow_runs": [self._run(i) for i in range(100)]}
+
+        monkeypatch.setattr(bf, "gh_get_json", full_page)
+        with pytest.raises(bf.BackfillError, match="page cap"):
+            bf.list_window_runs("Etoile04/nucpot", "2026-09-07T16:36:38Z", "tok")
+
+
+class TestLegacySchemaGate:
+    def test_schema_complete_events_pass(self) -> None:
+        bf.validate_legacy_schema([make_event(), make_event()], Path("/tmp/deploy-events.jsonl"))
+
+    def test_missing_required_field_aborts_before_merge(self) -> None:
+        ev = make_event()
+        del ev["duration_ms"]
+        with pytest.raises(bf.BackfillError, match=r"missing §3\.1 fields.*duration_ms"):
+            bf.validate_legacy_schema([ev], Path("/tmp/deploy-events.jsonl"))
+
+    def test_extra_fields_are_not_rejected(self) -> None:
+        ev = make_event()
+        ev["note"] = "legacy lane carried an extra key"
+        bf.validate_legacy_schema([ev], Path("/tmp/deploy-events.jsonl"))
 
 
 class TestRepairStateOnly:

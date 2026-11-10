@@ -81,6 +81,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts.okr.prod_event_collector import (  # noqa: E402
+    SCHEMA_FIELDS,
     FragmentInvalid,
     SyncState,
     validate_fragment,
@@ -101,6 +102,11 @@ API_BASE = "https://api.github.com"
 API_RETRIES = 3
 API_RETRY_BACKOFF_S = 3.0
 API_PACE_S = 0.25  # courtesy pacing between per-run artifact calls
+
+# NFM-5941: a full page-15 means the window outgrew the inventory — abort
+# instead of silently dropping the OLDEST window runs while state still
+# advances past them (a silent gap on any future re-run with a bigger window).
+MAX_INVENTORY_PAGES = 15
 
 LOCK_ACQUIRE_TIMEOUT_S = 60.0
 CLOBBER_WATCH_POLLS = 12
@@ -209,8 +215,14 @@ def list_window_runs(repo: str, since_iso: str, token: str) -> list[dict[str, An
         )
         page_runs = data.get("workflow_runs", [])
         runs.extend(r for r in page_runs if r.get("name") == "Production Deployment")
-        if len(page_runs) < 100 or page > 15:
+        if len(page_runs) < 100:
             break
+        if page >= MAX_INVENTORY_PAGES:
+            raise BackfillError(
+                f"window inventory hit the {MAX_INVENTORY_PAGES}-page cap "
+                f"({MAX_INVENTORY_PAGES * 100}+ runs) with more pages indicated — aborting rather than "
+                "silently dropping the oldest window runs; narrow --window-since and re-run"
+            )
         page += 1
     runs.sort(key=lambda r: int(r["id"]))
     if not runs:
@@ -285,6 +297,23 @@ def compact_event(event: dict[str, Any]) -> str:
     return json.dumps(event, separators=(",", ":"))
 
 
+def validate_legacy_schema(legacy_events: list[dict[str, Any]], legacy_path: Path) -> None:
+    """Every legacy event merged into master must satisfy the §3.1 schema.
+
+    ``read_jsonl`` only guarantees parse + event_id; this keeps master
+    schema-pure by construction — a legacy line missing a required
+    ``SCHEMA_FIELDS`` key is a fatal, state-preserving abort before any
+    write (NFM-5941 LOW finding).
+    """
+    for idx, event in enumerate(legacy_events, start=1):
+        missing = SCHEMA_FIELDS - set(event.keys())
+        if missing:
+            raise BackfillError(
+                f"{legacy_path} event #{idx} (event_id={event.get('event_id')!r}) missing §3.1 fields: "
+                f"{sorted(missing)} — refusing to merge a schema-incomplete event into master"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Flock-protected writes (same lock file the collector's remote script uses)
 # ---------------------------------------------------------------------------
@@ -354,22 +383,40 @@ def flush_under_lock(
     Re-reads master under the lock; if it drifted since load (a collector
     tick appended meanwhile), the batch is re-filtered against the fresh
     event_id set before appending, so no duplicates can land.
+
+    NFM-5941 hardening: the pre-lock classification can be stale against a
+    tail that moved under the lock, so before the first byte is written the
+    batch is re-validated against the FRESH ledger — global ts ordering
+    (a collector tick appending a newer-ts line makes a ts-ordered append
+    impossible) and state monotonicity (a tick that already advanced
+    ``last_synced_run_id`` past our target must never be written DOWN,
+    or the collector would re-integrate those runs into duplicate
+    event_ids). Both aborts are state-preserving; the script is idempotent
+    and safe to re-run.
     """
     lock_fd = acquire_lock(master_lock_path(master_path))
     try:
         fresh_raw = master_path.read_text(encoding="utf-8")
         fresh_sha = sha256_text(fresh_raw)
+        fresh_events = [json.loads(line) for line in fresh_raw.splitlines() if line.strip()]
         if fresh_sha != loaded_master_sha:
-            fresh_ids = {
-                json.loads(line)["event_id"]
-                for line in fresh_raw.splitlines()
-                if line.strip()
-            }
+            fresh_ids = {e["event_id"] for e in fresh_events}
             before = len(batch)
             batch = [p for p in batch if json.loads(p[2])["event_id"] not in fresh_ids]
             print(
                 f"[backfill] master drifted under lock; reclassification dropped {before - len(batch)} line(s)",
                 file=sys.stderr,
+            )
+        validate_ts_ordering(fresh_events, batch)
+        try:
+            fresh_state = SyncState.from_json(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            fresh_state = SyncState()
+        if fresh_state.last_synced_run_id > target_state.last_synced_run_id:
+            raise BackfillError(
+                "sync-state advanced past our target under the lock "
+                f"(last_synced_run_id={fresh_state.last_synced_run_id} > {target_state.last_synced_run_id}) — "
+                "a collector tick integrated newer runs; aborting before any write (re-run is idempotent)"
             )
         append_lines_locked(master_path, [p[2] for p in batch])
         written_state = write_state_locked(state_path, target_state)
@@ -489,7 +536,11 @@ def check_postconditions(
 
     counts = summary["per_status_counts"]
     integrated = counts.get(STATUS_NEW, 0) + counts.get(STATUS_OVERLAP_MASTER, 0) + counts.get(STATUS_OVERLAP_LEGACY, 0)
-    bad = sum(v["count"] for v in summary["bad_reasons"].values())
+    # bad_reasons already carries the STATUS_NO_ARTIFACT bucket (classify_fragments
+    # files artifact-less runs there), so the no_artifact count enters the balance
+    # exactly once, via counts below — summing it into `bad` too double-counts N
+    # artifact-less window runs and false-fails a correct ledger (NFM-5941 blocker).
+    bad = sum(v["count"] for k, v in summary["bad_reasons"].items() if k != STATUS_NO_ARTIFACT)
     if integrated + bad + counts.get(STATUS_NO_ARTIFACT, 0) != summary["window_runs"]:
         failures.append("window run accounting does not balance (integrated+bad+no_artifact != window_runs)")
 
@@ -584,6 +635,7 @@ def run_apply(args: argparse.Namespace, token: str) -> tuple[dict[str, Any], Syn
 
     master_sha, master_events, master_ids_list = read_jsonl(master_path, "master")
     legacy_sha, legacy_events, legacy_ids_list = read_jsonl(legacy_path, "legacy")
+    validate_legacy_schema(legacy_events, legacy_path)
     master_ids, legacy_ids = set(master_ids_list), set(legacy_ids_list)
     pre_state = SyncState.from_json(state_path.read_text(encoding="utf-8"))
     era_a_bad = sorted(set(pre_state.bad_run_ids))
@@ -637,6 +689,7 @@ def run_dry(args: argparse.Namespace, token: str) -> tuple[dict[str, Any], SyncS
     master_path, state_path, legacy_path = preflight(args)
     master_sha, master_events, master_ids_list = read_jsonl(master_path, "master")
     legacy_sha, legacy_events, legacy_ids_list = read_jsonl(legacy_path, "legacy")
+    validate_legacy_schema(legacy_events, legacy_path)
     master_ids, legacy_ids = set(master_ids_list), set(legacy_ids_list)
     pre_state = SyncState.from_json(state_path.read_text(encoding="utf-8"))
 
