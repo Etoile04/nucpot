@@ -80,6 +80,16 @@ _UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 # ADR-KR3-A2 §Failure-mode 3: clock-skew window between GH API and host.
 SYNC_SKEW_MINUTES = 5
 
+# NFM-5933 P1: a pending run (listed but not yet integrated) that keeps
+# failing the same stage must not stay invisible. The first three
+# consecutive failures stay transient (retry on the next iteration);
+# on the attempt AFTER the third consecutive failure (>3) the collector
+# fires the alert path and the CLI exits non-zero so the workflow step
+# turns red. The counter lives in a sidecar next to the sync-state so
+# it survives across executor runs without changing the sync-state JSON
+# shape (the shape the remote append script writes under flock).
+MAX_CONSECUTIVE_FAILURES = 3
+
 
 # ---------------------------------------------------------------------------
 # Domain types
@@ -212,6 +222,7 @@ class Backend(Protocol):
     ) -> None: ...
     def alert_bad_fragment(self, run_id: int, reason: str) -> None: ...
     def alert_append_failure(self, reason: str) -> None: ...
+    def alert_pending_failure(self, run_id: int, attempts: int, reason: str) -> None: ...
 
 
 def _gh_api(repo: str, *args: str) -> Any:
@@ -308,7 +319,11 @@ class GhBackend:
             env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
         )
         if proc.returncode != 0:
-            raise RuntimeError(f"gh run download failed for run_id={run_id}: {proc.stderr.strip()}")
+            # NFM-5933: keep the raw gh stderr in the raised message (the
+            # per-run stdout line and the tripwire alert both carry it),
+            # capped so a pathological stderr dump cannot flood the log.
+            stderr_tail = proc.stderr.strip()[-400:]
+            raise RuntimeError(f"gh run download failed for run_id={run_id}: {stderr_tail}")
 
     def append_and_advance(
         self,
@@ -503,19 +518,107 @@ class GhBackend:
             # code path again.
             pass
 
+    def alert_pending_failure(self, run_id: int, attempts: int, reason: str) -> None:
+        """NFM-5933 tripwire: a pending run failed >3 consecutive attempts.
+
+        Fires exactly once per crossing (on the attempt AFTER the third
+        consecutive failure) from ``collect``; the CLI additionally exits
+        non-zero so the executor step turns red even with no webhook
+        configured (the non-zero exit is the tripwire; the alert is
+        belt-and-braces until P4 wires a real channel).
+        """
+        webhook = os.environ.get("ALERT_WEBHOOK", "")
+        if not webhook:
+            return
+        body = json.dumps(
+            {
+                "msg_type": "interactive",
+                "card": {
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": "Prod deploy-event pending run stuck",
+                        },
+                        "template": "red",
+                    },
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                f"**run_id**: `{run_id}`\n"
+                                f"**consecutive failures**: {attempts} "
+                                f"(> {MAX_CONSECUTIVE_FAILURES})\n"
+                                f"**reason**: {reason}\n"
+                                "**action**: collector exits non-zero; state NOT advanced; "
+                                "the same run will be re-attempted on the next iteration."
+                            ),
+                        }
+                    ],
+                },
+            }
+        )
+        try:
+            subprocess.run(
+                [
+                    "curl",
+                    "-sf",
+                    "-X",
+                    "POST",
+                    webhook,
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    body,
+                ],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        except Exception:
+            # Alert failure is non-fatal — the non-zero exit already
+            # tripped the wire; this is only the extra page.
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
 
-def collect(state: SyncState, backend: Backend) -> SyncState:
+def collect(
+    state: SyncState,
+    backend: Backend,
+    attempts: dict[int, int] | None = None,
+    execute: bool = True,
+) -> SyncState:
     """Top-level orchestration. Returns the next state to persist.
 
     The caller persists the returned state ONLY if it differs from the
     input (an SSH/append failure leaves the original state untouched,
     so the caller can detect that case by comparing).
+
+    NFM-5933 P1 instrumentation:
+
+    - ``attempts``: optional caller-owned map of ``run_id -> consecutive
+      failed attempts`` for pending runs. ``collect`` bumps it on every
+      failed download / failed append and clears entries when the run
+      integrates or leaves the pending set (bad-marked). Pass a dict to
+      survive across iterations; ``None`` (default) uses a throwaway map
+      so existing callers are unaffected.
+    - ``execute``: when ``False`` (the ``--dry-run`` fire), NO write
+      side effect runs — no ``append_and_advance``, no alerts, no
+      attempt-counter mutation. This makes the flag honor its own
+      documented contract ("Validate + plan only; do not call backend
+      side effects") — the pre-P1 code appended for real under dry-run.
+      Non-dry-run behavior is unchanged.
+    - Every iteration prints a per-stage stdout trail (window, listed
+      count, per-run artifact counts, download/validate/append verdicts,
+      end-of-iteration summary) so a quiet tick is distinguishable from
+      a dead one.
     """
+    if attempts is None:
+        attempts = {}
+
     # Decide the lower bound from the previous sync. If we have never
     # synced, start from the SYNC_SKEW window before "now" so we don't
     # pull the entire history (we only care about recent runs).
@@ -526,11 +629,17 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
     else:
         since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
+    print(
+        f"[collector] listing Production Deployment runs created>={since.isoformat()} "
+        f"(last_synced_at={state.last_synced_at!r}, last_synced_run_id={state.last_synced_run_id})",
+        flush=True,
+    )
 
     runs = sorted(
         backend.list_production_runs(since),
         key=lambda r: r.run_id,
     )
+    print(f"[collector] listed {len(runs)} Production Deployment run(s)", flush=True)
 
     next_state = SyncState(
         last_synced_run_id=state.last_synced_run_id,
@@ -539,16 +648,37 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
     )
 
     pending: list[tuple[int, str]] = []
+    n_bad_marked = 0
+    n_download_failed = 0
 
     for run in runs:
         if run.run_id <= next_state.last_synced_run_id:
+            print(
+                f"[collector] run {run.run_id}: skipped (<= last_synced_run_id "
+                f"{next_state.last_synced_run_id})",
+                flush=True,
+            )
             continue
         if run.run_id in next_state.bad_run_ids:
+            print(f"[collector] run {run.run_id}: skipped (in bad_run_ids)", flush=True)
             continue
+
+        print(
+            f"[collector] run {run.run_id}: {len(run.artifact_ids)} prod-deploy-event artifact(s)",
+            flush=True,
+        )
 
         if not run.artifact_ids:
             next_state.bad_run_ids.append(run.run_id)
-            backend.alert_bad_fragment(run.run_id, "no prod-deploy-event-* artifact uploaded")
+            n_bad_marked += 1
+            # The run left the pending set — its counter is moot.
+            attempts.pop(run.run_id, None)
+            if execute:
+                backend.alert_bad_fragment(run.run_id, "no prod-deploy-event-* artifact uploaded")
+            print(
+                f"[collector] run {run.run_id}: no prod-deploy-event artifact -> bad_run_ids",
+                flush=True,
+            )
             continue
 
         artifact_id = run.artifact_ids[0]
@@ -557,18 +687,57 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             backend.download_artifact(run.run_id, artifact_id, dest)
         except Exception as exc:
             # Transient: leave state alone so the next iteration retries.
-            print(
-                f"[collector] download failed for run_id={run.run_id}: {exc}",
-                file=sys.stderr,
-            )
+            # NFM-5933: count the consecutive failure (real attempts
+            # only — a dry-run fire does not count); after
+            # MAX_CONSECUTIVE_FAILURES in a row the NEXT failure fires
+            # the alert path, and main() exits non-zero.
+            n_download_failed += 1
+            streak = attempts.get(run.run_id, 0) + 1
+            if execute:
+                attempts[run.run_id] = streak
+                print(
+                    f"[collector] run {run.run_id}: download FAILED "
+                    f"(consecutive attempt {streak}/{MAX_CONSECUTIVE_FAILURES + 1} "
+                    f"tripwires at >{MAX_CONSECUTIVE_FAILURES}): {exc}",
+                    flush=True,
+                )
+                if streak == MAX_CONSECUTIVE_FAILURES + 1:
+                    backend.alert_pending_failure(
+                        run.run_id, streak, f"download: {exc}"
+                    )
+            else:
+                print(
+                    f"[collector] run {run.run_id}: download FAILED "
+                    f"(dry-run: not counted): {exc}",
+                    flush=True,
+                )
             continue
+
+        print(
+            f"[collector] run {run.run_id}: download OK (artifact {artifact_id})",
+            flush=True,
+        )
+
+        # NOTE NFM-5933: the streak is NOT cleared on download success —
+        # the run has not integrated yet. If it then fails at validation
+        # it leaves the pending set (counter popped there); if it fails
+        # at append the append-failure bump grows the same streak. The
+        # streak only clears when the run integrates (append OK clears
+        # all) or leaves the pending set (bad-marked).
 
         fragment_path = dest / f"{run.run_id}.jsonl"
         if not fragment_path.exists():
             candidates = list(dest.glob("*.jsonl"))
             if not candidates:
                 next_state.bad_run_ids.append(run.run_id)
-                backend.alert_bad_fragment(run.run_id, "artifact contains no .jsonl file")
+                n_bad_marked += 1
+                attempts.pop(run.run_id, None)
+                if execute:
+                    backend.alert_bad_fragment(run.run_id, "artifact contains no .jsonl file")
+                print(
+                    f"[collector] run {run.run_id}: artifact has no .jsonl -> bad_run_ids",
+                    flush=True,
+                )
                 continue
             fragment_path = candidates[0]
 
@@ -577,9 +746,20 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             events = validate_fragment(run.run_id, text)
         except FragmentInvalid as exc:
             next_state.bad_run_ids.append(run.run_id)
-            backend.alert_bad_fragment(run.run_id, exc.reason)
+            n_bad_marked += 1
+            attempts.pop(run.run_id, None)  # run left the pending set
+            if execute:
+                backend.alert_bad_fragment(run.run_id, exc.reason)
+            print(
+                f"[collector] run {run.run_id}: fragment INVALID ({exc.reason}) -> bad_run_ids",
+                flush=True,
+            )
             continue
 
+        print(
+            f"[collector] run {run.run_id}: fragment VALID ({len(events)} event)",
+            flush=True,
+        )
         pending.append((run.run_id, json.dumps(events[0], separators=(",", ":"))))
 
     if pending:
@@ -588,6 +768,21 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
         # advance target is the highest run_id in ``pending``.
         next_state.last_synced_run_id = pending[-1][0]
         next_state.last_synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(
+            f"[collector] append: {len(pending)} fragment(s), advancing to run_id "
+            f"{next_state.last_synced_run_id}"
+            + (" (dry-run: plan only, no write)" if not execute else ""),
+            flush=True,
+        )
+        if not execute:
+            # --dry-run contract: plan only. next_state carries the plan
+            # for the caller to print; it is NOT persisted (main skips
+            # _save_state) and no remote write happens.
+            print(
+                _summary_line(runs, pending, n_bad_marked, n_download_failed, attempts),
+                flush=True,
+            )
+            return next_state
         try:
             backend.append_and_advance(pending, next_state)
         except Exception as exc:
@@ -601,13 +796,88 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
             # cron fallback's silent stderr line is least actionable.
             reason = f"{type(exc).__name__}: {exc}"
             print(
-                f"[collector] append failed, state NOT advanced: {reason}",
-                file=sys.stderr,
+                f"[collector] append FAILED, state NOT advanced: {reason}",
+                flush=True,
             )
             backend.alert_append_failure(reason)
+            # NFM-5933: every pending run failed to integrate this
+            # attempt — bump each streak so a persistently failing
+            # append eventually trips the non-zero exit too.
+            for rid, _ in pending:
+                attempts[rid] = attempts.get(rid, 0) + 1
+            print(
+                _summary_line(runs, pending, n_bad_marked, n_download_failed, attempts),
+                flush=True,
+            )
             return state
 
+        attempts.clear()  # all pending runs integrated
+        print(
+            f"[collector] append OK: state advanced to run_id {next_state.last_synced_run_id}",
+            flush=True,
+        )
+
+    print(_summary_line(runs, pending, n_bad_marked, n_download_failed, attempts), flush=True)
     return next_state
+
+
+def _summary_line(
+    runs: list,
+    pending: list,
+    n_bad_marked: int,
+    n_download_failed: int,
+    attempts: dict[int, int],
+) -> str:
+    """One-line end-of-iteration verdict — printed on EVERY path (even a
+    fully quiet tick) so a quiet line is distinguishable from a dead one."""
+    streaks = {rid: n for rid, n in sorted(attempts.items()) if n > 0} or "none"
+    tripped = tripwired(attempts) or "none"
+    return (
+        f"[collector] iteration summary: listed={len(runs)} pending={len(pending)} "
+        f"bad_marked={n_bad_marked} download_failed={n_download_failed} "
+        f"pending_failures={streaks} tripwired={tripped}"
+    )
+
+
+def tripwired(attempts: dict[int, int]) -> dict[int, int]:
+    """NFM-5933: pending runs whose consecutive-failure streak exceeds
+    MAX_CONSECUTIVE_FAILURES. The CLI exits non-zero when this is
+    non-empty, turning the executor step red."""
+    return {rid: n for rid, n in attempts.items() if n > MAX_CONSECUTIVE_FAILURES}
+
+
+def _resolve_attempts_path(sync_state_path: Path) -> Path:
+    """Sidecar path for the consecutive-failure counter, derived from the
+    sync-state path so the two always live together on the host."""
+    return sync_state_path.with_suffix(".attempts.json")
+
+
+def _load_attempts(path: Path) -> dict[int, int]:
+    try:
+        obj = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    out: dict[int, int] = {}
+    for key, value in obj.items():
+        try:
+            rid, n = int(key), int(value)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            out[rid] = n
+    return out
+
+
+def _save_attempts(path: Path, attempts: dict[int, int]) -> None:
+    """Atomic write (tmp + rename) — a torn sidecar must never reset or
+    inflate a live failure streak."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({str(rid): attempts[rid] for rid in sorted(attempts)}, indent=2)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(payload + "\n")
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +991,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate + plan only; do not call backend side effects.",
     )
+    parser.add_argument(
+        "--attempts-path",
+        default=None,
+        help="Path to the NFM-5933 consecutive-failure sidecar JSON. "
+        "Defaults to the sync-state path with the suffix replaced "
+        "(<sync-state>.attempts.json). Ignored under --dry-run.",
+    )
     args = parser.parse_args(argv)
 
     sync_state_path = _resolve_sync_state_path(args.sync_state)
@@ -734,13 +1011,15 @@ def main(argv: list[str] | None = None) -> int:
         str(master_jsonl_path),
         str(sync_state_path),
     )
-    try:
-        next_state = collect(state, backend)
-    except Exception as exc:
-        print(f"[collector] iteration failed: {exc}", file=sys.stderr)
-        return 1
 
     if args.dry_run:
+        # Validate + plan only: no remote write, no alert, no counter
+        # mutation (a validate-only fire is not a real attempt).
+        try:
+            next_state = collect(state, backend, execute=False)
+        except Exception as exc:
+            print(f"[collector] iteration failed: {exc}", file=sys.stderr)
+            return 1
         print(
             json.dumps(
                 {
@@ -754,7 +1033,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    attempts_path = (
+        Path(args.attempts_path) if args.attempts_path else _resolve_attempts_path(sync_state_path)
+    )
+    attempts = _load_attempts(attempts_path)
+    try:
+        next_state = collect(state, backend, attempts=attempts)
+    except Exception as exc:
+        print(f"[collector] iteration failed: {exc}", file=sys.stderr)
+        return 1
+
+    _save_attempts(attempts_path, attempts)
     _save_state(sync_state_path, next_state)
+    tripped = tripwired(attempts)
     print(
         json.dumps(
             {
@@ -762,10 +1053,23 @@ def main(argv: list[str] | None = None) -> int:
                 "last_synced_run_id": next_state.last_synced_run_id,
                 "last_synced_at": next_state.last_synced_at,
                 "bad_run_ids": next_state.bad_run_ids,
+                "pending_failures": {str(k): v for k, v in sorted(attempts.items())},
+                "tripwired": {str(k): v for k, v in sorted(tripped.items())},
             },
             indent=2,
         )
     )
+    if tripped:
+        # NFM-5933 tripwire: the executor step must turn red so the
+        # stuck pending run cannot sit invisible behind a green tick.
+        print(
+            f"[collector] TRIPWIRE: pending run(s) exceeded "
+            f"{MAX_CONSECUTIVE_FAILURES} consecutive failures: "
+            f"{ {rid: n for rid, n in sorted(tripped.items())} }",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     return 0
 
 
