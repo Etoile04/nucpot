@@ -112,9 +112,8 @@ export function MaterialSubgraphView({ materialId }: MaterialSubgraphViewProps) 
       //
       // NFM-4471 (W2) — the resolver owns the id-space bridge and returns the
       // bare `/materials/{materials_id}` route; the *destination tab* is a
-      // caller concern, so the `/properties` suffix is appended here (same as
-      // MaterialGraphView) to deep-link into the Properties panel rather than
-      // the bare detail page.
+      // caller concern, so the `/properties` suffix is appended here to
+      // deep-link into the Properties panel rather than the bare detail page.
       const decision = resolveMaterialLink(node)
       if (decision.kind === "navigate") {
         router.push(`${decision.href}/properties`)

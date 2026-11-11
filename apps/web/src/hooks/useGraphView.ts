@@ -1,6 +1,6 @@
 /**
- * useGraphView — unified graph data state machine for the three KG
- * consumer views (KgExploreView, MaterialGraphView, MaterialSubgraphView).
+ * useGraphView — unified graph data state machine for the two KG
+ * consumer views (KgExploreView, MaterialSubgraphView).
  *
  * Wraps TanStack Query's `useQuery` and collapses the various flags
  * (isLoading, isFetching, isError, data, ...) into a single 5-state
@@ -18,8 +18,8 @@
  *                 (e.g. user clicks the explicit Retry button)
  *
  * NFM-4449 Q4 + Q6: replaces the hand-rolled `useState` state machines
- * in KgExploreView, MaterialGraphView, and MaterialSubgraphView. All
- * three consumers now share the same `data / status / retry` shape.
+ * in KgExploreView and MaterialSubgraphView. Both consumers now share
+ * the same `data / status / retry` shape.
  */
 
 import { useCallback, useMemo } from "react"
