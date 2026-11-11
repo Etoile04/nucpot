@@ -1,183 +1,79 @@
-"""Shared test fixtures for API integration tests."""
+"""Shared test fixtures for API integration tests.
+
+C2 three-layer assembly (NFM-5951 step 1): the reusable core primitives
+(env pins, SQLite-compat schema helpers, db/pg session fixtures, role
+fixtures) live in ``tests/support/``.  This root conftest shrinks to:
+
+- re-exports of the core layer (the 432 flat test files keep their
+  current fixture/import surface unchanged — ``scripts/tests`` and
+  ``test_migration_080_kg_orphan_bridge.py`` import helpers via
+  ``tests.conftest``);
+- ``pytest_configure`` — single registration point for the
+  ``no_auto_auth`` marker;
+- the three autouse fixtures, kept as-is.  Ownership is explicit: the two
+  rate-limit / auto-auth fixtures follow the full-app cluster in the
+  step-4+ split; ``_clear_v2_flag_cache`` stays in the core layer;
+- the ``scripts/`` sys.path injection, kept for now (consumer:
+  ``test_phase_gate.py`` 15-line import + batch3-ci.yml PR-level job;
+  its migration is step 5b, out of this ticket's scope).
+"""
 
 from __future__ import annotations
 
-import os
 import sys
-import uuid
-from collections.abc import Generator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
-# NFM-5058 / PR #1400 run 2: pin BLAS/OpenMP thread pools to 1 BEFORE the
-# first numpy/xgboost-backed import below can load them. Threaded BLAS
-# reduction order is not stable across runs or hardware generations, and
-# with a fixed NSGA-II seed that 1e-16-level noise amplifies into a visibly
-# different Pareto front (CI per-axis drift 0.051 vs the 0.05 tolerance
-# against a golden that reproduces exactly on the generating box).
-# setdefault keeps an explicit caller override authoritative.
-for _threads_var in (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-):
-    os.environ.setdefault(_threads_var, "1")
-
 # Ensure repo-root scripts/ is importable for phase gate and eval scripts.
+# 暂保留 (NFM-5951 step 1): consumer test_phase_gate.py 15-line import +
+# batch3-ci.yml:105 PR-level job are running against it; migration is step 5b.
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+# --- 环境钉子 must run before any numpy/xgboost-backed import below. -------
+# The pins live in tests/support/env.py (NFM-5058 / PR #1400 run 2); this
+# side-effect import must stay above the ``nfm_db`` imports — isort would
+# hoist it into the first-party section below them (t > n), which would let
+# threaded BLAS load before the pins (see tests/support/env.py for why the
+# order is load-bearing).  ``setdefault`` keeps caller overrides authoritative.
+import tests.support.env  # noqa: E402,F401,I001
+
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import JSON, DefaultClause, event  # noqa: E402
-from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB  # noqa: E402
-from sqlalchemy.ext.asyncio import (  # noqa: E402
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Core-layer re-exports (NFM-5951 step 1).  Fixture registration + import-
+# surface compatibility: fixtures re-exported into this namespace are
+# registered for the whole suite exactly as before the move.
+# ---------------------------------------------------------------------------
 from nfm_db.database import get_db  # noqa: E402
 from nfm_db.main import app  # noqa: E402
-from nfm_db.models import Base, BlogRole, User  # noqa: E402
-from nfm_db.services.auth_service import create_access_token  # noqa: E402
-
-# Deterministic user IDs for FK seed data (matched by test_blog_post_service,
-# test_blog_auth, test_md_verification_service_edge_cases).
-_SEED_AUTHOR_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
-_SEED_REVIEWER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
-_SEED_OTHER_ID = uuid.UUID("a0000000-0000-0000-0000-000000000003")
-
-
-# ---------------------------------------------------------------------------
-# SQLite compatibility helpers
-# ---------------------------------------------------------------------------
-
-
-def _strip_dangling_fks(metadata) -> None:
-    """Remove FKs whose target table is absent from the metadata.
-
-    ``extraction_figures.job_id`` references ``extraction_jobs`` which is
-    not registered — SQLAlchemy's ``sort_tables_and_constraints`` raises
-    ``NoReferencedTableError``.  We strip these before ``create_all``.
-    Valid FKs (whose target *is* in the metadata) are kept so that ORM
-    relationships can resolve their join conditions.
-    """
-    registered = set(metadata.tables.keys())
-    for table in metadata.tables.values():
-        for col in table.columns:
-            dangling = [
-                fk
-                for fk in list(col.foreign_keys)
-                if fk._colspec.split(".")[0].strip('"') not in registered
-            ]
-            for fk in dangling:
-                col.foreign_keys.discard(fk)
-        table_fks_to_remove = [
-            fkc
-            for fkc in list(table.constraints)
-            if hasattr(fkc, "_colspec") and fkc._colspec.split(".")[0].strip('"') not in registered
-        ]
-        for fkc in table_fks_to_remove:
-            table.constraints.discard(fkc)
-
-
-def _replace_jsonb(metadata) -> None:
-    """Replace JSONB/ARRAY columns with TEXT/JSON for SQLite compat.
-
-    Also strips PostgreSQL ``::type`` casts out of server defaults.  SQLite
-    emits ``server_default`` text verbatim, so a Postgres-correct default
-    like ``'{}'::jsonb`` (NFM-4548 ``property_measurements.conditions``,
-    ``dataset_versions.row_ids`` / ``source_ids``) fails ``create_all`` with
-    ``unrecognized token: ":"``.  Dropping the cast leaves ``'{}'``, which is
-    valid on SQLite and semantically identical.
-    """
-    import re
-
-    from sqlalchemy import ARRAY as SA_ARRAY
-    from sqlalchemy import text as sa_text
-    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
-
-    for table in metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, PG_JSONB):
-                col.type = JSON()
-            if isinstance(col.type, (PG_ARRAY, SA_ARRAY)):
-                col.type = JSON()
-
-            default = getattr(col.server_default, "arg", None)
-            default_sql = getattr(default, "text", None)
-            if isinstance(default_sql, str) and "::" in default_sql:
-                col.server_default = DefaultClause(sa_text(re.sub(r"::\s*\w+", "", default_sql)))
-
-
-def _safe_create_all(sync_conn, metadata) -> None:
-    """Create all tables, stripping dangling FKs first.
-
-    ``conn.run_sync`` passes ``(sync_connection, *args)`` as the callable's
-    positional arguments.
-    """
-    _replace_jsonb(metadata)
-    _strip_dangling_fks(metadata)
-    metadata.create_all(sync_conn)
-
-
-# ---------------------------------------------------------------------------
-# NFM-4159 — attribution view DDL for tests.
-# ---------------------------------------------------------------------------
-# ``Base.metadata.create_all`` only handles tables; SQL views are out-of-band.
-# Tests for ``GET /api/v1/properties/{id}/measurements`` and
-# ``GET /api/v1/datasets/{id}`` SELECT from
-# ``v_property_measurement_attribution`` (migration 076).  We run the same
-# DDL inline so the test schema mirrors the migration-applied prod schema
-# without forcing every test to drive alembic.
-#
-# Kept as a single string constant so prod migration 076 + this fixture
-# are trivially diff-able.
-_ATTRIBUTION_VIEW_DDL = """
-CREATE VIEW IF NOT EXISTS v_property_measurement_attribution AS
-SELECT
-    pm.id                                                         AS measurement_id,
-    pm.dataset_id                                                 AS dataset_id,
-    CASE
-        WHEN pm.created_at < '2026-09-02 00:00:00'
-         AND d.source_id IS NULL
-        THEN 'lost'
-        ELSE 'intact'
-    END                                                           AS attribution_status,
-    CASE
-        WHEN pm.created_at < '2026-09-02 00:00:00'
-         AND d.source_id IS NULL
-        THEN '2026-09-02'
-        ELSE NULL
-    END                                                           AS lost_at,
-    (
-        SELECT count(*)
-        FROM property_measurements pm2
-        JOIN datasets d2 ON d2.id = pm2.dataset_id
-        WHERE pm2.dataset_id = pm.dataset_id
-          AND pm2.created_at < '2026-09-02 00:00:00'
-          AND d2.source_id IS NULL
-    )                                                             AS sibling_placeholder_count
-FROM property_measurements pm
-JOIN datasets d ON d.id = pm.dataset_id
-"""
-
-
-def _create_attribution_view(sync_conn) -> None:
-    """Install the ``v_property_measurement_attribution`` view for tests.
-
-    Idempotent via ``CREATE VIEW IF NOT EXISTS`` (SQLite) / ``CREATE OR
-    REPLACE VIEW`` (Postgres — re-issued as DROP+CREATE below for SQLite
-    safety).  Runs after ``_safe_create_all`` so the underlying tables
-    exist.
-    """
-    from sqlalchemy import text
-
-    sync_conn.execute(text("DROP VIEW IF EXISTS v_property_measurement_attribution"))
-    sync_conn.execute(text(_ATTRIBUTION_VIEW_DDL))
+from nfm_db.models import BlogRole, User  # noqa: E402
+from tests.support.db_fixtures import (  # noqa: E402,F401
+    _SEED_AUTHOR_ID,
+    db,
+    db_session,
+    pg_session,
+)
+from tests.support.role_fixtures import (  # noqa: E402,F401
+    admin_headers,
+    admin_user,
+    domain_expert_headers,
+    domain_expert_user,
+    editor_headers,
+    editor_user,
+    reviewer_headers,
+    reviewer_user,
+)
+from tests.support.sqlite_compat import (  # noqa: E402,F401
+    _ATTRIBUTION_VIEW_DDL,
+    _create_attribution_view,
+    _replace_jsonb,
+    _safe_create_all,
+    _strip_dangling_fks,
+)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -319,12 +215,16 @@ def _reenable_rate_limit_overrides(request) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clear_v2_flag_cache() -> Generator[None, None, None]:
+def _clear_v2_flag_cache() -> AsyncIterator[None]:
     """Prevent EXTRACTION_PIPELINE_V2 lru_cache from leaking across tests.
 
     Tests that set ``NFM_EXTRACTION_V2_ENABLED=true`` (e.g.
     ``test_extraction_v2_flag_verification``) can poison the cache for
     subsequent V4 API tests that route through the dispatcher.
+
+    Core-layer owned (NFM-5951 step 1): stays with the core layer in the
+    step-4+ split (the two rate-limit / auto-auth fixtures above follow
+    the full-app cluster instead).
     """
     try:
         from nfm_db.services.extraction_pipeline_dispatch import (
@@ -339,119 +239,10 @@ def _clear_v2_flag_cache() -> Generator[None, None, None]:
         yield
 
 
+# The ``db_session`` / ``admin_user`` parameters below intentionally shadow
+# the re-exported fixture names (pytest resolves fixtures by parameter name).
 @pytest.fixture
-async def db_session() -> AsyncSession:
-    """Create an in-memory SQLite async session for testing."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(_safe_create_all, Base.metadata)
-        await conn.run_sync(_create_attribution_view)
-
-    session_factory = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    async with session_factory() as session:
-        # Seed deterministic users so FK references in blog/md_verification tests resolve.
-        for uid, name, email in [
-            (_SEED_AUTHOR_ID, "_fk_seed_author", "_fk_author@test.com"),
-            (_SEED_REVIEWER_ID, "_fk_seed_reviewer", "_fk_reviewer@test.com"),
-            (_SEED_OTHER_ID, "_fk_seed_other", "_fk_other@test.com"),
-        ]:
-            existing = await session.get(User, uid)
-            if existing is None:
-                session.add(
-                    User(
-                        id=uid,
-                        username=name,
-                        email=email,
-                        hashed_password="hashed",
-                    )
-                )
-        await session.flush()
-        yield session
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    await engine.dispose()
-
-
-# ---------------------------------------------------------------------------
-# NFM-4159 — ``db`` fixture alias.
-# ---------------------------------------------------------------------------
-# New test files pin ``db: AsyncSession`` as the per-test session fixture.
-# The long-standing shared fixture is ``db_session``; alias here so test
-# code reads naturally without rewriting shared infrastructure.
-@pytest.fixture
-async def db(db_session: AsyncSession) -> AsyncSession:
-    """Per-test async session — alias for ``db_session`` (NFM-4159)."""
-    return db_session
-
-
-# ---------------------------------------------------------------------------
-# NFM-2032: real-Postgres integration fixture (opt-in)
-# ---------------------------------------------------------------------------
-# Activated by setting NFM_TEST_DATABASE_URL to a disposable asyncpg
-# URL (e.g. ``postgresql+asyncpg://nfm:nfm@localhost:5432/nfm_test_nfm2032``).
-# When the env var is unset the fixture is auto-skipped, so the regular
-# SQLite ``db_session`` continues to drive the rest of the test suite.
-# This is the only piece of the test stack that exercises the real
-# Postgres dialect against the 5-tuple composite UNIQUE INDEX introduced
-# by migration 033; SQLAlchemy's SQLite dialect silently accepts
-# duplicate UNIQUE rows in some configurations, so the SQLite suite
-# cannot be trusted on its own for race detection.
-
-
-_NFM_TEST_PG_URL = os.environ.get("NFM_TEST_DATABASE_URL", "").strip()
-
-
-@pytest.fixture
-async def pg_session() -> AsyncSession:
-    """Create a disposable Postgres async session for NFM-2032 SQL probes.
-
-    Skips when ``NFM_TEST_DATABASE_URL`` is unset; the test calling
-    this fixture must therefore be decorated with
-    ``@pytest.mark.skipif(not _NFM_TEST_PG_URL, ...)`` or equivalent
-    so the suite stays green on CI without Postgres.
-
-    Schema is created from the application metadata (no migrations
-    applied); the dedup tests assert the composite UNIQUE INDEX is
-    enforced by the DB regardless of how the schema was built.
-    """
-    if not _NFM_TEST_PG_URL:
-        pytest.skip("NFM_TEST_DATABASE_URL is not set; skipping real-Postgres test")
-
-    engine = create_async_engine(_NFM_TEST_PG_URL, echo=False)
-    # Replace JSONB/ARRAY with JSON because the test metadata is
-    # written once for both SQLite and Postgres; the prod sessions
-    # use the JSONB/ARRAY types so the schema matches production.
-    async with engine.begin() as conn:
-        await conn.run_sync(_safe_create_all, Base.metadata)
-
-    session_factory = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    async with session_factory() as session:
-        yield session
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-@pytest.fixture
-async def async_client(db_session: AsyncSession):
+async def async_client(db_session: AsyncSession):  # noqa: F811
     """Create an async test client for the FastAPI app with database override."""
 
     # Override the database dependency
@@ -469,95 +260,7 @@ async def async_client(db_session: AsyncSession):
 
 
 @pytest.fixture
-async def admin_user(db_session: AsyncSession):
-    """Create an admin user for testing."""
-    user = User(
-        username="admin",
-        email="admin@example.com",
-        hashed_password="hashed_password_here",
-        blog_role=BlogRole.ADMIN,
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-@pytest.fixture
-async def editor_user(db_session: AsyncSession):
-    """Create an editor user for testing."""
-    user = User(
-        username="editor",
-        email="editor@example.com",
-        hashed_password="hashed_password_here",
-        blog_role=BlogRole.EDITOR,
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-@pytest.fixture
-async def reviewer_user(db_session: AsyncSession):
-    """Create a reviewer user for testing."""
-    user = User(
-        username="reviewer",
-        email="reviewer@example.com",
-        hashed_password="hashed_password_here",
-        blog_role=BlogRole.REVIEWER,
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-@pytest.fixture
-async def domain_expert_user(db_session: AsyncSession):
-    """Create a domain_expert user for testing."""
-    user = User(
-        username="domain_expert",
-        email="domain_expert@example.com",
-        hashed_password="hashed_password_here",
-        blog_role=BlogRole.DOMAIN_EXPERT,
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-@pytest.fixture
-async def admin_headers(admin_user: User):
-    """Create headers with admin authentication token."""
-    token = create_access_token(data={"sub": str(admin_user.id)})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-async def editor_headers(editor_user: User):
-    """Create headers with editor authentication token."""
-    token = create_access_token(data={"sub": str(editor_user.id)})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-async def reviewer_headers(reviewer_user: User):
-    """Create headers with reviewer authentication token."""
-    token = create_access_token(data={"sub": str(reviewer_user.id)})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-async def domain_expert_headers(domain_expert_user: User):
-    """Create headers with domain_expert authentication token."""
-    token = create_access_token(data={"sub": str(domain_expert_user.id)})
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-async def authenticated_client(db_session: AsyncSession, admin_user: User):
+async def authenticated_client(db_session: AsyncSession, admin_user: User):  # noqa: F811
     """Create an async test client with admin authentication headers."""
     from nfm_db.services.auth_service import create_access_token
 
