@@ -14,6 +14,12 @@ sources with the exact extractor used by scripts/count_model_imports.py
 is deliberately NOT a hardcoded snapshot: a frozen name list is blind to
 newly added direct imports and would reproduce the very hole this guard
 exists to close (NFM-5955 review patch — same rationale as rg itself).
+
+Side 2 also covers package/submodule-bind imports (``import
+nfm_db.models[.<module>]`` / ``from nfm_db import models``) — forms the
+from-import extractor structurally cannot see. Each must resolve to an
+importable module; the function-local ontology_version bind in
+extraction_gaps.py is the live case today.
 """
 
 from __future__ import annotations
@@ -27,6 +33,8 @@ from types import ModuleType
 from count_model_imports import (
     CONSUMER_ROOTS,
     MODELS_IMPORT_RE,
+    PACKAGE_BIND_RE,
+    SWEEP_SELF_EXCLUDE,
     is_models_package_file,
     iter_py_files,
     parse_import_names,
@@ -69,6 +77,35 @@ def _scan_direct_surface(repo_root: Path) -> tuple[dict[str, set[str]], dict[str
                     names_to_files.setdefault(name, set()).add(rel)
         root_statements[root_rel] = statements
     return names_to_files, root_statements
+
+
+def _scan_bind_modules(repo_root: Path) -> dict[str, set[str]]:
+    """Map package/submodule-bind module paths to the files importing them.
+
+    Covers bind forms the from-import extractor never matches (``import
+    nfm_db.models[.<module>]``, ``from nfm_db import models``) using the
+    shared regex from the counter module. Applies the same
+    ``SWEEP_SELF_EXCLUDE`` as the sweep: the counter's own documentation
+    quotes the guarded forms, and a measuring stick is not a consumer.
+    """
+    modules_to_files: dict[str, set[str]] = {}
+    for root_rel in CONSUMER_ROOTS:
+        root = repo_root / root_rel
+        for path in iter_py_files(root):
+            rel = path.relative_to(repo_root).as_posix()
+            if is_models_package_file(rel) or rel in SWEEP_SELF_EXCLUDE:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for match in PACKAGE_BIND_RE.finditer(text):
+                if match.group("module"):
+                    module_path: str = match.group("module")
+                else:
+                    clause = match.group("clause") or ""
+                    if "models" not in parse_import_names(clause):
+                        continue
+                    module_path = "nfm_db.models"
+                modules_to_files.setdefault(module_path, set()).add(rel)
+    return modules_to_files
 
 
 def _definition_re(name: str) -> re.Pattern[str]:
@@ -162,4 +199,22 @@ def test_models_public_surface_dual_side() -> None:
     assert not unresolvable, (
         "Direct-import names with no importable atomic module path — C1's package move "
         f"must keep these importable: {'; '.join(unresolvable)}"
+    )
+
+    # -- Side 2 extension: package/submodule-bind forms (``import           --
+    # -- nfm_db.models.<module>`` / ``from nfm_db import models``) must      --
+    # -- resolve to importable modules. The from-import extractor above     --
+    # -- cannot see them (live case: the function-local ontology_version    --
+    # -- bind in extraction_gaps.py).                                       --
+    bind_modules = _scan_bind_modules(repo_root)
+    unimportable: list[str] = []
+    for module_path, files in sorted(bind_modules.items()):
+        try:
+            importlib.import_module(module_path)
+        except Exception as exc:  # any failure here means the bind path broke
+            referencing = ", ".join(sorted(files)[:3])
+            unimportable.append(f"{module_path} (imported by {referencing}: {exc})")
+    assert not unimportable, (
+        "Package/submodule-bind imports with no importable module path — C1's package "
+        f"move must keep these importable: {'; '.join(unimportable)}"
     )

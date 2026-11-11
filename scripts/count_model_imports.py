@@ -23,9 +23,16 @@ this module is imported by that test, so the two cannot drift):
   package's own re-export imports (``models/__init__.py`` → atomic modules)
   and intra-package imports of ``Base`` are the direct path under guard,
   not consumers of it.
-* Only ``from``-import statements are counted. ``import nfm_db.models`` /
-  ``from nfm_db import models`` bind no names and have zero occurrences
-  today; they are reported in the outside-scope sweep if they ever appear.
+* Package-bind forms (``import nfm_db.models[.<module>]`` and
+  ``from nfm_db import models``) are NOT counted as per-root statements —
+  they bind the package rather than names from it. The outside-scope sweep
+  reports them in a separate ``bind_forms`` channel, repo-wide including
+  files inside the consumer roots (a from-form match in the same file
+  would otherwise mask them). One live bind-form import exists today:
+  apps/api/src/nfm_db/api/v1/extraction_gaps.py:234 (function-local
+  ontology_version bind). The counter itself is excluded from the sweep
+  via SWEEP_SELF_EXCLUDE — its documentation quotes the guarded forms,
+  and the measuring stick is not a consumer.
 
 Exit code is 0 whenever the scan itself completes — the counter is a
 published metric (the Q5 recovery gate reads it), not a pass/fail gate.
@@ -97,6 +104,23 @@ MODELS_IMPORT_RE = re.compile(
 
 _COMMENT_RE = re.compile(r"#.*")
 _ALIAS_RE = re.compile(r"\s+as\s+\S+$")
+
+# Package-bind forms: import the models package/submodules directly instead
+# of names from it. Line-anchored (re.MULTILINE) so quoted mentions that do
+# not start a line (docs, comments) never match. The ``from nfm_db import
+# <clause>`` branch only counts when the clause actually binds ``models`` —
+# the caller resolves that via parse_import_names.
+PACKAGE_BIND_RE = re.compile(
+    r"^\s*import\s+(?P<module>nfm_db\.models(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\b"
+    r"|^\s*from\s+nfm_db\s+import\s+(?P<clause>\((?:[^)]*)\)|[^\n(#]+)",
+    re.MULTILINE,
+)
+
+#: The measuring stick itself is never a consumer: the counter's docstring
+#: quotes the guarded import forms, so it is excluded from the sweep (and
+#: from the public-surface test's bind scan, which imports this constant —
+#: the two cannot drift).
+SWEEP_SELF_EXCLUDE: frozenset[str] = frozenset({"scripts/count_model_imports.py"})
 
 
 @dataclass
@@ -177,23 +201,48 @@ def scan_root(repo_root: Path, root_rel: str) -> RootCount:
     return tally
 
 
-def sweep_outside_roots(repo_root: Path, counted_files: set[str]) -> dict[str, list[str]]:
-    """Repo-wide sweep for model imports outside the consumer roots.
+def _bind_module_path(text: str) -> str | None:
+    """First package/submodule-bind module path in ``text``, if any.
 
-    Returns ``{"stray": [...], "assembly": [...]}`` — new files importing
-    ``nfm_db.models`` that the six-root scope misses (the exact failure
-    mode that hid ``apps/mcp-server`` from the original five-root scan).
-    ``assembly`` entries are the known bootstrap imports in ASSEMBLY_SITES;
-    ``stray`` entries are everything else and should be triaged: either
-    promote the file's tree into CONSUMER_ROOTS or add it to ASSEMBLY_SITES.
+    ``import nfm_db.models[.<module>]`` yields the dotted module path;
+    ``from nfm_db import <clause>`` yields ``nfm_db.models`` only when the
+    clause actually binds ``models``. Both bind the package (or a
+    submodule) rather than names from it, so the statement counter —
+    which keys on ``from``-import clauses — structurally cannot see them.
+    """
+    for match in PACKAGE_BIND_RE.finditer(text):
+        if match.group("module"):
+            return match.group("module")
+        clause = match.group("clause") or ""
+        if "models" in parse_import_names(clause):
+            return "nfm_db.models"
+    return None
+
+
+def sweep_outside_roots(repo_root: Path, counted_files: set[str]) -> dict[str, list[str]]:
+    """Repo-wide sweep for model imports outside (or orthogonal to) the roots.
+
+    Returns ``{"stray": [...], "assembly": [...], "bind_forms": [...]}``:
+
+    * ``stray`` — new files importing ``nfm_db.models`` via ``from``-forms
+      that no consumer root counted (the exact failure mode that hid
+      ``apps/mcp-server`` from the original five-root scan). Triage: either
+      promote the file's tree into CONSUMER_ROOTS or add it to
+      ASSEMBLY_SITES.
+    * ``assembly`` — the known bootstrap imports in ASSEMBLY_SITES.
+    * ``bind_forms`` — package/submodule-bind imports (PACKAGE_BIND_RE).
+      Unlike ``stray``, this channel scans files inside the consumer roots
+      too: a from-form match in the same file would otherwise mask a bind
+      form the statement counter can never see (extraction_gaps.py today).
     """
     stray: list[str] = []
     assembly: list[str] = []
+    bind_forms: list[str] = []
     for path in sorted(repo_root.rglob("*.py")):
         if not path.is_file():
             continue
         rel = path.relative_to(repo_root).as_posix()
-        if rel in counted_files or is_models_package_file(rel):
+        if rel in SWEEP_SELF_EXCLUDE or is_models_package_file(rel):
             continue
         # Prune on components RELATIVE to the repo root: pruning on absolute
         # parts would silently neuter the sweep in any checkout located
@@ -201,12 +250,16 @@ def sweep_outside_roots(repo_root: Path, counted_files: set[str]) -> dict[str, l
         if any(part in _SWEEP_PRUNE_DIRS for part in path.relative_to(repo_root).parts):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
+        if _bind_module_path(text) is not None:
+            bind_forms.append(rel)
+        if rel in counted_files:
+            continue
         if MODELS_IMPORT_RE.search(text):
             if rel in ASSEMBLY_SITES:
                 assembly.append(rel)
             else:
                 stray.append(rel)
-    return {"stray": stray, "assembly": assembly}
+    return {"stray": stray, "assembly": assembly, "bind_forms": bind_forms}
 
 
 def collect_counts(repo_root: Path = REPO_ROOT) -> tuple[list[RootCount], set[str]]:
@@ -235,6 +288,9 @@ def format_report(tallies: list[RootCount], outside: dict[str, list[str]]) -> st
         lines.append(f"  - {rel}")
     lines.append(f"assembly (known bootstrap imports): {len(outside['assembly'])}")
     for rel in outside["assembly"]:
+        lines.append(f"  - {rel}")
+    lines.append(f"bind forms (package/submodule-bind imports): {len(outside['bind_forms'])}")
+    for rel in outside["bind_forms"]:
         lines.append(f"  - {rel}")
     return "\n".join(lines)
 
