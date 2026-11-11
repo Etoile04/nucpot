@@ -3,6 +3,7 @@
 import os
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
+from enum import Enum
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
@@ -179,7 +180,7 @@ def _upload_error_handler(_request: Request, exc: PotentialUploadError) -> JSONR
 # openapi operation order) must not change.
 # ---------------------------------------------------------------------------
 
-type RouterMount = tuple[APIRouter, str, list[str]]
+type RouterMount = tuple[APIRouter, str, list[str | Enum]]
 type MiddlewareSpec = tuple[type, dict[str, Any]]
 type HandlerInstaller = Callable[[FastAPI], None]
 
@@ -293,7 +294,9 @@ def install_standard_handlers(application: FastAPI) -> None:
     application.state.limiter = limiter
     application.exception_handlers[RateLimitExceeded] = rate_limit_exceeded_handler
     register_http_exception_handler(application)
-    application.add_exception_handler(PotentialUploadError, _upload_error_handler)
+    # mypy: Starlette's registry types handlers as Exception-wide callables;
+    # this handler only ever receives PotentialUploadError (registered by key).
+    application.add_exception_handler(PotentialUploadError, _upload_error_handler)  # type: ignore[arg-type]
 
 
 def create_app(
@@ -407,7 +410,11 @@ def create_app(
     for middleware_cls, middleware_kwargs in (
         middleware if middleware is not None else _default_middleware()
     ):
-        application.add_middleware(middleware_cls, **middleware_kwargs)
+        # mypy: MiddlewareSpec deliberately holds bare classes (CORSMiddleware,
+        # ProxyHeadersMiddleware, NFMRateLimitMiddleware — all valid middleware
+        # factories); Starlette's _MiddlewareFactory protocol can't be satisfied
+        # by a bare `type`.
+        application.add_middleware(middleware_cls, **middleware_kwargs)  # type: ignore[arg-type]
 
     for install_handlers in handlers if handlers is not None else [install_standard_handlers]:
         install_handlers(application)
