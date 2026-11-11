@@ -158,10 +158,10 @@ preflight() {
     fi
 
     log "[5/9] Mac origins reachable from z203 over tailscale"
-    if remote_bash 'curl -s -m 8 -o /dev/null http://100.65.21.27:3000/api/v1/health'; then
-        log "  OK - :3000 answers"
+    if remote_bash 'curl -s -m 8 -o /dev/null -w "%{http_code}" http://100.65.21.27:3000/api/v1/health | grep -q "^200$"'; then
+        log "  OK - :3000 answers 200"
     else
-        failures=$((failures + 1)); log "  FAIL - 100.65.21.27:3000 not reachable from z203"
+        failures=$((failures + 1)); log "  FAIL - 100.65.21.27:3000 not 200 from z203"
     fi
     if remote_bash 'curl -s -m 8 -o /dev/null http://100.65.21.27:8002/'; then
         log "  OK - :8002 answers (404-on-probe expected)"
@@ -225,29 +225,39 @@ preflight() {
 # ---------- install / soak / cutover ----------
 
 stage_binaries() {
-    remote_bash "test -x $CLOUDFLARED_BIN" && return 0
-    if [ -n "$STAGED_CLOUDFLARED" ]; then
-        log "staging cloudflared from $STAGED_CLOUDFLARED"
-        scp -o BatchMode=yes -o ConnectTimeout=10 "$STAGED_CLOUDFLARED" "$Z203_TARGET:/tmp/nfm-cloudflared"
-        r "sudo install -m 0755 /tmp/nfm-cloudflared $CLOUDFLARED_BIN && rm -f /tmp/nfm-cloudflared"
-    elif remote_bash 'test -x /home/z203/bin/cloudflared'; then
-        log "staging cloudflared from existing /home/z203/bin/cloudflared"
-        r "sudo install -m 0755 /home/z203/bin/cloudflared $CLOUDFLARED_BIN"
-    else
-        die "no cloudflared source; supply --staged-cloudflared"
+    # F1b (NFM-5965 CR): two INDEPENDENT blocks — a pre-existing cloudflared
+    # must not short-circuit caddy staging (early return skipped the caddy
+    # checks; forwarder ExecStartPre would then fail on a missing binary).
+    if ! remote_bash "test -x $CLOUDFLARED_BIN"; then
+        if [ -n "$STAGED_CLOUDFLARED" ]; then
+            log "staging cloudflared from $STAGED_CLOUDFLARED"
+            scp -o BatchMode=yes -o ConnectTimeout=10 "$STAGED_CLOUDFLARED" "$Z203_TARGET:/tmp/nfm-cloudflared"
+            r "sudo install -m 0755 /tmp/nfm-cloudflared $CLOUDFLARED_BIN && rm -f /tmp/nfm-cloudflared"
+        elif remote_bash 'test -x /home/z203/bin/cloudflared'; then
+            log "staging cloudflared from existing /home/z203/bin/cloudflared"
+            r "sudo install -m 0755 /home/z203/bin/cloudflared $CLOUDFLARED_BIN"
+        else
+            die "no cloudflared source; supply --staged-cloudflared"
+        fi
     fi
-    remote_bash "test -x $CADDY_BIN" && return 0
-    if [ -n "$STAGED_CADDY" ]; then
-        log "staging caddy from $STAGED_CADDY"
-        scp -o BatchMode=yes -o ConnectTimeout=10 "$STAGED_CADDY" "$Z203_TARGET:/tmp/nfm-caddy"
-        r "sudo install -m 0755 /tmp/nfm-caddy $CADDY_BIN && rm -f /tmp/nfm-caddy"
-    else
-        log "downloading caddy $CADDY_VERSION_DEFAULT on z203"
-        r "curl -fsSL -o /tmp/nfm-caddy.tar.gz 'https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION_DEFAULT}/caddy_2.8.4_linux_amd64.tar.gz' \
-           && tar -xzf /tmp/nfm-caddy.tar.gz -C /tmp caddy \
-           && sudo install -m 0755 /tmp/caddy $CADDY_BIN \
-           && rm -f /tmp/nfm-caddy.tar.gz /tmp/caddy" \
-        || die "caddy download failed (CN line); supply --staged-caddy with a Mac-side binary"
+    if ! remote_bash "test -x $CADDY_BIN"; then
+        if [ -n "$STAGED_CADDY" ]; then
+            log "staging caddy from $STAGED_CADDY"
+            scp -o BatchMode=yes -o ConnectTimeout=10 "$STAGED_CADDY" "$Z203_TARGET:/tmp/nfm-caddy"
+            r "sudo install -m 0755 /tmp/nfm-caddy $CADDY_BIN && rm -f /tmp/nfm-caddy"
+        else
+            # F2: filename derived from CADDY_VERSION_DEFAULT (was hardcoded
+            # twice) + sha256-verify the tarball against the release .sha256.
+            local cver="${CADDY_VERSION_DEFAULT#v}"
+            log "downloading caddy $CADDY_VERSION_DEFAULT on z203 (sha256-verified)"
+            r "curl -fsSL -o /tmp/nfm-caddy.tar.gz 'https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION_DEFAULT}/caddy_${cver}_linux_amd64.tar.gz' \
+               && curl -fsSL -o /tmp/nfm-caddy.sha256 'https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION_DEFAULT}/caddy_${cver}_linux_amd64.tar.gz.sha256' \
+               && echo \"\$(cat /tmp/nfm-caddy.sha256)  /tmp/nfm-caddy.tar.gz\" | sha256sum -c - >/dev/null \
+               && tar -xzf /tmp/nfm-caddy.tar.gz -C /tmp caddy \
+               && sudo install -m 0755 /tmp/caddy $CADDY_BIN \
+               && rm -f /tmp/nfm-caddy.tar.gz /tmp/nfm-caddy.sha256 /tmp/caddy" \
+            || die "caddy download/verify failed (CN line); supply --staged-caddy with a Mac-side binary"
+        fi
     fi
     log "caddy: $(r "$CADDY_BIN version 2>/dev/null | head -1")"
 }
@@ -309,11 +319,13 @@ post_start_checks() {
     fi
     if r "grep -c 'Registered tunnel connection' $verify_log 2>/dev/null || true" | grep -qv '^0$'; then
         log "  OK - VERIFY replica registered with the edge"
+    else
+        log "  WARN - no VERIFY registration line yet in $verify_log"
     fi
-    if r 'curl -s -m 8 -o /dev/null http://localhost:3000/api/v1/health'; then
+    if r 'curl -s -m 8 -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/health | grep -q "^200$"'; then
         log "  OK - forwarder localhost:3000 -> Mac origin round-trip 200"
     else
-        die "forwarder :3000 round-trip failed after start"
+        die "forwarder :3000 round-trip failed after start (non-200 or unreachable)"
     fi
     if r 'curl -s -m 8 -o /dev/null -w "%{http_code}" http://localhost:8002/ | grep -q 404'; then
         log "  OK - forwarder :8002 round-trip answered (404-on-probe expected)"

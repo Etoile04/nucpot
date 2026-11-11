@@ -1188,6 +1188,10 @@ Resolution paths (CTO adjudication pending on NFM-5965/5963):
    (attach to NFM-5968). It re-checks §14.1's ⚠️ rows, sudo availability
    (non-interactive sudo on z203 — else one operator sudo session needed),
    binary sources, tailscale path, and both plist token extractions.
+   For state-changing modes prefer `--staged-caddy` (Mac-side binary) —
+   the on-z203 download crosses the CN line; without a staged binary the
+   script downloads the pinned caddy release and sha256-verifies it against
+   the release `.sha256` (fails closed on mismatch or unreachable).
 6. Watchdog mode re-read: `cat /usr/local/lib/nfm-watchdog/reg-gap-gate.mode`
    (record the value in the window evidence; §14.4 drill step depends on it).
 

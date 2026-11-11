@@ -186,7 +186,7 @@ case "$MODE" in
         mkdir -p "$BACKUP_DIR"
         check_replica_envelope
         log "backing up plist -> $PLIST_BAK"
-        sudo cp "$PLIST" "$PLIST_BAK" && sudo chown "$(id -u):$(id -g)" "$PLIST_BAK"
+        sudo cp "$PLIST" "$PLIST_BAK" && sudo chown "$(id -u):$(id -g)" "$PLIST_BAK" && sudo chmod 0600 "$PLIST_BAK"
         log "backing up generator -> $GENERATOR_BAK"
         cp "$GENERATOR" "$GENERATOR_BAK"
         log "editing generator (parameterized keepalive; MAIN=always, VERIFY=legacy)"

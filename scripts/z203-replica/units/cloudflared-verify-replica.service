@@ -13,8 +13,10 @@
 
 [Unit]
 Description=NFM HA replica - VERIFY tunnel connector (nucpot-verify, 847668eb)
+# Wants= (not just After=) so the forwarder is pulled in even if this unit is
+# started standalone (NFM-5965 CR F4).
 After=network-online.target nfm-origin-forwarder.service tailscaled.service
-Wants=network-online.target
+Wants=network-online.target nfm-origin-forwarder.service
 
 [Service]
 Type=simple

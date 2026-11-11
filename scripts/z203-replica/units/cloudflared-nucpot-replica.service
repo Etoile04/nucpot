@@ -20,8 +20,10 @@
 [Unit]
 Description=NFM HA replica - MAIN tunnel connector (nucpot, 04b1e559)
 # Forwarder must be up first: the edge origin resolves to it on localhost.
+# Wants= (not just After=) so a direct cutover without a prior soak still
+# pulls the forwarder in (NFM-5965 CR F4).
 After=network-online.target nfm-origin-forwarder.service tailscaled.service
-Wants=network-online.target
+Wants=network-online.target nfm-origin-forwarder.service
 
 [Service]
 Type=simple
