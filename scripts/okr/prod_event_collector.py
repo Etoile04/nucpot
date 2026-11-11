@@ -138,6 +138,20 @@ ALERT_CLASS_BAD_FRAGMENT = "bad-fragment"
 ALERT_CLASS_APPEND_FAILURE = "append-failure"
 ALERT_CLASS_SELF_TEST = "self-test"
 
+# NFM-5937: master-stall tripwire. Warns when the newest master event is
+# older than MASTER_STALL_MAX_AGE_DAYS (parent NFM-5931 acceptance: 7
+# days) WHILE completed Production Deployment runs exist in that same
+# window — "deploys ran, capture silently stalled". Read-only against
+# master; alarms ride the NFM-5936 transport priority. A 0-day threshold
+# is the forced-old-state probe door (--tripwire-max-age-days 0).
+ALERT_CLASS_MASTER_STALL = "master-stall"
+MASTER_STALL_MAX_AGE_DAYS = 7.0
+
+# The deploy workflow the collector (and the tripwire window) track.
+# NFM-5937: hoisted from the literal in ``list_production_runs`` so the
+# tripwire cannot drift from the collector's own notion of "a deploy".
+DEPLOY_WORKFLOW_NAME = "Production Deployment"
+
 
 # ---------------------------------------------------------------------------
 # Domain types
@@ -151,6 +165,21 @@ class Run:
     run_id: int
     created_at: datetime  # tz-aware UTC
     artifact_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeployRunRecord:
+    """One completed deploy workflow run, for tripwire windows (NFM-5937).
+
+    Conclusion is the raw GH API value (``success`` / ``failure`` /
+    ``cancelled`` / …). Any completed conclusion counts as "a deploy
+    ran" — a weather-killed deploy that still produced no event is
+    exactly the stall signature this tripwire exists to catch.
+    """
+
+    run_id: int
+    created_at: datetime  # tz-aware UTC
+    conclusion: str
 
 
 @dataclass
@@ -254,6 +283,91 @@ def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# NFM-5937 master-stall tripwire (read-only vs master)
+# ---------------------------------------------------------------------------
+
+
+def newest_master_event_ts(master_jsonl_path: str | Path) -> datetime | None:
+    """Parse the newest event ``ts`` from the master JSONL. Read-only.
+
+    Scans every line and keeps the max so a torn final line (a mid-append
+    read without the flock — master appends are the only writers, under
+    flock, so readers never take it) cannot hide the newest complete
+    event. Returns ``None`` when the file is missing, empty, or has no
+    parseable line at all.
+    """
+    path = Path(master_jsonl_path)
+    if not path.exists():
+        return None
+    newest: datetime | None = None
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = str(json.loads(line).get("ts", ""))
+                candidate = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+    return newest
+
+
+def master_stall_tripwire(
+    backend: Backend,
+    *,
+    master_jsonl_path: str | Path,
+    now: datetime | None = None,
+    max_age_days: float = MASTER_STALL_MAX_AGE_DAYS,
+) -> bool:
+    """Warn when capture stalled while deploys kept running (NFM-5937).
+
+    Fires — alert via the NFM-5936 transport priority — iff BOTH:
+      - the newest master event is older than ``max_age_days`` (strictly,
+        so exactly 7d is not a stall), AND
+      - at least one completed ``Production Deployment`` run was created
+        after that newest event (the window).
+
+    Any completed conclusion counts: a weather-killed deploy that still
+    produced no event is precisely the stall signature. A missing/empty
+    master leaves the age rule undefined — the tripwire stays silent (the
+    collect-path ``bad-fragment``/``append-failure`` alerts own total-
+    capture loss) and prints why.
+
+    Returns whether the alert fired. Read-only against master: no append,
+    no sync-state, no failure sidecar, no SSH hop.
+    """
+    now = now or datetime.now(UTC)
+    newest = newest_master_event_ts(master_jsonl_path)
+    if newest is None:
+        print(
+            "[tripwire] no parseable master events — age condition undefined, not firing"
+        )
+        return False
+    age = now - newest
+    if age <= timedelta(days=max_age_days):
+        print(
+            f"[tripwire] OK: newest master event age {age} <= {max_age_days:g}d — no stall"
+        )
+        return False
+    window_runs = backend.list_deploy_runs_in_window(newest, until=now)
+    if not window_runs:
+        print(
+            f"[tripwire] OK: newest master event age {age} > {max_age_days:g}d "
+            f"but no completed {DEPLOY_WORKFLOW_NAME} runs in the window — no stall"
+        )
+        return False
+    backend.alert_master_stall(newest, age, window_runs)
+    print(
+        f"[tripwire] FIRED: master-stall — newest event {age.total_seconds() / 86400:.2f}d old, "
+        f"{len(window_runs)} completed deploy run(s) in window"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Backend protocol + GH implementation (subprocess boundary — swappable in tests)
 # ---------------------------------------------------------------------------
 
@@ -272,6 +386,14 @@ class Backend(Protocol):
     def alert_append_failure(self, reason: str) -> None: ...
     def alert_pending_failure(
         self, run_id: int, stage: str, attempts: int, reason: str
+    ) -> None: ...
+
+    # NFM-5937 master-stall tripwire
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]: ...
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
     ) -> None: ...
 
 
@@ -559,7 +681,7 @@ class GhBackend:
             items = data.get("workflow_runs", [])
             for item in items:
                 name = item.get("name", "")
-                if name != "Production Deployment":
+                if name != DEPLOY_WORKFLOW_NAME:
                     continue
                 if item.get("status") != "completed":
                     continue
@@ -580,6 +702,60 @@ class GhBackend:
                 file=sys.stderr,
             )
         return runs
+
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]:
+        """Completed deploy runs created strictly inside ``(since, until]``.
+
+        NFM-5937 tripwire window listing: like ``list_production_runs``
+        (same workflow, same completed-only rule, same pagination) but
+        WITHOUT the per-run artifact listing — the tripwire only needs to
+        know that a deploy ran — and anchored at the newest master event
+        with no skew: the window must not reach back before the event
+        that already exists, or quiet periods after a captured deploy
+        would look active.
+        """
+        iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        records: list[DeployRunRecord] = []
+        page = 1
+        while page <= MAX_PAGES:
+            data = _gh_api(
+                self.repo,
+                f"actions/runs?created=>={iso}&per_page={PAGE_SIZE}&page={page}",
+            )
+            items = data.get("workflow_runs", [])
+            for item in items:
+                if item.get("name", "") != DEPLOY_WORKFLOW_NAME:
+                    continue
+                if item.get("status") != "completed":
+                    continue
+                try:
+                    run_id = int(item["id"])
+                    created = datetime.fromisoformat(
+                        item["created_at"].replace("Z", "+00:00")
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if created <= since or created > until:
+                    continue
+                records.append(
+                    DeployRunRecord(
+                        run_id=run_id,
+                        created_at=created,
+                        conclusion=str(item.get("conclusion", "")),
+                    )
+                )
+            if len(items) < PAGE_SIZE:
+                break
+            page += 1
+        else:
+            print(
+                f"[tripwire] WARN: window listing hit the {MAX_PAGES}-page cap "
+                f"({MAX_PAGES * PAGE_SIZE} runs) — older window runs were not considered",
+                file=sys.stderr,
+            )
+        return records
 
     def _list_artifact_ids(self, run_id: int) -> tuple[int, ...]:
         data = _gh_api(self.repo, f"actions/runs/{run_id}/artifacts")
@@ -894,6 +1070,50 @@ class GhBackend:
                         "action",
                         "run stays pending and is retried; the collector step "
                         "exits non-zero until it resolves.",
+                    ),
+                ],
+            )
+
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
+    ) -> None:
+        """Tripwire alert: master stalled while deploys ran (NFM-5937).
+
+        Transport priority mirrors ``alert_bad_fragment``: the Feishu
+        webhook when ``ALERT_WEBHOOK`` is set, else the dedup-keyed
+        ``[collector-alert] master-stall`` gh-issue fallback — ONE open
+        issue for the class, later fires comment into it.
+        """
+        age_days = age.total_seconds() / 86400.0
+        newest_iso = newest_ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        shown = window_runs[:5]
+        summary = ", ".join(f"{r.run_id}:{r.conclusion or 'completed'}" for r in shown)
+        if len(window_runs) > 5:
+            summary += f", … +{len(window_runs) - 5} more"
+        if not self._alert_via_webhook(
+            "Master deploy-event stall (KR-3)",
+            (
+                f"**newest_master_event_ts**: `{newest_iso}`\n"
+                f"**event_age_days**: {age_days:.2f} (threshold "
+                f"{MASTER_STALL_MAX_AGE_DAYS:g})\n"
+                f"**deploy_runs_in_window**: {summary}\n"
+                "**action**: capture stalled while deploys ran — check "
+                "prod-deploy-event-collector-executor runs + sync-state; "
+                "do NOT re-baseline (parent NFM-5932)."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_MASTER_STALL,
+                [
+                    ("newest_master_event_ts", newest_iso),
+                    ("event_age_days", f"{age_days:.2f} (threshold {MASTER_STALL_MAX_AGE_DAYS:g})"),
+                    ("deploy_runs_in_window", summary),
+                    ("window_size", str(len(window_runs))),
+                    (
+                        "action",
+                        "capture stalled while deploys ran — check "
+                        "prod-deploy-event-collector-executor runs + sync-state; "
+                        "do NOT re-baseline (parent NFM-5932).",
                     ),
                 ],
             )
@@ -1247,6 +1467,23 @@ def main(argv: list[str] | None = None) -> int:
         "state — no sync-state, no master JSONL, no failure sidecar, no "
         "SSH hop.",
     )
+    parser.add_argument(
+        "--tripwire",
+        action="store_true",
+        help="NFM-5937: run the master-stall tripwire and exit (no "
+        "collection). Fires the NFM-5936 transport when the newest master "
+        "event is older than --tripwire-max-age-days while completed "
+        "Production Deployment runs exist in the window. Read-only "
+        "against master; exit 1 = tripped.",
+    )
+    parser.add_argument(
+        "--tripwire-max-age-days",
+        type=float,
+        default=MASTER_STALL_MAX_AGE_DAYS,
+        help="NFM-5937 stall threshold in days (default %(default)s). 0 "
+        "is the forced-old-state probe door: any in-window deploy run "
+        "trips the alert.",
+    )
     args = parser.parse_args(argv)
 
     if args.self_test_alert:
@@ -1266,6 +1503,20 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"[collector] self-test alert fired into issue #{fired}")
         return 0
+
+    if args.tripwire:
+        # NFM-5937 master-stall tripwire: same no-host-state contract as
+        # the self-test door above — only the master JSONL is READ.
+        # Exit 1 on fire is the loud secondary surface (the alert issue
+        # is primary), mirroring the collect-path tripwire contract.
+        backend = GhBackend(args.repo, "", "", "")
+        master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
+        tripped = master_stall_tripwire(
+            backend,
+            master_jsonl_path=master_jsonl_path,
+            max_age_days=args.tripwire_max_age_days,
+        )
+        return 1 if tripped else 0
 
     sync_state_path = _resolve_sync_state_path(args.sync_state)
     master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
