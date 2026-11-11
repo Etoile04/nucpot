@@ -1,0 +1,46 @@
+# NFM HA replica — MAIN tunnel connector (tunnel 04b1e559, nucpot.dpdns.org)
+#
+# Remotely-managed (token-run) tunnel: ingress config lives at the Cloudflare
+# edge and pins the origin to `localhost:3000`. On z203 that address resolves
+# to the local origin forwarder (nfm-origin-forwarder.service), which proxies
+# to the real Mac origins over Tailscale. Do NOT point this unit at any other
+# origin — there are no agent-side Cloudflare credentials to change the edge
+# config, and the forwarder IS the design (NFM-5963 architecture ruling).
+#
+# The tunnel token is NOT stored in this file. It is written at install time
+# by scripts/z203-replica/install-replica.sh (extracted from the Mac plist)
+# into /etc/nfm/replica/nucpot-replica.env, mode 0600 root. The TUNNEL_TOKEN
+# environment variable is read natively by cloudflared (`tunnel run` with no
+# positional tunnel name), which also keeps the token out of `ps` output.
+#
+# Deployed to: /etc/systemd/system/cloudflared-nucpot-replica.service
+# Log:         /var/log/cloudflared-nucpot-replica.log  (G3 liveness lane pins
+#              this exact path — do not move it without re-opening NFM-5966)
+
+[Unit]
+Description=NFM HA replica - MAIN tunnel connector (nucpot, 04b1e559)
+# Forwarder must be up first: the edge origin resolves to it on localhost.
+After=network-online.target nfm-origin-forwarder.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# TUNNEL_TOKEN=... (0600 root, written by install-replica.sh at install time)
+EnvironmentFile=/etc/nfm/replica/nucpot-replica.env
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --protocol http2 run
+Restart=always
+RestartSec=10
+TimeoutStopSec=30s
+StandardOutput=append:/var/log/cloudflared-nucpot-replica.log
+StandardError=append:/var/log/cloudflared-nucpot-replica.log
+
+# Hardening: token-run needs no capabilities and no home/state files.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
