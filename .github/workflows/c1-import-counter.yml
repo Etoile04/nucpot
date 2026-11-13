@@ -1,0 +1,80 @@
+name: C1 Import Counter (NFM-5955)
+
+# NFM-5955 C1 guardrail — aggregate model-import counter.
+#
+# Prints the per-root count of direct ``nfm_db.models[.module]`` imports
+# across the six consumer roots (apps/api/{src,tests,scripts,e2e},
+# scripts, e2e, apps/mcp-server). The mcp-server root is an independent uv
+# workspace outside the apps/api PR CI scope — without it, deleting or
+# moving the model paths at C1 cleanup time would crash its tests with no
+# red CI anywhere. The counter is the published metric the Q5 recovery
+# gate reads: C1 consumer-surface rewrite PRs must drive it monotonically
+# down, and it may only be decommissioned at count 0 or after two minor
+# versions, whichever comes first.
+#
+# The job is a dry-run publisher (informational): it fails only when the
+# scan itself cannot run. Shape follows the batch1/2/3 path-filter
+# precedent.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/api/src/**/*.py"
+      - "apps/api/tests/**/*.py"
+      - "apps/api/scripts/**/*.py"
+      - "apps/api/e2e/**/*.py"
+      - "scripts/**/*.py"
+      - "e2e/**/*.py"
+      - "apps/mcp-server/**/*.py"
+      - ".github/workflows/c1-import-counter.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/src/**/*.py"
+      - "apps/api/tests/**/*.py"
+      - "apps/api/scripts/**/*.py"
+      - "apps/api/e2e/**/*.py"
+      - "scripts/**/*.py"
+      - "e2e/**/*.py"
+      - "apps/mcp-server/**/*.py"
+      - ".github/workflows/c1-import-counter.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c1-import-counter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  counter:
+    name: Model-import counter dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Python toolchain
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The counter is stdlib-only by design — no dependency install, so a
+      # dependency outage can never take the metric publisher down with it.
+      - name: Run model-import counter
+        run: |
+          python scripts/count_model_imports.py
+          python scripts/count_model_imports.py --json > model-imports.json
+          echo "### Model-import counter (NFM-5955)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python scripts/count_model_imports.py >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload counter snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-imports-json
+          path: model-imports.json
+          retention-days: 90
