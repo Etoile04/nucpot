@@ -26,7 +26,9 @@ FETCH, not the job, exactly like Leg A:
   operations by construction; ``cancel-in-progress: false`` is load-bearing
   (a cancelled run could tear a host-local ledger append mid-flight — the
   11-04 queue-timeout evictions 41866246466/41866273808 prove queued runs
-  do get cancelled externally).
+  do get cancelled externally). NFM-5936 adds one workflow_dispatch door:
+  the alert self-test, which requires an ``orchestrator_run_id`` input so
+  the verified-artifact provenance invariant survives manual fires.
 - ``collect-prod-deploy-events-orchestrator.yml`` (hosted) — owns the
   ``*/5`` schedule and ``workflow_dispatch`` verbatim; stages
   ``scripts/lib/collect_prod_run.sh`` + ``scripts/lib/collect_prod_events.py``
@@ -224,14 +226,69 @@ def test_executors_are_dispatch_only() -> None:
     for exec_path, dispatch_type in ((EXEC1, DISPATCH_TYPE_1), (EXEC2, DISPATCH_TYPE_2)):
         doc = _load_yaml(exec_path)
         triggers = _triggers(doc)
-        assert set(triggers) == {"repository_dispatch"}, (
-            f"{exec_path.name} triggers must be repository_dispatch only, got "
-            f"{sorted(triggers)}; a schedule trigger would re-open the "
-            "literal-cron guard class and a direct workflow_dispatch would "
-            "have no payload artifact"
+        assert "schedule" not in triggers, (
+            f"{exec_path.name} must never carry a schedule trigger — a schedule "
+            "would re-open the literal-cron guard class; the orchestrators own "
+            "the cadence"
+        )
+        assert "repository_dispatch" in triggers, (
+            f"{exec_path.name} must listen for repository_dispatch"
         )
         types = triggers["repository_dispatch"].get("types") or []
         assert dispatch_type in types, f"{exec_path.name} must listen for {dispatch_type!r}"
+        # NFM-5936: exec1 may additionally carry a workflow_dispatch door for
+        # the alert self-test. The original dispatch-only pin rejected manual
+        # fires because "a direct workflow_dispatch would have no payload
+        # artifact" — the door is sound only when it REQUIRES an
+        # `orchestrator_run_id` input naming the run whose verified payload
+        # artifact it executes (the manifest check stays unconditional, so
+        # the provenance invariant holds in dispatch mode too). Exec2 has no
+        # self-test door: no inputs key, no workflow_dispatch.
+        door = triggers.get("workflow_dispatch")
+        if door is None:
+            continue
+        inputs = (door.get("inputs") or {}) if isinstance(door, dict) else {}
+        run_id_input = inputs.get("orchestrator_run_id")
+        assert isinstance(run_id_input, dict) and run_id_input.get("required") is True, (
+            f"{exec_path.name}: the workflow_dispatch door must REQUIRE an "
+            "`orchestrator_run_id` input — a manual fire without orchestrator "
+            "artifact provenance would have nothing verified to execute"
+        )
+
+
+def test_executor_alert_self_test_door_shape() -> None:
+    """NFM-5936: the exec1 self-test door is alert-only and state-free."""
+    doc = _load_yaml(EXEC1)
+    triggers = _triggers(doc)
+    door = triggers.get("workflow_dispatch")
+    assert door is not None, (
+        "prod-deploy-event-collector-executor.yml lost the NFM-5936 alert "
+        "self-test workflow_dispatch door"
+    )
+    inputs = door.get("inputs") or {}
+    assert inputs.get("self_test", {}).get("type") == "boolean", (
+        "self_test input must be boolean"
+    )
+    permissions = doc.get("permissions") or {}
+    assert permissions.get("issues") == "write", (
+        "executor must carry issues:write — the NFM-5936 dedup-keyed "
+        "gh-issue alert fallback creates/comments issues when ALERT_WEBHOOK "
+        "is unset"
+    )
+    body_text = "\n".join(_job_commands(doc))
+    assert "--self-test-alert" in body_text, (
+        "the collector step must pass --self-test-alert in self-test mode"
+    )
+    # The host-prereq steps gate OFF in self-test mode so the probe cannot
+    # depend on anything the alert path doesn't use.
+    for step in _steps(doc.get("jobs", {}).get("collect", {})):
+        name = step.get("name") or ""
+        if name in ("Verify SSH key present", "Verify jq available on host"):
+            cond = step.get("if") or ""
+            assert "self_test" in cond, (
+                f"step {name!r} must gate off in self-test mode (no self_test "
+                "clause in its if condition)"
+            )
 
 
 def test_orchestrators_and_executors_use_matching_event_types() -> None:
