@@ -457,3 +457,101 @@ operations; the `NFMD_DEPLOY_EVENTS_PATH` / `NFMD_DEPLOY_EVENTS_PROCESSED_PATH`
 repo vars and the persistent host-local JSONL ledger are unchanged. The
 original workflow file is deleted; rollback = revert. Guards:
 `scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py`.
+
+---
+
+## Amendment note — 2026-11-10 (NFM-5935): one-shot reviewed backfill of the master ledger
+
+### Context
+
+The C6.1.1 stage-2 master lane (`prod_event_collector.py`) stalled on
+2026-09-07 with `last_synced_run_id=0`, an empty `last_synced_at`, and 177
+Era-A-poisoned `bad_run_ids`; with an empty `last_synced_at` the collector's
+`since` window degenerates to `now − 5min` every tick, so the Sep-8 → now
+gap is unreachable by the collector's own retry semantics. The legacy lane
+(`collect_prod_events.py` → `$NFMD_DEPLOY_EVENTS_PATH`) stayed hot
+throughout (74 events, 2026-10-15 → 2026-11-08). NFM-5935 (P3, under the
+NFM-5932 Path-A restore adjudication) authorizes exactly one reviewed
+host-side write to close the gap.
+
+### What runs
+
+`scripts/okr/backfill_prod_events_nfm5935.py` (stdlib-only, python 3.9 —
+the NFM-4652 constraint), one-shot, idempotent by event_id:
+
+1. Preflight: verifies the timestamped backup of master + sync-state
+   exists and matches the live files byte-for-byte (abort on drift —
+   re-backup first), plus optional `--expect-*-sha` guards.
+2. Merges the legacy JSONL into the master JSONL under the collector's
+   own flock (`<master>.lock`), dedup by `event_id`.
+3. Lists every `Production Deployment` run created ≥
+   2026-09-07T16:36:38Z (anchor run 34144432832 minus the collector's
+   5-minute skew), downloads each `prod-deploy-event-*` artifact,
+   validates with the collector's own `validate_fragment`, dedups by
+   `event_id` against master ∪ legacy, and appends the remainder under
+   the same flock. Master lines are append-only byte-preserving; the
+   appended tail keeps global `ts` ascending (enforced — violation is a
+   fatal, state-preserving abort).
+4. Runs without a recoverable fragment (no artifact / invalid /
+   expired) become the documented gap list: they are the only entries
+   written to `bad_run_ids`. The 177 Era-A ids are cleared; runs inside
+   the window are re-marked only if genuinely invalid, runs below the
+   window are unreachable behind `last_synced_run_id` either way.
+5. Writes sync-state at the true catch-up point (`last_synced_run_id` =
+   highest window run id, `last_synced_at` = now) under the same flock.
+6. Watches the state file for the collector's unflocked unconditional
+   `main()` `_save_state` reversion (a tick that loaded the pre-backfill
+   state) and repairs reverting writes; a legitimate collector advance
+   past the target ends the watch. `--repair-state-only <summary.json>`
+   re-applies the target state without re-running the inventory.
+
+The collector itself is NOT modified and the reporter is untouched:
+`NFMD_PROD_EVENTS_PATH` semantics stay frozen (KR-3 reads master by
+default). The `reporter` and downstream consumers see the master grow by
+the merged + backfilled events, nothing else.
+
+### Why the artifact catch-up lives here, not in the collector
+
+The collector has no event_id dedup, and its skip bound is monotonic
+(`run_id <= last_synced_run_id`). Gap run ids sort BELOW the
+legacy-covered run ids, so no state value can make the collector
+"backfill Sep 8 → Oct 14 but skip the legacy-covered Oct 15 → Nov 8
+runs" — a pure collector catch-up would duplicate the 74 legacy
+event_ids and break the KR-3 denominator. The one-shot imports the
+collector's `validate_fragment` and `SyncState` so validation and state
+serialization remain byte-identical to the collector's own semantics.
+
+### Host write procedure (runbook delta)
+
+```bash
+# 0. timestamped backup FIRST (verify shas against the evidence post)
+mkdir -p ~/.nfmd/backups/nfm5935-<ts> && cp -p ~/.nfmd/master-deploy-events.jsonl \
+  ~/.nfmd/prod-event-sync-state.json ~/.nfmd/backups/nfm5935-<ts>/
+shasum -a 256 ~/.nfmd/backups/nfm5935-<ts>/*
+# 1. dry-run (zero writes; prints the full plan + summary JSON)
+GH_TOKEN=<token> python3 scripts/okr/backfill_prod_events_nfm5935.py --dry-run \
+  --summary-out /tmp/nfm5935-dryrun.json
+# 2. apply (sha guards pin the files to the backed-up bytes)
+GH_TOKEN=<token> python3 scripts/okr/backfill_prod_events_nfm5935.py \
+  --expect-master-sha <sha> --expect-state-sha <sha> \
+  --backup-dir ~/.nfmd/backups/nfm5935-<ts> --summary-out /tmp/nfm5935-summary.json
+# 3. only if the state was later reverted by a collector tick:
+GH_TOKEN=<token> python3 scripts/okr/backfill_prod_events_nfm5935.py \
+  --repair-state-only /tmp/nfm5935-summary.json
+```
+
+Exit code 1 = a postcondition failed (duplicate ids, unbalanced run
+accounting, state not at the catch-up point) — the summary JSON names
+the failure; master/state are then in the exact post-run state described
+by the summary and must NOT be re-flushed blindly; diagnose, restore
+from backup if needed, and re-run (idempotent).
+
+### Rollback note
+
+Restore `~/.nfmd/master-deploy-events.jsonl` and
+`~/.nfmd/prod-event-sync-state.json` from the backup dir (byte-identical,
+shas recorded in the NFM-5935 evidence post), then let the forward
+collector resume. The ledger returns to the pre-backfill state (48
+lines, frozen at 2026-09-07); nothing else on the host is modified by
+this script — the legacy lane, the reporter, and both collector
+workflow pairs are untouched.
