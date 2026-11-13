@@ -64,7 +64,7 @@ jobs:
       NFMD_DEPLOY_EVENTS_PROCESSED_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PROCESSED_PATH || '' }}
     steps:
       - name: Download payload from orchestrator run
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: collect-events-payload
           run-id: ${{ github.event.client_payload.orchestrator_run_id }}
