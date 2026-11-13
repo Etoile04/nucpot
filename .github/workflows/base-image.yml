@@ -73,7 +73,7 @@ jobs:
       # arm64 build legs without QEMU's binfmt handlers, so they are
       # registered BEFORE buildx/build-push touches the arm64 platform.
       - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
