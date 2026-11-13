@@ -5,9 +5,8 @@
  * retry), the initial-data fast-path, and the `retry` refetch trigger.
  *
  * NFM-4449 Q4 + Q6: this test pins the public contract that
- * KgExploreView, MaterialGraphView, and MaterialSubgraphView now depend
- * on. Touching the state machine without updating these tests is a
- * breaking change.
+ * KgExploreView and MaterialSubgraphView now depend on. Touching the
+ * state machine without updating these tests is a breaking change.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"

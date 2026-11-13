@@ -29,8 +29,8 @@
  * They do not assert pixel-perfect layout, breakpoint widths, or the
  * exact KaTeX-rendered HTML (those are E2E / visual-QA concerns under
  * Playwright). They also do not assert the empty / error / loading
- * branches — those are covered by MaterialGraphView's pattern and are
- * not the load-bearing behaviour for Layout B acceptance.
+ * branches — those are not the load-bearing behaviour for Layout B
+ * acceptance.
  */
 
 import { describe, it, expect, vi } from "vitest"
