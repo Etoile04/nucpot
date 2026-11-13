@@ -84,6 +84,20 @@ def _require_seams() -> None:
     for seam in ("NFM_MONITOR_LOG", "NFM_MONITOR_STATE", "NFM_MONITOR_PROBE", "NFM_MONITOR_NOTIFY"):
         if seam + ":-" not in src:
             pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
+    # NFM-5966: the replica lane must be fully seamable too — a stripped
+    # replica seam would make tests hit the REAL z203 over SSH and write
+    # the PRODUCTION ~/.nfm-site-monitor.replica.state.
+    for seam in (
+        "NFM_MONITOR_REPLICA_STATE:-",
+        "NFM_REPLICA_SSH:-",
+        "NFM_REPLICA_TARGET:-",
+        "NFM_REPLICA_TIMEOUT:-",
+        "NFM_REPLICA_FWD_URL:-",
+    ):
+        if seam not in src:
+            pytest.fail(
+                f"script lost its replica-lane env seam ({seam}) — refusing to run against production"
+            )
     # NFM-5708: the reference-battery state file is part of the
     # ~/.nfm-site-monitor.* family and must be seamable like the main state.
     if "NFM_MONITOR_REF_STATE:-" not in src:
@@ -100,6 +114,72 @@ def _require_seams() -> None:
     ):
         if f'os.environ.get("{seam}"' not in src:
             pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
+
+
+# -------- NFM-5966 replica-lane stub helpers (shared with the lane suites) ---
+# The replica lane SSHes to z203 on every real-probe tick; in tests the
+# `ssh` binary seam is swapped for an executable stub whose stdout is the
+# canned remote-battery output. The DEFAULT stub (used by the base env
+# fixture) reads units not-found — the NOTE-class, never-WARN verdict — so
+# every pre-existing test stays silent on the replica lane while still
+# exercising its parse path end-to-end.
+
+_replica_stub_counter = iter(range(10000))
+
+
+def replica_battery(
+    rep_load="not-found",
+    rep_active="inactive",
+    fwd_load="not-found",
+    fwd_active="inactive",
+    log_lines=None,
+    fwd_http="500 0.002",
+):
+    """Canned z203 battery stdout (the exact remote-script shape)."""
+    if log_lines is None:
+        log_lines = [
+            "tail: cannot open '/var/log/cloudflared-nucpot-replica.log': No such file or directory"
+        ]
+    return (
+        f"UNIT cloudflared-nucpot-replica.service LoadState={rep_load} ActiveState={rep_active} \n"
+        f"UNIT nfm-origin-forwarder.service LoadState={fwd_load} ActiveState={fwd_active} \n"
+        "LOGSTART\n" + "\n".join(log_lines) + "\nLOGEND\n"
+        f"FWDHTTP {fwd_http}\n"
+    )
+
+
+def reg_log_lines(age_s: int):
+    """A replica log tail whose only registration line is age_s old."""
+    import datetime
+    stamp = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=age_s)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    noise = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=max(age_s - 30, 0))).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    return [
+        f"{stamp} INF Registered tunnel connection connIndex=0 connection=deadbeef-0000-4000-8000-000000000000 event=0 ip=198.41.192.37 location=lax12 protocol=http2",
+        f"{noise} INF Connection terminated connIndex=0",
+    ]
+
+
+def write_replica_stub_ssh(tmp_path, battery_text):
+    """Executable stub `ssh` that prints the canned battery on stdout."""
+    p = tmp_path / f"stub_ssh_{next(_replica_stub_counter)}.sh"
+    p.write_text(
+        "#!/bin/bash\ncat <<'REPLICA_BATTERY_EOF'\n" + battery_text + "REPLICA_BATTERY_EOF\n",
+        encoding="utf-8",
+    )
+    p.chmod(0o755)
+    return str(p)
+
+
+def write_replica_stub_ssh_fail(tmp_path, rc=255):
+    """Stub `ssh` that fails at transport level (no output)."""
+    p = tmp_path / f"stub_ssh_{next(_replica_stub_counter)}.sh"
+    p.write_text(f"#!/bin/bash\necho 'ssh: connect to host z203 port 22: Connection timed out' >&2\nexit {rc}\n", encoding="utf-8")
+    p.chmod(0o755)
+    return str(p)
 
 
 def _ref(i: int) -> str:
@@ -275,6 +355,11 @@ def env(tmp_path, mock_site):
         "NFM_REF_DOM_URL": base + "/ref-dom",
         "NFM_REF_TIMEOUT": "5",
         "NFM_REF_BASELINE_MIN": "3",
+        # NFM-5966 replica-lane seams: isolated replica state file + a stub
+        # `ssh` whose battery reads units not-found (NOTE-class verdict,
+        # never WARN) — pre-existing tests stay silent on the replica lane.
+        "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
+        "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
     }
     yield e
 
@@ -374,6 +459,9 @@ def test_seam_guard_accepts_real_reads(tmp_path, monkeypatch):
                 '#!/usr/bin/env bash\nLOG="${NFM_MONITOR_LOG:-x}"\n'
                 'STATE="${NFM_MONITOR_STATE:-x}"\nPROBE="${NFM_MONITOR_PROBE:-x}"\n'
                 'NOTIFY="${NFM_MONITOR_NOTIFY:-x}"\nREFSTATE="${NFM_MONITOR_REF_STATE:-x}"\n'
+                'REPSTATE="${NFM_MONITOR_REPLICA_STATE:-x}"\n'
+                'RSSH="${NFM_REPLICA_SSH:-x}"\nRTGT="${NFM_REPLICA_TARGET:-x}"\n'
+                'RTMO="${NFM_REPLICA_TIMEOUT:-x}"\nRFWD="${NFM_REPLICA_FWD_URL:-x}"\n'
                 "python3 - <<EOF\nimport os\n"
                 'os.environ.get("NFM_SCAN_BASE")\nos.environ.get("NFM_SCAN_DEADLINE")\n'
                 'os.environ.get("NFM_SCAN_REF_POOL")\n'
