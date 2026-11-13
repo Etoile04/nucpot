@@ -170,9 +170,11 @@ Rollback for this runbook itself: revert the carrying PR (docs-only).
 - **Lane B health:** last `.processed` row tracks the newest deploy run;
   `deploy-events.jsonl` tail `ts` matches recent successful deploys
   (mtime may lag hours — see §2).
-- **KR-3 read:** `python -m scripts.okr.report` (master via the frozen
-  `NFMD_PROD_EVENTS_PATH` default). On the restored series:
-  KR-3 = 0.4098 (2026-11-11); formal verification is P5.
+- **KR-3 read:** `python -m scripts.okr.coverage_kr3` — honors the frozen
+  reporter chain (`--prod-path` → `$NFMD_PROD_EVENTS_PATH` → master default,
+  §1). Do not use `python -m scripts.okr.report` here: it resolves KR-3 via
+  `$NFMD_DEPLOY_EVENTS_PATH` → repo default and never reads master. On the
+  restored series: KR-3 = 0.4098 (2026-11-11); formal verification is P5.
 - **Never:** repoint the reporter at the legacy lane; hand-edit the master
   outside the reviewed paths (§1); paste the `ALERT_WEBHOOK` URL into
   issues, logs, or tickets (repo secret only).
