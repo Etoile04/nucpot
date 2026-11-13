@@ -1,0 +1,45 @@
+# NFM origin forwarder (caddy) on z203
+#
+# Reverse-proxies the loopback addresses that the remotely-managed tunnel
+# edge configs pin as origins:
+#   localhost:3000 -> http://100.65.21.27:3000  (Mac prod web, over Tailscale)
+#   localhost:8002 -> http://100.65.21.27:8002  (Mac verify origin, over Tailscale)
+#
+# Binding is loopback-only (127.0.0.1 + ::1 via `localhost` site addresses):
+# nothing is exposed on z203's LAN, matching the "edge origin localhost:PORT"
+# semantics exactly. Caddy v2 reverse_proxy passes WebSocket/upgrade requests
+# through by default and preserves the client Host header.
+#
+# Preflight (install-replica.sh) FAILS CLOSED if anything already listens on
+# z203 :3000/:8002 — as of 2026-11-11 the operator's own containers own both
+# ports; freeing them is a consent-card item, NOT something this stack does.
+#
+# Deployed to: /etc/systemd/system/nfm-origin-forwarder.service
+# Config:      /etc/nfm/origin-forwarder/Caddyfile
+
+[Unit]
+Description=NFM origin forwarder (caddy) - localhost:3000/:8002 -> Mac origins over Tailscale
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=nfm-forwarder
+LogsDirectory=nfm-origin-forwarder
+Environment=XDG_DATA_HOME=/var/lib/nfm-forwarder
+Environment=XDG_CONFIG_HOME=/var/lib/nfm-forwarder
+ExecStartPre=/usr/local/bin/caddy validate --config /etc/nfm/origin-forwarder/Caddyfile
+ExecStart=/usr/local/bin/caddy run --config /etc/nfm/origin-forwarder/Caddyfile
+Restart=always
+RestartSec=5
+TimeoutStopSec=15s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
