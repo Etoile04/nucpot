@@ -1,0 +1,5 @@
+[
+  "nfm_db.middleware.rate_limit.NFMRateLimitMiddleware",
+  "nfm_db.main.ProxyHeadersMiddleware",
+  "starlette.middleware.cors.CORSMiddleware"
+]
