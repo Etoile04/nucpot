@@ -12,11 +12,15 @@ Covers the four acceptance-criterion-5 cases:
 
 from __future__ import annotations
 
+import base64
+import fcntl
 import importlib.util
 import json
+import os
+import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,9 +29,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "okr"))
 
 from prod_event_collector import (  # noqa: E402
+    MAX_CONSECUTIVE_FAILURES,
+    PAGE_SIZE,
+    FailureStore,
     FragmentInvalid,
+    GhBackend,
     Run,
     SyncState,
+    _build_remote_append_script,
     _resolve_ssh_target,
     collect,
     validate_fragment,
@@ -55,17 +64,23 @@ class _FakeBackend:
     fragments: dict
     alerts: list = None
     append_should_raise: Exception | None = None
+    download_fail_ids: set = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if self.alerts is None:
             self.alerts = []
         self.append_calls: list = []
         self.append_failure_alerts: list = []
+        self.pending_failure_alerts: list = []
+        self.sinces: list = []
 
     def list_production_runs(self, since: datetime) -> list:
+        self.sinces.append(since)
         return list(self.runs)
 
     def download_artifact(self, run_id: int, artifact_id: int, dest: Path) -> None:
+        if run_id in self.download_fail_ids:
+            raise RuntimeError(f"transient download failure for run_id={run_id}")
         text = self.fragments.get(run_id)
         if text is None:
             raise RuntimeError(f"no fragment registered for run_id={run_id}")
@@ -82,6 +97,9 @@ class _FakeBackend:
 
     def alert_append_failure(self, reason: str) -> None:
         self.append_failure_alerts.append(reason)
+
+    def alert_pending_failure(self, run_id: int, stage: str, attempts: int, reason: str) -> None:
+        self.pending_failure_alerts.append((run_id, stage, attempts, reason))
 
 
 class TestValidateFragment:
@@ -168,10 +186,10 @@ class TestSyncState:
         assert s.bad_run_ids == [1, 2]
 
 
-def _make_run(run_id: int) -> Run:
+def _make_run(run_id: int, created_at: datetime | None = None) -> Run:
     return Run(
         run_id=run_id,
-        created_at=datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC),
+        created_at=created_at or datetime(2026, 7, 30, 12, 0, 0, tzinfo=UTC),
         artifact_ids=(999,),
     )
 
@@ -553,3 +571,436 @@ class TestGhApiArgContract:
         assert cmd[:2] == ["gh", "api"]
         assert len(cmd) == 3, f"expected gh api to receive a single endpoint arg, got cmd={cmd!r}"
         assert cmd[2] == "repos/Etoile04/nucpot/actions/runs/12345/artifacts"
+
+
+# ---------------------------------------------------------------------------
+# NFM-5934 — repair: portable append (fcntl.flock), pending-failure
+# tripwire, window anchor / head-of-line, dry-run validate-only,
+# completed-run filter.
+# ---------------------------------------------------------------------------
+
+
+def _b64(raw: str) -> str:
+    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+class TestRemoteAppendScript:
+    """The remote critical section is a stdlib python3 program.
+
+    NFM-5934: the previous bash script called the ``flock(1)`` binary —
+    absent on the macOS prod host, so EVERY append failed rc 127 → 99
+    since Era-B went live — and ``head -n -1`` (GNU-only; BSD head
+    rejects negative counts so a malformed master tail was never
+    truncated). These tests EXECUTE the generated script with the real
+    interpreter so lock / truncate / append / state-advance semantics
+    are pinned, not assumed.
+    """
+
+    def _run_script(self, script: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-"], input=script, capture_output=True, text=True, timeout=60
+        )
+
+    def test_happy_path_appends_and_advances(self, tmp_path: Path) -> None:
+        master = tmp_path / "master.jsonl"
+        master.write_text('{"existing": true}\n')
+        state = tmp_path / "state.json"
+        payload = [{"run_id": 100, "text": json.dumps(_FULL_EVENT)}]
+        new_state = SyncState(last_synced_run_id=100, last_synced_at="2026-07-30T12:00:00Z")
+        script = _build_remote_append_script(
+            str(master), str(state), _b64(json.dumps(payload)), _b64(new_state.to_json())
+        )
+        proc = self._run_script(script)
+        assert proc.returncode == 0, proc.stderr
+        lines = master.read_text().splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[0]) == {"existing": True}
+        assert json.loads(lines[1]) == _FULL_EVENT
+        state_obj = json.loads(state.read_text())
+        assert state_obj["last_synced_run_id"] == 100
+
+    def test_malformed_tail_is_truncated_before_append(self, tmp_path: Path) -> None:
+        master = tmp_path / "master.jsonl"
+        # Partial final line WITHOUT trailing newline — the exact
+        # torn-append shape the tail-1 check exists for.
+        master.write_text('{"ok": 1}\n{"par')
+        state = tmp_path / "state.json"
+        payload = [{"run_id": 101, "text": json.dumps(_FULL_EVENT)}]
+        script = _build_remote_append_script(
+            str(master), str(state), _b64(json.dumps(payload)), _b64(SyncState(101).to_json())
+        )
+        proc = self._run_script(script)
+        assert proc.returncode == 0, proc.stderr
+        assert "malformed, truncating" in proc.stderr
+        content = master.read_text()
+        assert content.startswith('{"ok": 1}\n')
+        assert '{"par' not in content
+        assert len(content.splitlines()) == 2
+        assert json.loads(content.splitlines()[1]) == _FULL_EVENT
+
+    def test_well_formed_tail_is_not_touched(self, tmp_path: Path) -> None:
+        master = tmp_path / "master.jsonl"
+        before = '{"ok": 1}\n{"ok": 2}\n'
+        master.write_text(before)
+        state = tmp_path / "state.json"
+        payload = [{"run_id": 102, "text": json.dumps(_FULL_EVENT)}]
+        script = _build_remote_append_script(
+            str(master), str(state), _b64(json.dumps(payload)), _b64(SyncState(102).to_json())
+        )
+        proc = self._run_script(script)
+        assert proc.returncode == 0, proc.stderr
+        assert master.read_text() == before + json.dumps(_FULL_EVENT) + "\n"
+
+    def test_lock_busy_exits_99_without_writing(self, tmp_path: Path) -> None:
+        master = tmp_path / "master.jsonl"
+        master.write_text("")
+        state = tmp_path / "state.json"
+        lock_path = tmp_path / "master.jsonl.lock"
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            payload = [{"run_id": 103, "text": json.dumps(_FULL_EVENT)}]
+            script = _build_remote_append_script(
+                str(master), str(state), _b64(json.dumps(payload)), _b64(SyncState(103).to_json())
+            )
+            proc = self._run_script(script)
+            assert proc.returncode == 99
+            assert "lock busy" in proc.stderr
+            assert master.read_text() == ""
+            assert not state.exists()
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def test_no_flock_binary_or_gnu_head_dependencies(self) -> None:
+        script = _build_remote_append_script("/m", "/s", "e30=", "e30=")
+        # Strip comments so a mention in prose doesn't false-positive.
+        code = "\n".join(ln.split("#", 1)[0] for ln in script.splitlines())
+        assert "flock -n" not in code, "flock(1) does not exist on the macOS prod host"
+        assert "head -n -1" not in code, "BSD head rejects negative line counts"
+        assert "fcntl.flock" in code
+        assert "python3" not in code  # the script IS python (run as `python3 -`)
+
+
+class TestFailureStore:
+    def test_round_trip_through_disk(self, tmp_path: Path) -> None:
+        path = tmp_path / "state-failures.json"
+        store = FailureStore(path)
+        store.record_run_failure(42, "download", "boom", "2026-11-10T00:00:00Z")
+        store.record_run_failure(42, "download", "boom again", "2026-11-10T00:00:00Z")
+        store.record_append_failure("ssh reset")
+        store.flush()
+        reloaded = FailureStore(path)
+        assert reloaded.data["runs"]["42"]["failures"] == 2
+        assert reloaded.data["runs"]["42"]["created_at"] == "2026-11-10T00:00:00Z"
+        assert reloaded.data["append"]["failures"] == 1
+
+    def test_tolerates_garbage(self, tmp_path: Path) -> None:
+        path = tmp_path / "state-failures.json"
+        path.write_text("not json {")
+        store = FailureStore(path)
+        assert store.data["runs"] == {}
+        assert store.data["append"]["failures"] == 0
+
+    def test_clear_run_and_oldest_pending(self) -> None:
+        store = FailureStore()
+        store.record_run_failure(2, "download", "x", "2026-11-10T02:00:00Z")
+        store.record_run_failure(1, "download", "x", "2026-11-10T01:00:00Z")
+        assert store.oldest_pending_created_at() == "2026-11-10T01:00:00Z"
+        store.clear_run(1)
+        assert store.oldest_pending_created_at() == "2026-11-10T02:00:00Z"
+
+    def test_missing_file_starts_empty(self, tmp_path: Path) -> None:
+        store = FailureStore(tmp_path / "absent.json")
+        assert store.oldest_pending_created_at() == ""
+
+
+class TestListProductionRunsCompletedFilter:
+    """NFM-5934: only completed runs are listed.
+
+    A deploy run is ~50 min in flight before its fragment artifact
+    uploads; listing it in-progress bad-marked it permanently as "no
+    prod-deploy-event-* artifact" — a false negative that would eat the
+    real fragment the moment a tick landed inside the deploy window.
+    """
+
+    def _item(self, run_id: int, status: str = "completed") -> dict:
+        return {
+            "id": run_id,
+            "name": "Production Deployment",
+            "status": status,
+            "created_at": "2026-11-08T10:58:47Z",
+        }
+
+    def _patch_gh(self, monkeypatch: pytest.MonkeyPatch, pages: list[list[dict]]) -> list[str]:
+        import prod_event_collector as m
+
+        calls: list[str] = []
+
+        def fake_gh_api(repo: str, endpoint: str):
+            calls.append(endpoint)
+            if "/artifacts" in endpoint:
+                return {"artifacts": []}
+            page = 1
+            if "page=" in endpoint:
+                page = int(endpoint.rsplit("page=", 1)[1])
+            return {"workflow_runs": pages[page - 1] if page <= len(pages) else []}
+
+        monkeypatch.setattr(m, "_gh_api", fake_gh_api)
+        return calls
+
+    def test_in_progress_runs_are_skipped(self, monkeypatch) -> None:
+        self._patch_gh(
+            monkeypatch,
+            [[self._item(1, status="in_progress"), self._item(2, status="completed")]],
+        )
+        backend = GhBackend("Etoile04/nucpot", "t@h", "/m", "/s")
+        runs = backend.list_production_runs(datetime.now(UTC))
+        assert [r.run_id for r in runs] == [2]
+
+    def test_paginates_past_first_page(self, monkeypatch) -> None:
+        page1 = [self._item(i) for i in range(1, PAGE_SIZE + 1)]
+        page2 = [self._item(PAGE_SIZE + 1)]
+        calls = self._patch_gh(monkeypatch, [page1, page2])
+        backend = GhBackend("Etoile04/nucpot", "t@h", "/m", "/s")
+        runs = backend.list_production_runs(datetime.now(UTC))
+        assert len(runs) == PAGE_SIZE + 1
+        assert any("page=2" in c for c in calls)
+
+    def test_page_cap_is_loud(self, monkeypatch, capsys) -> None:
+        pages = [[self._item(i) for i in range(1, PAGE_SIZE + 1)] for _ in range(5)]
+        self._patch_gh(monkeypatch, pages)
+        backend = GhBackend("Etoile04/nucpot", "t@h", "/m", "/s")
+        runs = backend.list_production_runs(datetime.now(UTC))
+        assert len(runs) == 5 * PAGE_SIZE
+        assert "cap" in capsys.readouterr().err
+
+
+class TestPendingTripwire:
+    """A pending run failing >MAX_CONSECUTIVE_FAILURES consecutive times
+    is surfaced (alert once on crossing + non-zero exit signal) and stays
+    pending — never silently retried forever, never data-losing."""
+
+    def test_download_failures_tripwire_on_crossing(self) -> None:
+        run = _make_run(1000)
+        backend = _FakeBackend(runs=[run], fragments={})
+        backend.download_fail_ids = {1000}
+        store = FailureStore()
+        stalled_per_tick = []
+        for _ in range(4):
+            outcome = collect(SyncState(), backend, failures=store)
+            stalled_per_tick.append(len(outcome.stalled))
+        assert stalled_per_tick == [0, 0, 0, 1]
+        # Alert fires exactly once, on crossing (4th consecutive failure).
+        assert len(backend.pending_failure_alerts) == 1
+        assert backend.pending_failure_alerts[0][:3] == (1000, "download", 4)
+        # The run stays pending — bad-marks would be data loss.
+        assert 1000 not in outcome.bad_run_ids
+        assert store.data["runs"]["1000"]["failures"] == 4
+        assert backend.append_calls == []
+
+    def test_recovery_resolves_tripwire_and_alert_is_not_refired(self) -> None:
+        run = _make_run(1001)
+        backend = _FakeBackend(runs=[run], fragments={})
+        backend.download_fail_ids = {1001}
+        store = FailureStore()
+        for _ in range(4):
+            collect(SyncState(), backend, failures=store)
+        backend.download_fail_ids = set()
+        backend.fragments[1001] = json.dumps(_FULL_EVENT)
+        outcome = collect(SyncState(), backend, failures=store)
+        assert outcome.stalled == ()
+        assert "1001" not in store.data["runs"]
+        assert len(backend.append_calls) == 1
+        assert len(backend.pending_failure_alerts) == 1  # not re-fired on recovery
+
+    def test_append_streak_tripwire_keeps_state_unchanged(self) -> None:
+        run = _make_run(1100)
+        backend = _FakeBackend(runs=[run], fragments={1100: json.dumps(_FULL_EVENT)})
+        backend.append_should_raise = RuntimeError("ssh connection reset")
+        store = FailureStore()
+        for attempt in range(4):
+            outcome = collect(SyncState(), backend, failures=store)
+            assert outcome.to_json() == SyncState().to_json()
+            assert len(outcome.stalled) == (1 if attempt == 3 else 0)
+        assert len(backend.append_failure_alerts) == 4  # existing every-failure alert
+        assert store.data["append"]["failures"] == 4
+
+    def test_cap_constant_matches_parent_tripwire_text(self) -> None:
+        # Parent phase text: "fails >3 consecutive attempts". 3 must not
+        # trip; 4 must.
+        assert MAX_CONSECUTIVE_FAILURES == 3
+
+
+class TestHeadOfLineAnchor:
+    """A transiently-failing run below a newer successful run must be
+    retried (window anchored at its created_at, pending-store bypass of
+    the high-water guard) — not silently dropped forever."""
+
+    def test_anchored_window_and_retry_below_high_water(self) -> None:
+        t0 = datetime(2026, 7, 30, 10, 0, 0, tzinfo=UTC)
+        run_a = _make_run(100, created_at=t0)
+        run_b = _make_run(200, created_at=t0 + timedelta(minutes=30))
+        store = FailureStore()
+        backend = _FakeBackend(
+            runs=[run_a, run_b],
+            fragments={200: json.dumps(_FULL_EVENT), 100: json.dumps(_FULL_EVENT)},
+        )
+        backend.download_fail_ids = {100}
+
+        outcome1 = collect(SyncState(), backend, failures=store)
+        assert outcome1.last_synced_run_id == 200  # B integrated
+        assert outcome1.stalled == ()  # 1 failure < cap
+        assert "100" in store.data["runs"]  # A tracked as pending
+
+        # Tick 2: A recovers. The listing window must anchor at A's
+        # created_at (older than the plain last-synced window) so A is
+        # still considered, and the pending store must bypass the
+        # high-water guard (100 <= 200). Thread outcome1 as state, the
+        # way main() persists state between ticks.
+        backend.download_fail_ids = set()
+        outcome2 = collect(outcome1, backend, failures=store)
+        assert backend.sinces[-1] <= t0, "window must anchor at the oldest pending run"
+        assert len(backend.append_calls) == 2
+        appended_rids = [rid for rid, _ in backend.append_calls[1][0]]
+        assert appended_rids == [100]  # A's fragment finally appended
+        assert outcome2.last_synced_run_id == 200, "high-water must never regress"
+        assert "100" not in store.data["runs"]
+        assert outcome2.stalled == ()
+
+
+class TestDryRunValidateOnly:
+    """--dry-run must be validate-only BY CONSTRUCTION. On main the
+    append ran inside collect() before main()'s dry-run gate — harmless
+    only while every append failed on the missing flock binary."""
+
+    def test_dry_run_has_no_side_effects(self, tmp_path: Path) -> None:
+        run = _make_run(1200)
+        backend = _FakeBackend(runs=[run], fragments={1200: json.dumps(_FULL_EVENT)})
+        store_path = tmp_path / "state-failures.json"
+        store = FailureStore(store_path)
+        outcome = collect(SyncState(), backend, dry_run=True, failures=store)
+        assert backend.append_calls == []
+        assert backend.alerts == []
+        assert backend.append_failure_alerts == []
+        assert backend.pending_failure_alerts == []
+        assert not store_path.exists(), "dry-run must not persist failure counts"
+        # The plan still shows what WOULD happen.
+        assert outcome.last_synced_run_id == 1200
+
+    def test_dry_run_does_not_mutate_existing_counts(self, tmp_path: Path) -> None:
+        run = _make_run(1201)
+        backend = _FakeBackend(runs=[run], fragments={})
+        backend.download_fail_ids = {1201}
+        store_path = tmp_path / "state-failures.json"
+        store_path.write_text(
+            json.dumps(
+                {
+                    "runs": {"1201": {"failures": 4, "stage": "download", "last_error": "x"}},
+                    "append": {"failures": 0, "last_error": ""},
+                }
+            )
+        )
+        store = FailureStore(store_path)
+        collect(SyncState(), backend, dry_run=True, failures=store)
+        assert json.loads(store_path.read_text())["runs"]["1201"]["failures"] == 4
+
+
+class TestMainWiring:
+    """End-to-end through main(): the tripwire must flip the step exit
+    non-zero (the load-bearing surface while ALERT_WEBHOOK is empty),
+    and --dry-run must stay validate-only."""
+
+    def _argv(self, tmp_path: Path, extra: list[str] | None = None) -> list[str]:
+        argv = [
+            "--sync-state",
+            str(tmp_path / "state.json"),
+            "--master-jsonl",
+            str(tmp_path / "master.jsonl"),
+            "--ssh-target",
+            "t@h",
+        ]
+        return argv + (extra or [])
+
+    def test_tripwire_exit_nonzero_until_resolved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import prod_event_collector as m
+
+        run = _make_run(1300)
+        failing = {"download": True}
+
+        class _ScriptedBackend:
+            def __init__(self, *a: object, **k: object) -> None:
+                pass
+
+            def list_production_runs(self, since: datetime) -> list:
+                return [run]
+
+            def download_artifact(self, run_id: int, artifact_id: int, dest: Path) -> None:
+                if failing["download"]:
+                    raise RuntimeError("boom")
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / f"{run_id}.jsonl").write_text(json.dumps(_FULL_EVENT))
+
+            def append_and_advance(self, fragments, new_state) -> None:
+                pass
+
+            def alert_bad_fragment(self, *a: object) -> None:
+                pass
+
+            def alert_append_failure(self, *a: object) -> None:
+                pass
+
+            def alert_pending_failure(self, *a: object) -> None:
+                pass
+
+        monkeypatch.setattr(m, "GhBackend", _ScriptedBackend)
+        monkeypatch.setenv("NFMD_PROD_SSH_TARGET", "t@h")
+        argv = self._argv(tmp_path)
+        rcs = [m.main(argv) for _ in range(4)]
+        assert rcs == [0, 0, 0, 1], "tripwire must flip the step exit non-zero on the 4th failure"
+        failures_path = tmp_path / "state-failures.json"
+        assert failures_path.exists()
+        assert json.loads(failures_path.read_text())["runs"]["1300"]["failures"] == 4
+
+        failing["download"] = False
+        assert m.main(argv) == 0
+        assert json.loads(failures_path.read_text())["runs"] == {}
+
+    def test_dry_run_main_writes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import prod_event_collector as m
+
+        run = _make_run(1301)
+
+        class _ValidFragmentBackend:
+            def __init__(self, *a: object, **k: object) -> None:
+                pass
+
+            def list_production_runs(self, since: datetime) -> list:
+                return [run]
+
+            def download_artifact(self, run_id: int, artifact_id: int, dest: Path) -> None:
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / f"{run_id}.jsonl").write_text(json.dumps(_FULL_EVENT))
+
+            def append_and_advance(self, fragments, new_state) -> None:
+                raise AssertionError("dry-run must never append")
+
+            def alert_bad_fragment(self, *a: object) -> None:
+                raise AssertionError("dry-run must never alert")
+
+            def alert_append_failure(self, *a: object) -> None:
+                raise AssertionError("dry-run must never alert")
+
+            def alert_pending_failure(self, *a: object) -> None:
+                raise AssertionError("dry-run must never alert")
+
+        monkeypatch.setattr(m, "GhBackend", _ValidFragmentBackend)
+        monkeypatch.setenv("NFMD_PROD_SSH_TARGET", "t@h")
+        rc = m.main(self._argv(tmp_path, ["--dry-run"]))
+        assert rc == 0
+        assert not (tmp_path / "state.json").exists(), "dry-run must not save state"
+        assert not (tmp_path / "state-failures.json").exists(), "dry-run must not persist counts"

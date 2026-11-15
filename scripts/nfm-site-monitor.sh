@@ -472,6 +472,119 @@
 #     The close path is unchanged — once open=1, the next green tick books
 #     the episode close with its existing RECOVERY line.
 #
+# NFM-5947 (2026-11-11, SRE; CPO triage 2026-11-10T16:03Z on QA courier
+# NFM-5947, per the NFM-5858 precedent) — Homepage P1 single family
+# disposition + standing courier escalation bar. COMMENT-ONLY record;
+# zero behavior change (no line below the header is touched).
+#   - Disposition: ABSORB as accepted post-fix residual. No follow-up
+#     ticket; no scope change to ADR-026 (NFM-5870) — the structural
+#     remedy is already specced inside that family (5873 decision gate ->
+#     5874 worker fallback -> 5875 monitor classification); a new
+#     follow-up would duplicate 5874/5875, not accelerate them.
+#   - Mechanism confirmed cold-fill-at-TTL-expiry, 6/6 in the courier
+#     window: every Homepage single ran LANES origin=ok edge-tunnel=ok
+#     edge-cached=fail verdict=CACHED_DEGRADED, refs slow=0 unavail=0,
+#     batclass=clean, streak 1, RECOVERY next tick (16:56:57Z / 17:40:14Z
+#     / 19:26:52Z / 19:38:08Z / 23:26:45Z 11-09, 12:08:06Z 11-10), deploy
+#     e34d41166 unchanged throughout (events are PRE-ISR-warmup; PR #1531
+#     not yet deployed). Cross-route corroboration: /browse 5067ms single
+#     14:41:27Z 11-10 same shape (own lineage NFM-5858).
+#   - CENSUS CORRECTION (SRE re-verified from this log 11-11): the
+#     courier counted x4 but the same 19.2h window holds SIX Homepage
+#     singles — the beat census missed 19:21:12Z 5619ms and 19:32:17Z
+#     5485ms (same class: single-cycle each, RECOVERY between, refs-clean
+#     batclass=clean). Post-TTL-fix (11-05) family census: 11 Homepage
+#     singles total; the rolling-24h count stood AT 6 as of 12:02:43Z
+#     11-10 — zero headroom to bar (c): one more family single before the
+#     earliest window members age out crosses 6. Absorption still holds
+#     (class characterized, impact = slow first-hit only, remedy
+#     in-flight), but beats must track the true count below.
+#   - STANDING ESCALATION BAR (pre-commitment update; supersedes the
+#     "next single/pair trips courier" bar): re-trip a courier ONLY on
+#     (a) streak >=2 on the same route family (consecutive windows, no
+#     RECOVERY between), (b) >=2 distinct routes tripping in one window,
+#     or (c) >6 singles/24h sustained. Singles-with-RECOVERY stay
+#     absorbed under this verdict. Census method for lane beats: count
+#     every 'Frontend Homepage P1' WARN with streak 1 + a following
+#     RECOVERY line (do NOT enumerate magnitudes — the 11-10 11:04Z beat
+#     listed 5779/6391/7332 and missed 5619/5485 in between).
+#   - Expedite levers are human-delivery stalls, not engineering (both
+#     carded; do not re-ask): deploy-path decision card 2bc50484 on
+#     NFM-5898 gates the PR #1531 cutover; the CF zone-token reply on
+#     NFM-5873 gates serve-stale (converts exactly these cold fills into
+#     stale-served responses).
+#
+# NFM-5966 (2026-11-12, SRE; CPO dispatch — D2-G3 under parent NFM-5963) —
+# replica liveness lane (fourth lane; z203 HA replica, D2-G2 components):
+#   - Gap: the D2 HA replica (cloudflared-nucpot-replica.service +
+#     nfm-origin-forwarder.service on z203, NFM-5965) had NO liveness
+#     coverage. Replica darkness is exactly the dangerous state during a
+#     primary outage (the replica exists to carry traffic while the Mac
+#     primary is dark — NFM-5963 scope item 4; the 8/8-episode verdict is
+#     single-path Mac-side prefix blackhole), and unmonitored it would stay
+#     invisible until a full-edge episode the replica should have absorbed.
+#   - Lane: ONE SSH round trip per tick to z203 over tailscale (path
+#     measured clean in NFM-5964: direct v6, 25/58ms) running a READ-ONLY
+#     battery: `systemctl show -p LoadState -p ActiveState` for BOTH pinned
+#     units + the last 256KiB of /var/log/cloudflared-nucpot-replica.log
+#     (registration age, same rolling-staleness semantics as the NFM-5880
+#     gate, N=600s) + a forwarder end-to-end curl (localhost:3000 ->
+#     Mac:3000). Emitted as one "REPLICA — replica: ..." evidence line per
+#     tick, after the LANES line (the OK/WARN/CRITICAL line stays the tick's
+#     newest line, NFM-5876 convention).
+#   - Verdict (replica=<ok|dark|unknown|notfound> on the REPLICA line):
+#       notfound — either unit LoadState=not-found (D2-G2 not yet deployed /
+#         unit removed): NOTE-class, NO WARN (a state the board already
+#         knows is in flight must not noise the WARN class).
+#       dark    — a loaded unit not active, OR both units active but
+#         registration stale (age>=600 or none_span).
+#       ok      — both units active AND registration fresh (age<600).
+#       unknown — everything else (ssh_fail, registration unreadable,
+#         none_short, garbled output): FAIL-OPEN by construction.
+#   - Severity shape (CPO dispatch, binding): replica-dark ALONE (primary
+#     green) = ONE WARN lane entry per dark tick, NOT a page — no notify,
+#     no CRITICAL line, no pending_page latch, no streak>=2 machinery, exit
+#     code stays 0. Any page upgrade is gated on 48h post-window soak
+#     evidence and would be a NEW reviewed change, never a drift. Replica-
+#     dark AND primary-dark = the existing primary handling (this lane
+#     stays evidence-only on degrade ticks: no replica WARN, streak frozen).
+#   - Probe-dependency honesty: the SSH path (tailscale + sshd + operator
+#     key) is a NEW dependency; absence of a replica verdict (ssh_fail /
+#     unknown / notfound) can NEVER classify anything — the lane adds no
+#     conjunct to the NFM-5876 three-lane verdict matrix, so it is
+#     STRUCTURALLY impossible for this lane to create or suppress a
+#     PARTIAL_DEGRADED or a page. NFM-5872 tripwire 3 (tunnel-dark +
+#     cached-dark => FULL_EDGE_OUTAGE CRITICAL, never PD) is untouched: the
+#     matrix is byte-identical.
+#   - State: OWN state file (~/.nfm-site-monitor.replica.state, seam
+#     NFM_MONITOR_REPLICA_STATE) holding the consecutive-dark streak +
+#     first-dark timestamp for the WARN line evidence — every pre-existing
+#     state_write call site stays byte-identical (NFM-5667/5708 pattern for
+#     S1/REF state). Streak semantics: increments only on primary-green
+#     dark ticks; ok resets (with a REPLICA-RECOVERY note if it ended a
+#     streak); unknown/notfound and primary-degrade ticks freeze (neither
+#     count nor reset).
+#   - fwd_http is EVIDENCE-ONLY in this build (rides the token, never flips
+#     the verdict): the forwarder's end-to-end answer depends on the
+#     z203->Mac tailscale leg, and a z203-local curl hiccup must not read
+#     as replica-dark. Upgrading it to a verdict conjunct is post-soak work
+#     (same 48h clause). Known z203-side confounder (SRE probe 2026-11-11):
+#     0.0.0.0:3000 on z203 ALREADY answers (HTTP 500 "Internal Server
+#     Error" from an unknown pre-existing listener) — flagged for D2-G2:
+#     the caddy forwarder cannot bind localhost:3000 until that listener
+#     is reconciled; the lane's fwd_http token will read whatever answers
+#     there until then.
+#   - ADR-023: the SSH lane is transport-level (tailscale interface), not
+#     HTTP egress — no proxy class applies; the on-z203 curl is direct
+#     localhost. Budget: ssh ConnectTimeout 8s + subprocess kill 20s worst
+#     case on a 300s tick.
+#   - Diagnostic: --replica-probes-once prints the token + verdict, touches
+#     no log and no state (SRE post-deploy verification;
+#     --origin-probes-once precedent). Env seams (test-only; unset in
+#     production => identical behavior): NFM_REPLICA_SSH (binary),
+#     NFM_REPLICA_TARGET, NFM_REPLICA_TIMEOUT, NFM_REPLICA_FWD_URL,
+#     NFM_MONITOR_REPLICA_STATE.
+#
 # Probe: python3 scripts/health_check.py from the production host checkout
 # (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
 # host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
@@ -636,6 +749,34 @@ S1_EPISODE_GREEN_GAP=600  # ruling §2: >=10 min green separates episodes
 # latch + REMINDER_RUNS reminder cadence), so reader-side behavior stays
 # uniform across alert classes.
 PD_PAGE_STREAK=2
+
+# NFM-5966: replica lane — pinned z203 targets (shared names with D2-G2,
+# NFM-5965), registration staleness N identical to the NFM-5880 gate
+# (600s), and an OWN state file so every pre-existing state_write call
+# site stays byte-identical (NFM-5667/5708 pattern). Seams are test-only;
+# unset in production => the documented defaults. The SSH probe uses the
+# operator's z203 identity (user ~/.ssh/config alias `z203` -> tailscale
+# 100.70.30.21, NFM-5964) — BatchMode, no agent, read-only battery.
+REPLICA_STATE="${NFM_MONITOR_REPLICA_STATE:-$HOME/.nfm-site-monitor.replica.state}"
+REPLICA_SSH="${NFM_REPLICA_SSH:-/usr/bin/ssh}"
+REPLICA_TARGET="${NFM_REPLICA_TARGET:-z203}"
+REPLICA_TIMEOUT="${NFM_REPLICA_TIMEOUT:-20}"
+REPLICA_FWD_URL="${NFM_REPLICA_FWD_URL:-http://localhost:3000/api/v1/health}"
+REPLICA_N_STALE=600       # == primary gate N_MIN_SECONDS / S1_EPISODE_GREEN_GAP
+
+replica_state_get() { # key default
+  if [[ -f "$REPLICA_STATE" ]]; then
+    v="$(grep -E "^$1=" "$REPLICA_STATE" | tail -1 | cut -d= -f2-)"
+    [[ -n "$v" ]] && echo "$v" || echo "$2"
+  else
+    echo "$2"
+  fi
+}
+replica_state_write() { # dark_streak first_dark
+  mkdir -p "$(dirname "$REPLICA_STATE")" 2>/dev/null || true
+  printf 'dark_streak=%s\nfirst_dark=%s\n' "$1" "$2" > "$REPLICA_STATE.tmp"
+  mv "$REPLICA_STATE.tmp" "$REPLICA_STATE"
+}
 
 s1_get() { # key default
   if [[ -f "$S1_STATE" ]]; then
@@ -1452,6 +1593,138 @@ origin_probes() { # prints "origin: /=<code>/<ms>ms/<bytes>B browse=..."; rc 0 a
   printf '%s' "$acc"
 }
 
+# ---- NFM-5966 replica liveness probe (z203 over tailscale, one SSH trip) ----
+# Read-only remote battery: per-unit LoadState/ActiveState (systemctl show
+# needs no root), the replica connector log tail (registration age), and a
+# forwarder end-to-end curl. Prints ONE machine-token line; rc 0 always —
+# a failed probe is ERR/ssh_fail-tagged evidence, never an error and never
+# an alarm input by itself (verdict rules in the NFM-5966 header block).
+# Markers bound the log tail so arbitrary log content can never be
+# misparsed as control output (cloudflared lines always start with a
+# timestamp, so the marker lines are collision-free in practice; the
+# parser anchors on line starts anyway).
+replica_probes() { # prints "replica: unit=... fwd=... load=... reg=... fwd_http=... verdict=..."
+  "$PY" - <<'REPPYEOF'
+import os, re, subprocess, sys, time
+
+SSH = os.environ.get("NFM_REPLICA_SSH", "/usr/bin/ssh")
+TARGET = os.environ.get("NFM_REPLICA_TARGET", "z203")
+PROBE_TIMEOUT = float(os.environ.get("NFM_REPLICA_TIMEOUT", "20"))
+FWD_URL = os.environ.get("NFM_REPLICA_FWD_URL", "http://localhost:3000/api/v1/health")
+REMOTE_LOG = "/var/log/cloudflared-nucpot-replica.log"
+N_STALE = 600  # == the NFM-5880 gate N; drift-guarded by tests
+
+UNITS = ["cloudflared-nucpot-replica.service", "nfm-origin-forwarder.service"]
+_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ")
+_REG_SUBSTR = "Registered tunnel connection"
+
+
+def parse_iso_z(ts):
+    try:
+        import calendar
+        return int(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, OverflowError):
+        return None
+
+
+REMOTE = (
+    'for u in %s; do printf "UNIT %%s " "$u"; '
+    'systemctl show "$u" -p LoadState -p ActiveState 2>&1 | tr "\\n" " "; echo; done; '
+    'echo LOGSTART; tail -c 262144 %s 2>&1; echo LOGEND; '
+    'printf "FWDHTTP "; curl -sS -o /dev/null --max-time 5 -w "%%{http_code} %%{time_total}" "%s" 2>&1; echo'
+) % (" ".join(UNITS), REMOTE_LOG, FWD_URL)
+
+try:
+    completed = subprocess.run(
+        [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+         "-o", "StrictHostKeyChecking=accept-new", TARGET, REMOTE],
+        capture_output=True, timeout=PROBE_TIMEOUT,
+    )
+except Exception as e:
+    print("replica: ssh_fail(%s) verdict=unknown" % type(e).__name__)
+    sys.exit(0)
+
+if completed.returncode != 0:
+    err = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+    tag = err[-1][:60] if err else "rc=%d" % completed.returncode
+    print("replica: ssh_fail(%s) verdict=unknown" % tag)
+    sys.exit(0)
+
+out = completed.stdout.decode("utf-8", "replace")
+
+units = {}
+for line in out.split("\n"):
+    m = re.match(r"^UNIT (\S+) (.*)$", line)
+    if not m:
+        continue
+    name, rest = m.group(1), m.group(2)
+    load = re.search(r"LoadState=(\S+)", rest)
+    active = re.search(r"ActiveState=(\S+)", rest)
+    units[name] = (load.group(1) if load else "unknown",
+                   active.group(1) if active else "unknown")
+
+rep_load, rep_active = units.get(UNITS[0], ("unknown", "unknown"))
+fwd_load, fwd_active = units.get(UNITS[1], ("unknown", "unknown"))
+
+# Registration age from the bounded tail (same scan rules as the gate).
+reg_tok = "log_missing"
+m = re.search(r"^LOGSTART\n(.*?)^LOGEND", out, re.S | re.M)
+if m:
+    tail = m.group(1)
+    if re.search(r"No such file", tail):
+        reg_tok = "log_missing"
+    elif re.search(r"Permission denied", tail):
+        reg_tok = "perm_denied"
+    else:
+        last_reg = first_ts = last_ts = None
+        for tl in tail.split("\n"):
+            tm = _TS_RE.match(tl)
+            if not tm:
+                continue
+            ep = parse_iso_z(tm.group(1))
+            if ep is None:
+                continue
+            if first_ts is None:
+                first_ts = ep
+            last_ts = ep
+            if _REG_SUBSTR in tl:
+                last_reg = ep
+        if last_reg is not None:
+            age = int(time.time()) - last_reg
+            if age < 0:
+                age = 0  # clock skew: a stamp ahead of the host clock is fresh
+            reg_tok = str(age)
+        elif first_ts is not None and last_ts is not None:
+            reg_tok = "none_span" if (last_ts - first_ts) >= N_STALE else "none_short"
+
+# Forwarder end-to-end (evidence-only).
+m = re.search(r"^FWDHTTP (.*)$", out, re.M)
+fw_tok = "ERR(no-output)"
+if m:
+    fw = m.group(1).strip()
+    fm = re.match(r"^(\d{3}) (\d+(?:\.\d+)?)", fw)
+    if fm:
+        fw_tok = "%s/%dms" % (fm.group(1), int(float(fm.group(2)) * 1000))
+    elif fw:
+        fw_tok = "ERR(%s)" % fw.splitlines()[0][:48]
+
+# Verdict (NFM-5966 header rules).
+if rep_load == "not-found" or fwd_load == "not-found":
+    verdict = "notfound"
+elif rep_active != "active" or fwd_active != "active":
+    verdict = "dark"
+elif reg_tok.isdigit():
+    verdict = "ok" if int(reg_tok) < N_STALE else "dark"
+elif reg_tok == "none_span":
+    verdict = "dark"
+else:  # none_short / log_missing / perm_denied — no replica verdict: fail-open
+    verdict = "unknown"
+
+print("replica: unit=%s fwd=%s load=%s/%s reg=%s fwd_http=%s verdict=%s"
+      % (rep_active, fwd_active, rep_load, fwd_load, reg_tok, fw_tok, verdict))
+REPPYEOF
+}
+
 # ---- NFM-5876 three-lane classification -------------------------------------
 # Parses the three lanes from data the tick already collected: PROBE_ROWS
 # (the raw health_check.py table — edge-tunnel = "Backend API Health", the
@@ -1612,6 +1885,15 @@ if [[ "${1:-}" == "--origin-probes-once" ]]; then
   origin_out="$(origin_probes)"; origin_rc=$?
   echo "origin-probes rc=$origin_rc: $origin_out"
   exit "$origin_rc"
+fi
+
+# ---- replica-probes-once mode (NFM-5966 SRE diagnostic; no log write, no
+# state — prints the token + verdict so post-deploy verification never
+# touches the tick machine) -----------------------------------------------
+if [[ "${1:-}" == "--replica-probes-once" ]]; then
+  replica_out="$(replica_probes)"; replica_rc=$?
+  echo "replica-probes rc=$replica_rc: $replica_out"
+  exit 0
 fi
 
 # ---- ack mode (SRE heartbeat, after retro-filing the [SRE-CRITICAL]) -------
@@ -1825,6 +2107,18 @@ log "ORIGIN — $ORIGIN_EV"
 three_lane_classify
 log "LANES — origin=$LANE_ORIGIN edge-tunnel=$LANE_TUNNEL_TOK edge-cached=$LANE_CACHED verdict=$LANE_VERDICT [NFM-5876]"
 
+# NFM-5966: replica lane evidence — every real-probe tick (green + degrade
+# alike), after the LANES line so the OK/WARN/CRITICAL line stays the tick's
+# newest line. Evidence-ONLY here: verdict rules and the green-path WARN
+# entry live below; degrade ticks never WARN from this lane (the primary
+# line carries the tick; replica-dark + primary-dark = existing full-edge
+# handling). Scan-blind early-exit CRITICALs (NFM-5446/NFM-5497) leave
+# before this point — no REPLICA line on those exits, same as LANES.
+REPLICA_OUT="$(replica_probes 2>/dev/null)"
+log "REPLICA — $REPLICA_OUT"
+REP_VERDICT="$(printf '%s' "$REPLICA_OUT" | grep -oE 'verdict=[a-z]+' | head -1 | cut -d= -f2)"
+[[ -n "$REP_VERDICT" ]] || REP_VERDICT="unknown"
+
 # CPO charter addendum: a CONFIDENT non-clean battery verdict on a GREEN tick
 # (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
 # implications; a clean battery stays silent so green OK lines are
@@ -1846,6 +2140,33 @@ if (( RC == 0 )); then
   prev_streak="$(state_get streak 0)"
   first_fail="$(state_get first_fail -)"
   pending="$(state_get pending_page -)"
+  # NFM-5966: replica lane bookkeeping — GREEN ticks only (degrade ticks
+  # freeze the streak: replica-dark + primary-dark is the existing
+  # full-edge handling, and this lane must not add evidence noise to a
+  # paging tick). dark = one WARN lane entry per tick, NOT a page: no
+  # notify, no CRITICAL line, no pending_page latch, no streak>=2
+  # machinery, exit code unchanged. ok resets (REPLICA-RECOVERY note when
+  # it ended a streak). unknown/notfound freeze silently — absence of a
+  # replica verdict is fail-open and NOTE-class (D2-G2 not-found is a
+  # board-known in-flight state; per-tick NOTE noise would repeat the
+  # NFM-5712 defect class). State lives ONLY in the replica lane's own
+  # file — every pre-existing state_write call site stays byte-identical.
+  rep_dark_streak="$(replica_state_get dark_streak 0)"
+  rep_first_dark="$(replica_state_get first_dark -)"
+  case "$REP_VERDICT" in
+    dark)
+      rep_dark_streak="$(( rep_dark_streak + 1 ))"
+      if [[ "$rep_first_dark" == "-" || -z "$rep_first_dark" ]]; then rep_first_dark="$NOW"; fi
+      log "WARN — REPLICA_DARK (replica lane dark, primary green): $REPLICA_OUT — dark streak ${rep_dark_streak} since ${rep_first_dark} — evidence WARN, no page (NFM-5966; any page upgrade gated on 48h post-window soak)"
+      ;;
+    ok)
+      if (( rep_dark_streak > 0 )); then
+        log "REPLICA-RECOVERY — replica green again after ${rep_dark_streak} dark tick(s) (first dark ${rep_first_dark}) — evidence lane, no page was fired [NFM-5966]"
+      fi
+      rep_dark_streak=0; rep_first_dark="-"
+      ;;
+  esac
+  replica_state_write "$rep_dark_streak" "$rep_first_dark"
   if (( prev_streak > 0 )); then
     log "RECOVERY — all checks passing again after $prev_streak failing probe(s) (first failure $first_fail) — SRE closes the alert"
     # Missed-page reconciliation (NFM-5262): if a CRITICAL was latched and no
