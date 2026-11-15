@@ -20,6 +20,11 @@
 #       --health-status ok \
 #       --deploy-epoch 7        # NFM-5253: optional, additive JSON field
 #
+# NFM-5984: --health-status is optional. When omitted it is DERIVED from
+# --health-gate-first-poll-passed (true → ok, else error) so the status can
+# never contradict the boolean the caller explicitly passed. Explicit values
+# still win; invalid values still degrade to "error" (ADR-NFM-4195 D2).
+#
 # Event schema is fixed by the NFM-2035 spec, section 3.1: one JSON object per
 # line, appended, never rewritten.
 #
@@ -95,9 +100,11 @@ _deploy_event_int() {
 }
 
 # NFM-4198 / ADR-NFM-4195 D2: normalise to the /health vocabulary pin
-# (ok | degraded | error). Anything else — including an omitted flag —
-# becomes "error" so a malformed call site can never invent new vocabulary
-# or silently read as success.
+# (ok | degraded | error). Anything invalid — including an explicit
+# malformed flag value — becomes "error" so a malformed call site can
+# never invent new vocabulary or silently read as success. NFM-5984: an
+# OMITTED flag is derived from the gate boolean before this normalisation
+# (see _deploy_event_emit_impl), so it never reaches here as a literal.
 _deploy_event_health_status() {
   case "${1:-}" in
     ok|degraded|error) printf '%s' "$1" ;;
@@ -129,7 +136,11 @@ _deploy_event_emit_impl() {
   local environment="unknown" triggered_by="unknown" commit_sha="unknown"
   local first_pass_success="false" health_gate_first_poll_passed="false"
   local rollback_triggered="false" skip_flag_used="false" duration_ms="0"
-  local health_status="error" deploy_epoch=""
+  # NFM-5984: health_status starts EMPTY — an omitted --health-status is
+  # derived from the gate boolean below instead of the old unconditional
+  # "error" default, which leaked into prod master events (epochs 71–72)
+  # whose health_gate_first_poll_passed was true.
+  local health_status="" deploy_epoch=""
 
   while [ "$#" -gt 0 ]; do
     local key="$1"; shift
@@ -168,6 +179,20 @@ _deploy_event_emit_impl() {
     ''|*[!0-9]*) epoch_suffix="" ;;
     *) epoch_suffix=",\"deploy_epoch\":${deploy_epoch}" ;;
   esac
+
+  # NFM-5984: derive health_status from the gate boolean when the flag is
+  # omitted, so the two emitted fields can never contradict each other
+  # (true → ok; anything else → error — the same conservative mapping as
+  # _deploy_event_bool). Call sites that pass --health-status explicitly
+  # (staging trap, record_rollback callers passing gate=false) are
+  # untouched; explicit values still round-trip or degrade to error per
+  # ADR-NFM-4195 D2.
+  if [ -z "$health_status" ]; then
+    case "$(_deploy_event_bool "$health_gate_first_poll_passed")" in
+      true) health_status="ok" ;;
+      *)    health_status="error" ;;
+    esac
+  fi
 
   local path parent
   path="$(deploy_event_path)"

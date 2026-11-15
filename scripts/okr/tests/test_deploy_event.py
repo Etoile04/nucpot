@@ -227,7 +227,11 @@ class TestHealthStatusField:
 
     Enum is closed (ok | degraded | error) — mirroring the /health vocabulary
     pin — and malformed values degrade to ``error`` rather than inventing new
-    vocabulary.
+    vocabulary. NFM-5984: an *omitted* flag no longer falls back to the old
+    unconditional ``error`` default (that default leaked into prod master
+    events — epochs 71-72 — whose ``health_gate_first_poll_passed`` was
+    true); it now derives from the gate boolean the caller explicitly passed,
+    so the two fields can never contradict each other.
     """
 
     def test_degraded_round_trips(self, tmp_path: Path) -> None:
@@ -248,9 +252,32 @@ class TestHealthStatusField:
         run_emit(events, args=args)
         assert read_events(events)[0]["health_status"] == "error"
 
-    def test_omitted_flag_defaults_to_error(self, tmp_path: Path) -> None:
-        """Callers that predate NFM-4198 still emit a well-formed line."""
+    def test_omitted_flag_derives_ok_when_gate_passed(self, tmp_path: Path) -> None:
+        """NFM-5984: omitted --health-status + gate boolean true → "ok".
+
+        The prod fragment step passes the gate boolean but (before NFM-5984)
+        no --health-status; the derived status must agree with that boolean
+        instead of the old unconditional "error" default.
+        """
         events = tmp_path / "events.jsonl"
         args = _DEFAULT_ARGS.replace("--health-status ok", "")
         run_emit(events, args=args)
+        assert read_events(events)[0]["health_status"] == "ok"
+
+    def test_omitted_flag_derives_error_when_gate_failed(self, tmp_path: Path) -> None:
+        """NFM-5984: omitted --health-status + gate boolean false → "error"
+        (the same conservative mapping as _deploy_event_bool)."""
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "").replace(
+            "--health-gate-first-poll-passed true", "--health-gate-first-poll-passed false"
+        )
+        run_emit(events, args=args)
         assert read_events(events)[0]["health_status"] == "error"
+
+    def test_omitted_flag_still_emits_a_well_formed_line(self, tmp_path: Path) -> None:
+        """Callers that predate NFM-4198 still emit a well-formed line."""
+        events = tmp_path / "events.jsonl"
+        args = _DEFAULT_ARGS.replace("--health-status ok", "")
+        result = run_emit(events, args=args)
+        assert result.returncode == 0
+        assert len(read_events(events)) == 1
