@@ -274,3 +274,121 @@ was the only failing step across the egress blackhole episodes
 (NFM-5548 → 5556 → 5796 → 5798) and starved this lane 12h+ during the
 2026-11-04 runner outage. The original workflow file is deleted; rollback =
 revert. Guards: `scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py`.
+
+---
+
+## Amendment note — 2026-11-11 (NFM-5938, NFM-5932 P6): master JSONL is the single KR-3 prod series source; 2026-09-07 → 2026-11-10 outage recorded; legacy NFM-2111 lane adjudicated (KEEP)
+
+This addendum extends the 2026-11-05 amendment above. It records the
+NFM-5932 repair tree (CTO Path-A adjudication 2026-11-10: **restore, do not
+re-baseline**) and the P6 keep/retire decision for the legacy NFM-2111 lane.
+Per-phase, first-hand evidence for every claim below lives on NFM-5932 and
+its children (NFM-5933 … NFM-5939); commit- and sha-level pointers are in
+the carrying PR. Ops procedures: `docs/runbooks/prod-deploy-events.md`.
+
+### Single-source rule
+
+`~/.nfmd/master-deploy-events.jsonl` is the **single authoritative KR-3
+production deploy-event series**. The reporter is frozen on it:
+`scripts/okr/coverage_kr3.py` resolves the prod series as `--prod-path` arg
+→ `$NFMD_PROD_EVENTS_PATH` → `~/.nfmd/master-deploy-events.jsonl` (default).
+Nothing may repoint the reporter at the legacy lane
+(`~/.nfmd/deploy-events.jsonl`), and nothing writes the master except the
+collector's SSH+flock append path or a reviewed, repo-committed one-shot
+script with a timestamped pre-write backup (NFM-5932 hard constraint).
+
+### Outage window 2026-09-07 → 2026-11-10 (data restored 2026-11-11)
+
+- **Last pre-outage event:** run `34144432832`, ts `2026-09-07T17:11:01Z`
+  (the anchor of master's 48 lines, last written by the 2026-09-08 manual
+  backfill of `prod-event-backfill.jsonl`). CTO forensics 2026-11-10,
+  re-verified first-hand: `prod-event-sync-state.json` showed
+  `last_synced_run_id=0`, `last_synced_at=""`, 177 `bad_run_ids` — this lane
+  **never completed an automated sync** in its entire life.
+- **Era-A gaps** (single `prod-deploy-event-collector.yml`, ≤ 2026-11-05):
+  1. *Permissions gap.* The workflow carried **no `permissions:` block**, so
+     the runner `GITHUB_TOKEN` held only Contents/Metadata/Packages. Without
+     `actions: read`, artifact listing saw nothing and every deploy run was
+     false-marked bad — runner step `dfeca650…_4867f34c…` (2026-09-07
+     08:14Z) shows a `advanced:false` tick completing in ~1s with the state
+     already stuck. 177 poisoned `bad_run_ids` accumulated.
+  2. *Alert gap.* `ALERT_WEBHOOK` was unset, so both alert call sites
+     (`alert_bad_fragment`, `alert_append_failure`) silently no-op'd. The
+     lane's death raised nothing for two months.
+- **Era-B** (2026-11-05, NFM-5798 P2 Leg B — the amendment above) fixed the
+  perms gap (executor: `actions: read`, `contents: read`) and the checkout
+  fragility, but the lane stayed at zero syncs. Five latent defects,
+  captured and confirmed first-hand under NFM-5933/5934: the never-synced
+  window trap (`since = now−5min` made the backlog structurally unreachable),
+  the macOS `flock(1)` absence (remote append rc=99 on every attempt, BSD
+  `head -n -1` truncate failure in the same script), the fragment
+  double-emit (deploy emit step + EXIT trap → two-line fragments), the
+  silent download-retry class (stderr-only, no state change, no alert —
+  the literal captured state of run `42473687433`), and `--dry-run` not
+  being validate-only. Era-B was mechanically healthy and starved, not
+  broken.
+- **Repair** (NFM-5932 tree, 2026-11-10/11): P1 instrumented capture
+  (PR #1534, CR PASS relay NFM-5944); P2 repair (PR #1537, CR PASS relay
+  NFM-5942) — completed-run-only listing, python-`fcntl` remote critical
+  section, emit-once guard, 7-day bootstrap lookback for never-synced
+  state, per-run pending-failure sidecar with >3-consecutive-failure alert
+  + non-zero exit, and a `--dry-run` side-effect gate; P3 reviewed one-shot
+  backfill (PR #1536, squash-merged as `b61bd1e9` on human GO) executed
+  2026-11-11T05:11→05:29:40Z under the collector flock with
+  `--expect-*-sha` guards: **master 48 → 122 events** (Era-A bytes
+  preserved + 74 legacy-lane events 2026-09-25→2026-11-08, zero duplicate
+  ids, ts non-decreasing), sync-state advanced to
+  `last_synced_run_id=42957760934` / `2026-11-11T05:29:25Z`, `bad_run_ids`
+  177 → 255 (honest machine-reasoned marks); P4 alerting (PR #1538, CR PASS
+  relay NFM-5946) — dedup-keyed gh-issue fallback + self-test door,
+  end-to-end proven (issue #1539; runbook delta:
+  `docs/runbooks/site-monitoring.md` §10.1, landing on `main` with the
+  NFM-5932 merge batch). PRs #1534/#1537/#1538 were
+  CR-passed but pending the NFM-5932 human merge batch at this addendum's
+  drafting; statuses land with NFM-5939 integration.
+- **Residual data gap:** 2026-09-08 → 2026-09-25 — 161 window runs
+  unrecoverable as §3.1 events (123 corrupt two-line fragments + 38 with no
+  artifact); ~123 may be salvageable later by a first-line salvage pass,
+  and the surviving artifacts expire ≈2026-12-06 (board flag stands).
+  The series is therefore frozen 2026-09-07T17:11:01Z → recovered through
+  2026-11-08T12:49:40Z, with that 17-day interior gap permanent as §3.1
+  events.
+- **KR-3 computability:** the untouched reporter against the restored
+  master computes **KR-3 = 0.4098** (2026-11-11); formal reporter proof and
+  the stall tripwire are P5 (NFM-5937), gated on the NFM-5898 deploy-path
+  resolution.
+
+### Legacy NFM-2111 lane — decision: KEEP, non-authoritative
+
+`~/.nfmd/deploy-events.jsonl` and its writers
+(`collect-prod-deploy-events-{orchestrator,executor}.yml` +
+`scripts/lib/collect_prod_events.py`, NFM-2111 per ADR-KR3-A1 §C6.1) are
+**retained**. Rationale:
+
+1. **It is the only writer that kept working through the outage** — 74
+   events appended 2026-09-25→2026-11-08, and those appends are exactly
+   what the P3 backfill used to restore the master series over that window.
+   None of the failure classes that killed the ADR lane applied to it: the
+   executor declares `actions: read`/`contents: read` explicitly and
+   prefers a fine-grained PAT (`secrets.GH_TOKEN || secrets.GITHUB_TOKEN`),
+   it appends with python `fcntl.flock` (no macOS `flock(1)` dependency),
+   and its per-attempt artifacts sidestep the single-fragment defects.
+2. **Independent redundancy with a different idempotency model** —
+   `nfm-deploy-event-<run_id>-<attempt>` artifacts, processed-ledger
+   coverage tokens (NFM-5829), and `sha256(event_json_text)` append
+   idempotency. The master lane is single-fragment-per-run; a re-run's
+   attempt-2 event is visible only here.
+3. **Cost is low and the lane is healthy** post-Leg-B split (checkout-free
+   executor; hosted `*/5` orchestrator; practical delivery cadence 3–4.5 h
+   per the documented cron-drop history — late, not lossy, on its lane).
+
+**Conditions of keep:** the legacy file is **not** a KR-3 source (the
+reporter is frozen on master; the P5 tripwire watches master age
+specifically); no new consumers attach to it; retirement may be revisited
+only through a new ADR amendment after the repaired master lane has held a
+clean sync record for ≥90 days (one artifact-retention floor). CTO sign-off
+on this keep/retire decision is recorded on NFM-5932 before the carrying PR
+merges (NFM-5938 AC).
+
+Rollback for this addendum itself: revert the carrying PR (docs-only; no
+runtime artifact references this section).
