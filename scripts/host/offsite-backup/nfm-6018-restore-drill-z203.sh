@@ -81,6 +81,8 @@ if [ -f "$STAMP_DIR/db/nfm_db.dump" ]; then
     fail_step "docker-network-create-failed"
   fi
 
+  # POSTGRES_PASSWORD below is a throwaway literal for a scratch container that
+  # lives for ~10 seconds on z203 and is torn down with the drill — not a secret.
   if docker run -d --name "$PG_NAME" --network "$NET_NAME" -e POSTGRES_PASSWORD=drill-only "$PG_IMG" >/dev/null 2>&1; then
     note "[pg] scratch container up ($PG_IMG)"
   else
