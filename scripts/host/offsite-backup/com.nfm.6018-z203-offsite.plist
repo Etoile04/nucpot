@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NFM-6018 — nightly off-site backup ship, Mac Studio -> z203 (user LaunchAgent).
+
+  02:30 local daily, 30 min after the sanctioned 02:00 on-host stamp
+  (nfm-g2 run-backup.sh, NFM-4749/4750 crontab), and clear of the 04:20
+  keep-5 image-prune cron and the 21:35-21:55Z dark window (NFM-5973).
+
+  RunAtLoad=true gives at-least-once catch-up after a powered-off night;
+  the script's fail-closed preflight (stamp age < 26h, manifest verify)
+  plus idempotent re-ship make that safe.
+
+  Script lives at ~/bin/nfm-6018-z203-offsite.sh (host-durable, outside
+  the floating nucpot checkout — NFM-5543 precedent). Log line contract
+  for SRE heartbeat ticks: last `[NFM-6018-OFFSITE]` line in
+  ~/Library/Logs/nfm-6018-offsite.log must carry fail=0 and be younger
+  than 26h; anything else = investigate (see
+  docs/runbooks/prod-offsite-backup.md in the nucpot repo).
+
+  Installed without sudo as a user LaunchAgent (pattern:
+  com.nfm.site-monitor / NFM-5745 reboot-durability finding).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nfm.6018-z203-offsite</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/lwj04/bin/nfm-6018-z203-offsite.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/lwj04/Library/Logs/nfm-6018-offsite-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/lwj04/Library/Logs/nfm-6018-offsite-launchd.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/lwj04</string>
+</dict>
+</plist>
