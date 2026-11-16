@@ -158,6 +158,35 @@ jobs:
             --ssh-target lwj04@127.0.0.1 \
             $DRY_RUN_FLAG $SELF_TEST_FLAG
 
+      - name: Master-stall tripwire (NFM-5937)
+        # Read-only against the master JSONL (no append, no sync-state, no
+        # SSH hop): fires the NFM-5936 transport — ALERT_WEBHOOK when set,
+        # else the dedup-keyed [collector-alert] master-stall gh-issue —
+        # when the newest master event is older than 7d while completed
+        # Production Deployment runs exist in that window (parent
+        # NFM-5931 acceptance). (success() || failure()) keeps the step
+        # running when collection failed — a dead collect loop is exactly
+        # when the stall signal matters — WITHOUT the bare always() the
+        # provenance invariant forbids on payload steps; the verify gate
+        # is still the first-class condition. Exits 1 when tripped (loud
+        # secondary surface; the alert issue is primary). Skipped in
+        # self-test mode: that door fires exactly one alert and must stay
+        # single-purpose.
+        if: >-
+          (success() || failure()) &&
+          steps.verify-payload.outcome == 'success' &&
+          github.event.client_payload.self_test != 'true' &&
+          inputs.self_test != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+        run: |
+          cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
+          python3 prod_event_collector.py \
+            --master-jsonl /Users/lwj04/.nfmd/master-deploy-events.jsonl \
+            --repo "${{ github.repository }}" \
+            --tripwire
+
       - name: Annotate summary
         if: always()
         env:

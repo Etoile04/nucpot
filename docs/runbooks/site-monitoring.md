@@ -475,6 +475,61 @@ NFM-5936 PR. Pre-P4 behavior returns (alerts silently no-op while
 `ALERT_WEBHOOK` is unset); master JSONL / sync-state semantics are
 untouched by P4 by construction — the alert path never writes host state.
 
+### 10.2 Master-stall tripwire (NFM-5937)
+
+Parent NFM-5931 acceptance: warn when the newest master event is older
+than **7 days** WHILE production deploys ran in that window — the
+"deploys ran, capture silently stalled" signature (the 09-07 → 11-11
+stall was invisible for a month). The tripwire runs as its own executor
+step (`Master-stall tripwire (NFM-5937)`) on every collector fire, after
+the collect step:
+
+- **Condition (both required):** newest master event age > 7d
+  (strict — exactly 7d is not a stall), AND ≥ 1 completed
+  `Production Deployment` run created strictly after that newest event.
+  Any completed conclusion counts (`failure` / `cancelled` included):
+  a weather-killed deploy that still produced no event is exactly the
+  stall signature.
+- **Read-only vs master** (parent NFM-5932 hard constraint): the check
+  reads the master JSONL (max-`ts` scan, torn-tail tolerant); it never
+  appends, never touches sync-state or the failure sidecar, no SSH hop.
+  Master writes stay flock/reviewed-only.
+- **Transport:** rides §10.1 unchanged — Feishu webhook when set, else
+  the dedup-keyed `[collector-alert] master-stall` gh-issue (ONE open
+  issue per class, later fires comment into it).
+- **Scheduling:** rides the orchestrator's `*/15` backstop +
+  `workflow_run` fast path — no new schedule, no new workflow.
+- **Exit semantics:** fires → alert + `exit 1` from the tripwire step
+  (loud secondary surface, mirroring the collect-path tripwire
+  contract); silent → `exit 0`. The step runs on collect FAILURE via
+  `(success() || failure())` — a dead collect loop is when the signal
+  matters most — but keeps the manifest-verify gate as a first-class
+  condition (the Leg A provenance invariant: no bare `always()` on
+  payload steps). Skipped entirely in self-test mode (§10.1's door stays
+  single-purpose).
+- **Undefined state:** a missing/empty/unparseable master file leaves
+  the age rule undefined — the tripwire stays silent and says so on
+  stdout (total-capture loss is owned by the collect-path
+  `bad-fragment`/`append-failure` alerts).
+
+**Forced-old-state probe door:** run on the host with
+`--tripwire-max-age-days 0` — the age gate collapses and any completed
+in-window deploy run trips the real dedup-keyed alert (issue
+`[collector-alert] master-stall`), end-to-end, without writing anything
+to master. Close the probe issue after evidence capture so the dedup key
+resets.
+
+**Tests:** `scripts/okr/tests/test_nfm_5937_tripwire.py` (condition
+truth table incl. strict-boundary + zero-threshold probe door, torn-tail
+master reads, window listing filters + pagination, transport-priority
+mirror of §10.1, CLI dispatch/exit codes, executor step wiring +
+provenance gate).
+
+**Rollback note (repo-only change, no host-level deltas):** revert the
+NFM-5937 PR. The executor loses the tripwire step; no host files change
+(the tripwire exists only inside the staged payload + workflow), master
+and sync-state semantics are untouched by construction.
+
 ## 11. Three probe lanes & the PARTIAL_DEGRADED classification (NFM-5876)
 
 Child of NFM-5872 (CTO ruling R4-3 on NFM-5862, 2026-11-07). The sentinel's
