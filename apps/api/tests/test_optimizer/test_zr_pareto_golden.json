@@ -1,9 +1,20 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "issue": "NFM-5058",
-  "title": "Zr-only Pareto regression golden (KR-OPT-Q4-S2)",
+  "title": "Zr-only Pareto regression golden (KR-OPT-Q4-S2; NFM-5481 re-baseline, NFM-6009 Q2 schema bump)",
+  "problem_identity": {
+    "boundary": "zr_only",
+    "u_fraction_bounds": [
+      0.8,
+      0.95
+    ],
+    "floor_rho_u_g_cm3": 16.0,
+    "floor_t_stable_c": 500.0,
+    "element_absence_threshold": 0.005,
+    "n_ieq_constraints": 7
+  },
   "provenance": {
-    "generated_at_utc": "2026-10-12T03:58:48.112255+00:00",
+    "generated_at_utc": "2026-11-16T02:29:58.809813+00:00",
     "generator": "tests.test_optimizer.generate_golden",
     "boundary": "Zr-only (Mo, Nb, V, Ti, Cr forced to 0)",
     "excluded_element_basis": {
@@ -41,11 +52,17 @@
       "2 <= element count (U + solutes strictly above ELEMENT_ABSENCE_THRESHOLD=0.005) <= 6 \u2014 NFM-5481"
     ],
     "surrogate_mode": "synthetic (model artifacts absent in this environment; regression test runs identically so fronts stay comparable)",
+    "rebaseline": {
+      "issue": "NFM-5481",
+      "summary": "U window widened to [0.80, 0.95]; role-spec floors g5 (rho_U >= 16.0 g/cm^3) and g6 (T_stable >= 500 degC) and the element-count band g7 wired. Supersedes the PRE-floor schema-1 golden generation lineage.",
+      "blessing": "NFM-6009 Q2 (NDE ruling, 2026-11-16)",
+      "problem_identity": "machine-readable identity block at payload top level (schema_version 2); regression tests assert artifact equality against it"
+    },
     "provenance_files": {
       "prediction_service.py": "b39a8ddd44e792cbcef136d966b989cbb351a439",
-      "nsga2_problem.py": "38909c6e29ed93cfcaa4c67e0d90a953f3194460",
+      "nsga2_problem.py": "f58c9e5271adc3ecdeaa6ba2c943d16edebd0aa8",
       "ml_surrogate.py": "1402edceb3d5e296bdf169b3b6f95f20405fa3b6",
-      "zr_only.py": "38909c6e29ed93cfcaa4c67e0d90a953f3194460"
+      "zr_only.py": "f58c9e5271adc3ecdeaa6ba2c943d16edebd0aa8"
     },
     "tolerance_spec": {
       "per_axis_drift_max": 0.05,
@@ -56,7 +73,7 @@
   "front": {
     "n_solutions": 200,
     "n_evaluations": 20000,
-    "wall_time_s": 1.128,
+    "wall_time_s": 1.116,
     "objective_axis_spans": {
       "rho_U": {
         "fmin": -18.357507,
