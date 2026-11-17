@@ -20,6 +20,13 @@
 
 const FETCH_TIMEOUT_MS = 8_000
 
+// NFM-5863: the home page's emitted s-maxage is the MINIMUM of the route
+// segment revalidate and every inner fetch's data-cache revalidate, so this
+// constant must move in-lockstep with `export const revalidate` in
+// src/app/page.tsx (1800s). Exported for the heavy-route-ttl contract test,
+// which pins both sides of that coupling.
+export const HOME_DATA_REVALIDATE_S = 1800
+
 function apiBaseUrl(): string {
   return process.env.API_SERVER_URL ?? "http://nucpot-prod-api:8000"
 }
@@ -27,10 +34,11 @@ function apiBaseUrl(): string {
 function fetchOptions(): RequestInit {
   return {
     headers: { Accept: "application/json" },
-    // NFM-5267: join the page's ISR window (revalidate=300) instead of
-    // opting every fetch out of the data cache — a no-store fetch would
-    // force dynamic rendering and re-emit Cache-Control: no-store on `/`.
-    next: { revalidate: 300 },
+    // NFM-5267: join the page's ISR window instead of opting every fetch
+    // out of the data cache — a no-store fetch would force dynamic
+    // rendering and re-emit Cache-Control: no-store on `/`. Joined window
+    // widened to 30 min by NFM-5863 (see HOME_DATA_REVALIDATE_S).
+    next: { revalidate: HOME_DATA_REVALIDATE_S },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   } as RequestInit
 }

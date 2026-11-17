@@ -40,10 +40,19 @@
 #
 # NEVER deletes: :latest tags, restore-*/preview-*/frozen-*/test-* tags
 # (human-managed), running images, volumes, containers.
+#
+# NFM-5578 (ADR-013 G5 amendment): this entry now carries the single
+# flock-class concurrency guard shared by BOTH prune callers — the daily
+# cron above and the post-deploy trim hook (scripts/post_deploy_trim.sh,
+# NFM-5101 Option D). A busy lock SKIPs (exit 0): keep-N converges on the
+# running pass.
 # ============================================================================
 set -euo pipefail
 
-DEPLOY_USER=nfmdeploy
+# NFM-5578: DEPLOY_USER is env-overridable for hermetic tests only — through
+# the sanctioned sudo path env_reset strips caller env (same reasoning as
+# NFM_G2_REPO above), so production always pins nfmdeploy.
+DEPLOY_USER="${NFM_G2_DEPLOY_USER:-nfmdeploy}"
 DEPLOY_HOME=/var/lib/nfmdeploy
 REPO="${NFM_G2_REPO:-${DEPLOY_HOME}/Projects/nucpot}"
 
@@ -68,7 +77,7 @@ while [ $# -gt 0 ]; do
       KEEP_SHAS="$2"; shift 2 ;;
     --until)           [ $# -ge 2 ] || { echo "--until needs a value (hours)" >&2; exit 64; }
       UNTIL_HOURS="$2"; shift 2 ;;
-    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     *) echo "unknown argument '$1'" >&2; exit 64 ;;
   esac
 done
@@ -79,6 +88,77 @@ case "$KEEP_SHAS"       in *[!0-9]*|'') echo "--keep-shas must be a positive int
 if [ -n "$UNTIL_HOURS" ]; then
   case "$UNTIL_HOURS" in *[!0-9]*) echo "--until must be a positive int (hours)" >&2; exit 64 ;; esac
   [ "$UNTIL_HOURS" -ge 1 ] || { echo "--until must be >= 1 hour" >&2; exit 64; }
+fi
+
+# ============================================================================
+# NFM-5578 (ADR-013 G5 amendment, NFM-5101 Option D): single cross-path
+# concurrency guard. This entry is the ONE point both prune callers
+# traverse — the 20:20Z com.nfm.g2.cleanup-daily cron AND the post-deploy
+# trim hook (scripts/post_deploy_trim.sh from the deploy_prod.sh success
+# tail) — so the lock lives HERE, not duplicated at either caller (ruling
+# constraint 2: no parallel prune runs; constraint 3: keep-N converges on
+# whichever pass holds the lock, so a SKIP is always safe).
+#
+# Skip, never queue: a busy lock exits 0 with a SKIP line — the running
+# pass already converges the same keep-N state and the next cron/hook beat
+# reclaims any residue. flock (Linux) when available, else Apple shlock
+# (/usr/bin/shlock, macOS — this host class); an unlockable lock dir or a
+# host with neither primitive downgrades to a WARNING, never a failure:
+# availability of the deploy path outranks strictness (ruling constraint
+# 1, same ordering the daily cron already implies).
+# ============================================================================
+CLEANUP_LOCK_DIR="${NFM_G2_VAR_DIR:-/usr/local/var/nfm-g2}"
+CLEANUP_LOCK_FILE="${CLEANUP_LOCK_DIR}/cleanup.lock"
+CLEANUP_LOCK_HELD=0
+CLEANUP_LOCK_IMPL=""
+
+cleanup_lock_skip() {
+  echo "SKIP (NFM-5578): sanctioned cleanup already running ($1) — keep-N converges on the running pass; the next cron/hook beat reclaims"
+  exit 0
+}
+
+cleanup_lock_release() {
+  if [ "${CLEANUP_LOCK_HELD}" = "1" ] && [ "${CLEANUP_LOCK_IMPL}" = "shlock" ]; then
+    # Release only OUR lock: the pid check keeps a reused/exited holder's
+    # file (or a newer acquirer's) from being unlinked here.
+    [ "$(cat "${CLEANUP_LOCK_FILE}" 2>/dev/null)" = "$$" ] && rm -f "${CLEANUP_LOCK_FILE}"
+  fi
+  # flock impl: fd 9 closes with the process — nothing to release.
+  return 0
+}
+trap cleanup_lock_release EXIT
+
+if mkdir -p "${CLEANUP_LOCK_DIR}" 2>/dev/null && [ -w "${CLEANUP_LOCK_DIR}" ]; then
+  if command -v flock >/dev/null 2>&1; then
+    CLEANUP_LOCK_IMPL="flock"
+    exec 9>>"${CLEANUP_LOCK_FILE}"
+    if flock -n 9; then
+      CLEANUP_LOCK_HELD=1
+    else
+      cleanup_lock_skip "flock busy: ${CLEANUP_LOCK_FILE}"
+    fi
+  elif [ -x /usr/bin/shlock ]; then
+    CLEANUP_LOCK_IMPL="shlock"
+    if /usr/bin/shlock -f "${CLEANUP_LOCK_FILE}" -p $$; then
+      CLEANUP_LOCK_HELD=1
+    else
+      LOCK_HOLDER="$(cat "${CLEANUP_LOCK_FILE}" 2>/dev/null || true)"
+      if [ -n "${LOCK_HOLDER}" ] && ps -p "${LOCK_HOLDER}" >/dev/null 2>&1; then
+        cleanup_lock_skip "pid ${LOCK_HOLDER} holds ${CLEANUP_LOCK_FILE}"
+      fi
+      # Stale lock (holder dead — crashed mid-prune): break and reacquire.
+      rm -f "${CLEANUP_LOCK_FILE}"
+      if /usr/bin/shlock -f "${CLEANUP_LOCK_FILE}" -p $$; then
+        CLEANUP_LOCK_HELD=1
+      else
+        cleanup_lock_skip "stale lock re-acquire failed: ${CLEANUP_LOCK_FILE}"
+      fi
+    fi
+  else
+    echo "WARNING (NFM-5578): no flock/shlock on this host — cleanup running WITHOUT the concurrency guard" >&2
+  fi
+else
+  echo "WARNING (NFM-5578): lock dir ${CLEANUP_LOCK_DIR} unusable — cleanup running WITHOUT the concurrency guard" >&2
 fi
 
 # Inherited PATH first: under sudo env_reset it is the secure path, so this

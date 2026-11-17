@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM-5826: user LaunchAgent for the openclaw sqlite-cache guard.
+     Rendered by scripts/install_openclaw_cache_guard.sh, which substitutes
+     __HOME__ before installing into ~/Library/LaunchAgents/. A user agent
+     (not a root daemon): ~/.openclaw is user-owned and must never need the
+     operator sudo lane.
+
+     Daily beat at 04:50, deliberately offset from the g2 docker cleanup
+     (com.nfm.g2.cleanup-daily at 04:20) so the two prune passes never stack
+     on the same disk-timeout window. RunAtLoad stays FALSE and KeepAlive is
+     absent, per the house "install must not prune" rule: installing the
+     agent must never itself delete anything; the only prune path is the
+     calendar beat. The guard's dry-run is the default; the apply flag is
+     passed explicitly here. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.nfmd.openclaw-cache-guard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HOME__/.nfmd/openclaw-cache-guard/openclaw_cache_guard.sh</string>
+        <string>--apply</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/nfmd-openclaw-cache-guard.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/nfmd-openclaw-cache-guard.log</string>
+</dict>
+</plist>

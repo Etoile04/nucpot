@@ -47,7 +47,11 @@ This module is the gate-side half of the fix:
     tick writes the ``alarm``. Recovery semantics (NFM-4805) are
     untouched, a healthy tick resets the counter, and the post-startup
     first tick bypasses grace so a restart into a dark fleet alarms at
-    once.
+    once. When a grace window closes on a healthy tick (tripped ticks
+    inside the window, alarm never fired), a NON-verdict ``grace_clear``
+    closure record is written (NFM-5699) — otherwise a lone blip leaves
+    its ``grace`` record as the audit-log tail indefinitely, which reads
+    identically to a wedged watcher or ongoing degradation.
 
 The launchd loop wrapper (``entries/start-mirror-health.sh``) polls on
 a fixed interval, runs a probe + summarize + write per tick, and the
@@ -445,6 +449,39 @@ def write_grace(
     )
 
 
+def write_grace_clear(
+    audit,
+    summary: HealthSummary,
+    *,
+    threshold: int,
+    consecutive_tripped: int,
+    grace_ticks: int,
+) -> None:
+    """Append a NON-verdict ``grace_clear`` record when a grace window
+    closes on a healthy tick (NFM-5699).
+
+    Recovery (NFM-4805) only fires when the previous tick ALARMED; a grace
+    tick leaves ``previous_tripped`` False, so the grace→healthy transition
+    used to write NOTHING — and a lone blip left its ``grace`` record as
+    the audit-log tail for days, indistinguishable from a wedged watcher
+    or ongoing degradation (the NFM-5698 CEO recon flag: a grace record
+    sat as the log tail 3h20m while the fleet was healthy the whole time).
+    This closure marker carries the healthy summary plus the debounce
+    context of the window it closes. Like ``grace`` it is NOT a verdict
+    event — ``latest_verdict``/probe_g2.sh read only ``alarm``/``recovery``,
+    so G2.7 semantics are untouched.
+    """
+    audit.write(
+        "grace_clear",
+        None,
+        healthy_count=summary.healthy_count,
+        threshold=threshold,
+        prod_mirror_healthy=summary.prod_mirror_healthy,
+        consecutive_tripped=consecutive_tripped,
+        grace_ticks=grace_ticks,
+    )
+
+
 def _tripped(summary: HealthSummary) -> bool:
     """The alarm condition for one tick: below threshold OR prod mirror dark."""
     return summary.healthy_below_threshold or not summary.prod_mirror_healthy
@@ -522,8 +559,9 @@ def _latest_event(path: str, events: tuple[str, ...]) -> Optional[dict]:
 # Verdict events: the records that carry a standing fleet verdict. The
 # watchdog writes ``alarm`` while tripped (post-grace) and ``recovery``
 # when the alarm clears (or on a healthy first tick after startup);
-# everything else (``startup``, ``drift``, and the NFM-5567 non-verdict
-# ``grace`` marker) is lifecycle/trace noise, not a verdict.
+# everything else (``startup``, ``drift``, the NFM-5567 non-verdict
+# ``grace`` marker, and its NFM-5699 ``grace_clear`` closure) is
+# lifecycle/trace noise, not a verdict.
 _VERDICT_EVENTS = ("alarm", "recovery")
 
 
@@ -586,10 +624,13 @@ def _run_once(
     grace_ticks``), and a non-verdict ``grace`` record carrying the same
     detail while inside the window — operator-visible persistence
     either way. A healthy tick writes a ``recovery`` record only on the
-    alarmed→healthy transition or on the first tick after startup — so
-    steady-state health stays quiet, but the NEWEST verdict record in
-    the log always carries the current verdict for
-    ``latest_verdict``/probe_g2.sh instead of latching the last alarm.
+    alarmed→healthy transition or on the first tick after startup, and a
+    non-verdict ``grace_clear`` closure record when it ends a
+    grace-only stretch (``consecutive_tripped > 0`` with no alarm
+    written; NFM-5699) — so steady-state health stays quiet, but the
+    NEWEST verdict record in the log always carries the current verdict
+    for ``latest_verdict``/probe_g2.sh instead of latching the last
+    alarm, and no grace record is left dangling as the log tail.
     Callers must reset ``consecutive_tripped`` to 0 on a healthy tick
     (see ``main``).
     """
@@ -611,6 +652,17 @@ def _run_once(
     elif previous_tripped is None or previous_tripped:
         write_recovery(
             audit, summary, threshold=threshold, first_tick=previous_tripped is None
+        )
+    elif consecutive_tripped > 0:
+        # NFM-5699: a healthy tick closing an open grace window (tripped
+        # ticks inside the window, alarm never fired) writes the closure
+        # marker — without it the grace record stays the log tail forever.
+        write_grace_clear(
+            audit,
+            summary,
+            threshold=threshold,
+            consecutive_tripped=consecutive_tripped,
+            grace_ticks=grace_ticks,
         )
     return summary
 
@@ -678,7 +730,10 @@ def main(argv: Optional[list[str]] = None) -> None:
     # writes a verdict record (alarm if tripped, recovery if healthy) —
     # clearing any stale pre-restart alarm the probe would otherwise latch
     # onto (NFM-4805). consecutive_tripped carries the NFM-5567 debounce
-    # counter and resets on any healthy tick, so blips never accumulate.
+    # counter and resets on any healthy tick, so blips never accumulate; a
+    # healthy tick that ends a grace-only stretch writes the NFM-5699
+    # ``grace_clear`` closure record inside _run_once (the counter is reset
+    # only AFTER the tick, so the tick still sees the open window).
     previous_tripped = None
     consecutive_tripped = 0
     while True:
