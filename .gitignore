@@ -74,3 +74,8 @@ apps/web/qa-artifacts/lighthouse/
 # NFM-5314: PreCompletionMerge enforce-mode soak audit log (AC3 evidence,
 # written by the hook at runtime — never repo content)
 .pcmr_enforce.log
+
+# NFM-5954: bun.lock was never tracked (zero git history) and this repo has no
+# bun workflow — pnpm is the only package manager (see AGENTS.md). Ignore the
+# file so local bun experiments never enter git.
+bun.lock
