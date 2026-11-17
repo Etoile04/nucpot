@@ -21,7 +21,7 @@ from nfm_db.services.kg_re import ExtractedEntity, GraphBuilder, RelationExtract
 
 async def _build(db_session: AsyncSession, extracted: list[dict]):
     """Run a GraphBuilder pass with the linker stubbed to always miss."""
-    builder = GraphBuilder(session=db_session, corpus_id="test-corpus", sync_to_age=False)
+    builder = GraphBuilder(session=db_session, corpus_id="test-corpus")
     with patch.object(
         builder._linker,
         "find_matching_node",

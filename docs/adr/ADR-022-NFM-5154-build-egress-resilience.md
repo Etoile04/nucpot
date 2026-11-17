@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169); amended 2026-09-24 — D1 publishes multi-arch, [NFM-5203](/NFM/issues/NFM-5203); amended 2026-09-24 — D5 pip ladders span distinct mirrors, [NFM-5209](/NFM/issues/NFM-5209)) |
+| **Status** | Accepted (amended 2026-09-23 — D2 re-scoped to BuildKit-verified build paths; [NFM-5169](/NFM/issues/NFM-5169); amended 2026-09-24 — D1 publishes multi-arch, [NFM-5203](/NFM/issues/NFM-5203); amended 2026-09-24 — D5 pip ladders span distinct mirrors, [NFM-5209](/NFM/issues/NFM-5209); amended 2026-10-07 — D4 scoped for the NFM-5333 loopback rate-limiting throttle, [NFM-5333](/NFM/issues/NFM-5333)) |
 | **Date** | 2026-09-23 |
 | **Author** | CTO (architecture sign-off; routed from [NFM-5153](/NFM/issues/NFM-5153) SRE lane) |
 | **Scope** | Runner Docker build path (`docker/*.Dockerfile`) + network legs in CI/deploy workflows |
@@ -170,6 +170,36 @@ conclusions (catches non-stall cancels).
 The brownout hit the CN mirror and the direct legs at different moments; a
 proxy adds a single point of failure and measured 5.5× latency, buying no
 redundancy against this failure signature. Egress stays direct.
+
+**Amended 2026-10-07 ([NFM-5333](/NFM/issues/NFM-5333)):** D4's rejection
+is scoped, not overturned. NFM-5333 adds a loopback rate-limiting forward
+proxy (`scripts/ci_throttle_proxy.py`, LaunchAgent `io.nfmd.ci-throttle`,
+`127.0.0.1:7899`) wired health-gated into every bulk-download build path on
+the prod host: the three per-deploy builds in `scripts/deploy_prod.sh` and
+the candidate build in `production-deployment.yml`'s deploy-prod job (the
+nightly `base-image.yml` warm-cache `docker pull` is daemon-side egress and
+stays direct; it is a single advisory layer pull, not RUN-step bulk
+downloads). It is not the egress-proxy class ADR-018/D4
+rejects:
+
+- Egress stays DIRECT — no upstream hop (no VPN tunneling CN mirrors
+  abroad, the NFM-2502 failure), so ADR-018's measured 5.5× slowdown does
+  not apply; the proxy connects straight to the target and only paces
+  delivery to the client.
+- Loopback-only bind and a live health probe: on any proxy failure
+  `deploy_prod.sh` falls back to the exact pre-NFM-5333 uncapped direct
+  behavior, so it cannot become the 7897-style single point of failure.
+- Purpose is the inverse of D4's context — not brownout redundancy but
+  capping aggregate build-download throughput: the three per-deploy
+  `--no-cache` builds re-download the full pip/pnpm trees at line rate,
+  saturating the shared broadband and breaking the sentinel 5s public-edge
+  P0 budget ([NFM-5273](/NFM/issues/NFM-5273) RCA).
+
+The proxy's operating contract (token bucket, health endpoint, install)
+lives in the `scripts/ci_throttle_proxy.py` module docstring and
+`scripts/install_ci_throttle.sh`; this amendment is only the record that
+ADR-018's no-proxy rule is upheld for egress while download pacing is
+permitted on the loopback shaping hop.
 
 ### D5 — KEEP: retry ladders as second line
 

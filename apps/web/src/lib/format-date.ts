@@ -21,3 +21,16 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return "-"
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/**
+ * Render an ISO timestamp (or plain date) as `YYYY-MM-DD` — the
+ * date-only convention shared by the /datasets list and detail pages
+ * (NFM-5321 D2: raw ISO 8601 wire format must not reach the UI).
+ * Returns `"-"` for nullish/unparseable input.
+ */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "-"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "-"
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}

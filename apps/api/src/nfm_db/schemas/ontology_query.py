@@ -1,10 +1,10 @@
-"""Phase 2 query response schemas for AGE-backed ontology endpoints (NFM-832).
+"""Phase 2 query response schemas for ontology endpoints (NFM-832).
 
-Response models for the four new endpoints:
+Response models for the three graph-query endpoints (relational reads
+over kg_nodes/kg_edges):
   - GET  /api/v1/ontology/node/{node_id}  -> NodeNeighborsResponse
   - GET  /api/v1/ontology/search         -> SearchResponse
   - GET  /api/v1/ontology/path            -> ShortestPathResponse
-  - POST /api/v1/ontology/sync            -> SyncResponse
 """
 
 from __future__ import annotations
@@ -146,21 +146,6 @@ class ShortestPathResponse(BaseModel):
     to: PathNode = Field(alias="to")
     path: list[PathStep] = Field(default_factory=list)
     length: int = Field(ge=0)
-
-
-# ---------------------------------------------------------------------------
-# Sync / rebuild  (POST /ontology/sync)
-# ---------------------------------------------------------------------------
-
-
-class SyncResponse(BaseModel):
-    """Response for POST /ontology/sync."""
-
-    corpus_id: str = Field(min_length=1)
-    graph_name: str = Field(min_length=1)
-    nodes_synced: int = Field(ge=0)
-    edges_synced: int = Field(ge=0)
-    duration_ms: float = Field(ge=0.0)
 
 
 # Back-compat aliases used by the ontology router

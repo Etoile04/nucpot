@@ -6,13 +6,25 @@ to Paperclip's SRE Monitor agent. Closes Paperclip issues when GitHub
 issues are closed.
 
 Runs as a Hermes cron job every 10 minutes. Silent when nothing to report.
+
+Dedup layers (2026-11-07, dsh-adoption M1 Task 4):
+  1. state file (CI_ROUTER_STATE, default ~/.hermes/state/ci-issue-router-
+     router-state.json) — fast-path skip for already-routed gh numbers, and
+     reopen detection (gh open again after auto-close).
+  2. PG existence regex (#<n> with digit boundary) — second defense when the
+     state file is lost; unchanged from previous behavior.
+  3. pg_advisory_xact_lock around card creation — serializes the NFM-<n>
+     max+1 allocation so two overlapping ticks cannot double-issue numbers
+     or double-create cards.
 """
 
 # ruff: noqa: B007, F841, N999
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,6 +37,28 @@ COMPANY_ID = "ec7c0ded-5688-4002-8d0c-672597244875"
 PROJECT_ID = "89da4552-72a9-4e0b-8938-400c90bcf743"
 SRE_AGENT_ID = "2ee2415b-e43e-4806-888f-c231e60facaf"
 LABELS = ["ci-failure", "deploy-failure"]
+STATE_PATH = os.environ.get(
+    "CI_ROUTER_STATE",
+    os.path.expanduser("~/.hermes/state/ci-issue-router-state.json"),
+)
+ADVISORY_LOCK_KEY = 0x63697274  # "cirt" — identifies this router's critical section
+
+
+def load_state() -> dict:
+    try:
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"routed": {}, "closed": []}
+
+
+def save_state(state: dict) -> None:
+    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=1)
+    os.replace(tmp, STATE_PATH)
+
 
 DB_CONFIG = {
     "host": "127.0.0.1",
@@ -134,6 +168,16 @@ def gh_ref_pattern(gh_number: int) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report decisions (create/close/skip/reopened) but write nothing "
+        "— no PG writes, no state file changes",
+    )
+    args = parser.parse_args()
+    dry = args.dry_run
+
     # Gather GitHub issues (never silently: each gh failure prints a stderr
     # WARNING from gh_issue_list)
     gh_failures = 0
@@ -164,16 +208,30 @@ def main() -> int:
         # Silent: nothing to report
         return 0
 
+    state = load_state()
+    routed: dict = state.get("routed", {})
+    closed_seen: list = state.get("closed", [])
+
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
+
+    # Serialize the whole read-allocate-insert tick so two overlapping runs
+    # cannot double-issue NFM identifiers or double-create cards. Taken FIRST
+    # (before any row locks) for a consistent lock order — no advisory↔row
+    # deadlock cycle. Held until commit/rollback.
+    if not dry:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (ADVISORY_LOCK_KEY,))
 
     closed_pc = 0
     created_pc = 0
     skipped_pc = 0
+    reopened: list[int] = []
 
     # Close Paperclip issues whose GitHub counterparts are closed
     for gi in closed_issues:
         gh_number = gi["number"]
+        if str(gh_number) in closed_seen:
+            continue  # state-file fast path: already auto-closed in a past tick
         pattern = gh_ref_pattern(gh_number)
         cur.execute(
             """SELECT id, identifier, status FROM issues
@@ -182,12 +240,18 @@ def main() -> int:
                  AND status NOT IN ('done', 'cancelled')""",
             (PROJECT_ID, pattern, pattern),
         )
-        for issue_id, identifier, _ in cur.fetchall():
-            cur.execute(
-                "UPDATE issues SET status = 'done', completed_at = NOW() WHERE id = %s",
-                (issue_id,),
-            )
+        rows = cur.fetchall()
+        for issue_id, identifier, _ in rows:
+            if not dry:
+                cur.execute(
+                    "UPDATE issues SET status = 'done', completed_at = NOW() WHERE id = %s",
+                    (issue_id,),
+                )
             closed_pc += 1
+            print(f"  → would close {identifier} (GitHub #{gh_number} closed)"
+                  if dry else f"  → closed {identifier} (GitHub #{gh_number} closed)")
+        if rows and not dry:
+            closed_seen.append(str(gh_number))
 
     # Create Paperclip issues for new GitHub CI failures
     for gi in open_issues:
@@ -195,15 +259,26 @@ def main() -> int:
         gh_title = gi["title"]
         gh_body = gi.get("body", "") or ""
 
-        # Check if Paperclip issue already exists
+        # Defense 1: state file fast path
+        if str(gh_number) in routed:
+            skipped_pc += 1
+            continue
+
+        # Defense 2: PG existence regex (state file lost/cleared)
         pattern = gh_ref_pattern(gh_number)
         cur.execute(
-            """SELECT id FROM issues
+            """SELECT id, status FROM issues
                WHERE project_id = %s
                  AND (title ~ %s OR description ~ %s)""",
             (PROJECT_ID, pattern, pattern),
         )
-        if cur.fetchone():
+        existing = cur.fetchall()
+        if existing:
+            # Reopen detection: GitHub issue open again but our card is
+            # terminal (auto-closed earlier). Surface it — never auto-reopen
+            # (revival is gated; see dsh-adoption M3 revival_gate).
+            if all(status in ("done", "cancelled") for _, status in existing):
+                reopened.append(gh_number)
             skipped_pc += 1
             continue
 
@@ -219,6 +294,12 @@ def main() -> int:
             f"This issue will auto-close when the GitHub issue is closed."
         )
 
+        if dry:
+            created_pc += 1
+            print(f"  → would create card: {title[:70]}")
+            continue
+
+        # (allocation is serialized by the advisory lock taken at tick start)
         # Get next issue number from identifier (global, not per-project — unique constraint)
         cur.execute(
             """SELECT identifier FROM issues
@@ -254,16 +335,32 @@ def main() -> int:
             ),
         )
         created_pc += 1
+        routed[str(gh_number)] = identifier
 
-    conn.commit()
-    conn.close()
+    if dry:
+        conn.rollback()
+        conn.close()
+    else:
+        conn.commit()
+        conn.close()
+        state["routed"] = routed
+        state["closed"] = closed_seen
+        save_state(state)
 
     # Report only if something happened
-    if created_pc > 0 or closed_pc > 0:
-        print(f"CI Issue Router: created={created_pc}, closed={closed_pc}, skipped={skipped_pc}")
-        if created_pc > 0:
+    if created_pc > 0 or closed_pc > 0 or reopened:
+        parts = [f"created={created_pc}", f"closed={closed_pc}", f"skipped={skipped_pc}"]
+        if dry:
+            parts.append("dry-run")
+        print("CI Issue Router: " + ", ".join(parts))
+        if created_pc > 0 and not dry:
             for gi in open_issues:
                 print(f"  → Routed GitHub #{gi['number']}: {gi['title'][:70]}")
+        for n in reopened:
+            print(
+                f"  ⚠️ GitHub #{n} REOPENED after auto-close — Paperclip card is "
+                f"terminal; revival is operator-gated, not auto-reopened"
+            )
 
     return 0
 

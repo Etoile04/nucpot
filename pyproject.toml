@@ -60,6 +60,31 @@ known-first-party = ["nfm_db"]
 # timezone.utc (UP017), and socket.timeout (UP041). Enforced by
 # scripts/tests/test_nfm_docker_gate_py39_compat.py.
 "scripts/host-prod-gate/nfm_docker_gate/*" = ["UP017", "UP045", "UP041"]
+# NFM-5333: same NFM-4320 class — ci_throttle_proxy.py is a launchd agent
+# under /usr/bin/python3 = 3.9 (scripts/install_ci_throttle.sh), so the
+# pyupgrade autofixes for these rules would emit py3.10+/3.11+-only forms.
+"scripts/ci_throttle_proxy.py" = ["UP017", "UP045", "UP041"]
+# NFM-5279: health_check.py may run under the py3.9 CommandLineTools
+# interpreter on the runner, so its try/except UTC import keeps the
+# `timezone.utc` fallback spelling (UP017's autofix would emit `UTC = UTC`).
+"scripts/health_check.py" = ["UP017"]
+# NFM-5708: the refs suite re-exports the sibling suite's pytest fixtures
+# (env/mock_site) purely for fixture registration; every test parameter
+# requesting them then "redefines" the import — the standard cross-module
+# fixture idiom, not a shadowing defect.
+"scripts/tests/test_nfm_site_monitor_refs.py" = ["F811"]
+# NFM-5711: the replay suite imports the same sibling fixtures via the
+# same idiom (re-exporting env/mock_site for its own parametrized rows),
+# so F811 is the same cross-module-fixture false positive here.
+"scripts/tests/test_nfm5708_replay_20261024.py" = ["F811"]
+# NFM-5556: the suite imports the `fixture_origin` pytest fixture from the
+# NFM-5548 sibling module so pytest can resolve it; the parameter name IS
+# the lookup key, so F401/F811 (import shadowed by params) are false
+# positives — removing the import would break fixture resolution.
+# NFM-5558: same py3.9-parity class as NFM-4320/NFM-5279 — the suite may
+# run under the runner's /usr/bin/python3 = 3.9, so zip(strict=) (py3.10+)
+# must not appear; the zipped sequences are equal-length by construction.
+"scripts/tests/test_nfm_5556_raceproof_checkout.py" = ["F401", "F811", "B905"]
 
 [tool.mypy]
 python_version = "3.12"

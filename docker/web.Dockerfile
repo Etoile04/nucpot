@@ -23,14 +23,23 @@ WORKDIR /app
 ARG COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 ENV COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY}
 
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# NFM-5333: corepack's shim download also traverses the ci-throttle proxy
+# (deploy_prod.sh build env); the fallback strip keeps a dead proxy from
+# failing the web build at this 5 MB step.
+RUN corepack enable && \
+    { corepack prepare pnpm@9 --activate || \
+      env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+        corepack prepare pnpm@9 --activate; }
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/ ./packages/
 
 RUN pnpm config set registry https://registry.npmmirror.com && \
-    pnpm install --frozen-lockfile
+    { pnpm install --frozen-lockfile || \
+      (echo "NFM-5333: proxy-capped pnpm install failed — retrying DIRECT/UNCAPPED" 1>&2 && \
+       env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+         pnpm install --frozen-lockfile); }
 
 COPY apps/web/ ./apps/web/
 
@@ -60,6 +69,23 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/content ./content
+
+# NFM-5441: legacy chunk compatibility shim (temporary — remove after the
+# NFM-5420 board-gated CF purge lands and NFM-5418 confirms edge healing).
+# The CF edge still serves 1y-pinned HTML (cached 2026-10-08/09 across
+# /datasets /browse /potentials /materials) whose hashed asset refs 404 at
+# origin, breaking cache-cold visitors (NFM-5418): 2 refs visibly 404 at the
+# edge, 11 more 404 at origin since the f727ce6c8 chunk rotation (latent —
+# any cache-miss colo). These 13 files are served under their ORIGINAL
+# hashed names so that HTML renders again. Additive only: content-hashed
+# filenames cannot collide with the current build's chunks.
+#   *.js (12) — byte-exact recovery (rebuild at 186e54c76, the main tip live
+#     at cache time, reproduces every content-hash name exactly).
+#   25fb4gkiz433k.css — same-source rebuild under the legacy name: the
+#     original image was pruned and no rebuild reproduces that hash (deploy
+#     tree drift); rule-level diff vs the current build shows ONLY the
+#     NFM-5330 utility additions, i.e. exactly the pre-5330 stylesheet.
+COPY docker/legacy-chunks/ ./apps/web/.next/static/chunks/
 
 EXPOSE 3000
 

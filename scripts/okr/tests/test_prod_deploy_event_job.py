@@ -167,3 +167,43 @@ def test_no_hardcoded_developer_home_paths(raw: str) -> None:
         "§C6.1.5 forbids these and §C6.3.2 calls them disqualifying:\n"
         + "\n".join(o.strip() for o in offenders)
     )
+
+
+# --------------------------------------------------------------------------
+# NFM-5934: the fragment must be emitted exactly ONCE per run
+# --------------------------------------------------------------------------
+
+
+def test_fragment_emit_is_emit_once(emit_step_run: str) -> None:
+    """The direct ``_prod_emit`` call plus the EXIT trap used to append
+    TWO lines per fragment (deploy_event.sh appends unconditionally), and
+    ``validate_fragment`` rejects >1 line — every Era-B fragment was born
+    invalid (runs 42473687433 / 42477796832 both carry 2 lines). The
+    ``[ -s "$FRAGMENT_PATH" ]`` guard makes the second (trap) invocation
+    a no-op while keeping the early-emit + trap redundancy.
+    """
+    guard = 'if [ -s "$FRAGMENT_PATH" ]; then'
+    assert guard in emit_step_run, (
+        "the deploy-prod fragment emit step lost the emit-once guard; the "
+        "direct _prod_emit call plus the EXIT trap would double-append "
+        "again and every fragment would be rejected as 2-line"
+    )
+    assert "trap '_prod_emit" in emit_step_run, "EXIT-trap emission must stay armed"
+    assert '_prod_emit "$SUCCESS" "$FIRST_POLL"' in emit_step_run
+    # The guard must sit INSIDE _prod_emit, i.e. before the trap arming.
+    assert emit_step_run.index(guard) < emit_step_run.index("trap '_prod_emit")
+
+
+@pytest.fixture(scope="module")
+def emit_step_run(raw: str) -> str:
+    """The ``run:`` body of the deploy-prod job's fragment emit step."""
+    import yaml
+
+    steps = yaml.safe_load(raw)["jobs"]["deploy-prod"]["steps"]
+    for step in steps:
+        if step.get("name") == "Emit prod deploy-event fragment":
+            return str(step.get("run", ""))
+    raise AssertionError(
+        "the deploy-prod job's 'Emit prod deploy-event fragment' step is "
+        "missing — the ADR-KR3-A2 producer lane cannot emit fragments"
+    )

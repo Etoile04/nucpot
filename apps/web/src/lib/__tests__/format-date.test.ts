@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatDateTime } from "../format-date"
+import { formatDate, formatDateTime } from "../format-date"
 
 describe("formatDateTime", () => {
   it("renders local YYYY-MM-DD HH:mm without ISO artifacts", () => {
@@ -29,5 +29,23 @@ describe("formatDateTime", () => {
     expect(formatDateTime(undefined)).toBe("-")
     expect(formatDateTime("")).toBe("-")
     expect(formatDateTime("not-a-date")).toBe("-")
+  })
+})
+
+// NFM-5321 (D2): the /datasets list + detail pages render date-only
+// values as YYYY-MM-DD — the raw ISO 8601 wire format must not leak.
+describe("formatDate", () => {
+  it("renders local YYYY-MM-DD without ISO artifacts", () => {
+    const out = formatDate("2026-10-05T03:37:01.123456Z")
+    expect(out).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(out).not.toContain("T")
+    expect(out).not.toContain("Z")
+  })
+
+  it("returns '-' for null, undefined, empty, and invalid input", () => {
+    expect(formatDate(null)).toBe("-")
+    expect(formatDate(undefined)).toBe("-")
+    expect(formatDate("")).toBe("-")
+    expect(formatDate("not-a-date")).toBe("-")
   })
 })

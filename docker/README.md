@@ -5,7 +5,7 @@
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  NFM API    │────▶│  LightRAG Sidecar│────▶│  PostgreSQL 16  │
-│  (port 8000)│     │  (port 8001)     │     │  pgvector + AGE │
+│  (port 8000)│     │  (port 8001)     │     │  pgvector       │
 └─────────────┘     └──────────────────┘     └─────────────────┘
        │                                              │
        ▼                                              ▼
@@ -88,7 +88,7 @@ uvicorn …`).
 
 2. **Embedding Model Lock-In**: The embedding model (`BAAI/bge-m3`, 1024-dim) is **FINAL** after the first index build. Changing it requires a complete rebuild of the entire RAG index.
 
-3. **PostgreSQL Extensions**: Requires `pgvector` and `Apache AGE` extensions on the shared PostgreSQL instance. These are installed by NFM-741.1.
+3. **PostgreSQL Extensions**: Requires the `pgvector` extension on the shared PostgreSQL instance. It is installed by NFM-741.1. (The Apache AGE extension was retired 2026-10 per NFM-5215 — the KG substrate is relational tables + pgvector.)
 
 4. **Resource Usage**: LightRAG can be memory-intensive during indexing. The compose file sets a 4GB memory limit (1GB reservation). Adjust based on your corpus size.
 

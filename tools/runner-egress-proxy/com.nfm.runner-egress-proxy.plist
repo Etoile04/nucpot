@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- NFM runner-egress terminating-TLS proxy — ADR-024 staged exception lane.
+     STAGED ONLY: the runner stays on DIRECT egress; activation is SRE-gated.
+     Scoped to wenjiedeMac-Studio (single-host lane, hence the absolute paths).
+     No secrets here: certs/keys are host-local under ~/nfm-egress-proxy. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nfm.runner-egress-proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/lwj04/nfm-egress-proxy/egress_proxy.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NFM_EGRESS_CERT_DIR</key>
+        <string>/Users/lwj04/nfm-egress-proxy</string>
+        <key>NFM_EGRESS_BIND</key>
+        <string>127.0.0.1</string>
+        <key>NFM_EGRESS_PORT</key>
+        <string>8443</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/lwj04/Library/Logs/nfm-egress-proxy.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/lwj04/Library/Logs/nfm-egress-proxy.log</string>
+</dict>
+</plist>

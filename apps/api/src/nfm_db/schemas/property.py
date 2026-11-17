@@ -202,9 +202,17 @@ class DatasetWithAttributionResponse(DatasetResponse):
 
     Adds the §5.2 attribution block.  No UI affordance is attached —
     the placeholder title itself is the disclosure on the recast cohort.
+
+    NFM-5321 (D2): optional ``material_name`` / ``source_title`` mirror
+    the list endpoint's ``expand`` join columns and are populated only
+    when the caller passes ``?expand=material`` / ``?expand=source``;
+    the default response keeps them null so the LOCKED §5.2 contract
+    shape is unchanged for existing clients.
     """
 
     attribution: DatasetAttributionBlock
+    material_name: str | None = None
+    source_title: str | None = None
 
 
 class PropertyMeasurementCreate(BaseModel):

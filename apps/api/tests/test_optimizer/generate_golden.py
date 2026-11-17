@@ -49,7 +49,15 @@ from pymoo.operators.mutation.pm import PM  # noqa: E402
 from pymoo.operators.sampling.lhs import LHS  # noqa: E402
 from pymoo.optimize import minimize  # noqa: E402
 
-from nfm_db.optimization.nsga2_problem import ALLOY_ELEMENTS  # noqa: E402
+from nfm_db.optimization.nsga2_problem import (  # noqa: E402
+    ALLOY_ELEMENTS,
+    BOUNDS_U_MAX,
+    BOUNDS_U_MIN,
+    ELEMENT_ABSENCE_THRESHOLD,
+    FLOOR_T_STABLE_C,
+    FLOOR_U_DENSITY,
+    N_IEQ_CONSTRAINTS,
+)
 from nfm_db.optimization.zr_only import ZrOnlyProblem  # noqa: E402
 
 # ``datetime.UTC`` is the modern alias for ``datetime.timezone.utc``;
@@ -147,6 +155,29 @@ def _build_compositions(X: np.ndarray) -> list[dict[str, float]]:
     return out
 
 
+def build_problem_identity() -> dict:
+    """Machine-readable problem identity (NFM-6009 Q2 condition b).
+
+    Every Pareto artifact (golden, linux/amd64 cross-platform fixture)
+    carries this block verbatim at top level, and the regression tests
+    assert golden<->fixture equality against the live module constants.
+    A PRE-floor artifact compared against a post-floor golden must fail
+    LOUDLY on identity mismatch instead of masquerading as ~3% front
+    drift — that silent-mixup class is exactly what stranded the frozen
+    linux fixture under ``xfail`` (the NFM-5481 re-baseline residue).
+    Values are imported from ``nsga2_problem`` so they cannot silently
+    diverge from the code the optimizer actually runs.
+    """
+    return {
+        "boundary": "zr_only",
+        "u_fraction_bounds": [BOUNDS_U_MIN, BOUNDS_U_MAX],
+        "floor_rho_u_g_cm3": FLOOR_U_DENSITY,
+        "floor_t_stable_c": FLOOR_T_STABLE_C,
+        "element_absence_threshold": ELEMENT_ABSENCE_THRESHOLD,
+        "n_ieq_constraints": N_IEQ_CONSTRAINTS,
+    }
+
+
 def _build_provenance() -> dict:
     return {
         "generated_at_utc": _NOW().isoformat(),
@@ -176,14 +207,35 @@ def _build_provenance() -> dict:
             "-fabricability (negate entropy+B/V scorer)",
         ],
         "constraints": [
-            "BOUNDS_U_MIN (=0.60) <= u_frac <= BOUNDS_U_MAX (=0.90)",
+            "BOUNDS_U_MIN (=0.80) <= u_frac <= BOUNDS_U_MAX (=0.95) "
+            "(role-spec window, NFM-5481)",
             "max_element <= BOUNDS_MAX_SINGLE_ELEMENT (=0.20)",
             "BOUNDS_BV_MIN (=8.0) <= B/V <= BOUNDS_BV_MAX (=18.0)",
+            "FLOOR_U_DENSITY (=16.0) <= rho_U (g/cm^3) — NFM-5481 role-spec floor",
+            "FLOOR_T_STABLE_C (=500.0) <= T_stable (degC) — NFM-5481 role-spec "
+            "floor; synthetic path pins T at SYNTHETIC_T_STABLE_C (=670.0)",
+            "2 <= element count (U + solutes strictly above "
+            "ELEMENT_ABSENCE_THRESHOLD=0.005) <= 6 — NFM-5481",
         ],
         "surrogate_mode": (
             "synthetic (model artifacts absent in this environment; "
             "regression test runs identically so fronts stay comparable)"
         ),
+        "rebaseline": {
+            "issue": "NFM-5481",
+            "summary": (
+                "U window widened to [0.80, 0.95]; role-spec floors g5 "
+                "(rho_U >= 16.0 g/cm^3) and g6 (T_stable >= 500 degC) and "
+                "the element-count band g7 wired. Supersedes the PRE-floor "
+                "schema-1 golden generation lineage."
+            ),
+            "blessing": "NFM-6009 Q2 (NDE ruling, 2026-11-16)",
+            "problem_identity": (
+                "machine-readable identity block at payload top level "
+                "(schema_version 2); regression tests assert artifact "
+                "equality against it"
+            ),
+        },
         "provenance_files": {
             "prediction_service.py": _git_sha_for(_PREDICTION_SERVICE),
             "nsga2_problem.py": _git_sha_for(_NSGA2_PROBLEM),
@@ -257,9 +309,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "issue": "NFM-5058",
-        "title": "Zr-only Pareto regression golden (KR-OPT-Q4-S2)",
+        "title": (
+            "Zr-only Pareto regression golden (KR-OPT-Q4-S2; "
+            "NFM-5481 re-baseline, NFM-6009 Q2 schema bump)"
+        ),
+        "problem_identity": build_problem_identity(),
         "provenance": _build_provenance(),
         "front": _serialize_front(F, X, n_eval, wall_s),
     }

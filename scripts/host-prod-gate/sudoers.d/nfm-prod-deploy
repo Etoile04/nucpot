@@ -23,6 +23,11 @@
 #                               tars (Plan A in NFM-4749 only covered
 #                               logical dump; the ro gate denies volume
 #                               mount + docker exec into prod-db)
+#   run-autovc-build.sh       — NFM-5524 sanctioned AutoVC image build
+#                               (the compose build stanzas pin network:
+#                               host, which the ro gate denies regardless
+#                               of scope; refuses unpushed trees — pinned
+#                               in test_nfm_docker_gate_hostsetup.py)
 #   ollama-runner-term.sh     — NFM-4887 SIGTERM chokepoint for a wedged
 #                               host ollama MLX runner; the ONLY root-runas
 #                               grant (the runner belongs to the desktop
@@ -41,6 +46,7 @@
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-record-manifest.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-cleanup.sh
 %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-backup.sh
+%admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-autovc-build.sh
 
 # NFM-4887: the lightrag watchdog LaunchDaemon (UserName=nfmdeploy)
 # unwedges the host ollama MLX runner through this validating root

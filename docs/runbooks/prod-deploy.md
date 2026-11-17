@@ -14,6 +14,29 @@
 `.github/workflows/production-deployment.yml` is blocked or a hot
 build must be pushed without waiting on CI.
 
+> **Deploy-lock enforcement is ON by default (NFM-5259, 2026-10-05).**
+> The NFM-5253 deploy-epoch fence flipped from shadow to ENFORCED after the
+> clean NFM-5258 shadow week (epochs 1→7 strict +1, zero anomalies). What
+> this means for an operator:
+>
+> - **Exit 80** — the deploy was REFUSED because a fresh deploy lock is held
+>   by a live pid: another deploy is genuinely in flight. Do NOT retry
+>   immediately; confirm the other run finished (`gh run list --workflow
+>   production-deployment.yml`, then `sudo -n -u nfmdeploy cat
+>   /usr/local/var/nfm-g2/prod-deploy.lock`) and re-run the deploy job only
+>   after it is gone. The holder's lock is never overwritten.
+> - **Exit 81** — `scripts/deploy_epoch.py` was missing/broken at deploy
+>   time. This is FATAL on purpose (the legacy blind lock write would
+>   silently bypass the fence). Fix the checkout/helper and re-run; do not
+>   paper over it.
+> - **Emergency-disable** — `NFM_DEPLOY_LOCK_ENFORCE=0` restores shadow
+>   semantics (conflict logged but proceeds; helper failure falls back to
+>   the legacy lock). Use ONLY as a deliberate, documented emergency measure:
+>   it disables both the refusal and the drift checker's epoch stand-down
+>   classification for that deploy. The knob fails CLOSED: any other value
+>   (`true`, `yes`, `on`, a typo) is treated as enforced with a warning —
+>   only the exact value `0` disables.
+
 **Source of truth for the contract:** the Production Deployment
 workflow at `.github/workflows/production-deployment.yml`. Anything in
 this runbook that drifts from the workflow is a bug — fix the runbook,
@@ -578,7 +601,9 @@ NFM-4264: 6h of attribution with zero audit trail).
   which re-records after re-upping a previous tag (a rollback changes live
   digests; without a re-record the next drift interval would false-alarm a
   sanctioned rollback; `restart` does NOT re-record — it never changes
-  digests). The workflow injects `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
+  digests). NFM-5253 adds `scripts/record_rollback.sh` as a fourth writer
+  for the manual rollback path (see §10). The workflow injects
+  `DEPLOY_ACTOR='gh-runner:<actor>'`; manual
   on-host runs default to `deploy_prod.sh:<user>`; rollback records
   `run-recovery.sh:<sudo-user>`.
 - **Actor charset (NFM-4884, one contract):** `A-Za-z0-9 : . _ [ ] -`,
@@ -622,7 +647,10 @@ NFM-4264: 6h of attribution with zero audit trail).
 - **Schema (field names frozen for the G4b sibling):**
   `{deploy_sha, image_tags, image_digests, service_containers, timestamp,
   actor}` — keyed by compose service of project `nucpot-prod`
-  (db/redis/api/lightrag/worker/web).
+  (db/redis/api/lightrag/worker/web). NFM-5253 adds one ADDITIVE field,
+  `deploy_epoch` (int): the deploy-epoch of the recorded state transition,
+  omitted entirely when no epoch exists yet (pre-fencing host) so the
+  legacy shape is preserved; readers treat a missing epoch as "unknown".
 - **Digest precedence (the drift alarm must recompute identically):**
   `RepoDigests[0]` when non-empty, else the container's image-ID digest
   (`docker inspect --format '{{.Image}}'`). Prod images are built on the host,
@@ -671,7 +699,19 @@ zero audit trail).
 - **No-noise during sanctioned deploys (AC-G4b.2):** (1) `deploy_prod.sh`
   holds the deploy lock for the whole deploy (trap-removed on ANY exit — a
   crashed deploy must alarm); the checker stands down while the lock is
-  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build). Lock location
+  fresh (`--max-lock-age`, default 2h ≫ ~30 min cold build) **AND the
+  activated epoch rule classifies it an in-flight deploy (NFM-5259,
+  2026-10-05)**: stand down iff `lock.epoch > manifest epoch` — the lock's
+  mint is ahead of the last recorded state transition. A fresh lock
+  at-or-behind the manifest epoch is LEFTOVER (crashed pre-trap host,
+  hand-placed lock) and no longer suppresses the alarm — the checker files.
+  `indeterminate` artifacts (a pre-fencing lock without an epoch member, or
+  a pre-fencing manifest without `deploy_epoch` — e.g. the first post-flip
+  in-flight deploy) still stand down: the only fresh no-epoch locks are
+  explicit `NFM_DEPLOY_LOCK_ENFORCE=0` emergency deploys and pre-flip
+  residue, both freshness-bounded. The evaluation line
+  (`epoch fencing (NFM-5259 active): … stand_down=true|false|indeterminate`)
+  rides the cron log. Lock location
   mirrors the manifest (NFM-4273): `/usr/local/var/nfm-g2/prod-deploy.lock`
   when the canonical gate dir exists, else `~/.nfmd/prod-deploy.lock` —
   same env > canonical > `~/.nfmd` resolution as the writer, so the cron
@@ -811,6 +851,44 @@ git describe --match 'released/*' --abbrev=8 origin/main~1   # nearest anchor
 sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh rollback --tag <that-sha>
 ```
 
+**Record the rollback (NFM-5253 / NFM-4848 T5 — mandatory):** a rollback
+is a state transition and must leave its message. After ANY rollback —
+the gated `run-recovery.sh rollback` above, or the manual compose path
+(`PROD_IMAGE_TAG=<prev-sha> docker compose -f docker-compose.prod.yml
+--env-file docker/.env.prod up -d`) — run:
+
+```bash
+sudo -n -u nfmdeploy bash -c 'cd ~nfmdeploy/Projects/nucpot && \
+  bash scripts/record_rollback.sh --tag <that-sha> --reason "<why>"'
+```
+
+`record_rollback.sh` mints the next deploy-epoch
+(`/usr/local/var/nfm-g2/prod-deploy.epoch`), re-records the G4a manifest
+with that epoch, and appends a `rollback_triggered=true` deploy-event
+line (epoch rides as the additive `deploy_epoch` field). Without it the
+next drift-cron interval false-alarms the rollback and the KR event
+stream never learns it happened. It must run as an identity that can
+write the canonical G2 dir (the deploy identity via the sudo form above;
+running it as the desktop user against a gated host fails loudly at the
+epoch mint — on purpose). Wiring the gated `run-recovery.sh rollback`
+entry to call it automatically rides the host-entry propagation step
+(§11).
+
+**Epoch cross-check under the activated stand-down (NFM-5259, §8):** the
+drift alarm backstop survives — and is sharpened by — the enforcement
+flip. A recorded rollback mints epoch N+1 and re-records the manifest at
+N+1, so the epoch chain stays ordered: the next deploy mints N+2 > N+1
+and the activated `lock.epoch > manifest.epoch` comparison can never
+mistake a recorded rollback's aftermath for an in-flight deploy (a
+rollback holds no deploy lock; the §8 recheck window covers the
+`compose up -d` → re-record gap exactly as before). Skipping the record
+is now DOUBLY visible: the drift-cron false-alarm (unchanged backstop)
+PLUS the manifest epoch left behind the epoch file — the divergence the
+activated rule files on. `record_rollback.sh` mint-failure stays FATAL
+(rc 2): a manifest whose epoch does not correspond to a real state
+transition would poison the epoch comparison the activated rule relies
+on.
+
 Anchors (`released/<UTC-date>-<sha8>`) are pushed by the `tag-released` CI
 job after deploy + smoke pass; if CI could not push (egress flake), the
 host-side reconciler catches up on its next cron tick, or run it once:
@@ -921,3 +999,307 @@ etime arithmetic) before declaring the propagation complete.
 - [prod-compose-gate.md](./prod-compose-gate.md) — the G2 wall itself
   (`host_setup.sh` installs `entry-sync.sh` root-side alongside the entries).
 
+## 12. Post-cancel host-side reconciliation (NFM-5527)
+
+### 12.1. Why this exists
+
+Run 38419888271 (2026-10-14): the deploy job was cancelled externally at
+06:01:54Z, but the host-side apply survived the ssh/sudo teardown (nothing
+signals it — the cancel kills the runner's ssh client, and sudo does not
+forward that death to the `nfmdeploy` deploy body) and **completed the
+cutover at 06:24:48Z**. The GHA conclusion said `cancelled`, the in-job
+cutover guard was skipped by the cancel, and only queue luck kept the next
+run's already-green apply from overlapping the orphan. Ground truth for
+"what is prod running" is **always** the health endpoint's `deploy_sha` +
+the cutover guard (NFM-5442 rule), never the run conclusion.
+
+NFM-5527 adds two structural guards plus this standing step:
+
+* **Queue, not instant refusal** — `deploy_prod.sh` now passes
+  `--wait-secs` (env `NFM_DEPLOY_LOCK_WAIT_SECS`, default 2400s, `0` =
+  legacy instant refusal) to `deploy_epoch.py lock-acquire`: a second
+  apply finding a fresh live-pid lock WAITS behind it (polling, never
+  minting per poll) before the single mint+decide. Two host-side applies
+  can no longer collide; a deploy that lands while an orphan applies
+  queues instead of going red. Exhaustion still refuses with rc 80.
+* **Apply journal** — `${G2_VAR_DIR}/prod-deploy.journal` (beside the
+  deploy lock; `~/.nfmd` fallback off-gate) gets one JSONL record per
+  apply start (`ts`/`epoch`/`sha`/`pid`/`actor`) and one per trap-covered
+  end (`rc` + `ok|failed`). "Did the apply finish after the cancel, and
+  for which sha" is now answered from the host.
+* **Post-cancel reconciliation step** — `production-deployment.yml` runs
+  an `if: cancelled()` step that reads the journal tail + health
+  `deploy_sha` into the run log automatically. This section is what a
+  human does with that output.
+
+### 12.2. The standing step (any cancelled deploy job)
+
+```bash
+# 1. What did the apply journal record? (start without a matching end
+#    = died by signal — e.g. SIGKILLed; end AFTER the cancel timestamp
+#    = the orphan finished its cutover after the job died)
+tail -n 6 /usr/local/var/nfm-g2/prod-deploy.journal
+
+# 2. What is prod ACTUALLY running now? (NFM-5442: ground truth)
+curl -fsS http://localhost:8001/api/v1/health | sed -n 's/.*"deploy_sha"[^:]*:[[:space:]]*"\([^"]*\)".*/deploy_sha=\1/p'
+
+# 3. Compare against the intended sha of the cancelled run, then:
+#    - health sha == intended sha   → the orphan COMPLETED the cutover;
+#      verify like any landed deploy (cutover assert + smoke) — do NOT
+#      blind re-trigger, you would queue a redundant apply of the same sha.
+#    - health sha != intended sha   → reconcile deliberately: either the
+#      orphan died mid-apply (check drift alarm §8) or a LATER run cut
+#      over — read the journal ordering before deciding to re-trigger.
+#      The next apply will QUEUE behind any still-live holder (NFM-5527),
+#      so a re-trigger is overlap-safe, but confirm intent first.
+```
+
+Manual runs that want the old fail-fast behavior export
+`NFM_DEPLOY_LOCK_WAIT_SECS=0`.
+
+### 12.3. References
+
+- [NFM-5527](../../issues/NFM-5527) — evidence run 38419888271 and the
+  hazard analysis (mislabelled run conclusion; no structural overlap
+  protection).
+- [NFM-5442](../../issues/NFM-5442) — gate red ≠ deploy failure; health
+  `deploy_sha` + cutover guard as ground truth.
+- [NFM-5253](../../issues/NFM-5253) / [NFM-5259](../../issues/NFM-5259) —
+  the deploy-epoch lock this queues on (enforced since 2026-10-05).
+- [NFM-5526](../../issues/NFM-5526) — the QA battery that compensated the
+  skipped in-job cutover guard for run 38419888271.
+
+## 13. Post-cutover ISR warm-up (NFM-5898)
+
+### 13.1. Why this exists
+
+NFM-5897 (SRE root cause, 2026-11-08): every deploy served the web image's
+**build-time prerender** of `/` and `/browse` for up to ~30 min after the
+cutover. The ISR freshness clock is anchored at `next build`
+(`revalidate = 1800`), and the build stage cannot reach the API (the compose
+network does not exist inside docker build), so `home-data.ts` fail-soft
+bakes empty sections — the 77150B cold payload, byte-stable across two
+cutovers, vs the 126848B prod-data render.
+
+A warm-up GET cannot fix this: it cache-HITs the same build-anchored entry.
+The deploy therefore **forces** on-demand revalidation via the token-guarded
+`POST /api/revalidate-landing` handler
+(`apps/web/src/app/api/revalidate-landing/route.ts` → `revalidatePath('/')`
++ `revalidatePath('/potentials')`; `/browse` shares the `/potentials` ISR
+entry through the NFM-5228 alias rewrite).
+
+### 13.2. What runs, in what order
+
+Inside `scripts/deploy_prod.sh`, after the web health gate and BEFORE the
+NFM-5420 CF purge (the edge's first refetch after purge must hit a warm
+origin):
+
+1. **Cold-window capture** — the served build-time prerender of `/` and
+   `/browse` is saved to
+   `/tmp/nfm-cutover-<sha>/coldwindow-nfm-5898/cold-*.html`, closing the
+   NFM-5897 residual (the 77150B body was never content-captured). The
+   post-warm-up bodies and per-route diffs land beside them.
+2. **Forced revalidation** — one `POST /api/revalidate-landing` with the
+   per-deploy `ISR_WARMUP_TOKEN` (generated in-script before `compose up`;
+   never provisioned in any env file; empty default keeps the endpoint
+   fail-closed). One retry after 5s.
+3. **Warm capture + byte report** — `GET /` and `GET /browse` regenerate
+   against the live API; the deploy log carries a
+   `cold prerender <n>B -> warm regen <m>B` line per route and the
+   `ISR_WARMUP_COMPLETED_OK` anchor.
+
+Failure policy (NFM-5149 / NFM-5426 precedent): **advisory-only**. A failed
+warm-up prints `ISR_WARMUP_FAILED` and never retro-reds a healthy deploy —
+but it means the cold window is unmitigated for that deploy, so an SRE
+reading the log should check the next site-monitor tick. The policy is
+enforced by construction: the block runs under the deploy script's
+`set -euo pipefail`, and every fallible command inside it (captures, the
+retry `sleep`, the capture `mkdir`) is individually guarded, so a warm-up
+hiccup can never abort the deploy between the health gate and the CF purge.
+
+Behavioral guards: `scripts/tests/test_deploy_prod_isr_warmup.py` (block
+ordering, token plumbing, capture-before-warmup, loud non-fatal failure —
+executed under the script's `set -euo pipefail` options, including the
+unusable-retry-delay case).
+
+### 13.3. References
+
+- [NFM-5898](../../issues/NFM-5898) — the mitigation card (LE).
+- [NFM-5897](../../issues/NFM-5897) — the root-cause thread (two
+  cutovers × build-anchored ISR cold window; transition table).
+- `apps/web/src/app/heavy-route-ttl.test.ts` — why the 1800s TTL itself is
+  pinned and must NOT be lowered to "fix" this (it sits above the
+  site-monitor probe cadence by contract, NFM-5863).
+
+## 14. HA tunnel replica cut-over window (D2 / NFM-5963)
+
+> **Scope:** execution of the board-approved D2 reversal — a decorrelated
+> cloudflared replica connector on z203 joining the MAIN tunnel
+> (`04b1e559`) pool, plus the failure drill, the `KeepAlive=true` flip, and
+> the verify-tunnel disposition. Charter: [NFM-5963](../../issues/NFM-5963);
+> window ticket: [NFM-5968](../../issues/NFM-5968) (window LOCKED Fri
+> 2026-11-13 19:00–21:00 UTC). Artifacts: `scripts/z203-replica/`
+> (units, Caddyfile, install/rollback/KeepAlive scripts) — CR-passed on
+> NFM-5965 (D2-G2) before ANY host apply (NFM-5670 discipline).
+>
+> **Hard fences:** the primary connector must never be improvisationally
+> edited mid-window; ANY red ⇒ `rollback-replica.sh --mode abort` ⇒
+> primary-only state ⇒ window ABORTED ⇒ report on NFM-5968 + route to CTO.
+> Do not touch edge configs (no agent-side Cloudflare credentials exist;
+> ingress is remotely-managed — the forwarder IS the design).
+
+### 14.1. Ground truth snapshot (re-verify day-of; drift is expected)
+
+| Fact | Value | Measured |
+|---|---|---|
+| MAIN tunnel / plist | `04b1e559…`, `/Library/LaunchDaemons/com.cloudflare.cloudflared-nucpot.plist`, KeepAlive dict `{SuccessfulExit: false}`, ThrottleInterval 10, token literal in plist | CTO 2026-11-11 |
+| VERIFY tunnel / plist | `847668eb…`, `…cloudflared-verify.plist`, same shape | CTO 2026-11-11 |
+| Mac cloudflared | 2026.6.1 (`/opt/homebrew/bin/cloudflared`) | CPO 2026-11-12 |
+| Mac tailscale IP | `100.65.21.27` | CPO 2026-11-12 |
+| z203 | `z203@z203-thinkstation-p3-tower`, Ubuntu 22.04, systemd 249, tailscale `100.70.30.21`, x86_64 | CTO 2026-11-11 |
+| **z203 :3000 owner** | ⚠️ operator container `nucpot-prod-linux-web` (0.0.0.0:3000, up 2wks) | CPO 2026-11-12 |
+| **z203 :8002 owner** | ⚠️ operator container `nucpot-autovc-api-1` (0.0.0.0:8002, up 2wks) | CPO 2026-11-12 |
+| **z203 legacy cloudflared** | ⚠️ `/etc/systemd/system/cloudflared.service` (locally-managed, dead creds, "Unauthorized: Tunnel not found" retry loop; routes prod hostname → z203:3100 in its stale config) | CPO 2026-11-12 |
+| Origin reachability | `100.65.21.27:3000/api/v1/health` → 200; `:8002` → 404-on-probe (by design, uvicorn, no health route) | CPO 2026-11-12 |
+| NFM-5880 watchdog | mode file `/usr/local/lib/nfm-watchdog/reg-gap-gate.mode` = **LIVE** (as of 11-12; re-check day-of) | CPO 2026-11-12 |
+
+**The two ⚠️ rows are the G2 design gate:** the remotely-managed edge pins the
+origin to `localhost:3000`/`localhost:8002` ON THE REPLICA, and those ports
+are occupied by the operator's own containers as of 2026-11-12. The
+installed stack FAILS CLOSED on this: `install-replica.sh preflight` refuses
+to proceed while the ports are taken or the zombie cloudflared runs.
+Resolution paths (CTO adjudication pending on NFM-5965/5963):
+
+- **(C) Ports freed** — operator remaps `nucpot-prod-linux-web` (3000) and
+  `nucpot-autovc-api-1` (8002) host mappings + disables the zombie. Design
+  proceeds exactly as specced (this is the path the artifacts implement).
+- **(D) Netns redesign** — replica + forwarder inside an isolated network
+  namespace (compose). No operator asks, but re-specces unit names (G3 pins
+  three names) ⇒ CTO re-adjudication, artifacts amended, re-review.
+
+### 14.2. Pre-window gate checklist (ALL required before T+0)
+
+1. Consent card answered on NFM-5963 (z203 replica host + verify-pool soak),
+   including the port-freed ask from §14.1 path (C).
+2. D2-G1 path verdict recorded on NFM-5964 (YES, or CAVEAT with CTO note).
+3. D2-G2 artifacts CR-passed AND merged (NFM-5965; G4 start condition).
+4. D2-G3 liveness lane deployed in DRY_RUN ≥24h (NFM-5966).
+5. `install-replica.sh --mode preflight` transcript PASSES on the day
+   (attach to NFM-5968). It re-checks §14.1's ⚠️ rows, sudo availability
+   (non-interactive sudo on z203 — else one operator sudo session needed),
+   binary sources, tailscale path, and both plist token extractions.
+   For state-changing modes prefer `--staged-caddy` (Mac-side binary) —
+   the on-z203 download crosses the CN line; without a staged binary the
+   script downloads the pinned caddy release and sha256-verifies it against
+   the release `.sha256` (fails closed on mismatch or unreachable).
+6. Watchdog mode re-read: `cat /usr/local/lib/nfm-watchdog/reg-gap-gate.mode`
+   (record the value in the window evidence; §14.4 drill step depends on it).
+
+### 14.3. Window sequence (T+ steps; evidence marker after each)
+
+**T+0 — KeepAlive flip (only primary-side change).**
+
+```bash
+scripts/z203-replica/macos-set-main-keepalive-true.sh apply \
+  --replica-state expected-absent   # replica not yet in MAIN pool at this step
+```
+
+Script gates: replica-state envelope check → plist+generator backups →
+parameterized generator edit (MAIN `always`, VERIFY legacy dict; the script
+never runs `sync_plist`/`pkill`) → PlistBuddy dict→bool rewrite + `plutil -lint`
+→ bootout+bootstrap → pid + public-200 + fresh registration checks. On any
+failure it names its backups; `rollback` mode restores both and reloads.
+*Ordering note:* flipping while the replica already carries MAIN traffic
+(z203 switch first) gives a zero-gap reload; the 5968 sequence puts the flip
+first, which costs one ~10s primary restart INSIDE the window. Either order
+is executable with the `--replica-state` flag; the window executor picks per
+CTO guidance and records which was used.
+
+**T+5m — z203 soak→cutover switch (verify unit down, MAIN unit up).**
+
+```bash
+scripts/z203-replica/install-replica.sh --mode cutover --yes
+```
+
+Requires a prior soak install (`--mode soak --yes`, D2-G4). Cutover stops the
+VERIFY replica, enables the MAIN replica, then self-checks: unit states,
+`Registered tunnel connection` in `/var/log/cloudflared-nucpot-replica.log`,
+forwarder round-trips `localhost:3000 → 200` and `localhost:8002 → 404` on
+z203.
+
+**T+10m — green check (~10m).** Edge pool for `04b1e559` shows 2 connectors
+(Mac log + z203 replica log both carrying registrations); origin/edge/cached
+lanes green in the site-monitor tick (`~/Library/Logs/nfm-site-monitor.log`);
+public 200; zero origin errors in EITHER connector log.
+
+**T+20m — FAILURE DRILL (10m primary unload).**
+
+```bash
+sudo launchctl bootout system/com.cloudflare.cloudflared-nucpot
+# for 10 minutes: replica MUST carry public traffic
+watch curl -s -o /dev/null -w '%{http_code}\n' https://nucpot.dpdns.org   # 200 throughout
+tail -f /var/log/cloudflared-nucpot-replica.log                          # z203: serving
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.cloudflared-nucpot.plist
+```
+
+Watchdog interaction — check the deployed mode FIRST (§14.2 step 6):
+
+- mode `LIVE` (current): the NFM-5880 dual-signal gate should NOT fire — its
+  sentinel full-edge signal stays green BECAUSE the replica is serving, even
+  while the primary connector is dark. Record the NON-fire with timestamps;
+  that is the discriminating-signal evidence. If it DOES fire mid-drill,
+  record its actions and do NOT fight it (no operator OK to disable
+  mid-window); the primary's bootstrap at drill end reconciles state.
+- mode `DRY_RUN`: record expected-fire evidence only.
+
+**T+35m — ROLLBACK DRILL (10m replica unload).**
+
+```bash
+scripts/z203-replica/rollback-replica.sh --mode abort
+# 10 minutes: primary-only green (public 200, connector log quiet on z203)
+scripts/z203-replica/install-replica.sh --mode cutover --yes   # re-join
+```
+
+This is the charter's "rollback tested" evidence. `--keep-forwarder` may
+speed the re-join; record which was used.
+
+**T+50m — verify-tunnel disposition (record verbatim on NFM-5968).** The
+verify tunnel stays host-single-path after the window (the replica returns
+to verify-only duty); residual single-path risk on the non-P0 verify surface
+is accepted; revisit trigger = any verify-class P0.
+
+**T+55m — 48h soak watch starts** (monitor lane + ledger). Charter
+acceptance requires a clean 48h episode soak post-window.
+
+### 14.4. Failure handling
+
+ANY red at any step ⇒ `rollback-replica.sh --mode abort` (or `--mode full`
+if the KeepAlive flip already happened: it restores the plist+generator and
+reloads the primary BEFORE unloading z203, so the primary's reload gap is
+covered by the still-serving replica) ⇒ confirm primary-only green ⇒ window
+ABORTED ⇒ post the transcript on NFM-5968 and route to CTO for re-attempt
+adjudication. No mid-window improvisation on the prod edge.
+
+### 14.5. Evidence checklist (PC-3)
+
+| # | Evidence | Where |
+|---|---|---|
+| 1 | KeepAlive=true in the LIVE plist (`PlistBuddy -c 'Print :KeepAlive'`) | NFM-5968 comment |
+| 2 | Preflight PASS transcript (day-of) | NFM-5968 comment |
+| 3 | KeepAlive apply transcript incl. backups paths | NFM-5968 comment |
+| 4 | 2-connector edge state (both registration log lines, timestamps) | NFM-5968 comment |
+| 5 | Failure-drill transcript (10m replica-carries-traffic + watchdog non-fire/expected-fire) | NFM-5968 comment |
+| 6 | Rollback-drill transcript (primary-only 10m + re-join) | NFM-5968 comment |
+| 7 | verify-tunnel disposition text | NFM-5968 comment |
+| 8 | 48h post-window soak: monitor tick + ledger, zero episodes | NFM-5963 |
+
+### 14.6. References
+
+- [NFM-5963](../../issues/NFM-5963) — D2-EXEC charter (board-approved 05:02Z 11-11).
+- [NFM-5964](../../issues/NFM-5964) — D2-G1 path measurement.
+- [NFM-5965](../../issues/NFM-5965) — D2-G2 artifacts (this runbook section).
+- [NFM-5966](../../issues/NFM-5966) — D2-G3 liveness extension.
+- [NFM-5967](../../issues/NFM-5967) — D2-G4 enrollment + shadow soak.
+- [NFM-5968](../../issues/NFM-5968) — window execution ticket.
+- `scripts/z203-replica/` — units, Caddyfile, install/rollback/KeepAlive scripts.
+- Operator one-pager: [../deployment/z203-ha-replica-operator-onepager.md](../deployment/z203-ha-replica-operator-onepager.md).

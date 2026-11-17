@@ -1,0 +1,2425 @@
+#!/usr/bin/env bash
+# nfm-site-monitor.sh — NFM-5226 public-edge site monitor sentinel.
+#
+# Why: GitHub Actions scheduled-event delivery for this repo is chronically
+# starved repo-wide (~10 of 144 expected */10 firings/day; */5 and hourly
+# crons equally starved; queue times 0s; public repo; GH status green).
+# The site-monitor workflow cannot be made to fire on schedule from inside
+# the repo, so the primary detection lane moves on-host. The GitHub cron
+# stays as a free best-effort supplement; no repo/workflow change.
+#
+# Alarm contract (documented on NFM-5226):
+#   - Probe cadence: every 300s via ~/Library/LaunchAgents/com.nfm.site-monitor.plist
+#   - Detection: P0 failure confirmed after 2 consecutive failing probes
+#     -> "[ts] site-monitor: CRITICAL ..." line below (worst case ~10 min)
+#   - Escalation: SRE Monitor heartbeat (2h) reads this log; CRITICAL lines
+#     page SRE -> [SRE-CRITICAL] Paperclip issue to Lead Engineer.
+#     Worst-case alert latency = 10 min detect + 2h pickup ~= 2h10m.
+#   - Missed-page reconciliation (NFM-5262, 2026-09-28): a brief P0 that
+#     recovers before heartbeat pickup is invisible to a green read, so the
+#     sentinel latches pending_page at the CRITICAL transition and logs
+#     "PAGE-UNACK" on recovery. It stays latched (and is re-stated by every
+#     RECOVERY while latched) until the SRE heartbeat retro-files the
+#     [SRE-CRITICAL] issue and runs `--ack-page`. Guarantees issue-filing
+#     <= 2h10m even for self-recovered incidents (2026-09-28 07:30Z class).
+#   - Sentinel liveness: an OK/WARN/CRITICAL line is written EVERY run; if the
+#     newest line is older than 15 min, treat the sentinel itself as dead
+#     (monitoring-blindness guard).
+#   - P1-only failures: WARN lines, never CRITICAL (matches workflow semantics
+#     where issue creation requires p0_failures > 0). The NFM-5418 stale-pin
+#     lane is P1: watched-page edge copies still carrying s-maxage>3600 are
+#     WARN-only (functional-but-stale HTML) — with the legacy-chunk shim
+#     (NFM-5442) serving dead refs, this lane is what makes "purge landed"
+#     observable (WARN -> OK) until the edge re-caches at 300s.
+#
+# NFM-5446 (2026-10-11) — chunk-scan fail-open fix:
+#   - Defect: the 5-page chunk-ref scan ran page GETs and ref HEADs fully
+#     SERIALLY under a 240s SIGALRM whose expiry handler printed
+#     "scan-deadline-exceeded (fail-open)" with rc 0 = GREEN. During diurnal
+#     edge-interference windows (NFM-5262, 5-10.4s/request) the serial scan
+#     can never fit 240s, so BOTH watched lanes (P1 stale 1y-pins, P0 dead
+#     chunk refs) went silently unverified while the sentinel read green
+#     (~30 consecutive probes / 3h46m observed live 2026-10-11).
+#   - Fix: pages and ref HEADs now run in PARALLEL (bounded pool), and a
+#     scan that still cannot complete within its budget reports
+#     scan-degraded with rc 3 — never green. Definitive findings gathered
+#     before the budget ran out (dead refs, TTL pins) are still reported.
+#   - TTL spot-check lane (always runs): each page's s-maxage/age verdict is
+#     taken from response HEADERS before the body is read, so stale-pin P1
+#     detection survives ref-verification budget exhaustion.
+#   - Skip-rate alert: >= SCAN_SKIP_CRITICAL consecutive degraded scans
+#     (>=3, ~15 min at 300s cadence — matches STALE_SENTINEL_SECONDS)
+#     escalates to a CRITICAL sentinel-blind page (same monitoring-blindness
+#     class as the sentinel-broken internal-error lane). A completing scan
+#     resets the streak and logs a RECOVERY if it ended a blind episode.
+#   - Env seams (test-only; unset in production => identical behavior):
+#     NFM_SCAN_BASE, NFM_SCAN_DEADLINE, NFM_SCAN_REF_POOL, NFM_MONITOR_LOG,
+#     NFM_MONITOR_STATE, NFM_MONITOR_PROBE, NFM_MONITOR_NOTIFY
+#     (scripts/tests/test_nfm_site_monitor.py refuses to run without them).
+#   - Gate-review hardening: the ref-cap check iterates `bad` under `lock`
+#     (a lock-free sum raced concurrent appends and a RuntimeError in the
+#     worker would silently DROP a real P0 finding); final reporting and the
+#     SIGALRM backstop read findings through a retrying lock-free snapshot
+#     (the handler must never take `lock` — the interrupted main thread may
+#     hold it) and the backstop now reports verified P0s (rc 1) instead of
+#     hardcoding p0=0; snapshot failure is degraded-unknown, never green.
+#
+# NFM-5454 (2026-10-11, SRE tuning) — single-ref flake threshold:
+#   - Post-#1469 data (2026-10-11): every noise-grade degraded scan had
+#     refs-unverified=1 (a single ref HEAD error, NFM-5262 diurnal class;
+#     9 occurrences; the 17:48Z sentinel-blind CRITICAL fired on three =1
+#     probes — ~2 pages/day at that sensitivity). Real failures the same
+#     day were multi-ref (=9, =12) or cap-era (=10).
+#   - Change: refs-unverified degrades only at >= REFS_DEGRADE_MIN (2). A
+#     lone unverified ref logs a NOTE-tagged ok line instead (drift watch:
+#     a PERSISTENT single = cap/edge investigation, runbook §7).
+#     Over-budget truncation is counted separately (refs-truncated) and
+#     degrades at ANY count — the cap-outgrown signal stays fail-closed.
+#     Definitive 4xx dead refs remain immediate P0 (rc 1) — untouched.
+#     SCAN_SKIP_CRITICAL stays 3: blindness detection latency unchanged.
+#
+# NFM-5497 (2026-10-13) — blind-streak edge-flap classifier:
+#   - Problem: the NFM-5446 skip-streak lane counted ANY 3 consecutive
+#     degraded chunk-scan cycles as sentinel-blind and paged CRITICAL —
+#     including benign diurnal edge-flap bursts (NFM-5262) whose cycles
+#     merely starve ref HEADs while pages fetch fine (ep-5, 2026-10-13:
+#     all-fetches-failed, then refs-unverified=12, then =2 -> CRITICAL
+#     page at ~daily cadence; NFM-5493 retro, NFM-5488 triggers 2/3 hit).
+#   - Fix: each degraded cycle is classified by fetch coverage, which the
+#     scan itself emits as a "fetches=<fetched>/<pages>" token:
+#       mode A all-fetches-failed — 0 of 5 page GETs completed (genuine
+#         edge-down class): 3 consecutive mode-A cycles -> CRITICAL with
+#         semantics byte-identical to the pre-classifier build (threshold
+#         SCAN_SKIP_CRITICAL=3, recovery, ack unchanged). A degraded
+#         report carrying no fetch evidence also classifies mode A —
+#         fail-closed. Launcher failures (no scan report at all) leave
+#         the per-mode counters untouched and never page from this lane,
+#         exactly as before.
+#       mode B refs-unverified-only — >=1 page fetch completed: 3
+#         consecutive mode-B cycles -> WARN only (no PAGE-UNACK latch, no
+#         page). Escalates to CRITICAL iff a definitive P0 FAIL (dead
+#         chunk refs / P0 probe failure — cache-cold-visitor breakage,
+#         page-worthy per NFM-5446) lands within/overlapping the streak
+#         window (state blind_p0_fail; set by any definitive P0 failure,
+#         cleared by a fully green cycle). P0 unknown/skipped never
+#         escalates — blind != failed.
+#   - Streak counters are per-mode and strictly consecutive (a cycle of
+#     one mode increments its counter and resets the other's); any
+#     completed scan resets both. A cycle recording a NOTE
+#     (refs-unverified < REFS_DEGRADE_MIN, NFM-5454) never enters any
+#     streak and needs no mode tag.
+#   - Every degraded cycle logs mode=/fetches_failed=/refs_unverified=/
+#     p0=/origin= evidence so calibration data accrues for future tuning
+#     (NFM-5454 pattern).
+#
+# NFM-5542 (2026-10-15, ADR-023) — sentinel egress independence:
+#   - Ground truth (CTO, NFM-5540 → parent NFM-5541): this sentinel had
+#     THREE python egress lanes with inconsistent proxy posture. Bare
+#     urllib rides the macOS system proxy (v2cloud 127.0.0.1:7892 via
+#     scutil): the 2026-10-15 02:12–02:26Z chunk-scan false CRITICAL
+#     (fetches=0/5, mode=A ×3, origin=ok) and both 2026-10-14 blind
+#     windows were LOCAL VPN-proxy vantage defects, not site trouble.
+#     RECORDS CORRECTION: the 10-14 "CN-side ClientHello DPI" attribution
+#     for the site-monitor windows is SUPERSEDED — local monitoring defect
+#     (ADR-013's broker/GitHub DPI rulings are a different subsystem and
+#     stay valid).
+#   - ADR-023: DIRECT IS PRIMARY for every python lane. (D1) the chunk-scan
+#     heredoc below fetches pages and HEADs refs through one shared
+#     no-proxy opener (scripts/health_check.py::check_url + send_alert got
+#     the same opener); (D2) no_proxy='*' / NO_PROXY='*' are exported below
+#     so a future bare urlopen cannot silently re-couple through the
+#     ENV-VAR proxy class — note the macOS sysconf proxy is only bypassed
+#     by the explicit opener, which is why D1 is primary and D2 is
+#     defense-in-depth. curl (the NFM-5525 confirmation lane) honors
+#     no_proxy too and was already effectively direct (green in every
+#     episode, so origin-check semantics are unchanged).
+#   - (D3) observability: a one-line /usr/sbin/scutil --proxy summary is
+#     logged at sentinel startup and rides every degraded cycle's
+#     mode=/fetches= evidence token, so the next flap adjudicates
+#     host-egress vs edge in ONE log line.
+#
+# NFM-5667 (2026-10-20) — streak-1 full-edge page rule (NFM-5666 code half;
+# CTO ruling NFM-5664 comment 35aa85eb §4, 2026-10-20T00:15Z):
+#   - Gap: the base-probe lane needs STREAK_THRESHOLD=2 consecutive failing
+#     probes before paging, so a full-edge P0 that recovers inside one probe
+#     interval goes UNPAGED (Ep#4 20:03Z + Ep#5 20:19Z 10-19: both real
+#     upstream-blackhole outages, sentinel line read "6 checks failed, 2 P0,
+#     hard status codes (502/530)" at streak 1 -> WARN only).
+#   - Rule: PAGE at streak 1 IFF ALL FOUR conjuncts hold on the current
+#     failing probe: (1) >=5 of the 6 EDGE checks failed (the two monitored
+#     hostnames; the P2 Supabase third-party check is outside the rule);
+#     (2) >=2 P0 checks among them; (3) the failure set spans BOTH hostnames
+#     (full-edge; NFM-5262 diurnal flaps are partial and latency-class and
+#     never match); (4) dominant failure class is hard edge status codes
+#     (502/530 and other 52x/53x) — latency-timeout-dominant sets are
+#     EXCLUDED and keep the streak>=2 lane. Population basis: 3/3 prior
+#     signature matches were real outages.
+#   - Rate limit: max 1 page / 30 min for this class, from a counter
+#     INDEPENDENT of the streak>=2 lane (S1_PAGE_COOLDOWN; the streak>=2
+#     lane's pacing — REMINDER_RUNS — never consumes it and vice versa).
+#   - Page payload (ruling amendment 1): window timestamps (first-failure at
+#     page time; the green run completes the window on its RECOVERY line),
+#     per-hostname status-class counts, the rolling-30d full-edge episode
+#     count toward ADR-025 D2 trigger T2 with the ledger delta, and the
+#     NFM-5664 ruling reference — pages double as T2 counting evidence.
+#   - T2 ledger basis (ruling §2): BY-EPISODE — distinct full-edge P0
+#     windows separated by >=10 min of green each count once. Episode state
+#     (open/close/ledger) lives in its OWN state file (NFM_MONITOR_S1_STATE)
+#     so the streak>=2 lane's state format and every pre-existing
+#     state_write call site stay byte-identical (AC4). The ledger may be
+#     seeded at cutover by writing ISO timestamps into that file (the SRE
+#     sibling owns the deploy/verify half); unpruned history older than 30d
+#     drops out of the count on the next append.
+#   - The existing streak>=2 lane is UNCHANGED: a streak-1 page latches
+#     pending_page (same missed-page reconciliation) but never resets or
+#     rewrites the streak counter, and a later streak-2 CRITICAL pages per
+#     its own semantics — the streak-1 lane fires at most its one
+#     rate-limited page per match.
+#   - 14-day precision review clause (ruling amendment 2): any false-
+#     positive page reverts the rule to streak>=2 for the affected subclass
+#     pending CTO re-ruling — the NOTE-tagged suppression/keep lines below
+#     accrue the calibration evidence.
+#
+# NFM-5708 (2026-10-25, carrier for NFM-5706; CTO ruling NFM-5705 R5 +
+# watch-line (d) amendment to ruling 5206262b on NFM-5664) — path-independent
+# reference probes:
+#   - Gap: 2026-10-24 15:46–16:33Z multi-route P1 burst was indistinguishable
+#     from site-side degradation without a MANUAL reference battery
+#     (NFM-5704/5705). Both sentinel routes ride ONE CN-to-CF-AMS transit
+#     path, so multi-hostname != multi-path.
+#   - Lanes (3 lightweight GETs, parallel, riding the EXISTING tick cadence —
+#     no new schedule/daemon; worst case +REF_TIMEOUT on a tick):
+#       cf  = https://www.cloudflare.com     (int'l CF-edge)
+#       ncf = https://ghcr.io                (int'l non-CF)
+#       dom = https://mirrors.ustc.edu.cn    (CN-domestic control; NFM-5712
+#             swap from tuna.tsinghua.edu.cn — see the NFM-5712 block)
+#   - Per-host RELATIVE baselines (EMA of healthy samples) live in
+#     ~/.nfm-site-monitor.ref.state — thresholds are sample >= SLOW_RATIO x
+#     that host's OWN baseline (NFM-5720 adds dual absolute floors per lane
+#     — either-arm; see the NFM-5720 block below). A lane is slow iff
+#     sample >= 2.5x baseline (10-24 battery: ghcr 2.15s vs 0.77s = 2.8x,
+#     cloudflare 8.25/3.54/3.01s vs ~0.3s; ratio 2.5 catches both with the
+#     fail-open direction — only suppression needs certainty). Failed probes
+#     never touch the baseline and read UNAVAILABLE — never slow (NFM-5712
+#     three-valued semantics; see the NFM-5712 block). Warmup is
+#     attempt-based (>= BASELINE_MIN=10 attempts, ~50 min at 300s cadence),
+#     so a permanently unreachable lane cannot hold the
+#     battery in WARMUP forever; during warmup it never suppresses a page).
+#   - Classification (emitted on every nucpot DEGRADE tick in the log line as
+#     "[NFM-5706 class=<C>; refs: <per-host timings>]" — full hint enum per
+#     the CPO charter addendum (NFM-5708, folding NFM-5707):
+#     TRANSIT_BROWNOUT / SITE_SIDE / CN_DOMESTIC / clean (+ UNCLASSIFIED as
+#     the fail-open floor). How to read it:
+#       TRANSIT_BROWNOUT = nucpot slow + ALL int'l refs slow + domestic
+#         pristine on a TRUSTED baseline (an untrusted dom lane never
+#         satisfies the conjunct — verdict drops to mixed/UNCLASSIFIED,
+#         paging fail-open) => LOG-ONLY WARN, NON-PAGING, no SRE wake
+#         (5206262b(d), NFM-5705 R5). Gates ONLY the streak>=2 base-lane
+#         CRITICAL branch;
+#         the nucpot failure streak keeps counting, so the moment transit
+#         recovers (or classification clears) the existing page fires.
+#       SITE_SIDE = nucpot slow + refs pristine => existing watch-line
+#         escalation per 5206262b as amended — page semantics unchanged,
+#         class + reference latencies ride the log lines as evidence.
+#       CN_DOMESTIC = the CN-domestic control is degraded (COMPLETED but
+#         slow — NFM-5712: a control that never completed reads
+#         CONTROL_UNAVAILABLE instead, never this class) =>
+#         HINT class only: int'l comparison is UNRELIABLE in that state (a
+#         slow domestic lane usually means host-egress or CN-domestic
+#         path trouble, which also slows the int'l lanes), so the tick is NOT
+#         force-fit into TRANSIT_BROWNOUT/SITE_SIDE. NO suppression — the
+#         existing paging path runs fail-open exactly like UNCLASSIFIED; the
+#         evidence token carries "(intl comparison unreliable)".
+#       clean = battery verdict when ALL lanes are pristine (observable in
+#         --ref-probes-once output as batclass=clean). On a nucpot DEGRADE
+#         tick a clean battery maps to SITE_SIDE; on a GREEN tick the OK line
+#         stays byte-stable (no token). A CONFIDENT non-clean battery verdict
+#         on a green tick (intl_brownout / cn_domestic) logs one NOTE line —
+#         recording only, zero page implications.
+#       UNCLASSIFIED = battery could not testify (warmup / mixed int'l
+#         evidence / ref lane internal error) — existing paging path,
+#         fail-open.
+#   - ADR-023 compliance: reference lanes are pinned DIRECT via the explicit
+#     no-proxy opener (immune to BOTH the env-var proxy class and the macOS
+#     scutil system proxy) plus the wrapper's no_proxy='*' export. Known
+#     confounder (documented per NFM-5705): the user VPN at 127.0.0.1:7892
+#     hard-fails TLS to nucpot.dpdns.org (6/6 SSL_ERROR_SYSCALL) — these
+#     lanes must never ride it, so a VPN flap cannot fake a brownout.
+#   - Baseline drift policy: samples below SLOW_RATIO fold into the EMA at
+#     ALPHA=0.125; above-ratio samples fold at ALPHA_SLOW=0.03 only, so a
+#     1-2h brownout cannot re-baseline the references mid-incident while a
+#     genuine multi-hour drift still converges.
+#   - Streak-1 full-edge rule (NFM-5667) and the scan-blind lanes
+#     (NFM-5446/NFM-5497) are UNTOUCHED; the reference battery appends
+#     evidence to the streak-1 page payload but never gates it.
+#
+# NFM-5712 (2026-10-25, G1 fix for NFM-5706; CTO gate G1 on NFM-5705/NFM-5706)
+#   — three-valued control semantics + ustc swap:
+#   - Defect (live since deploy 2026-10-24T21:52Z): tuna.tsinghua.edu.cn is
+#     permanently unreachable from this vantage, and a transport-level FAIL
+#     read slow=1 — so every tick emitted
+#     `tuna…=FAIL(URLError)(ema=-,slow=1) -> dom_slow=1 -> batclass=cn_domestic`
+#     while nucpot was GREEN (30 spurious NOTEs), and a dead control could
+#     never witness the domestic-pristine conjunct, making TRANSIT_BROWNOUT
+#     permanently unemittable — the three-way discriminator the charter
+#     exists to provide was collapsed.
+#   - Control endpoint swap (CTO-decided): tuna.tsinghua.edu.cn ->
+#     mirrors.ustc.edu.cn (200 @ 0.12s from this vantage; single control
+#     host; lane stays DIRECT-pinned per ADR-023).
+#   - Three-valued per-host outcomes: COMPLETED (any received HTTP status —
+#     2xx/3xx/4xx all count as a latency sample) / SLOW (completed but over
+#     the relative per-host-baseline threshold) / UNAVAILABLE
+#     (connection-level failure: URLError, TLS, no response). UNAVAILABLE
+#     never reads slow, never emits cn_domestic, and never satisfies a
+#     pristine conjunct: the control lane maps to batclass=
+#     control_unavailable (recording-only CONTROL_UNAVAILABLE note,
+#     TRANSIT_BROWNOUT unemittable for that tick => UNCLASSIFIED fail-open,
+#     non-paging), and an UNAVAILABLE int'l lane forces mixed/UNCLASSIFIED —
+#     suppression needs certainty, so a transport failure can never
+#     manufacture the ALL-int'l-slow conjunct either.
+#   - Per-endpoint baselines: the state file carries a `<lane>_url` marker;
+#     a lane re-pointed at a different URL starts a FRESH baseline (the
+#     stale tuna-era dom entries — dom_att=80, dom_count=0, EMA never formed
+#     — are safely ignored and dropped on the next state rewrite). During
+#     the new host's warmup the domestic leg records only: no confident
+#     batclass until its EMA forms (BASELINE_MIN completed samples).
+#   - Paging behavior is UNCHANGED: the streak-1 rule (NFM-5667), the
+#     streak>=2 lane, the scan-blind lanes and the tick cadence all stay
+#     exactly as they are; only the battery's evidence vocabulary moved.
+#
+# NFM-5720 (2026-10-26, post-G3 carrier for NFM-5706; CTO [CTO-ARCH-OBS]
+# b826f9b0 on NFM-5706, 2026-10-25T20:01Z — sources QA d6ab085c/8ad28898 +
+# CTO adjudication 00bdefaa on NFM-5705) — two false-NEGATIVE classifier
+# refinements from the first instrumented burst day (10-25). No false pages,
+# no false TB-while-clean: the soak invariant class is untouched.
+#   - OBS-1 — EMA ratchet masks absolute degradation (QA finding,
+#     CTO-endorsed): per-host EMA baselines chase sustained degradation (cf
+#     EMA climbed 1232->1763ms across 10-25), so 14:07:25Z printed
+#     slow=0, batclass=clean with cf at an absolute 2150ms (~2.8x the
+#     ~760ms clean baseline) — SITE_SIDE labels over-trust and
+#     TRANSIT_BROWNOUT under-fires during long brownouts. Fix: dual
+#     absolute+relative slow test — a lane is SLOW when the sample exceeds
+#     EITHER the relative arm (EMA x SLOW_RATIO) OR the lane's absolute
+#     floor (ABS_FLOOR: cf 1900 / ghcr 1600 / ustc 575 = 2.5x the
+#     clean-period baselines 760/640/230ms from the 10-25 log of record,
+#     within the CTO's "floors = 2-3x those" range).
+#     Reconciliation note (CR-relevant): the CTO's prose says "flag slow
+#     when sample > max(EMA x ratio, absolute floor)", but max() leaves
+#     the CTO's OWN 14:07:25Z vector unflagged at every floor in the
+#     stated range (2150 < max(4337, 1900..2280) for all of them) — i.e.
+#     the literal max-form implements no fix for the named defect.
+#     Either-arm (equivalently min-of-thresholds) is what satisfies the
+#     AC3 vector; the floor arm equals the relative arm the EMA would
+#     apply had it never ratcheted, so it only ever LOWERS a threshold —
+#     zero false-positive exposure (clean lanes sit far under floors).
+#     Fold consistency: the EMA slow-fold (ALPHA_SLOW) keys on the same
+#     dual test — floor-caught samples must not fold at full ALPHA, which
+#     would accelerate the ratchet this fix bounds.
+#   - OBS-2 — label precedence mislabels all-refs-slow as cn_domestic
+#     (CTO, new): 19:30:04Z printed batclass=cn_domestic with
+#     intl_slow=2/2 AND dom_slow=1 (cf 2012 / ghcr 1993 / ustc 656ms, all
+#     slow). All-three-slow is transit-class shape per the charter
+#     (TRANSIT_BROWNOUT = intl degraded; cn_domestic = dom degraded while
+#     intl clean). Fix: precedence — the intl_slow==2/2 transit conjunct is
+#     now evaluated BEFORE the dom_slow branch (intl class outranks
+#     cn_domestic); the lane_trusted["dom"] fail-open gate survives the
+#     reorder. On the 10-25 log of record this reclassifies 14:00:37Z,
+#     14:29:48Z, 15:14:10Z and 19:30:04Z (green-tick NOTEs) and 14:44:15Z
+#     (P1-only degrade tick — no page implications either way; the TB
+#     suppression branch only gates the streak>=2 P0 CRITICAL) from
+#     cn_domestic to intl_brownout, and 14:07:25Z from clean to mixed
+#     (cf floor-caught) — every reclassified tick has BOTH intl lanes
+#     >= their absolute floors; zero clean ticks flip (replay test
+#     test_nfm5720_classifier_refinements.py).
+#   - Landed AFTER NFM-5706 G3/G4 closed (blocker held the deploy): a
+#     mid-soak classifier change would have rebased the G3 anchor window.
+#
+# NFM-5797 (2026-10-31, SRE; QA request dbda0458 on NFM-5795 + courier
+# NFM-5797) — local-origin discriminator probes:
+#   - Gap: NFM-5795 forensics exonerated the origin for /browse via MANUAL
+#     fresh-conn probes (localhost:3000 => 3ms), and QA adopted the
+#     classification default "refs-clean + in-tick API-green = path-side" —
+#     but the discriminator was offered, never built, so every future
+#     refs-clean P1 single still needs a round-trip courier to classify
+#     (NFM-5797: the Homepage `/` series, x3, is exactly that courier).
+#   - Lanes: TWO fresh-connection GETs per tick to the ORIGIN cloudflared
+#     proxies to (default http://localhost:3000): `/` and `/browse` — the
+#     exact originService targets, `/` included per the NFM-5797 ask
+#     (NFM-5795 probes covered /browse only). Fresh connection per route
+#     (Connection: close) so the measurement is the origin's full-request
+#     latency, not a keep-alive rider. Riding the EXISTING tick cadence —
+#     no new schedule/daemon; worst case +2x ORIGIN_TIMEOUT (3s) on a tick.
+#   - Evidence-ONLY: the lane prints one "ORIGIN — origin: ..." line per
+#     tick, BEFORE the summary line (the OK/WARN/CRITICAL line stays the
+#     tick's newest line, preserving the newest-line liveness read; the
+#     per-tick startup line already establishes the multi-line-tick
+#     class). It NEVER feeds alarms, streaks, classification, state, or
+#     paging: the NFM-5706 battery keeps that role. Reading is manual
+#     (QA/SRE grep): a single-digit-ms origin token under a SITE_SIDE P1
+#     WARN classifies path-side IN-TICK (the NFM-5795 verdict, now
+#     self-served); an origin token at hundreds of ms+ or a non-200 /
+#     ERR tag is the courier-resume signal QA adopted.
+#   - Zero behavior change elsewhere: summary lines stay byte-stable
+#     (green OK lines carry no token — NFM-5708 convention), the
+#     streak-1 rule (NFM-5667), streak>=2 lane and scan-blind lanes
+#     (NFM-5446/NFM-5497) are untouched.
+#   - ADR-023 lineage: curl pinned DIRECT (--noproxy '*') + absolute
+#     binary path (NFM-4579 sparse-PATH); localhost never transits a
+#     proxy anyway, so the pin is defense-in-depth, not load-bearing.
+#   - Env seams (test-only; unset in production => identical behavior):
+#     NFM_ORIGIN_BASE (target origin), NFM_ORIGIN_TIMEOUT (per-route
+#     socket budget), NFM_ORIGIN_CURL (binary seam, test hermeticity).
+#   - Diagnostic: --origin-probes-once prints the token, touches no log
+#     and no state (SRE post-deploy verification without a state write).
+#
+# NFM-5876 (2026-11-07, SRE; CPO dispatch, child of NFM-5872 — CTO ruling
+# R4-3 on NFM-5862, 2026-11-07) — edge-tunnel probe lane + three-lane
+# PARTIAL_DEGRADED classification:
+#   - Gap: during partial tunnel degradation (NFM-5862 e7/e8 windows) the
+#     cached-HTML edge lane stayed green while the tunnel was dark — cache
+#     absorption masks tunnel loss, so tunnel degradation was either
+#     invisible or misclassified as a full-edge outage, and detection
+#     latency for a degrading tunnel was unbounded until users already saw
+#     errors.
+#   - Lane inventory — all three lanes are measured EVERY tick with NO new
+#     probe requests. Scope guard honored: the edge-tunnel lane EXTENDS
+#     the existing "Backend API Health" P0 target, which is exactly the
+#     CTO-specified URL https://nucpot.dpdns.org/api/v1/health — the
+#     uncached API path THROUGH the edge hostname, proven to transit the
+#     tunnel (it returned 530 during e7/e8) — verified + extended, not
+#     duplicated:
+#       origin-direct — NFM-5797 discriminator (localhost:3000 `/` +
+#         `/browse`, curl --noproxy '*'). Contract AMENDED by this lane:
+#         it was evidence-ONLY; it now ALSO gates the PARTIAL_DEGRADED
+#         conjunct (origin must be green for PD). It still never feeds
+#         streaks, state, or paging of its own.
+#       edge-tunnel  — the Backend API Health P0 target (uncached API via
+#         the edge; NO_PROXY_OPENER direct fetch, ADR-023/NFM-5542).
+#       edge-cached  — the Frontend Homepage + Frontend Browse Page HTML
+#         targets (edge-cached, s-maxage=1800); a chunk-scan
+#         edge-html-desync synthesis also counts as cached-lane failure.
+#   - Per-tick verdict: one "LANES — origin=... edge-tunnel=...
+#     edge-cached=... verdict=..." line per tick (green + degrade alike),
+#     BEFORE the summary line — the OK/WARN/CRITICAL line stays the tick's
+#     newest line (liveness read) and green OK lines stay byte-stable
+#     (NFM-5708 convention). Verdict matrix (unknown lanes never classify
+#     — fail-open; a garbled probe table keeps the existing p0="-1"
+#     page-worthy path in charge):
+#       origin ok + tunnel FAIL + cached ok -> PARTIAL_DEGRADED (tunnel
+#         dark, users shielded by cache): WARN immediately at streak 1;
+#         PAGE at streak 2 (NFM-5666 page discipline for the new class) —
+#         CRITICAL line + notify + pending_page latch, so the NFM-5262
+#         missed-page reconciliation applies unchanged; REMINDER_RUNS
+#         reminder cadence while it persists.
+#       tunnel FAIL + cached FAIL           -> FULL_EDGE_OUTAGE: existing
+#         CRITICAL path byte-identical (streak>=2 lane + the NFM-5666/
+#         NFM-5667 streak-1 full-edge rule untouched; PD and s1 matches
+#         are mutually exclusive — PD requires BOTH cached lanes green,
+#         which caps edge failures at 4/6 < the s1 conjunct of 5/6).
+#       all other combinations              -> existing semantics
+#         (ORIGIN_DEGRADED / CACHED_DEGRADED / MIXED / UNCLASSIFIED /
+#         ALL_OK are evidence verdicts only; zero behavior change).
+#   - Egress discipline (design item 3): the edge-tunnel lane rides the
+#     existing direct-pinned python fetch (NO_PROXY_OPENER under the
+#     wrapper's no_proxy='*' export — ADR-023/NFM-5542), never the scutil
+#     127.0.0.1:7892 proxy; the origin lane's curl is --noproxy '*' pinned
+#     (NFM-5797 lineage).
+#   - TRANSIT_BROWNOUT precedence: the NFM-5706 brownout suppression is
+#     evaluated FIRST and still gates any page — an active brownout
+#     classification can only DELAY a PD page, never consume it (the
+#     streak keeps counting). In practice cached-HTML staying green from
+#     this vantage during a transit brownout is unlikely, so the classes
+#     rarely overlap.
+#   - State: none new — PD rides the existing streak/since_remind/
+#     pending_page state (the streak>=2 lane's machinery), so RECOVERY,
+#     PAGE-UNACK and --ack-page behave uniformly across alert classes.
+#   - Env seams: none new — classification reads the probe's own table
+#     (captured pre-scan-synthesis in PROBE_ROWS) + the existing ORIGIN_EV
+#     token. NFM-5862 ruling item (b) respected: no timed warmup of any
+#     kind; the lane rides the existing 300s cadence and the existing
+#     Backend API Health retry + confirmation budget (NFM-5279/NFM-5525
+#     ladder unchanged). Scan-blind exits (NFM-5446/NFM-5497) keep their
+#     early-exit shape — no LANES line on those CRITICAL exits.
+#   - Scope guards honored: the pre-existing PAGE-UNACK latch (e7 CRITICAL
+#     from 2026-11-06T18:14:58Z) is NFM-5871's — untouched; origin/cached
+#     probe targets and cadence unchanged.
+#
+# NFM-5892 (2026-11-07, SRE; CPO dispatch from NFM-5891/NFM-5890) — restore
+# s1 episode booking on the streak>=2 CRITICAL paths:
+#   - Defect (e9, 2026-11-07 03:20Z -> 03:33Z): the first REAL episode to
+#     enter full-edge via lane-by-lane escalation (streak-1
+#     PARTIAL_DEGRADED-shaped 4/6 -> streak-2 full-edge 5/6) paged via the
+#     streak>=2 lane with NO s1 call — no t2-ledger append, no episode
+#     count, no rate-limit marker, no open window. The §4 machinery
+#     (NFM-5664 ruling 35aa85eb) was evaluated only at streak==1, so every
+#     rule keyed on episode counts / delta accounting was blind to the
+#     episode (ledger recorded 8, true 9, pre-backfill).
+#   - Fix: on the streak>=2 CRITICAL paths (public-edge + PARTIAL_DEGRADED
+#     + their ongoing-reminder variants), when the s1 conjuncts match AND
+#     no window is open, s1_book_streak2 books the episode AT the CRITICAL
+#     tick (ledger append + last_page rate-limit marker + open=1/
+#     win_first) and the t2-ledger count + ruling §4 ref + rate-limit
+#     marker ride the CRITICAL line via $s2_book_ev (empty string => the
+#     line is byte-identical when nothing books).
+#   - No double-page: the page stays on the streak>=2 lane; the stamped
+#     last_page is what suppresses the streak-1 lane's own page if the
+#     same episode re-enters at streak 1 within the 1/1800s cooldown.
+#     Booking is idempotent while a window is open (open==1 gate —
+#     reminder ticks never re-append). The streak-1 path is byte-for-byte
+#     unchanged (NFM-5667 rule + its tests).
+#   - TRANSIT_BROWNOUT ticks never book (the branch exits before the call:
+#     transit-side suppression is by definition not a site-side episode).
+#     The close path is unchanged — once open=1, the next green tick books
+#     the episode close with its existing RECOVERY line.
+#
+# NFM-6006 (2026-11-16, LE adjudication of the SRE retro-file) — booking
+# gate widened from the paging conjuncts to the episode shape:
+#   - Episode (11-11 11:42:09Z -> 12:19:42Z, ~37.5m): confirmed CRITICAL on
+#     the streak>=2 lane (all-connection-error / SSL UNEXPECTED_EOF shape)
+#     but booked NOTHING — no t2-ledger append, no open window, no episode
+#     close RECOVERY line, no fresh latch timestamp (pending_page kept
+#     e23's 10:59:31Z) — because the NFM-5892 call was gated on s1_match,
+#     whose conjunct 4 (hard>latency) is a PAGING precision rule (fx3
+#     latency-dominant exclusion) that a 100% connection-error episode can
+#     never satisfy. LE verdict: conjunct-4 page exclusion BY DESIGN; the
+#     evidence loss a DEFECT (the exact NFM-5892 class resurfacing one
+#     conjunct deeper). NOT reboot state loss — streak continuity survived
+#     the 11:47-48Z restart (first-failure 11:42:09Z persisted into the
+#     11:49:44Z CRITICAL; all state is file-backed).
+#   - Fix: s1_classify also sets s1_episode_match (conjuncts 1-3 only);
+#     the streak>=2 booking gate uses it. The streak-1 early-page rule is
+#     byte-for-byte unchanged (conjunct 4 keeps excluding latency-dominant
+#     sets from the PAGE; rate-limited s1 matches already book anyway).
+#   - Rate-limit semantics (unchanged, now documented): last_page counts
+#     LANE EMISSION stamps (s1 pages + s2 bookings), never delivery —
+#     notify_page is best-effort osascript with no delivery feedback. The
+#     1/1800s cooldown gates only the streak-1 lane; the streak>=2 lane's
+#     notify is unconditional. pending_page is a single keep-earliest slot
+#     armed at page-emission / first-CRITICAL tick — a second episode under
+#     an unacked older latch stays timestamp-invisible (the 11:42 episode's
+#     reconciliation trail pointed at e23); multi-episode latch semantics
+#     remain a CTO-level follow-up, NOT changed here.
+#
+# NFM-5947 (2026-11-11, SRE; CPO triage 2026-11-10T16:03Z on QA courier
+# NFM-5947, per the NFM-5858 precedent) — Homepage P1 single family
+# disposition + standing courier escalation bar. COMMENT-ONLY record;
+# zero behavior change (no line below the header is touched).
+#   - Disposition: ABSORB as accepted post-fix residual. No follow-up
+#     ticket; no scope change to ADR-026 (NFM-5870) — the structural
+#     remedy is already specced inside that family (5873 decision gate ->
+#     5874 worker fallback -> 5875 monitor classification); a new
+#     follow-up would duplicate 5874/5875, not accelerate them.
+#   - Mechanism confirmed cold-fill-at-TTL-expiry, 6/6 in the courier
+#     window: every Homepage single ran LANES origin=ok edge-tunnel=ok
+#     edge-cached=fail verdict=CACHED_DEGRADED, refs slow=0 unavail=0,
+#     batclass=clean, streak 1, RECOVERY next tick (16:56:57Z / 17:40:14Z
+#     / 19:26:52Z / 19:38:08Z / 23:26:45Z 11-09, 12:08:06Z 11-10), deploy
+#     e34d41166 unchanged throughout (events are PRE-ISR-warmup; PR #1531
+#     not yet deployed). Cross-route corroboration: /browse 5067ms single
+#     14:41:27Z 11-10 same shape (own lineage NFM-5858).
+#   - CENSUS CORRECTION (SRE re-verified from this log 11-11): the
+#     courier counted x4 but the same 19.2h window holds SIX Homepage
+#     singles — the beat census missed 19:21:12Z 5619ms and 19:32:17Z
+#     5485ms (same class: single-cycle each, RECOVERY between, refs-clean
+#     batclass=clean). Post-TTL-fix (11-05) family census: 11 Homepage
+#     singles total; the rolling-24h count stood AT 6 as of 12:02:43Z
+#     11-10 — zero headroom to bar (c): one more family single before the
+#     earliest window members age out crosses 6. Absorption still holds
+#     (class characterized, impact = slow first-hit only, remedy
+#     in-flight), but beats must track the true count below.
+#   - STANDING ESCALATION BAR (pre-commitment update; supersedes the
+#     "next single/pair trips courier" bar): re-trip a courier ONLY on
+#     (a) streak >=2 on the same route family (consecutive windows, no
+#     RECOVERY between), (b) >=2 distinct routes tripping in one window,
+#     or (c) >6 singles/24h sustained. Singles-with-RECOVERY stay
+#     absorbed under this verdict. Census method for lane beats: count
+#     every 'Frontend Homepage P1' WARN with streak 1 + a following
+#     RECOVERY line (do NOT enumerate magnitudes — the 11-10 11:04Z beat
+#     listed 5779/6391/7332 and missed 5619/5485 in between).
+#   - Expedite levers are human-delivery stalls, not engineering (both
+#     carded; do not re-ask): deploy-path decision card 2bc50484 on
+#     NFM-5898 gates the PR #1531 cutover; the CF zone-token reply on
+#     NFM-5873 gates serve-stale (converts exactly these cold fills into
+#     stale-served responses).
+#
+# NFM-5966 (2026-11-12, SRE; CPO dispatch — D2-G3 under parent NFM-5963) —
+# replica liveness lane (fourth lane; z203 HA replica, D2-G2 components):
+#   - Gap: the D2 HA replica (cloudflared-nucpot-replica.service +
+#     nfm-origin-forwarder.service on z203, NFM-5965) had NO liveness
+#     coverage. Replica darkness is exactly the dangerous state during a
+#     primary outage (the replica exists to carry traffic while the Mac
+#     primary is dark — NFM-5963 scope item 4; the 8/8-episode verdict is
+#     single-path Mac-side prefix blackhole), and unmonitored it would stay
+#     invisible until a full-edge episode the replica should have absorbed.
+#   - Lane: ONE SSH round trip per tick to z203 over tailscale (path
+#     measured clean in NFM-5964: direct v6, 25/58ms) running a READ-ONLY
+#     battery: `systemctl show -p LoadState -p ActiveState` for BOTH pinned
+#     units + the last 256KiB of /var/log/cloudflared-nucpot-replica.log
+#     (registration age, same rolling-staleness semantics as the NFM-5880
+#     gate, N=600s) + a forwarder end-to-end curl (localhost:3000 ->
+#     Mac:3000). Emitted as one "REPLICA — replica: ..." evidence line per
+#     tick, after the LANES line (the OK/WARN/CRITICAL line stays the tick's
+#     newest line, NFM-5876 convention).
+#   - Verdict (replica=<ok|dark|unknown|notfound> on the REPLICA line):
+#       notfound — either unit LoadState=not-found (D2-G2 not yet deployed /
+#         unit removed): NOTE-class, NO WARN (a state the board already
+#         knows is in flight must not noise the WARN class).
+#       dark    — a loaded unit not active, OR both units active but
+#         registration stale (age>=600 or none_span).
+#       ok      — both units active AND registration fresh (age<600).
+#       unknown — everything else (ssh_fail, registration unreadable,
+#         none_short, garbled output): FAIL-OPEN by construction.
+#   - Severity shape (CPO dispatch, binding): replica-dark ALONE (primary
+#     green) = ONE WARN lane entry per dark tick, NOT a page — no notify,
+#     no CRITICAL line, no pending_page latch, no streak>=2 machinery, exit
+#     code stays 0. Any page upgrade is gated on 48h post-window soak
+#     evidence and would be a NEW reviewed change, never a drift. Replica-
+#     dark AND primary-dark = the existing primary handling (this lane
+#     stays evidence-only on degrade ticks: no replica WARN, streak frozen).
+#   - Probe-dependency honesty: the SSH path (tailscale + sshd + operator
+#     key) is a NEW dependency; absence of a replica verdict (ssh_fail /
+#     unknown / notfound) can NEVER classify anything — the lane adds no
+#     conjunct to the NFM-5876 three-lane verdict matrix, so it is
+#     STRUCTURALLY impossible for this lane to create or suppress a
+#     PARTIAL_DEGRADED or a page. NFM-5872 tripwire 3 (tunnel-dark +
+#     cached-dark => FULL_EDGE_OUTAGE CRITICAL, never PD) is untouched: the
+#     matrix is byte-identical.
+#   - State: OWN state file (~/.nfm-site-monitor.replica.state, seam
+#     NFM_MONITOR_REPLICA_STATE) holding the consecutive-dark streak +
+#     first-dark timestamp for the WARN line evidence — every pre-existing
+#     state_write call site stays byte-identical (NFM-5667/5708 pattern for
+#     S1/REF state). Streak semantics: increments only on primary-green
+#     dark ticks; ok resets (with a REPLICA-RECOVERY note if it ended a
+#     streak); unknown/notfound and primary-degrade ticks freeze (neither
+#     count nor reset).
+#   - fwd_http is EVIDENCE-ONLY in this build (rides the token, never flips
+#     the verdict): the forwarder's end-to-end answer depends on the
+#     z203->Mac tailscale leg, and a z203-local curl hiccup must not read
+#     as replica-dark. Upgrading it to a verdict conjunct is post-soak work
+#     (same 48h clause). Known z203-side confounder (SRE probe 2026-11-11):
+#     0.0.0.0:3000 on z203 ALREADY answers (HTTP 500 "Internal Server
+#     Error" from an unknown pre-existing listener) — flagged for D2-G2:
+#     the caddy forwarder cannot bind localhost:3000 until that listener
+#     is reconciled; the lane's fwd_http token will read whatever answers
+#     there until then.
+#   - ADR-023: the SSH lane is transport-level (tailscale interface), not
+#     HTTP egress — no proxy class applies; the on-z203 curl is direct
+#     localhost. Budget: ssh ConnectTimeout 8s + subprocess kill 20s worst
+#     case on a 300s tick.
+#   - Diagnostic: --replica-probes-once prints the token + verdict, touches
+#     no log and no state (SRE post-deploy verification;
+#     --origin-probes-once precedent). Env seams (test-only; unset in
+#     production => identical behavior): NFM_REPLICA_SSH (binary),
+#     NFM_REPLICA_TARGET, NFM_REPLICA_TIMEOUT, NFM_REPLICA_FWD_URL,
+#     NFM_MONITOR_REPLICA_STATE.
+#
+# Probe: python3 scripts/health_check.py from the production host checkout
+# (stdlib-only, py3.9-compatible). Run WITHOUT ALERT_WEBHOOK (not present on
+# host) so no webhook is attempted. Exit 0 = all pass, 1 = failures
+# ("N check(s) failed (M P0 critical)" on stdout).
+#
+# Modes (house style of nfm-4599-expiry-alert.sh):
+#   (no args)        — real probe + state machine
+#   --simulate-failure  — exercise WARN->CRITICAL logging through the same
+#                         logging path with TEST prefix, no real state change
+#   --simulate-recovery — exercise RECOVERY logging, TEST prefix
+#   --scan-once      — run the NFM-5418 chunk-ref scan once, print result,
+#                      no state change (SRE diagnostic).
+#                      rc 0 clean / 1 findings / 3 degraded-unknown (NFM-5446)
+#   --ref-probes-once — run the NFM-5706 reference battery once and print the
+#                      per-host timings + classification tokens (SRE
+#                      diagnostic; updates the reference baselines, never
+#                      the main state; rc 0 ran / 3 internal error)
+#   --origin-probes-once — run the NFM-5797 local-origin discriminator once
+#                      and print the per-route token (SRE diagnostic; no
+#                      log write, no state; rc 0 always — ERR tags are
+#                      evidence, not errors)
+#   --ack-page       — SRE heartbeat clears a latched PAGE-UNACK after it has
+#                      retro-filed the [SRE-CRITICAL] issue (logs PAGE-ACK)
+#
+# Exit codes: 0 OK / 1 WARN (streak 1 or P1-only) / 2 CRITICAL / 3 internal error
+#
+# Why absolute paths: macOS PATH for GUI-launched agents is sparse (NFM-4579).
+
+set -uo pipefail
+
+LOG="${NFM_MONITOR_LOG:-$HOME/Library/Logs/nfm-site-monitor.log}"
+STATE="${NFM_MONITOR_STATE:-$HOME/.nfm-site-monitor.state}"
+# NFM-5708: reference-battery baselines — own file in the state family so
+# every pre-existing state_write call site stays byte-identical (NFM-5667
+# pattern for S1_STATE).
+REF_STATE="${NFM_MONITOR_REF_STATE:-$HOME/.nfm-site-monitor.ref.state}"
+PROBE="${NFM_MONITOR_PROBE:-/Users/lwj04/Projects/nucpot/scripts/health_check.py}"
+if [[ -x /opt/homebrew/bin/python3 ]]; then
+  PY=/opt/homebrew/bin/python3
+else
+  PY=/usr/bin/python3
+fi
+
+# NFM-5797: local-origin discriminator probes — target, per-route budget,
+# binary. Base is the origin cloudflared proxies to (the tunnel config's
+# originService); `/` and `/browse` are appended per-route. Seams are
+# test-only; unset in production => the documented defaults.
+ORIGIN_BASE="${NFM_ORIGIN_BASE:-http://localhost:3000}"
+ORIGIN_TIMEOUT="${NFM_ORIGIN_TIMEOUT:-3}"
+ORIGIN_CURL="${NFM_ORIGIN_CURL:-/usr/bin/curl}"
+
+# NFM-5542 (ADR-023) D2: pin python egress to direct, defense-in-depth.
+# no_proxy='*' neutralizes ENV-VAR proxies for urllib (the
+# getproxies_environment path) and for curl; the macOS system-configuration
+# proxy (scutil) is only bypassed by the explicit no-proxy openers (D1) —
+# this export stops a future bare urlopen from silently re-coupling through
+# the env-var class. Applies to every python invocation below (base probe +
+# chunk-scan heredoc).
+export no_proxy="*"
+export NO_PROXY="*"
+
+STREAK_THRESHOLD=2      # consecutive failing probes before CRITICAL
+REMINDER_RUNS=12        # ~1h reminder cadence while CRITICAL persists
+INTERNAL_STREAK_CRITICAL=6  # ~30 min of internal errors -> sentinel-broken page
+STALE_SENTINEL_SECONDS=900  # reader-side liveness bound (15 min)
+SCAN_PAGES="/ /datasets /browse /potentials /materials" # NFM-5418: edge-HTML pages whose chunk refs get verified; NFM-5438 (2026-10-09): +/potentials (3rd 1y-pinned page w/ dead refs, alias-served via LEGACY_ALIAS_REWRITES) +/materials (1y-pinned latent)
+SCAN_SKIP_CRITICAL=3    # NFM-5446: consecutive degraded scans -> sentinel-blind CRITICAL (~15 min at 300s cadence)
+
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+mkdir -p "$(dirname "$LOG")"
+
+log() {
+  printf '[%s] site-monitor: %s\n' "$NOW" "$*" >> "$LOG"
+}
+
+# Local notification lane (NFM-5262): the human works on this host; surface a
+# CRITICAL transition immediately instead of waiting for the 2h heartbeat.
+# Best-effort only — notification failure must never break monitoring.
+notify_page() { # summary
+  "${NFM_MONITOR_NOTIFY:-/usr/bin/osascript}" -e "display notification \"$1\" with title \"nucpot site-monitor CRITICAL\"" >/dev/null 2>&1 || true
+}
+
+# NFM-5542 (ADR-023) D3: one-line macOS proxy posture summary. Absolute
+# paths (/usr/sbin/scutil, /usr/bin/awk) — GUI-launched agents have a sparse
+# PATH (NFM-4579). Logged at sentinel startup and adjacent to every degraded
+# cycle's mode=/fetches= evidence so the next VPN flap adjudicates
+# host-egress vs edge in one line. scutil unavailable (non-macOS hosts)
+# reads "unknown" — best-effort observability, never a monitoring dependency.
+proxy_state_line() {
+  local scutil_bin summary
+  scutil_bin="${NFM_MONITOR_SCUTIL:-/usr/sbin/scutil}"
+  summary="$("$scutil_bin" --proxy 2>/dev/null | /usr/bin/awk '
+    $1 == "HTTPEnable"  && $3 == 1 { eh = 1 }
+    $1 == "HTTPProxy"   { eh_h = $3 }  $1 == "HTTPPort"  { eh_p = $3 }
+    $1 == "HTTPSEnable" && $3 == 1 { es = 1 }
+    $1 == "HTTPSProxy"  { es_h = $3 }  $1 == "HTTPSPort" { es_p = $3 }
+    $1 == "SOCKSEnable" && $3 == 1 { ek = 1 }
+    $1 == "SOCKSProxy"  { ek_h = $3 }  $1 == "SOCKSPort" { ek_p = $3 }
+    END {
+      if (NR == 0) exit
+      out = ""
+      if (eh) out = out " http=" eh_h ":" eh_p
+      if (es) out = out " https=" es_h ":" es_p
+      if (ek) out = out " socks=" ek_h ":" ek_p
+      if (out == "") print "scutil-proxy: none"
+      else print "scutil-proxy:" out
+    }')"
+  printf '%s' "${summary:-scutil-proxy: unknown}"
+}
+
+# Log rotation: keep last 2000 lines once the file exceeds 50 MiB
+# (same shape as nfm-4599-expiry-alert.sh).
+if [[ -f "$LOG" ]]; then
+  log_size="$(stat -f%z "$LOG" 2>/dev/null || echo 0)"
+  if (( log_size > 52428800 )); then
+    tail -n 2000 "$LOG" > "$LOG.tmp"
+    mv "$LOG.tmp" "$LOG"
+    printf '[%s] site-monitor: truncated %s to last 2000 lines (was %s bytes)\n' \
+      "$NOW" "$LOG" "$log_size" >> "$LOG"
+  fi
+fi
+
+# ---- state helpers --------------------------------------------------------
+state_get() { # key default
+  if [[ -f "$STATE" ]]; then
+    v="$(grep -E "^$1=" "$STATE" | tail -1 | cut -d= -f2-)"
+    [[ -n "$v" ]] && echo "$v" || echo "$2"
+  else
+    echo "$2"
+  fi
+}
+state_write() { # streak first_fail since_remind level internal_streak pending_page scan_skip_streak scan_skip_a scan_skip_b blind_p0_fail
+  # NFM-5497 adds the per-mode streaks + the blind-window P0-evidence flag.
+  # scan_skip_streak keeps its pre-NFM-5497 meaning (consecutive degraded
+  # cycles of ANY mode) for display/reader continuity.
+  printf 'streak=%s\nfirst_fail=%s\nsince_remind=%s\nlevel=%s\ninternal_streak=%s\npending_page=%s\nscan_skip_streak=%s\nscan_skip_streak_a=%s\nscan_skip_streak_b=%s\nblind_p0_fail=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "${9}" "${10}" > "$STATE.tmp"
+  mv "$STATE.tmp" "$STATE"
+}
+
+# ---- NFM-5667 streak-1 full-edge page rule (NFM-5664 ruling 35aa85eb §4) ---
+# Episode state lives in its OWN file so every pre-existing state_write call
+# site (the streak>=2 lane, AC4) stays byte-identical. Keys:
+#   last_page    — epoch of the last streak-1 page (rate-limit counter;
+#                  0 = never; INDEPENDENT of the streak>=2 lane)
+#   open         — 1 while a full-edge episode window is in progress
+#   win_first    — ISO ts of the window's first failure ("-" = none yet)
+#   close_epoch  — epoch the last window closed green (episode separation)
+#   ledger       — space-separated ISO ts of counted episodes (rolling 30d;
+#                  seedable at cutover, pruned on append)
+S1_STATE="${NFM_MONITOR_S1_STATE:-$HOME/.nfm-site-monitor.s1.state}"
+S1_EDGE_TOTAL=6           # 5 checks on nucpot.dpdns.org + 1 on verify.… (P2 Supabase is outside the rule)
+S1_FAILED_MIN=5           # conjunct 1: >=5 of the 6 edge checks failed
+S1_P0_MIN=2               # conjunct 2: >=2 P0 checks among them
+S1_PAGE_COOLDOWN=1800     # rate limit: max 1 page / 30 min for this class
+S1_EPISODE_GREEN_GAP=600  # ruling §2: >=10 min green separates episodes
+
+# NFM-5876: PARTIAL_DEGRADED page rule — WARN immediately (streak 1), page
+# at streak 2 (NFM-5666 page discipline for the new class). The page itself
+# rides the streak>=2 lane's machinery (CRITICAL line + notify + pending_page
+# latch + REMINDER_RUNS reminder cadence), so reader-side behavior stays
+# uniform across alert classes.
+PD_PAGE_STREAK=2
+
+# NFM-5966: replica lane — pinned z203 targets (shared names with D2-G2,
+# NFM-5965), registration staleness N identical to the NFM-5880 gate
+# (600s), and an OWN state file so every pre-existing state_write call
+# site stays byte-identical (NFM-5667/5708 pattern). Seams are test-only;
+# unset in production => the documented defaults. The SSH probe uses the
+# operator's z203 identity (user ~/.ssh/config alias `z203` -> tailscale
+# 100.70.30.21, NFM-5964) — BatchMode, no agent, read-only battery.
+REPLICA_STATE="${NFM_MONITOR_REPLICA_STATE:-$HOME/.nfm-site-monitor.replica.state}"
+REPLICA_SSH="${NFM_REPLICA_SSH:-/usr/bin/ssh}"
+REPLICA_TARGET="${NFM_REPLICA_TARGET:-z203}"
+REPLICA_TIMEOUT="${NFM_REPLICA_TIMEOUT:-20}"
+REPLICA_FWD_URL="${NFM_REPLICA_FWD_URL:-http://localhost:3000/api/v1/health}"
+REPLICA_N_STALE=600       # == primary gate N_MIN_SECONDS / S1_EPISODE_GREEN_GAP
+
+replica_state_get() { # key default
+  if [[ -f "$REPLICA_STATE" ]]; then
+    v="$(grep -E "^$1=" "$REPLICA_STATE" | tail -1 | cut -d= -f2-)"
+    [[ -n "$v" ]] && echo "$v" || echo "$2"
+  else
+    echo "$2"
+  fi
+}
+replica_state_write() { # dark_streak first_dark
+  mkdir -p "$(dirname "$REPLICA_STATE")" 2>/dev/null || true
+  printf 'dark_streak=%s\nfirst_dark=%s\n' "$1" "$2" > "$REPLICA_STATE.tmp"
+  mv "$REPLICA_STATE.tmp" "$REPLICA_STATE"
+}
+
+s1_get() { # key default
+  if [[ -f "$S1_STATE" ]]; then
+    v="$(grep -E "^$1=" "$S1_STATE" | tail -1 | cut -d= -f2-)"
+    [[ -n "$v" ]] && echo "$v" || echo "$2"
+  else
+    echo "$2"
+  fi
+}
+s1_write() { # last_page open win_first close_epoch ledger
+  mkdir -p "$(dirname "$S1_STATE")" 2>/dev/null || true
+  printf 'last_page=%s\nopen=%s\nwin_first=%s\nclose_epoch=%s\nledger=%s\n' \
+    "$1" "$2" "$3" "$4" "$5" > "$S1_STATE.tmp"
+  mv "$S1_STATE.tmp" "$S1_STATE"
+}
+
+s1_host_of() { # check-name -> main|verify|other (edge-name map; drift-guarded by tests)
+  case "$1" in
+    "Frontend Homepage"|"Frontend Browse Page"|"Backend API Health"|"Backend API Potentials"|"Backend API Reference Values")
+      echo main ;;
+    "AutoVC API Health")
+      echo verify ;;
+    *)
+      echo other ;;
+  esac
+} # end s1_host_of
+
+# Classifier: parse the probe's ❌ rows and set the conjunct tallies.
+# Sets: s1_edge_failed s1_p0_failed s1_main_failed s1_verify_failed
+#       s1_hard s1_latency s1_main_codes s1_verify_codes s1_match
+s1_classify() {
+  s1_edge_failed=0; s1_p0_failed=0; s1_main_failed=0; s1_verify_failed=0
+  s1_hard=0; s1_latency=0
+  s1_main_codes=""; s1_verify_codes=""
+  while IFS= read -r row; do
+    name="$(printf '%s' "$row" | awk -F'|' '{print $2}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^❌[[:space:]]*//')"
+    sev="$(printf '%s' "$row" | awk -F'|' '{print $3}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    detail="$(printf '%s' "$row" | awk -F'|' '{print $5}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    host="$(s1_host_of "$name")"
+    [[ "$host" == "other" ]] && continue   # third-party (P2 Supabase): outside the rule
+    s1_edge_failed=$((s1_edge_failed + 1))
+    [[ "$sev" == "P0" ]] && s1_p0_failed=$((s1_p0_failed + 1))
+    if [[ "$host" == "main" ]]; then s1_main_failed=$((s1_main_failed + 1)); else s1_verify_failed=$((s1_verify_failed + 1)); fi
+    # Failure class: latency-timeout (timeout / latency-over-budget /
+    # connection-class — the NFM-5262 diurnal shape) vs hard edge status
+    # (502/530 and other 52x/53x — CF error pages RETURNED). Anything else
+    # (wrong status/body) is "other" and never counts toward hard.
+    code="$(printf '%s' "$detail" | grep -oE '(HTTP|got) [0-9]{3}' | grep -oE '[0-9]{3}' | head -1)"
+    if [[ "$detail" == *"Timeout after"* || "$detail" == *"exceeds limit"* || "$detail" == *"Connection error"* ]]; then
+      cls="latency"; s1_latency=$((s1_latency + 1))
+    elif [[ -n "$code" ]] && { (( code == 502 )) || (( code >= 520 && code <= 539 )); }; then
+      cls="$code"; s1_hard=$((s1_hard + 1))
+    else
+      cls="other"
+    fi
+    if [[ "$host" == "main" ]]; then
+      s1_main_codes="${s1_main_codes}${cls} "
+    else
+      s1_verify_codes="${s1_verify_codes}${cls} "
+    fi
+  done < <(printf '%s' "$OUT" | grep -E '^\| *❌')
+  s1_match=0
+  if (( s1_edge_failed >= S1_FAILED_MIN )) \
+     && (( s1_p0_failed >= S1_P0_MIN )) \
+     && (( s1_main_failed >= 1 && s1_verify_failed >= 1 )) \
+     && (( s1_hard > s1_latency )); then
+    s1_match=1
+  fi
+  # NFM-6006: episode-shape gate — conjuncts 1-3 WITHOUT the paging-only
+  # hard>latency conjunct. A latency-dominant (connection-error) full-edge
+  # set is excluded from the streak-1 early PAGE by design (fx3/NFM-5262
+  # diurnal-flap exclusion) but is still a real full-edge episode: booking
+  # evidence must not hinge on a paging precision conjunct (the 11-11
+  # 11:42:09Z episode CRITICALed on the streak>=2 lane and booked nothing).
+  s1_episode_match=0
+  if (( s1_edge_failed >= S1_FAILED_MIN )) \
+     && (( s1_p0_failed >= S1_P0_MIN )) \
+     && (( s1_main_failed >= 1 && s1_verify_failed >= 1 )); then
+    s1_episode_match=1
+  fi
+}
+
+s1_class_hist() { # "502 502 530 " -> "502x2,530x1"
+  printf '%s' "$1" | tr ' ' '\n' | sed '/^$/d' | sort | uniq -c | awk '{printf "%sx%s,", $2, $1}' | sed 's/,$//'
+}
+
+# Rolling-30d ledger maintenance (calendar math in python — portable, and
+# $PY is already a hard dependency of the probe lane). Modes:
+#   append <ledger> <now_iso>  -> count, delta, new-ledger (episode counted)
+#   count  <ledger> <now_iso>  -> count, +0,   pruned-ledger (no append)
+# Malformed entries are KEPT (fail-closed for evidence), never dropped.
+s1_ledger() { # mode ledger now_iso
+  "$PY" - "$1" "$2" "$3" <<'S1PYEOF'
+import sys
+from datetime import datetime, timedelta
+mode, ledger, now = sys.argv[1], sys.argv[2], sys.argv[3]
+def parse(t):
+    return datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ")
+entries = [e for e in ledger.split() if e]
+try:
+    cutoff = parse(now) - timedelta(days=30)
+    kept = [e for e in entries if parse(e) > cutoff]
+except ValueError:
+    kept = entries
+if mode == "append":
+    kept.append(now)
+    print(len(kept), "+1", " ".join(kept))
+else:
+    print(len(kept), "+0", " ".join(kept))
+S1PYEOF
+}
+
+# Handle a classifier match at streak 1: episode accounting (ruling §2),
+# rate limit (1/30 min), page payload (ruling amendment 1). Exits 2 on a
+# real page; returns (after a NOTE line + s1 state update) when suppressed.
+s1_handle_match() { # streak first_fail since_remind
+  local now_epoch lp open win_first close_ep ledger rate_ok count delta
+  now_epoch="$(date -u +%s)"
+  lp="$(s1_get last_page 0)"
+  open="$(s1_get open 0)"
+  win_first="$(s1_get win_first -)"
+  close_ep="$(s1_get close_epoch 0)"
+  ledger="$(s1_get ledger '')"
+  rate_ok=1
+  (( lp == 0 || now_epoch - lp >= S1_PAGE_COOLDOWN )) || rate_ok=0
+  # Episode accounting (by-episode, >=10 min green separation):
+  #  - open==1                 -> window continues: no new ledger entry
+  #  - open==0, gap >= 10 min  -> DISTINCT episode: ledger append (+prune)
+  #  - open==0, gap <  10 min  -> same episode resumes: no new entry
+  delta="+0"
+  if (( open == 0 )); then
+    if (( close_ep == 0 || now_epoch - close_ep >= S1_EPISODE_GREEN_GAP )); then
+      read -r count delta ledger < <(s1_ledger append "$ledger" "$NOW")
+      win_first="$NOW"
+    else
+      read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+    fi
+  else
+    read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+  fi
+  if (( rate_ok == 1 )); then
+    # Page (ruling amendment 1 payload: window, per-host class counts, t2
+    # ledger delta + rolling-30d count, ruling reference). Latches the SAME
+    # pending_page reconciliation the streak>=2 lane uses; the green run
+    # completes the window on its RECOVERY line.
+    pending="$(state_get pending_page -)"
+    if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+    log "CRITICAL — streak-1 full-edge P0 (NFM-5666 rule, NFM-5664 ruling 35aa85eb §4): ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0, hard=${s1_hard} latency=${s1_latency}) — window ${win_first} -> recovery pending — classes: nucpot.dpdns.org={$(s1_class_hist "$s1_main_codes")} verify.nucpot.dpdns.org={$(s1_class_hist "$s1_verify_codes")} — t2-ledger: episodes=${count} rolling-30d (delta ${delta}; standing was 5/6 at ruling) — rate-limit 1/${S1_PAGE_COOLDOWN}s [$(proxy_state_line)] ${REF_EV}"
+    notify_page "streak-1 full-edge P0: ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0)"
+    s1_write "$now_epoch" 1 "$win_first" "$close_ep" "$ledger"
+    state_write "$1" "$2" "$3" CRITICAL 0 "$pending" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+    exit 2
+  fi
+  # Rate-limited: no page, but the match/episode evidence still accrues
+  # (calibration for the 14-day precision review, ruling amendment 2).
+  log "NOTE — streak-1 full-edge match NOT paged (rate limit ${S1_PAGE_COOLDOWN}s, last page epoch ${lp}): ${s1_edge_failed}/${S1_EDGE_TOTAL} edge checks failed (${s1_p0_failed} P0, hard=${s1_hard} latency=${s1_latency}), t2-ledger episodes=${count} [NFM-5667] ${REF_EV}"
+  s1_write "$lp" 1 "$win_first" "$close_ep" "$ledger"
+}
+
+# NFM-5892: streak>=2 episode booking — the §4 machinery (ledger append +
+# last_page rate-limit marker + open=1/win_first) for episodes whose FIRST
+# full-edge-shaped tick arrives at streak>=2 (the e9 class — header NFM-5892
+# block). Called from the streak>=2 CRITICAL lane AFTER the TRANSIT_BROWNOUT
+# early-exit with the shape already classified. NFM-6006: the gate is the
+# EPISODE shape (s1_episode_match = conjuncts 1-3), not the paging
+# conjuncts — the 11-11T11:42:09Z latency-dominant (all connection-error)
+# episode CRITICALed here and booked nothing while s1_match=0 gated the
+# call; conjunct 4 (hard>latency) stays a streak-1-PAGE-only precision
+# rule (fx3), never an evidence rule. Booking is gated on an
+# open==0 window (idempotent: reminder ticks never re-append) and reuses
+# the ruling §2 by-episode separation (a window re-opening after <10 min
+# green is the SAME episode — count, no append). The PAGE itself stays on
+# the calling streak>=2 lane (never a double-page); stamping last_page is
+# what suppresses the streak-1 lane's own page if the same episode
+# re-enters at streak 1 within the cooldown. The evidence suffix (t2-ledger
+# count + ruling §4 ref + rate-limit marker) is emitted by the caller in
+# its CRITICAL line — "" when nothing booked, keeping the line
+# byte-identical.
+# Sets: s2_book_ev
+s1_book_streak2() {
+  s2_book_ev=""
+  if [[ "$(s1_get open 0)" == "1" ]]; then return 0; fi
+  local now_epoch win_first close_ep ledger count delta
+  now_epoch="$(date -u +%s)"
+  win_first="$(s1_get win_first -)"
+  close_ep="$(s1_get close_epoch 0)"
+  ledger="$(s1_get ledger '')"
+  delta="+0"
+  if (( close_ep == 0 || now_epoch - close_ep >= S1_EPISODE_GREEN_GAP )); then
+    read -r count delta ledger < <(s1_ledger append "$ledger" "$NOW")
+    win_first="$NOW"
+  else
+    read -r count delta ledger < <(s1_ledger count "$ledger" "$NOW")
+  fi
+  s2_book_ev=" — t2-ledger: episodes=${count} rolling-30d (delta ${delta}; standing was 5/6 at ruling) — rate-limit 1/${S1_PAGE_COOLDOWN}s [NFM-5664 ruling 35aa85eb §4; NFM-5892]"
+  s1_write "$now_epoch" 1 "$win_first" "$close_ep" "$ledger"
+}
+
+# ---- NFM-5418 chunk-ref scan ----------------------------------------------
+# Edge-cached HTML outlives the origin build that produced its content-hashed
+# /_next/static refs when pages carry a long s-maxage; after a deploy changes
+# chunk hashes, cache-cold visitors get HTML whose refs 404 and React never
+# boots (NFM-5418; same class as NFM-5335). HTML-200 health probes are blind
+# to this — the HTML serves 200 from the edge while only the refs die.
+# Fetch edge HTML for SCAN_PAGES and verify its chunk refs resolve (capped at
+# REF_CAP distinct refs per page; truncated refs count as unverified — a
+# capped scan degrades, never reads green). A definitive
+# 4xx on a ref is P0-class (dead page for cache-cold visitors). Runs only
+# when the base probe is green; the base lane owns outage detection.
+#
+# NFM-5446: pages and ref HEADs run in PARALLEL under one wall budget; a
+# budget-exhausted scan is DEGRADED (rc 3, "unknown"), never green. Each
+# page's TTL verdict (s-maxage/age) is captured from response headers before
+# the body read, so stale-pin P1s survive ref-verification budget exhaustion.
+# All exits go through print+flush+os._exit so straggling worker threads can
+# never delay or swallow the report. The SIGALRM stays as an absolute
+# backstop for pathological hangs (slow-drip bodies, resolver stalls).
+chunk_scan() { # prints "<total> <p0> <detail>"; rc 0 clean / 1 findings / 3 degraded-unknown
+  "$PY" - $SCAN_PAGES <<'PYEOF'
+import os, re, signal, sys, threading, time, urllib.request, urllib.error
+from concurrent.futures import ThreadPoolExecutor, wait
+
+base = os.environ.get("NFM_SCAN_BASE", "https://nucpot.dpdns.org")
+DEADLINE = float(os.environ.get("NFM_SCAN_DEADLINE", "240"))
+t0 = time.monotonic()
+def left():
+    return DEADLINE - (time.monotonic() - t0)
+
+def page_stage_left():
+    # NFM-5572: wall remaining in the page stage — the fetch_page retry
+    # gate. Page futures are submitted within milliseconds of t0 (module
+    # exec -> pool submit), so this measures PAGE_STAGE_BUDGET from the
+    # effective stage start, mirroring left() for the ref lane.
+    return PAGE_STAGE_BUDGET - (time.monotonic() - t0)
+
+ua = "nfm-site-monitor/1.3 (+NFM-5418 chunk scan, NFM-5446 fail-closed, NFM-5454 flake threshold)"
+ref_re = re.compile(r'/_next/static/[A-Za-z0-9._\-/]+')
+smaxage_re = re.compile(r's-maxage=(\d+)')
+
+PAGE_TIMEOUT = 15.0       # per page GET socket timeout
+PAGE_STAGE_BUDGET = 90.0  # wall budget for the (parallel) page GETs
+REF_TIMEOUT = 15.0        # per ref HEAD socket timeout. NFM-5490: 8→15 — the
+                          # NFM-5262 diurnal edge tail runs 5-10.4 s/request
+                          # (+SSL handshake), so an 8 s timeout converted the
+                          # whole latency window into refs-unverified (ep-4:
+                          # 38 unverified while patient-client HEADs from the
+                          # same vantage returned 40/40 HTTP 200). Matches
+                          # PAGE_TIMEOUT; the DEADLINE still bounds the scan.
+REF_POOL = int(os.environ.get("NFM_SCAN_REF_POOL", "24"))  # parallel ref HEADs (serial pre-NFM-5446; 12 pre-NFM-5490).
+                          # 24: with ~150 refs scan-wide at 5-10 s each during
+                          # a diurnal window, a 12-pool cannot drain the waves
+                          # inside the post-page-stage budget even when every
+                          # HEAD succeeds; 24 halves the wave count. Worst
+                          # case (all HEADs burn the full timeout, retried)
+                          # still fail-closes via the budget gate below.
+REF_CAP = 45              # max distinct refs verified per page. 2026-10-11: 30→45 —
+                          # live /materials carries 40 distinct chunk refs, so cap-30
+                          # truncated 10 refs on EVERY scan; the skip streak could then
+                          # never reset and the sentinel-blind CRITICAL latched
+                          # permanently. Keep above the real per-page ref count; a
+                          # persistent refs-unverified>0 across calm-edge scans means
+                          # the site outgrew the cap (raise it, see runbook §7).
+REFS_DEGRADE_MIN = 2      # NFM-5454: refs-unverified below this is a NOTE, not a
+                          # degrade reason — a single errored ref is diurnal
+                          # edge-latency noise (2026-10-11: all 9 noise-grade
+                          # degrades were =1). Multi-ref failures (=9, =12 same
+                          # day) and truncation still degrade immediately.
+REPORT_MARGIN = 5.0       # reserve for printing/teardown before SIGALRM
+
+# NFM-5542 (ADR-023) D1: the scan egresses DIRECTLY — page GETs and ref
+# HEADs share ONE no-proxy opener. Bare urllib.request.urlopen rides the
+# macOS system proxy (getproxies -> scutil): that is what fired the
+# 2026-10-15 02:12–02:26Z false CRITICAL (fetches=0/5, mode=A ×3,
+# origin=ok while the site was up). The 10-14 "CN-side ClientHello DPI"
+# attribution for the site-monitor windows is superseded (NFM-5540): local
+# VPN-proxy defects — ADR-013's broker/GitHub DPI rulings are a different
+# subsystem and stay valid. ProxyHandler({}) pins this lane direct; the
+# wrapper's no_proxy='*' export (D2) additionally covers the env-var proxy
+# class. Verdict semantics unchanged: HTTPError handling, timeouts, and
+# budgets are identical to the urlopen build.
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+lock = threading.Lock()
+stale = {}   # page -> s-maxage value (TTL lane; from response headers)
+ages = {}    # page -> age header at read time
+bad = {}     # page -> ["ref->code", ...]
+fetched = 0
+refs_seen = 0
+skipped_refs = 0    # errored/unknown: HEAD exception, 5xx, budget-skipped, or
+                    # in-flight past the stage budget (degrades at >= REFS_DEGRADE_MIN)
+truncated_refs = 0  # over budget (distinct > REF_CAP) — degrades at ANY count (NFM-5454)
+
+def _fmt_findings():
+    parts = []
+    if bad:
+        parts.append("P0 dead refs — " + "; ".join(
+            "%s: %s" % (p, ",".join(v)) for p, v in bad.items()))
+    if stale:
+        parts.append("P1 stale 1y-pin — " + "; ".join(
+            "%s (s-maxage=%s, age=%ss)" % (p, v, ages.get(p, "?")) for p, v in stale.items()))
+    return " | ".join(parts)[:350]
+
+def _snapshot():
+    """Consistent (p0, n_stale, findings) read of the worker-mutated dicts.
+
+    Lock-free with retry: the SIGALRM handler must NOT take `lock` (the
+    interrupted main thread may hold it -> deadlock), and by emit time
+    straggler pool workers can still be appending (shutdown(wait=False)).
+    A RuntimeError (dict changed size during iteration) retries the whole
+    snapshot; persistent failure returns (-1, -1, "") which callers treat
+    as degraded-unknown — never green (fail-closed).
+    """
+    for _ in range(4):
+        try:
+            return (sum(len(v) for v in bad.values()), len(stale),
+                    _fmt_findings())
+        except RuntimeError:
+            continue
+    return (-1, -1, "")
+
+def _emit(line, rc):
+    print(line, flush=True)
+    os._exit(rc)
+
+def _deadline(signum, frame):
+    # Absolute backstop: budget accounting above should degrade first; this
+    # only fires on hangs the socket timeouts cannot bound. NEVER green.
+    # Verified findings gathered before the alarm still page: a confirmed
+    # dead ref is definitive regardless of coverage (same contract as the
+    # main-path p0 branch — rc 1, not 3).
+    p0, n_stale, findings = _snapshot()
+    # NFM-5497: fetch coverage rides the report so the blind-streak lane
+    # can classify the cycle (0 fetched => mode A, >=1 => mode B).
+    tag = "fetches=%d/%d" % (fetched, len(sys.argv[1:]) or 1)
+    if p0 > 0:
+        _emit("%d %d scan-degraded: deadline-exceeded | partial-findings: %s | %s"
+              % (p0 + max(n_stale, 0), p0, findings or "count-unavailable", tag), 1)
+    msg = "scan-degraded: deadline-exceeded"
+    if findings:
+        msg += " | partial-findings: " + findings
+    msg += " | " + tag
+    if n_stale > 0:
+        _emit("%d 0 %s" % (n_stale, msg), 3)
+    _emit("0 0 %s" % msg, 3)
+
+signal.signal(signal.SIGALRM, _deadline)
+signal.alarm(max(1, int(DEADLINE)))
+
+def fetch_page(page):
+    global fetched, refs_seen, skipped_refs, truncated_refs
+    req = urllib.request.Request(base + page, headers={"User-Agent": ua})
+    # NFM-5572 (NFM-5571 adjudication): ONE budget-gated retry on TRANSPORT
+    # failures only — the NFM-5490 ref-HEAD semantics ported to the page
+    # lane. 2026-10-17 live evidence: 7 mode-B cycles where a single page
+    # GET died at transport level (diurnal tail timeout / reset / TLS-EOF)
+    # while ~150 ref HEADs verified in-budget in the same cycles — one tail
+    # outlier cost one blind 5-min cycle, every skip self-healing on the
+    # next cycle. A definitive HTTP verdict is NEVER retried away
+    # (HTTPError propagates immediately: the server answered, that skip is
+    # real); the retry can only turn a genuinely-dead transport error into
+    # a real 200, never a false green, and a failed retry still raises so
+    # the page counts skipped (fail-closed). Worst case +PAGE_TIMEOUT (15s)
+    # per page; PAGE_STAGE_BUDGET (90s) and the DEADLINE alarm are unchanged
+    # and still bound the stage.
+    try:
+        # ADR-023 (NFM-5542): DIRECT primary — a VPN proxy flap must never
+        # read as "all page fetches failed" (the 10-15 02:12Z shape).
+        resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
+    except urllib.error.HTTPError:
+        raise  # definitive verdict — never retried away
+    except Exception:
+        # one more full-timeout attempt cannot fit the page-stage budget:
+        # fail-closed NOW — the stage wait would discard the late result
+        # anyway (same gate shape as head_ref's left() <= REF_TIMEOUT)
+        if page_stage_left() <= PAGE_TIMEOUT:
+            raise
+        resp = NO_PROXY_OPENER.open(req, timeout=PAGE_TIMEOUT)
+    try:
+        cc = resp.headers.get("cache-control") or ""
+        # TTL lane (NFM-5446): pin verdict from HEADERS, captured before the
+        # body read so it survives body-read / downstream budget failures.
+        m = smaxage_re.search(cc)
+        if m and int(m.group(1)) > 3600:
+            with lock:
+                stale[page] = m.group(1)
+                ages[page] = resp.headers.get("age") or "?"
+        body = resp.read(4000000).decode("utf-8", "replace")
+    finally:
+        resp.close()
+    distinct = list(dict.fromkeys(ref_re.findall(body)))
+    refs = distinct[:REF_CAP]
+    with lock:
+        fetched += 1
+        refs_seen += len(refs)
+        truncated_refs += len(distinct) - len(refs)
+    return page, refs
+
+def head_ref(page, ref):
+    global skipped_refs
+    req = urllib.request.Request(base + ref, method="HEAD", headers={"User-Agent": ua})
+    # NFM-5490: one budget-gated retry on TRANSPORT failures only (SSL
+    # UNEXPECTED_EOF, handshake/reset, tail-latency timeout) — the ep-4
+    # live adjudication proved refs stay verifiable mid-blindness with a
+    # patient client (40/40 HTTP 200 while this loop sat at unverified=38).
+    # A definitive verdict is never retried away: 4xx stays immediate P0
+    # (HTTPError breaks out below) and 5xx stays unknown — the retry can
+    # only turn a genuinely-dead transport error into a real 200, never a
+    # false green; persistent failure still counts unverified (fail-closed).
+    code = None
+    for _attempt in (1, 2):
+        if left() <= REF_TIMEOUT:  # one more HEAD cannot fit the budget
+            with lock:
+                skipped_refs += 1
+            return
+        try:
+            code = NO_PROXY_OPENER.open(req, timeout=REF_TIMEOUT).status
+            break
+        except urllib.error.HTTPError as e:
+            code = e.code
+            break
+        except Exception:
+            continue  # retry once while budget remains
+    if code is None:
+        # both attempts failed at transport level — unverified, fail-closed
+        with lock:
+            skipped_refs += 1
+        return
+    if 400 <= code < 500:
+        # Only a definitive 4xx means the object is GONE (P0). A 5xx is
+        # transient/unknown (origin trouble — the base probe lane owns
+        # outages) and must never produce a false P0 page.
+        # Cap check under `lock`: iterating `bad` lock-free races concurrent
+        # appends from other pool workers; the resulting RuntimeError in this
+        # worker would be swallowed by the never-checked future and DROP a
+        # real P0 finding (gate review: lock-free dict iteration race).
+        with lock:
+            if sum(len(v) for v in bad.values()) < 8:
+                bad.setdefault(page, []).append("%s->%d" % (ref.rsplit("/", 1)[-1], code))
+    elif code >= 500:
+        with lock:
+            skipped_refs += 1
+
+try:
+    pages = sys.argv[1:]
+    page_refs, skipped_pages = {}, []
+    pool = ThreadPoolExecutor(max_workers=max(1, len(pages)))
+    try:
+        futs = {pool.submit(fetch_page, p): p for p in pages}
+        done, not_done = wait(futs, timeout=PAGE_STAGE_BUDGET)
+        for f in done:
+            try:
+                p, refs = f.result()
+                page_refs[p] = refs
+            except Exception:
+                skipped_pages.append(futs[f])
+        skipped_pages.extend(futs[f] for f in not_done)
+    finally:
+        pool.shutdown(wait=False)
+
+    ref_tasks = [(p, r) for p, refs in page_refs.items() for r in refs]
+    if ref_tasks:
+        rpool = ThreadPoolExecutor(max_workers=REF_POOL)
+        try:
+            rfuts = [rpool.submit(head_ref, p, r) for p, r in ref_tasks]
+            _d, nd = wait(rfuts, timeout=max(0.0, left() - REPORT_MARGIN))
+            # in-flight past the stage budget count as UNVERIFIED (a late
+            # result may still land; over-counting stays conservative), and
+            # so does any ref whose worker ended exceptional — the ref was
+            # never verified, whatever the crash was (gate-review class:
+            # unchecked futures must not silently read as coverage).
+            with lock:
+                skipped_refs += len(nd)
+                skipped_refs += sum(1 for f in _d if f.exception() is not None)
+        finally:
+            rpool.shutdown(wait=False)
+
+    # Snapshot under retry: straggler ref workers may still be appending
+    # (rpool.shutdown(wait=False) + unchecked futures), so lock-free
+    # iteration here has the same race the cap check had.
+    p0, n_stale, findings = _snapshot()
+    if p0 < 0 or n_stale < 0:
+        _emit("0 0 scan-degraded: internal-error: findings snapshot raced "
+              "4 consecutive retries (fail-closed, never green) | "
+              "fetches=%d/%d" % (fetched, len(pages)), 3)
+    reasons = []
+    if fetched == 0:
+        reasons.append("all page fetches failed")
+    elif refs_seen == 0:
+        reasons.append("no chunk refs found in fetched pages")
+    if skipped_pages:
+        reasons.append("page-fetch-skipped=" + ",".join(sorted(set(skipped_pages))))
+    if truncated_refs:
+        # cap outgrown (runbook §7 signal) — fail-closed at ANY count
+        reasons.append("refs-truncated=%d" % truncated_refs)
+    if skipped_refs >= REFS_DEGRADE_MIN:
+        reasons.append("refs-unverified=%d" % skipped_refs)
+    # NFM-5497: fetch coverage rides every DEGRADED report (only — a clean
+    # scan must not grow reasons) — the blind-streak lane classifies mode
+    # A/B from this token, never prose.
+    if reasons:
+        reasons.append("fetches=%d/%d" % (fetched, len(pages)))
+    note = ""
+    if skipped_refs and skipped_refs < REFS_DEGRADE_MIN:
+        # NFM-5454: single-ref flake — visible for drift watch, no degrade
+        note = ("; refs-unverified=%d (below NFM-5454 degrade threshold %d "
+                "— diurnal single-ref flake, no streak impact)"
+                % (skipped_refs, REFS_DEGRADE_MIN))
+
+    if p0 > 0:
+        # Definitive dead refs page regardless of coverage caveats.
+        d = findings + note + ((" (scan-degraded: " + "; ".join(reasons) + ")") if reasons else "")
+        _emit("%d %d %s" % (p0 + n_stale, p0, d), 1)
+    if reasons:
+        d = "scan-degraded: " + "; ".join(reasons)
+        if n_stale > 0:
+            d += " | " + findings  # TTL lane carried pins out anyway
+        d += note
+        _emit("%d 0 %s" % (n_stale, d), 3)
+    if n_stale > 0:
+        _emit("%d 0 %s" % (n_stale, findings + note), 1)
+    _emit("0 0 ok (%d refs verified across %d page(s)%s)" % (refs_seen - skipped_refs, fetched, note), 0)
+except Exception as e:
+    # Internal errors are degraded-unknown too (was fail-open pre-NFM-5446).
+    _emit("0 0 scan-degraded: internal-error: %s | fetches=%d/%d"
+          % (e, fetched, len(sys.argv[1:]) or 1), 3)
+PYEOF
+}
+
+# ---- NFM-5708/NFM-5706 path-independent reference probes -------------------
+# Three lightweight GETs (int'l CF-edge / int'l non-CF / CN-domestic control)
+# run in PARALLEL on every real-probe tick: green ticks maintain the per-host
+# RELATIVE baselines, degrade ticks feed the classification. Direct-pinned
+# (ADR-023) — see the NFM-5708 header block for thresholds and semantics.
+ref_probes() { # prints one line: per-host timings + slow/warmup tokens; rc 0 ran / 3 internal
+  "$PY" - <<'REFPYEOF'
+import os, sys, threading, time, urllib.error, urllib.request
+
+STATE = os.environ.get("NFM_MONITOR_REF_STATE",
+                       os.path.expanduser("~/.nfm-site-monitor.ref.state"))
+TIMEOUT = float(os.environ.get("NFM_REF_TIMEOUT", "10"))
+SLOW_RATIO = float(os.environ.get("NFM_REF_SLOW_RATIO", "2.5"))
+BASELINE_MIN = int(os.environ.get("NFM_REF_BASELINE_MIN", "10"))
+ALPHA = 0.125       # EMA weight per healthy sample (≈8-tick convergence)
+ALPHA_SLOW = 0.03   # folded weight for above-threshold samples: a 1-2h brownout
+                    # cannot re-baseline the reference mid-incident, but a
+                    # genuine multi-hour drift still converges
+
+# NFM-5720 (OBS-1, CTO b826f9b0 on NFM-5706): per-lane ABSOLUTE slow floors
+# in ms = 2.5x the clean-period EMA baselines measured on the 2026-10-25 log
+# of record (cf ~760ms / ghcr ~640ms / ustc ~230ms; the CTO's "floors ≈ 2-3x
+# those" range, 2.5 chosen to mirror SLOW_RATIO). Either-arm semantics: a
+# sample is SLOW when it exceeds the relative arm (EMA x SLOW_RATIO) OR its
+# lane floor — see the NFM-5720 header block for why the CTO's literal
+# max()-form is reconciled to either-arm against the CTO's own 14:07:25Z
+# test vector (cf 2150ms vs a ratcheted relative arm of 4337ms: no floor in
+# the stated 2-3x range flags it under max(), i.e. max() fixes nothing).
+ABS_FLOOR = {
+    "cf":  float(os.environ.get("NFM_REF_ABS_FLOOR_CF", "1900")),
+    "ncf": float(os.environ.get("NFM_REF_ABS_FLOOR_NONCF", "1600")),
+    "dom": float(os.environ.get("NFM_REF_ABS_FLOOR_DOM", "575")),
+}
+
+# Roles FIXED (classifier depends on them): int'l CF / int'l non-CF / domestic.
+# NFM-5712: the CN-domestic control is mirrors.ustc.edu.cn — tuna proved
+# permanently unreachable from this vantage (CTO probe: ustc 200 @ 0.12s,
+# DECIDED), and a dead control collapses the three-way discriminator.
+LANES = [
+    ("cf",  os.environ.get("NFM_REF_CF_URL", "https://www.cloudflare.com")),
+    ("ncf", os.environ.get("NFM_REF_NONCF_URL", "https://ghcr.io")),
+    ("dom", os.environ.get("NFM_REF_DOM_URL", "https://mirrors.ustc.edu.cn")),
+]
+
+# ADR-023 (NFM-5542 lineage): reference lanes egress DIRECT. The explicit
+# empty ProxyHandler is PRIMARY — immune to both the env-var proxy class and
+# the macOS scutil system proxy; the wrapper's no_proxy='*' export is
+# defense-in-depth. Confounder (NFM-5705): the user VPN at 127.0.0.1:7892
+# hard-fails TLS (6/6 SSL_ERROR_SYSCALL to nucpot.dpdns.org) — these lanes
+# must never ride it, or a VPN flap would fake a transit brownout.
+#
+# Redirects are DISABLED: the lane measures the REFERENCE HOST, not its
+# redirect chain (live 2026-10-25: ghcr.io answers / with a 301 in ~2.6 s
+# while the redirect target stalls past any sane timeout). A 30x — like a
+# 4xx/5xx — is still a definitive TLS+HTTP verdict from the host: the path
+# round-tripped, so the sample is healthy evidence at the measured latency
+# (the reference is not the monitored object).
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # never follow — surfacing 30x as HTTPError to probe()
+
+OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _NoRedirect)
+UA = "nfm-site-monitor/1.4 (+NFM-5706 path-independent reference probes)"
+
+def load_state():
+    st = {}
+    try:
+        with open(STATE, encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line:
+                    k, v = line.rstrip("\n").split("=", 1)
+                    st[k] = v
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    return st
+
+def probe(url):
+    t0 = time.monotonic()
+    try:
+        req = urllib.request.Request(url, method="GET",
+                                     headers={"User-Agent": UA})
+        with OPENER.open(req, timeout=TIMEOUT) as resp:
+            resp.read(1024)  # first-KB latency: headers + initial body window
+        return int((time.monotonic() - t0) * 1000), None
+    except urllib.error.HTTPError:
+        # Definitive verdict with redirects disabled (30x) or an error status
+        # (4xx/5xx): the TLS+HTTP round trip COMPLETED — healthy path sample
+        # at the measured latency. The reference's uptime is not what this
+        # lane measures; only transport failure reads UNAVAILABLE (a
+        # distinct token so the battery never emits "FAIL" — grep-FAIL
+        # beat scans stay clean; NFM-5712).
+        return int((time.monotonic() - t0) * 1000), None
+    except Exception as e:  # timeout / TLS / reset — transport "fail"
+        return None, type(e).__name__
+
+results = {}
+def run_lane(key, url):
+    results[key] = probe(url)
+ths = [threading.Thread(target=run_lane, args=(k, u)) for k, u in LANES]
+for t in ths:
+    t.start()
+for t in ths:
+    t.join()
+
+try:
+    st = load_state()
+    new_state, disp_parts, slow, unavail, lane_trusted = {}, [], {}, {}, {}
+    warmup = 0
+    for key, url in LANES:
+        ms, err = results[key]
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        try:
+            cnt = int(st.get(key + "_count", "0"))
+        except ValueError:
+            cnt = 0
+        try:
+            att = int(st.get(key + "_att", "0"))
+        except ValueError:
+            att = 0
+        try:
+            ema = float(st.get(key + "_ema_ms", "nan"))
+        except ValueError:
+            ema = float("nan")
+        if st.get(key + "_url") != url:
+            # NFM-5712: baselines are PER ENDPOINT. A lane re-pointed at a
+            # different URL (the G1 fix swaps the control tuna.tsinghua ->
+            # mirrors.ustc.edu.cn) starts a FRESH baseline — a stale
+            # EMA/attempt history from the old host must never judge the new
+            # one. Marker-less pre-NFM-5712 state (the tuna-era entries:
+            # dom_att=80, dom_count=0, EMA never formed) resets the same
+            # way, and the full rewrite below drops the stale keys outright.
+            cnt, att, ema = 0, 0, float("nan")
+        new_state[key + "_url"] = url
+        trusted = cnt >= BASELINE_MIN
+        lane_trusted[key] = trusted
+        if ms is None:
+            # NFM-5712 three-valued outcome: UNAVAILABLE. A failed probe
+            # never touches the baseline (a VPN/host-egress outage must not
+            # poison the reference) and NEVER reads slow — the pre-5712
+            # conflation made a permanently-dead control emit cn_domestic
+            # every tick while claiming the slow token. Unavailability is
+            # carried explicitly instead: the control lane maps to
+            # batclass=control_unavailable (domestic pristine unverifiable,
+            # so TRANSIT_BROWNOUT stays unemittable) and an int'l lane
+            # forces mixed/UNCLASSIFIED — never pristine, never slow.
+            slow[key] = 0
+            unavail[key] = 1
+            new_state[key + "_count"] = str(cnt)
+            new_state[key + "_att"] = str(att + 1)
+            new_state[key + "_ema_ms"] = ("%.1f" % ema) if ema == ema else "-"
+            # Distinct token, never "FAIL": the battery rides OK-tick NOTE
+            # lines, and naive grep-FAIL beat scans (NFM-4951 class) must
+            # stay clean while only the control is unreachable (CPO/QA
+            # relay 2026-10-25 on NFM-5712).
+            disp = "UNAVAILABLE(%s)" % err
+        else:
+            # COMPLETED (any received HTTP status is a latency sample);
+            # SLOW iff over SLOW_RATIO x this host's OWN trusted baseline
+            # (relative arm) OR over the lane's NFM-5720 absolute floor —
+            # either arm. OBS-1: the relative arm alone lets a ratcheted
+            # EMA (cf 1232->1763ms across 10-25) mask absolute degradation
+            # — 14:07:25Z printed slow=0 at cf 2150ms (~2.8x the ~760ms
+            # clean baseline) because 2.5 x the RATCHETED 1735ms EMA is
+            # 4337ms. The floor arm is exactly what the relative arm would
+            # be had the EMA stayed at the clean-period norm, so it can
+            # only ever LOWER a threshold: false-positive class unchanged
+            # (clean lanes sit far under their floors).
+            unavail[key] = 0
+            over_rel = ema == ema and ms >= ema * SLOW_RATIO
+            over_abs = ms >= ABS_FLOOR[key]
+            slow[key] = 1 if (trusted and (over_rel or over_abs)) else 0
+            if ema != ema:            # no baseline yet — seed it
+                ema_new = float(ms)
+            elif over_rel or over_abs:
+                # NFM-5720 fold consistency: the slow-fold weight keys on
+                # the SAME dual test as the flag. A floor-caught sample
+                # (over_abs, not over_rel — the 14:07:25Z shape) must also
+                # fold at ALPHA_SLOW, else this fix itself would accelerate
+                # the very ratchet it exists to bound (full-weight ALPHA
+                # folding of degradation samples).
+                ema_new = ema + ALPHA_SLOW * (ms - ema)
+            else:
+                ema_new = ema + ALPHA * (ms - ema)
+            new_state[key + "_count"] = str(cnt + 1)
+            new_state[key + "_att"] = str(att + 1)
+            new_state[key + "_ema_ms"] = "%.1f" % ema_new
+            disp = "%dms" % ms
+        new_state[key + "_last"] = disp
+        # Warmup stays ATTEMPT-based (NFM-5708 review defect): a lane whose
+        # host is unreachable from this vantage (e.g. ghcr egress blocked)
+        # must not hold the whole battery in warmup forever and silence the
+        # classifier permanently — but during warmup it only records.
+        if att < BASELINE_MIN:
+            warmup = 1
+        ema_disp = ("%.0fms" % ema) if ema == ema else "-"
+        disp_parts.append("%s=%s(ema=%s,slow=%d,unavail=%d)"
+                          % (host, disp, ema_disp, slow[key], unavail[key]))
+    intl_slow = slow["cf"] + slow["ncf"]
+    intl_unavail = unavail["cf"] + unavail["ncf"]
+    # Battery-only verdict (CPO charter addendum enum: clean / intl_brownout
+    # / cn_domestic, warmup+mixed as non-confident floors; NFM-5712 adds
+    # control_unavailable). Warmup dominates: an untrusted battery never
+    # issues a confident hint. control_unavailable beats everything but
+    # warmup — an UNAVAILABLE control never completed, so it cannot judge
+    # latency (the G1 defect read it as cn_domestic every tick); it also
+    # cannot witness domestic-pristine, so TRANSIT_BROWNOUT stays
+    # unemittable that tick.
+    # NFM-5720 (OBS-2) precedence: intl_brownout beats cn_domestic —
+    # all-refs-slow is transit-class shape per the charter (TRANSIT_BROWNOUT
+    # = intl degraded; cn_domestic = dom degraded while intl clean). The
+    # pre-5720 order let dom_slow mask real transit brownouts: 19:30:04Z
+    # printed batclass=cn_domestic with intl_slow=2/2 AND dom_slow=1
+    # (cf 2012 / ghcr 1993 / ustc 656ms, all slow). cn_domestic is now the
+    # precise "dom degraded while intl NOT both slow" class.
+    if warmup:
+        batclass = "warmup"
+    elif unavail["dom"]:
+        # NFM-5712: the control is UNAVAILABLE (connection-level failure) —
+        # recording-only CONTROL_UNAVAILABLE note downstream, classification
+        # UNCLASSIFIED fail-open (never cn_domestic, never pristine).
+        batclass = "control_unavailable"
+    elif intl_slow == 2 and intl_unavail == 0:
+        # NFM-5720: the transit conjunct is evaluated BEFORE dom_slow (see
+        # the precedence note above). slow is COMPLETED-only, so
+        # intl_slow == 2 already implies both int'l lanes completed; the
+        # explicit guard documents the invariant. The lane_trusted["dom"]
+        # gate survives the reorder: an untrusted control (EMA never formed
+        # from BASELINE_MIN completed samples) cannot testify about the
+        # domestic leg in EITHER direction — untrusted-but-succeeding reads
+        # slow=0 at any latency (its EMA may be seeded mid-degradation) —
+        # so the verdict must fail open to mixed/UNCLASSIFIED instead of
+        # suppressing the page. Suppression needs certainty.
+        batclass = "intl_brownout" if lane_trusted["dom"] else "mixed"
+    elif slow["dom"]:
+        # Reached only when intl is NOT both-slow (0 or 1 lane slow): the
+        # charter's cn_domestic — dom degraded while intl clean/partial.
+        batclass = "cn_domestic"
+    elif intl_unavail:
+        # NFM-5712: an UNAVAILABLE int'l lane is neither slow nor pristine
+        # evidence — the battery cannot testify => mixed/UNCLASSIFIED
+        # fail-open (a transport failure must never manufacture the
+        # ALL-int'l-slow conjunct of TRANSIT_BROWNOUT).
+        batclass = "mixed"
+    elif intl_slow == 0:
+        batclass = "clean"
+    else:
+        batclass = "mixed"
+    tmp = STATE + ".tmp"
+    parent = os.path.dirname(STATE)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for k in sorted(new_state):
+            fh.write("%s=%s\n" % (k, new_state[k]))
+    os.replace(tmp, STATE)
+    # NFM-5712: unavailability rides the summary tokens (intl_unavail /
+    # dom_unavail) so a dead lane is greppable without parsing per-host
+    # display; the pre-existing intl_slow/dom_slow/warmup/batclass token
+    # order is preserved (log readers + ref_parse depend on it).
+    print("%s | intl_unavail=%d/2 dom_unavail=%d intl_slow=%d/%d dom_slow=%d warmup=%d batclass=%s"
+          % (" ".join(disp_parts), intl_unavail, unavail["dom"], intl_slow, 2,
+             slow["dom"], warmup, batclass))
+except Exception as e:
+    # Internal error: the battery cannot testify — tokens carry warmup=1 and
+    # batclass=warmup so the bash classifier fails UNCLASSIFIED (never
+    # suppresses a page).
+    print("refs-internal-error: %s | intl_slow=-/2 dom_slow=- warmup=1 batclass=warmup" % e)
+    sys.exit(3)
+REFPYEOF
+}
+
+# ---- NFM-5797 local-origin discriminator -----------------------------------
+# Two fresh-connection GETs to ORIGIN_BASE — `/` and `/browse`, the exact
+# originService targets cloudflared proxies to. Evidence-ONLY: prints one
+# machine-greppable token and always exits 0 — a failed route is ERR-tagged
+# evidence, never an error and never an alarm/state input (the NFM-5706
+# battery keeps the classification role; reading rule in the NFM-5797
+# header block). Fresh connection per route (Connection: close) so the
+# number is the origin's full-request latency, not a keep-alive rider;
+# DIRECT-pinned (--noproxy '*') + absolute binary path (NFM-4579).
+origin_probes() { # prints "origin: /=<code>/<ms>ms/<bytes>B browse=..."; rc 0 always
+  local acc="origin:" route res rc
+  for route in / /browse; do
+    res="$("$ORIGIN_CURL" -sS -o /dev/null --noproxy '*' \
+      --max-time "$ORIGIN_TIMEOUT" -H 'Connection: close' \
+      -A 'nfm-site-monitor/1.5 (+NFM-5797 local-origin discriminator)' \
+      -w '%{http_code} %{time_total} %{size_download}' \
+      "${ORIGIN_BASE}${route}" 2>/dev/null)"
+    rc=$?
+    if (( rc == 28 )); then
+      acc="$acc ${route}=ERR(timeout)"
+    elif (( rc == 7 )); then
+      acc="$acc ${route}=ERR(conn-refused)"
+    elif (( rc != 0 )); then
+      acc="$acc ${route}=ERR(curl-rc${rc})"
+    else
+      # "<code> <secs> <bytes>" -> "/=<code>/<integer ms>ms/<bytes>B"
+      acc="$acc ${route}=$(printf '%s' "$res" | awk '{printf "%s/%dms/%dB", $1, $2 * 1000, $3}')"
+    fi
+  done
+  printf '%s' "$acc"
+}
+
+# ---- NFM-5966 replica liveness probe (z203 over tailscale, one SSH trip) ----
+# Read-only remote battery: per-unit LoadState/ActiveState (systemctl show
+# needs no root), the replica connector log tail (registration age), and a
+# forwarder end-to-end curl. Prints ONE machine-token line; rc 0 always —
+# a failed probe is ERR/ssh_fail-tagged evidence, never an error and never
+# an alarm input by itself (verdict rules in the NFM-5966 header block).
+# Markers bound the log tail so arbitrary log content can never be
+# misparsed as control output (cloudflared lines always start with a
+# timestamp, so the marker lines are collision-free in practice; the
+# parser anchors on line starts anyway).
+replica_probes() { # prints "replica: unit=... fwd=... load=... reg=... fwd_http=... verdict=..."
+  "$PY" - <<'REPPYEOF'
+import os, re, subprocess, sys, time
+
+SSH = os.environ.get("NFM_REPLICA_SSH", "/usr/bin/ssh")
+TARGET = os.environ.get("NFM_REPLICA_TARGET", "z203")
+PROBE_TIMEOUT = float(os.environ.get("NFM_REPLICA_TIMEOUT", "20"))
+FWD_URL = os.environ.get("NFM_REPLICA_FWD_URL", "http://localhost:3000/api/v1/health")
+REMOTE_LOG = "/var/log/cloudflared-nucpot-replica.log"
+N_STALE = 600  # == the NFM-5880 gate N; drift-guarded by tests
+
+UNITS = ["cloudflared-nucpot-replica.service", "nfm-origin-forwarder.service"]
+_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ")
+_REG_SUBSTR = "Registered tunnel connection"
+
+
+def parse_iso_z(ts):
+    try:
+        import calendar
+        return int(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, OverflowError):
+        return None
+
+
+REMOTE = (
+    'for u in %s; do printf "UNIT %%s " "$u"; '
+    'systemctl show "$u" -p LoadState -p ActiveState 2>&1 | tr "\\n" " "; echo; done; '
+    'echo LOGSTART; tail -c 262144 %s 2>&1; echo LOGEND; '
+    'printf "FWDHTTP "; curl -sS -o /dev/null --max-time 5 -w "%%{http_code} %%{time_total}" "%s" 2>&1; echo'
+) % (" ".join(UNITS), REMOTE_LOG, FWD_URL)
+
+try:
+    completed = subprocess.run(
+        [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+         "-o", "StrictHostKeyChecking=accept-new", TARGET, REMOTE],
+        capture_output=True, timeout=PROBE_TIMEOUT,
+    )
+except Exception as e:
+    print("replica: ssh_fail(%s) verdict=unknown" % type(e).__name__)
+    sys.exit(0)
+
+if completed.returncode != 0:
+    err = completed.stderr.decode("utf-8", "replace").strip().splitlines()
+    tag = err[-1][:60] if err else "rc=%d" % completed.returncode
+    print("replica: ssh_fail(%s) verdict=unknown" % tag)
+    sys.exit(0)
+
+out = completed.stdout.decode("utf-8", "replace")
+
+units = {}
+for line in out.split("\n"):
+    m = re.match(r"^UNIT (\S+) (.*)$", line)
+    if not m:
+        continue
+    name, rest = m.group(1), m.group(2)
+    load = re.search(r"LoadState=(\S+)", rest)
+    active = re.search(r"ActiveState=(\S+)", rest)
+    units[name] = (load.group(1) if load else "unknown",
+                   active.group(1) if active else "unknown")
+
+rep_load, rep_active = units.get(UNITS[0], ("unknown", "unknown"))
+fwd_load, fwd_active = units.get(UNITS[1], ("unknown", "unknown"))
+
+# Registration age from the bounded tail (same scan rules as the gate).
+reg_tok = "log_missing"
+m = re.search(r"^LOGSTART\n(.*?)^LOGEND", out, re.S | re.M)
+if m:
+    tail = m.group(1)
+    if re.search(r"No such file", tail):
+        reg_tok = "log_missing"
+    elif re.search(r"Permission denied", tail):
+        reg_tok = "perm_denied"
+    else:
+        last_reg = first_ts = last_ts = None
+        for tl in tail.split("\n"):
+            tm = _TS_RE.match(tl)
+            if not tm:
+                continue
+            ep = parse_iso_z(tm.group(1))
+            if ep is None:
+                continue
+            if first_ts is None:
+                first_ts = ep
+            last_ts = ep
+            if _REG_SUBSTR in tl:
+                last_reg = ep
+        if last_reg is not None:
+            age = int(time.time()) - last_reg
+            if age < 0:
+                age = 0  # clock skew: a stamp ahead of the host clock is fresh
+            reg_tok = str(age)
+        elif first_ts is not None and last_ts is not None:
+            reg_tok = "none_span" if (last_ts - first_ts) >= N_STALE else "none_short"
+
+# Forwarder end-to-end (evidence-only).
+m = re.search(r"^FWDHTTP (.*)$", out, re.M)
+fw_tok = "ERR(no-output)"
+if m:
+    fw = m.group(1).strip()
+    fm = re.match(r"^(\d{3}) (\d+(?:\.\d+)?)", fw)
+    if fm:
+        fw_tok = "%s/%dms" % (fm.group(1), int(float(fm.group(2)) * 1000))
+    elif fw:
+        fw_tok = "ERR(%s)" % fw.splitlines()[0][:48]
+
+# Verdict (NFM-5966 header rules).
+if rep_load == "not-found" or fwd_load == "not-found":
+    verdict = "notfound"
+elif rep_active != "active" or fwd_active != "active":
+    verdict = "dark"
+elif reg_tok.isdigit():
+    verdict = "ok" if int(reg_tok) < N_STALE else "dark"
+elif reg_tok == "none_span":
+    verdict = "dark"
+else:  # none_short / log_missing / perm_denied — no replica verdict: fail-open
+    verdict = "unknown"
+
+print("replica: unit=%s fwd=%s load=%s/%s reg=%s fwd_http=%s verdict=%s"
+      % (rep_active, fwd_active, rep_load, fwd_load, reg_tok, fw_tok, verdict))
+REPPYEOF
+}
+
+# ---- NFM-5876 three-lane classification -------------------------------------
+# Parses the three lanes from data the tick already collected: PROBE_ROWS
+# (the raw health_check.py table — edge-tunnel = "Backend API Health", the
+# CTO-specified uncached API path through the edge, verified + extended per
+# the scope guard, not duplicated; edge-cached = Frontend Homepage + Frontend
+# Browse Page) and ORIGIN_EV (the NFM-5797 discriminator token — origin-direct).
+# Sets LANE_ORIGIN / LANE_TUNNEL / LANE_CACHED / LANE_TUNNEL_EV /
+# LANE_TUNNEL_TOK / LANE_VERDICT. Matrix + page rule documented in the header
+# NFM-5876 block; unknown lanes never classify (fail-open).
+lane_row_state() { # $1 = check name -> ok|fail|unknown from the raw probe table
+  local row
+  # Row shape is "| <icon> <name> | <sev> | ..." so the anchor is
+  # " <name> |" (space-name-space-pipe) — NOT "| <name> |" (the icon sits
+  # between the pipe and the name). Emoji read as literals; the
+  # detail column never carries that shape, so the anchor is unique to
+  # the name field.
+  row="$(printf '%s' "$PROBE_ROWS" | grep -F " $1 |" | head -1)"
+  if [[ -z "$row" ]]; then
+    echo unknown
+  elif [[ "$row" == *"✅"* ]]; then
+    echo ok
+  elif [[ "$row" == *"❌"* ]]; then
+    echo fail
+  else
+    echo unknown
+  fi
+}
+
+lane_origin_state() { # ORIGIN_EV -> ok|fail (both routes must answer 200)
+  if [[ "$ORIGIN_EV" == *" /=200/"* && "$ORIGIN_EV" == *"/browse=200/"* ]]; then
+    echo ok
+  else
+    echo fail
+  fi
+}
+
+lane_tunnel_detail() { # tunnel check's ❌ detail column (PD page payload)
+  printf '%s' "$PROBE_ROWS" | grep -E '^\| *❌' | grep -F " Backend API Health |" | head -1 \
+    | awk -F'|' '{print $5}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | cut -c1-80
+}
+
+three_lane_classify() { # sets the LANE_* variables from PROBE_ROWS + ORIGIN_EV
+  LANE_ORIGIN="$(lane_origin_state)"
+  LANE_TUNNEL="$(lane_row_state "Backend API Health")"
+  # edge-cached is three-valued: ok = both HTML lanes ✅ AND no desync
+  # synthesis (a chunk-scan edge-html-desync row counts as cached-lane
+  # failure); fail = an explicit ❌ among them; unknown = parseable gap.
+  # Tokens are LOWERCASE throughout — the log carries a naive `grep FAIL`
+  # cleanliness contract on green/control-degraded ticks (NFM-4951 class,
+  # test_nfm_site_monitor_refs) and uppercase FAIL in a lane token would
+  # break it.
+  local homepage browse desync
+  homepage="$(lane_row_state "Frontend Homepage")"
+  browse="$(lane_row_state "Frontend Browse Page")"
+  desync="$(printf '%s' "$OUT" | grep -E '^\| *❌' | grep -F "edge-html-desync" | head -1)"
+  if [[ "$homepage" == "ok" && "$browse" == "ok" && -z "$desync" ]]; then
+    LANE_CACHED="ok"
+  elif [[ "$homepage" == "fail" || "$browse" == "fail" || -n "$desync" ]]; then
+    LANE_CACHED="fail"
+  else
+    LANE_CACHED="unknown"
+  fi
+  LANE_TUNNEL_EV="$(lane_tunnel_detail)"
+  LANE_TUNNEL_TOK="$LANE_TUNNEL"
+  [[ "$LANE_TUNNEL" == "fail" ]] && LANE_TUNNEL_TOK="fail(${LANE_TUNNEL_EV:-unknown})"
+  if [[ "$LANE_TUNNEL" == "unknown" ]]; then
+    LANE_VERDICT="UNCLASSIFIED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "ok" ]]; then
+    LANE_VERDICT="ALL_OK"
+  elif [[ "$LANE_TUNNEL" == "fail" && "$LANE_CACHED" == "fail" ]]; then
+    LANE_VERDICT="FULL_EDGE_OUTAGE"
+  elif [[ "$LANE_TUNNEL" == "fail" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "ok" ]]; then
+    LANE_VERDICT="PARTIAL_DEGRADED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "fail" ]]; then
+    LANE_VERDICT="ORIGIN_DEGRADED"
+  elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "fail" ]]; then
+    LANE_VERDICT="CACHED_DEGRADED"
+  else
+    LANE_VERDICT="MIXED"
+  fi
+}
+
+# Parse the battery's machine tokens once per tick. Defaults are the
+# fail-closed vocabulary: any missing/garbled token leaves REF_WARMUP=1 and
+# sentinel values that can never satisfy the brownout conjuncts.
+ref_parse() { # sets REF_INTL_SLOW REF_INTL_TOTAL REF_DOM_SLOW REF_WARMUP REF_BATCLASS from REF_OUT/REF_RC
+  REF_INTL_SLOW=-1; REF_INTL_TOTAL=2; REF_DOM_SLOW=-1; REF_WARMUP=1; REF_BATCLASS="warmup"
+  (( REF_RC == 0 )) || return 0
+  tok="$(printf '%s' "$REF_OUT" | grep -oE 'intl_slow=[0-9]+/[0-9]+' | head -1)"
+  if [[ "$tok" == *"="* && "$tok" == */* ]]; then
+    REF_INTL_SLOW="${tok#*=}"; REF_INTL_SLOW="${REF_INTL_SLOW%%/*}"
+    REF_INTL_TOTAL="${tok##*/}"
+  fi
+  tok="$(printf '%s' "$REF_OUT" | grep -oE 'dom_slow=[0-9]+' | head -1)"
+  [[ -n "$tok" ]] && REF_DOM_SLOW="${tok#*=}"
+  tok="$(printf '%s' "$REF_OUT" | grep -oE 'warmup=[0-9]+' | head -1)"
+  [[ -n "$tok" ]] && REF_WARMUP="${tok#*=}"
+  tok="$(printf '%s' "$REF_OUT" | grep -oE 'batclass=[a-z_]+' | head -1)"
+  [[ -n "$tok" ]] && REF_BATCLASS="${tok#*=}"
+}
+
+# Classify a nucpot DEGRADE tick against the reference battery (NFM-5705 R5,
+# enum extended per the CPO charter addendum: TRANSIT_BROWNOUT / SITE_SIDE /
+# CN_DOMESTIC / clean, UNCLASSIFIED as the fail-open floor). Only confident
+# evidence reclassifies; UNCLASSIFIED and CN_DOMESTIC both run the existing
+# paging path fail-open — CN_DOMESTIC is a hint (domestic control degraded,
+# int'l comparison unreliable), never a suppression.
+ref_classify() { # sets REF_CLASS (requires REF_BATCLASS parsed)
+  REF_CLASS="UNCLASSIFIED"
+  case "${REF_BATCLASS:-warmup}" in
+    intl_brownout) REF_CLASS="TRANSIT_BROWNOUT" ;;
+    clean)         REF_CLASS="SITE_SIDE" ;;
+    cn_domestic)   REF_CLASS="CN_DOMESTIC" ;;
+    control_unavailable)
+                   # NFM-5712: control UNAVAILABLE — domestic-pristine is
+                   # unverifiable, so TRANSIT_BROWNOUT is unemittable; the
+                   # control never completed, so it is NOT CN_DOMESTIC.
+                   # Fail-open like UNCLASSIFIED (existing paging path); the
+                   # recording-only CONTROL_UNAVAILABLE note is logged at the
+                   # call site.
+                   REF_CLASS="UNCLASSIFIED" ;;
+    *)             REF_CLASS="UNCLASSIFIED" ;; # warmup / mixed / garbled token
+  esac
+}
+
+# ---- simulate modes (AC-2 test path; no real state mutation) --------------
+if [[ "${1:-}" == "--simulate-failure" ]]; then
+  log "TEST WARN — simulated P0 failure (streak 1/$STREAK_THRESHOLD, would not page yet)"
+  log "TEST CRITICAL — simulated P0 failure confirmed ($STREAK_THRESHOLD consecutive) — pages SRE via heartbeat log-read"
+  echo "simulate-failure: TEST WARN + TEST CRITICAL lines written to $LOG"
+  exit 0
+fi
+if [[ "${1:-}" == "--simulate-recovery" ]]; then
+  log "TEST RECOVERY — simulated recovery from failure — SRE closes the alert (recovery detection)"
+  echo "simulate-recovery: TEST RECOVERY line written to $LOG"
+  exit 0
+fi
+
+# ---- scan-once mode (SRE diagnostic; no state mutation, no alarm) ---------
+if [[ "${1:-}" == "--scan-once" ]]; then
+  scan_out="$(chunk_scan)"; scan_rc=$?
+  echo "chunk-scan rc=$scan_rc: $scan_out"
+  exit "$scan_rc"
+fi
+
+# ---- ref-probes-once mode (NFM-5706 SRE diagnostic; updates ONLY the
+# reference baselines — never the main state; prints tokens, no alarm) -------
+if [[ "${1:-}" == "--ref-probes-once" ]]; then
+  ref_out="$(ref_probes)"; ref_rc=$?
+  echo "ref-probes rc=$ref_rc: $ref_out"
+  exit "$ref_rc"
+fi
+
+# ---- origin-probes-once mode (NFM-5797 SRE diagnostic; no log write, no
+# state — prints the token so post-deploy verification never touches the
+# tick machine) ---------------------------------------------------------------
+if [[ "${1:-}" == "--origin-probes-once" ]]; then
+  origin_out="$(origin_probes)"; origin_rc=$?
+  echo "origin-probes rc=$origin_rc: $origin_out"
+  exit "$origin_rc"
+fi
+
+# ---- replica-probes-once mode (NFM-5966 SRE diagnostic; no log write, no
+# state — prints the token + verdict so post-deploy verification never
+# touches the tick machine) -----------------------------------------------
+if [[ "${1:-}" == "--replica-probes-once" ]]; then
+  replica_out="$(replica_probes)"; replica_rc=$?
+  echo "replica-probes rc=$replica_rc: $replica_out"
+  exit 0
+fi
+
+# ---- ack mode (SRE heartbeat, after retro-filing the [SRE-CRITICAL]) -------
+if [[ "${1:-}" == "--ack-page" ]]; then
+  pending="$(state_get pending_page -)"
+  if [[ "$pending" != "-" && -n "$pending" ]]; then
+    state_write 0 - 0 OK 0 - 0 0 0 -  # NFM-5497: full reset incl. blind-window flag
+    log "PAGE-ACK — SRE acked the CRITICAL from $pending (retro [SRE-CRITICAL] filed) — reconciliation closed"
+    echo "ack-page: PAGE-ACK written, pending_page cleared"
+  else
+    log "PAGE-ACK — SRE ack ran with no pending page (nothing to reconcile)"
+    echo "ack-page: no pending page"
+  fi
+  exit 0
+fi
+
+# ---- real probe ------------------------------------------------------------
+# NFM-5497 classifier state, read once per run: per-mode blind-streak
+# counters + the blind-window P0-evidence flag (set by any definitive P0
+# failure — base probe or scan dead-refs —, cleared by a fully green
+# cycle). The _next variants track this run's updates and are what every
+# state_write below persists; they default to "preserved".
+skip_a="$(state_get scan_skip_streak_a 0)"
+skip_b="$(state_get scan_skip_streak_b 0)"
+blind_p0="$(state_get blind_p0_fail -)"
+skip_a_next="$skip_a"
+skip_b_next="$skip_b"
+blind_p0_next="$blind_p0"
+N_SCAN_PAGES="$(wc -w <<<"$SCAN_PAGES" | tr -d ' ')"
+
+# NFM-5542 (ADR-023) D3: proxy posture at sentinel startup, every run —
+# with the D1 direct primaries a residual flap is attributable to host
+# egress (not the edge) from this one line alone.
+log "startup proxy-state — $(proxy_state_line) — python lanes pinned direct (ADR-023/NFM-5542)"
+
+if [[ ! -f "$PROBE" ]]; then
+  internal_streak="$(( $(state_get internal_streak 0) + 1 ))"
+  if (( internal_streak >= INTERNAL_STREAK_CRITICAL )); then
+    log "CRITICAL — internal error streak $internal_streak: probe script missing at $PROBE — sentinel cannot monitor (sentinel-broken)"
+    pending="$(state_get pending_page -)"
+    if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+    notify_page "sentinel-broken: probe script missing (internal streak $internal_streak)"
+    state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+      "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+    exit 2
+  fi
+  log "ERROR internal (streak $internal_streak/$INTERNAL_STREAK_CRITICAL) — probe script missing at $PROBE"
+  state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+    "$(state_get level OK)" "$internal_streak" "$(state_get pending_page -)" "$(state_get scan_skip_streak 0)" \
+    "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+  exit 3
+fi
+
+OUT="$("$PY" "$PROBE" 2>&1)"
+RC=$?
+# NFM-5876: raw per-check table, captured BEFORE chunk-scan synthesis can
+# replace OUT (scan findings synthesize a single edge-html-desync row) — the
+# three-lane classifier reads the probe's own verdicts from here, so a
+# scan-synthesized tick still classifies from the real probe lanes.
+PROBE_ROWS="$OUT"
+
+# NFM-5418: with the base probe green, verify edge HTML chunk refs resolve.
+# A failure here is synthesized into the base probe's failure format
+# ("N check(s) failed (M P0 critical)" + a ❌ detail row) so the existing
+# streak/WARN->CRITICAL state machine treats dead refs as P0.
+#
+# NFM-5446: scan_skip_next is the scan-skip streak to persist this run:
+#  - scan completed (rc 0/1)          -> 0 (reset; RECOVERY logged if it
+#                                        ended a >=SCAN_SKIP_CRITICAL blind
+#                                        episode)
+#  - scan degraded (rc 3 / launcher)  -> previous+1; >=SCAN_SKIP_CRITICAL
+#                                        consecutive => sentinel-blind CRITICAL
+#  - scan not attempted (probe red)   -> preserved
+scan_skip_next="$(state_get scan_skip_streak 0)"
+scan_degraded_note=""
+if (( RC == 0 )); then
+  SCAN_OUT="$(chunk_scan 2>/dev/null)"; SCAN_RC=$?
+  read -r scan_total scan_p0 scan_detail <<<"$SCAN_OUT"
+  if (( SCAN_RC == 1 )); then
+    scan_skip_next=0
+    skip_a_next=0; skip_b_next=0   # NFM-5497: a completed scan ends any blind episode
+    if (( scan_p0 > 0 )); then
+      blind_p0_next="$NOW"         # definitive dead refs inside the window
+    else
+      blind_p0_next="-"            # findings-only (P1 pins): episode closed clean
+    fi
+    OUT="${scan_total} check(s) failed (${scan_p0} P0 critical)
+| ❌ edge-html-desync | dead chunk refs (breaks cache-cold visitors) and/or stale 1y-pinned edge copies on watched pages | ${scan_detail}"
+    RC=1
+  elif (( SCAN_RC == 3 )); then
+    scan_skip_next="$(( $(state_get scan_skip_streak 0) + 1 ))"
+    # NFM-5497 mode classification: mode A = 0 page fetches completed
+    # (all-fetches-failed, genuine edge-down; a degraded report carrying
+    # no fetch evidence also classifies mode A — fail-closed); mode B =
+    # >=1 fetch completed (refs-unverified-only, incl. mixed cycles like
+    # ep-5 skip 2/3). The scan emits "fetches=<fetched>/<pages>" on every
+    # degraded report.
+    scan_mode="A"; fetches_failed="?"
+    if [[ "$scan_detail" == *"fetches="* ]]; then
+      ftok="$(printf '%s' "$scan_detail" | grep -oE 'fetches=[0-9]+/[0-9]+' | head -1)"
+      if [[ -n "$ftok" ]]; then
+        fetched_n="${ftok#fetches=}"
+        ftot="${fetched_n#*/}"
+        fetched_n="${fetched_n%%/*}"
+        fetches_failed="$(( ftot - fetched_n ))"
+        if (( fetched_n > 0 )); then scan_mode="B"; fi
+      fi
+    elif [[ "$scan_detail" == *"all page fetches failed"* ]]; then
+      fetches_failed="$N_SCAN_PAGES"  # pre-token prose fallback, defensive
+    fi
+    ru_tok="$(printf '%s' "$scan_detail" | grep -oE 'refs-unverified=[0-9]+' | head -1)"
+    refs_unv="${ru_tok#refs-unverified=}"
+    [[ -n "$refs_unv" ]] || refs_unv="0"
+    # Per-mode strictly-consecutive streaks: a cycle of one mode
+    # increments its counter and resets the other's.
+    if [[ "$scan_mode" == "A" ]]; then
+      skip_a_next="$(( skip_a + 1 ))"; skip_b_next=0
+    else
+      skip_b_next="$(( skip_b + 1 ))"; skip_a_next=0
+    fi
+    p0_ev="unknown"; [[ -n "${blind_p0_next/-}" ]] && p0_ev="fail"
+    # NFM-5542 (ADR-023) D3: the scutil proxy summary rides the SAME token
+    # as the mode=/fetches= evidence — one log line adjudicates host-egress
+    # vs edge on the next flap (mode A + healthy proxy = host egress).
+    mode_ev="[NFM-5497 mode=$scan_mode fetches_failed=$fetches_failed/$N_SCAN_PAGES refs_unverified=$refs_unv p0=$p0_ev origin=ok; streak A=$skip_a_next B=$skip_b_next; $(proxy_state_line)]"
+    # TTL-lane findings during a degraded scan still surface as P1 WARN —
+    # this is exactly the masking window NFM-5446 closes.
+    if [[ "$scan_detail" == *"P1 stale"* ]]; then
+      OUT="${scan_total} check(s) failed (0 P0 critical)
+| ❌ edge-html-desync | stale 1y-pinned edge copies on watched pages (TTL lane during degraded scan) | ${scan_detail}"
+      RC=1
+    fi
+    if (( skip_a_next >= SCAN_SKIP_CRITICAL )); then
+      # NFM-5497 mode A — semantics byte-identical to the pre-classifier
+      # build: threshold, latch, notify, recovery, ack all unchanged.
+      pending="$(state_get pending_page -)"
+      if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+      log "CRITICAL — sentinel chunk-scan blind (NFM-5446): scan degraded ${scan_skip_next} consecutive probe(s) — ${scan_detail} — P0 lane UNVERIFIED (monitoring blindness) ${mode_ev}"
+      notify_page "sentinel chunk-scan blind (${scan_skip_next} consecutive degraded scans) — P0 lane unverified"
+      state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+        CRITICAL 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+      exit 2
+    fi
+    if (( skip_b_next >= SCAN_SKIP_CRITICAL )); then
+      if [[ "$blind_p0_next" != "-" && -n "$blind_p0_next" ]]; then
+        # NFM-5497 fail-closed half: blind + CONFIRMED P0 breakage
+        # (dead chunk refs = cache-cold-visitor breakage, NFM-5446
+        # page class) still pages, exactly as the pre-classifier build
+        # paged every blind streak.
+        pending="$(state_get pending_page -)"
+        if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+        log "CRITICAL — sentinel chunk-scan blind with P0 FAIL evidence (NFM-5497): mode-B streak ${skip_b_next} consecutive degraded + definitive P0 failure at ${blind_p0_next} — ${scan_detail} — dead refs / P0 breakage inside the blind window (page-worthy per NFM-5446) ${mode_ev}"
+        notify_page "sentinel chunk-scan blind + P0 FAIL evidence (mode-B streak ${skip_b_next})"
+        state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+          CRITICAL 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+        exit 2
+      fi
+      # Benign diurnal edge-flap class (NFM-5262): WARN only — no
+      # PAGE-UNACK latch, no page, no exit 2.
+      log "WARN — chunk-scan blind streak mode=B refs-unverified-only (NFM-5497): degraded ${scan_skip_next} consecutive probe(s), mode-B streak ${skip_b_next} — ${scan_detail} — P0 lane unverified this cycle; no page (diurnal edge-flap class, NFM-5262; escalates only on P0 FAIL evidence) ${mode_ev}"
+      scan_degraded_note=1
+    else
+      log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL} (NFM-5446): ${scan_detail} — P0 lane unverified this cycle ${mode_ev}"
+      scan_degraded_note=1
+    fi
+  elif (( SCAN_RC == 0 )); then
+    if [[ "$scan_detail" == *"below NFM-5454 degrade threshold"* ]]; then
+      log "NOTE — chunk-scan ok with 1 ref unverified (below NFM-5454 degrade threshold 2; diurnal flake, NFM-5262 class) — no streak impact; persistent single-ref = investigate cap/edge"
+    fi
+    if (( $(state_get scan_skip_streak 0) >= SCAN_SKIP_CRITICAL )); then
+      log "RECOVERY — chunk-scan completed again after blind streak $(state_get scan_skip_streak 0) (NFM-5446) — SRE closes the sentinel-blind alert [NFM-5497 episode split: mode-A $(state_get scan_skip_streak_a 0) / mode-B $(state_get scan_skip_streak_b 0)]"
+    fi
+    scan_skip_next=0
+    skip_a_next=0; skip_b_next=0; blind_p0_next="-"  # episode closed clean
+  else
+    # scan launcher itself failed (python missing, etc.) — degraded, not green.
+    # NFM-5497: no scan report => no mode, no per-mode counter movement
+    # (preserved); this lane escalates exactly as before (WARN + overall
+    # streak only).
+    scan_skip_next="$(( $(state_get scan_skip_streak 0) + 1 ))"
+    log "WARN — chunk-scan DEGRADED, skip streak ${scan_skip_next}/${SCAN_SKIP_CRITICAL}: scan launcher rc=$SCAN_RC — P0/pin lanes unverified this cycle [NFM-5497 mode=unknown — no scan report; counters preserved; $(proxy_state_line)]"
+    scan_degraded_note=1
+  fi
+fi
+
+# NFM-5708 (NFM-5706): reference battery — EVERY real-probe tick (green ticks
+# maintain baselines; degrade ticks classify). Runs AFTER the base probe/scan
+# so it never delays them; worst case +REF_TIMEOUT on the tick (300s cadence).
+# REF_CLASS/REF_EV stay unset on green ticks — classification is degrade-only.
+REF_OUT="$(ref_probes 2>/dev/null)"; REF_RC=$?
+ref_parse
+if (( REF_RC != 0 )); then
+  REF_OUT="refs-internal-error (rc=$REF_RC) — battery cannot testify"
+fi
+
+# NFM-5797: local-origin discriminator — every real-probe tick, on green and
+# degrade ticks alike (in-tick classification of refs-clean P1 singles is
+# the point). Emitted BEFORE the summary lines so the OK/WARN/CRITICAL line
+# stays the tick's newest line (newest-line liveness read preserved; the
+# per-tick startup line already establishes the multi-line-tick class).
+# Evidence-only: never feeds alarms, streaks, classification, or state.
+ORIGIN_EV="$(origin_probes 2>/dev/null)"
+log "ORIGIN — $ORIGIN_EV"
+
+# NFM-5876: three-lane classification verdict — every real-probe tick (green
+# + degrade alike), BEFORE the summary line so the OK/WARN/CRITICAL line
+# stays the tick's newest line (liveness read; green OK lines stay
+# byte-stable, NFM-5708 convention). AC1: the lane result + verdict are
+# visible per tick in this log.
+three_lane_classify
+log "LANES — origin=$LANE_ORIGIN edge-tunnel=$LANE_TUNNEL_TOK edge-cached=$LANE_CACHED verdict=$LANE_VERDICT [NFM-5876]"
+
+# NFM-5966: replica lane evidence — every real-probe tick (green + degrade
+# alike), after the LANES line so the OK/WARN/CRITICAL line stays the tick's
+# newest line. Evidence-ONLY here: verdict rules and the green-path WARN
+# entry live below; degrade ticks never WARN from this lane (the primary
+# line carries the tick; replica-dark + primary-dark = existing full-edge
+# handling). Scan-blind early-exit CRITICALs (NFM-5446/NFM-5497) leave
+# before this point — no REPLICA line on those exits, same as LANES.
+REPLICA_OUT="$(replica_probes 2>/dev/null)"
+log "REPLICA — $REPLICA_OUT"
+REP_VERDICT="$(printf '%s' "$REPLICA_OUT" | grep -oE 'verdict=[a-z]+' | head -1 | cut -d= -f2)"
+[[ -n "$REP_VERDICT" ]] || REP_VERDICT="unknown"
+
+# CPO charter addendum: a CONFIDENT non-clean battery verdict on a GREEN tick
+# (intl_brownout / cn_domestic) logs one NOTE line — recording only, zero page
+# implications; a clean battery stays silent so green OK lines are
+# byte-stable. This is the "intl degraded but nucpot clean" observability row.
+# NFM-5712: an UNAVAILABLE control (batclass=control_unavailable) records a
+# CONTROL_UNAVAILABLE note instead — the G1 defect's per-tick cn_domestic
+# noise is gone; TRANSIT_BROWNOUT is unemittable for the tick (domestic
+# pristine unverifiable), still zero page implications.
+if (( RC == 0 && REF_RC == 0 )); then
+  if [[ "$REF_BATCLASS" == "control_unavailable" ]]; then
+    log "NOTE — CONTROL_UNAVAILABLE (NFM-5706/NFM-5712): CN-domestic control host unreachable (transport failure) while nucpot is GREEN — recording only, no page implications; TRANSIT_BROWNOUT unemittable this tick (domestic-pristine unverifiable) — [refs: $REF_OUT]"
+  elif [[ "$REF_BATCLASS" == "intl_brownout" || "$REF_BATCLASS" == "cn_domestic" ]]; then
+    log "NOTE — ref-battery (NFM-5706): $REF_BATCLASS observed while nucpot is GREEN — recording only, no page implications — [refs: $REF_OUT]"
+  fi
+fi
+
+if (( RC == 0 )); then
+  internal_streak=0
+  prev_streak="$(state_get streak 0)"
+  first_fail="$(state_get first_fail -)"
+  pending="$(state_get pending_page -)"
+  # NFM-5966: replica lane bookkeeping — GREEN ticks only (degrade ticks
+  # freeze the streak: replica-dark + primary-dark is the existing
+  # full-edge handling, and this lane must not add evidence noise to a
+  # paging tick). dark = one WARN lane entry per tick, NOT a page: no
+  # notify, no CRITICAL line, no pending_page latch, no streak>=2
+  # machinery, exit code unchanged. ok resets (REPLICA-RECOVERY note when
+  # it ended a streak). unknown/notfound freeze silently — absence of a
+  # replica verdict is fail-open and NOTE-class (D2-G2 not-found is a
+  # board-known in-flight state; per-tick NOTE noise would repeat the
+  # NFM-5712 defect class). State lives ONLY in the replica lane's own
+  # file — every pre-existing state_write call site stays byte-identical.
+  rep_dark_streak="$(replica_state_get dark_streak 0)"
+  rep_first_dark="$(replica_state_get first_dark -)"
+  case "$REP_VERDICT" in
+    dark)
+      rep_dark_streak="$(( rep_dark_streak + 1 ))"
+      if [[ "$rep_first_dark" == "-" || -z "$rep_first_dark" ]]; then rep_first_dark="$NOW"; fi
+      log "WARN — REPLICA_DARK (replica lane dark, primary green): $REPLICA_OUT — dark streak ${rep_dark_streak} since ${rep_first_dark} — evidence WARN, no page (NFM-5966; any page upgrade gated on 48h post-window soak)"
+      ;;
+    ok)
+      if (( rep_dark_streak > 0 )); then
+        log "REPLICA-RECOVERY — replica green again after ${rep_dark_streak} dark tick(s) (first dark ${rep_first_dark}) — evidence lane, no page was fired [NFM-5966]"
+      fi
+      rep_dark_streak=0; rep_first_dark="-"
+      ;;
+  esac
+  replica_state_write "$rep_dark_streak" "$rep_first_dark"
+  if (( prev_streak > 0 )); then
+    log "RECOVERY — all checks passing again after $prev_streak failing probe(s) (first failure $first_fail) — SRE closes the alert"
+    # Missed-page reconciliation (NFM-5262): if a CRITICAL was latched and no
+    # heartbeat has acked it, keep saying so on every recovery until acked.
+    if [[ "$pending" != "-" && -n "$pending" ]]; then
+      log "PAGE-UNACK — CRITICAL from $pending recovered without SRE pickup — SRE heartbeat MUST retro-file [SRE-CRITICAL] then run --ack-page"
+    fi
+  else
+    if [[ -n "$scan_degraded_note" ]]; then
+      log "OK — all checks passed (chunk-scan degraded: see WARN above — P0 lane unverified)"
+    else
+      log "OK — all checks passed"
+    fi
+    if [[ "$pending" != "-" && -n "$pending" ]]; then
+      log "PAGE-UNACK (still latched) — CRITICAL from $pending never acked by SRE — retro-file [SRE-CRITICAL] then run --ack-page"
+    fi
+  fi
+  # NFM-5667: a green probe closes any open streak-1 full-edge episode
+  # window — this RECOVERY line completes the page's window timestamps
+  # (first-failure -> recovery) and records the close epoch for the
+  # >=10-min episode-separation rule (ruling §2).
+  if [[ "$(s1_get open 0)" == "1" ]]; then
+    s1_wf="$(s1_get win_first -)"
+    s1_cnt="$(s1_ledger count "$(s1_get ledger '')" "$NOW" | awk '{print $1}')"
+    log "RECOVERY — streak-1 full-edge episode closed: window ${s1_wf} -> ${NOW} — t2-ledger episodes=${s1_cnt} rolling-30d [NFM-5667; NFM-5664 ruling 35aa85eb §2]"
+    s1_write "$(s1_get last_page 0)" 0 "$s1_wf" "$(date -u +%s)" "$(s1_get ledger '')"
+  fi
+  state_write 0 - 0 OK 0 "$pending" "$scan_skip_next" "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+  exit 0
+fi
+
+if (( RC == 1 )); then
+  internal_streak=0
+  # Parse "N check(s) failed (M P0 critical)". Unparseable output is treated
+  # as P0-unknown -> page-worthy (never miss a real P0).
+  p0="$(printf '%s' "$OUT" | grep -oE '[0-9]+ P0 critical' | grep -oE '^[0-9]+' | tail -1)"
+  [[ -n "$p0" ]] || p0="-1"
+  failed="$(printf '%s' "$OUT" | grep -oE '[0-9]+ check\(s\) failed' | grep -oE '^[0-9]+' | tail -1)"
+  [[ -n "$failed" ]] || failed="?"
+  # NFM-5497: latch P0 evidence for any blind-streak window that is (or
+  # becomes) active — p0 != 0 includes "-1" (unparseable = P0-unknown,
+  # page-worthy, never miss a real P0). Cleared only by a fully green
+  # cycle in the scan lane above.
+  if [[ "$p0" != "0" ]]; then
+    blind_p0_next="$NOW"
+  fi
+
+  streak="$(( $(state_get streak 0) + 1 ))"
+  since_remind="$(( $(state_get since_remind 0) + 1 ))"
+  if (( streak == 1 )); then
+    first_fail="$NOW"
+  else
+    first_fail="$(state_get first_fail "$NOW")"
+  fi
+
+  # Failure detail (NFM-5262): extract the actual failing table rows (❌ …)
+  # instead of tail -3, which reliably captured only the passing rows and hid
+  # the failure mode (timeout vs latency-budget vs non-200). Fallback to the
+  # old tail if no row markers are present.
+  faildetail="$(printf '%s' "$OUT" | grep -E '^\| *❌' | sed 's/^| *//; s/ *| */ /g' | tr '\n' '|' | cut -c1-400)"
+  [[ -n "$faildetail" ]] || faildetail="$(printf '%s' "$OUT" | grep -viE '^starting|^targets|^$' | tail -3 | tr '\n' '|' | cut -c1-300)"
+
+  # NFM-5708 (NFM-5706): THIS tick is a nucpot degrade — classify it against
+  # the reference battery (TRANSIT_BROWNOUT / SITE_SIDE / UNCLASSIFIED) and
+  # build the evidence token that rides every degrade log line below. Only
+  # TRANSIT_BROWNOUT changes behavior (gates the streak>=2 CRITICAL page);
+  # SITE_SIDE/UNCLASSIFIED run the existing watch-line path fail-open.
+  ref_classify
+  REF_EV="[NFM-5706 class=$REF_CLASS; refs: $REF_OUT]"
+  # CN_DOMESTIC hint (CPO charter addendum): domestic control degraded =>
+  # int'l comparison unreliable — say so IN the token; behavior stays
+  # fail-open (existing paging path), never suppression.
+  if [[ "$REF_CLASS" == "CN_DOMESTIC" ]]; then
+    REF_EV="$REF_EV (intl comparison unreliable — CN-domestic control degraded)"
+  fi
+  # NFM-5712: control UNAVAILABLE — the recording-only CONTROL_UNAVAILABLE
+  # note rides DEGRADE ticks too (truth-table row 3): no TRANSIT_BROWNOUT,
+  # classification UNCLASSIFIED fail-open (non-paging note; the existing
+  # WARN/CRITICAL path below runs exactly as before).
+  if [[ "$REF_BATCLASS" == "control_unavailable" ]]; then
+    log "NOTE — CONTROL_UNAVAILABLE (NFM-5706/NFM-5712): CN-domestic control host unreachable — domestic-pristine precondition unverifiable: TRANSIT_BROWNOUT unemittable this tick; classification UNCLASSIFIED fail-open — recording only, non-paging — [refs: $REF_OUT]"
+  fi
+
+  # NFM-5667: streak-1 full-edge page rule — evaluated ONLY at streak 1
+  # (streak>=2 keeps the existing lane; when both lanes match the streak-1
+  # lane fires at most its one rate-limited page and never alters
+  # streak>=2 behavior — AC4). Unparseable probe output (p0="-1") cannot
+  # satisfy the conjuncts and stays on the existing lane — fail-closed.
+  if [[ "$p0" != "0" ]] && (( streak == 1 )); then
+    s1_classify
+    if (( s1_match == 1 )); then
+      s1_handle_match "$streak" "$first_fail" "$since_remind"
+    fi
+  fi
+
+  if [[ "$p0" != "0" ]] && (( streak >= STREAK_THRESHOLD )); then
+    if [[ "$REF_CLASS" == "TRANSIT_BROWNOUT" ]]; then
+      # NFM-5708 (NFM-5706; ruling 5206262b(d) + NFM-5705 R5): nucpot
+      # degraded while ALL international references are slow AND the
+      # CN-domestic control is pristine => shared CN->int'l transit
+      # brownout, NOT site-side. LOG-ONLY, NON-PAGING, no SRE wake: no
+      # CRITICAL line, no notify, no PAGE-UNACK latch. The nucpot failure
+      # streak keeps counting, so the existing page fires the moment
+      # transit recovers or the classification clears (SITE_SIDE /
+      # UNCLASSIFIED) — suppression can only ever DELAY the existing page,
+      # never silently consume it.
+      log "WARN — TRANSIT_BROWNOUT (NFM-5706/NFM-5708): nucpot degraded (streak $streak, first failure $first_fail) + ALL int'l references slow + domestic control pristine — shared CN-to-int'l transit brownout, log-only / non-paging / no SRE wake per 5206262b(d) + NFM-5705 R5 — $failed check(s) failed ($p0 P0) — $faildetail $REF_EV"
+      # Suppressed ticks page nobody, so they must not advance the reminder
+      # clock (since_remind) — otherwise the first CRITICAL after
+      # suppression clears would mislabel itself "ongoing reminder".
+      state_write "$streak" "$first_fail" "$(state_get since_remind 0)" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
+        "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+      exit 1
+    fi
+    # NFM-5892: book the full-edge episode AT this streak>=2 CRITICAL tick
+    # when the episode shape matches (s1_episode_match=1, NFM-6006 gate) and
+    # no window is open — the
+    # e9 class: episodes entering full-edge via lane-by-lane escalation
+    # (tunnel dark -> cached edge dark next tick) previously paged with NO
+    # ledger append, NO t2-ledger count, NO rate-limit marker and NO open
+    # window (the NFM-5664 §4 machinery was streak-1-only). Reached only
+    # past the TRANSIT_BROWNOUT early-exit above (transit-side ticks are
+    # not site-side episodes and never book). The page stays on THIS lane
+    # (never a double-page); idempotent while a window is open. Evidence
+    # suffix rides the CRITICAL lines below via $s2_book_ev ("" => lines
+    # byte-identical when nothing books).
+    s2_book_ev=""
+    s1_classify
+    # NFM-6006: gate on the EPISODE shape (conjuncts 1-3), not the paging
+    # conjuncts — a latency-dominant full-edge CRITICAL books like any other
+    # full-edge episode; conjunct 4 keeps gating only the streak-1 early page.
+    if (( s1_episode_match == 1 )); then
+      s1_book_streak2
+    fi
+    # NFM-5876: PARTIAL_DEGRADED page rule — the edge-tunnel lane is dark
+    # while the origin and the cached edge stay green (tunnel degradation
+    # currently shielded by cache). WARN at streak 1 (the PD-specific WARN
+    # branch below), PAGE at streak 2 (NFM-5666 page discipline for the new
+    # class). Evaluated AFTER TRANSIT_BROWNOUT — the brownout suppression
+    # can only delay a page, never consume it — and BEFORE the full-edge
+    # CRITICAL, which stays byte-identical for FULL_EDGE_OUTAGE verdicts.
+    # PD and the streak-1 full-edge rule are mutually exclusive (PD requires
+    # both cached lanes green, capping edge failures at 4/6 < conjunct 5).
+    if [[ "$LANE_VERDICT" == "PARTIAL_DEGRADED" ]]; then
+      pending="$(state_get pending_page -)"
+      if [[ "$pending" == "-" || -z "$pending" ]]; then
+        pending="$NOW"   # latch: survives recovery until the heartbeat acks
+      fi
+      if (( since_remind >= REMINDER_RUNS )); then
+        since_remind=0
+        log "CRITICAL (ongoing reminder, first failure $first_fail) — PARTIAL_DEGRADED persists (edge-tunnel dark, users shielded by cached edge; NFM-5876 page rule: WARN streak 1, page streak ${PD_PAGE_STREAK}) — $failed check(s) failed ($p0 P0) — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      else
+        log "CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline for the new class): edge-tunnel dark while origin-direct and cached edge stay green — streak $streak, first failure $first_fail — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — users currently shielded by cached edge HTML — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      fi
+      notify_page "PARTIAL_DEGRADED: edge-tunnel dark, cached edge shielding users (streak $streak)"
+      state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
+        "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+      exit 2
+    fi
+    pending="$(state_get pending_page -)"
+    if [[ "$pending" == "-" || -z "$pending" ]]; then
+      pending="$NOW"   # latch: survives recovery until the heartbeat acks
+    fi
+    if (( since_remind >= REMINDER_RUNS )); then
+      since_remind=0
+      log "CRITICAL (ongoing reminder, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+    else
+      log "CRITICAL — public-edge P0 failure confirmed ($STREAK_THRESHOLD consecutive probes, first failure $first_fail) — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+    fi
+    notify_page "P0 public-edge failure: $failed check(s) down ($p0 P0)"
+    state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+    exit 2
+  fi
+
+  if [[ "$p0" == "0" ]]; then
+    log "WARN — P1-only failures ($failed check(s), 0 P0), streak $streak — not page-worthy; reminder cadence applies — $faildetail $REF_EV"
+    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+  else
+    # NFM-5876: a PARTIAL_DEGRADED tick warns IMMEDIATELY at streak 1 (the
+    # new class's first half of the page rule); the generic streak-1 WARN
+    # text stays byte-identical for every other verdict.
+    if [[ "$LANE_VERDICT" == "PARTIAL_DEGRADED" ]]; then
+      log "WARN — PARTIAL_DEGRADED (edge-tunnel dark, users shielded by cached edge): streak ${streak}/${PD_PAGE_STREAK} — immediate WARN per NFM-5876; page at streak ${PD_PAGE_STREAK} — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail $REF_EV"
+    else
+      log "WARN — failure streak $streak/$STREAK_THRESHOLD ($failed check(s) failed, $p0 P0) — confirming before CRITICAL — $faildetail $REF_EV"
+    fi
+    state_write "$streak" "$first_fail" "$since_remind" WARN 0 "$(state_get pending_page -)" "$scan_skip_next" \
+      "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+  fi
+  exit 1
+fi
+
+# probe crashed / python error
+internal_streak="$(( $(state_get internal_streak 0) + 1 ))"
+if (( internal_streak >= INTERNAL_STREAK_CRITICAL )); then
+  log "CRITICAL — internal error streak $internal_streak: probe exited rc=$RC — sentinel cannot monitor (sentinel-broken)"
+  pending="$(state_get pending_page -)"
+  if [[ "$pending" == "-" || -z "$pending" ]]; then pending="$NOW"; fi
+  notify_page "sentinel-broken: probe rc=$RC (internal streak $internal_streak)"
+  state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+    "$(state_get level OK)" "$internal_streak" "$pending" "$(state_get scan_skip_streak 0)" \
+    "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+  exit 2
+fi
+log "ERROR internal (streak $internal_streak/$INTERNAL_STREAK_CRITICAL) — probe exited rc=$RC: $(printf '%s' "$OUT" | tail -1 | cut -c1-200)"
+state_write "$(state_get streak 0)" "$(state_get first_fail -)" "$(state_get since_remind 0)" \
+  "$(state_get level OK)" "$internal_streak" "$(state_get scan_skip_streak 0)" \
+  "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+exit 3

@@ -23,6 +23,19 @@ export interface DatasetDetail {
   // NFM-4159 §5.2 attribution block — locked field names. Status is
   // 'placeholder' on recast-restored datasets, 'intact' otherwise.
   attribution: { status: "placeholder" | "intact" }
+  // NFM-5321 (D2): resolved via ?expand=material,source — null when the
+  // caller does not opt in. Lets the detail page render human-readable
+  // names instead of raw UUIDs.
+  material_name: string | null
+  source_title: string | null
+}
+
+/** Expand join options accepted by the detail endpoint (NFM-5321 D2). */
+export type DatasetExpand = "material" | "source" | "material,source"
+
+export interface GetDatasetServerOptions {
+  /** Opt-in joins: material → material_name, source → source_title. */
+  expand?: DatasetExpand
 }
 
 const REQUEST_TIMEOUT_MS = 15_000
@@ -37,12 +50,16 @@ function apiBaseUrl(): string {
 
 export async function getDatasetServer(
   id: string,
+  options: GetDatasetServerOptions = {},
 ): Promise<DatasetDetail> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
+    const query = options.expand
+      ? `?expand=${encodeURIComponent(options.expand)}`
+      : ""
     const response = await fetch(
-      `${apiBaseUrl()}/api/v1/datasets/${encodeURIComponent(id)}`,
+      `${apiBaseUrl()}/api/v1/datasets/${encodeURIComponent(id)}${query}`,
       {
         headers: { Accept: "application/json" },
         signal: controller.signal,
