@@ -47,6 +47,11 @@ on:
         required: false
         type: boolean
         default: false
+      self_test:
+        description: "NFM-5936: executor fires ONE dedup-keyed fallback alert (no collection). Also stage a payload artifact so the executor's manual self-test door has verified bytes."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   # The dispatch POST to the executor needs contents: write (Leg A review
@@ -86,5 +91,6 @@ jobs:
             -f event_type=nfmd-prod-collector-exec \
             -F 'client_payload[orchestrator_run_id]=${{ github.run_id }}' \
             -F 'client_payload[sha]=${{ github.sha }}' \
-            -f 'client_payload[dry_run]=${{ inputs.dry_run || false }}'
+            -f 'client_payload[dry_run]=${{ inputs.dry_run || false }}' \
+            -f 'client_payload[self_test]=${{ inputs.self_test || false }}'
           echo "dispatched nfmd-prod-collector-exec (orchestrator run ${{ github.run_id }} @ ${{ github.sha }})"
