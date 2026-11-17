@@ -89,4 +89,10 @@ EXPOSE 8000
 # guard at the head of the chain surfaces a clear "image is older than
 # DB" verdict on its own non-zero exit so the container never starts in
 # the NFM-4063 crash-loop state.
-CMD ["sh", "-c", "python /usr/local/bin/check_staging_revision.py && alembic upgrade head && exec uvicorn nfm_db.main:app --host 0.0.0.0 --port 8000"]
+#
+# NFM-5273/NFM-5274: uvicorn keeps --timeout-keep-alive 75, mirroring
+# docker/prod-api.Dockerfile — the Node keep-alive reuse race behind the
+# public 500s must stay unreproducible on staging too (see the prod
+# Dockerfile comment). Guarded by
+# apps/api/tests/compose/test_api_keepalive_timeout.py.
+CMD ["sh", "-c", "python /usr/local/bin/check_staging_revision.py && alembic upgrade head && exec uvicorn nfm_db.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75"]

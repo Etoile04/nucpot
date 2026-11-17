@@ -1,0 +1,100 @@
+name: Collect Production Deploy Events Executor (self-hosted)
+
+# =============================================================================
+# NFM-5798 P2 Leg B — checkout-free executor half of the deploy-events
+# collector diversion.
+# =============================================================================
+# Triggered ONLY by repository_dispatch from the hosted orchestrator
+# (collect-prod-deploy-events-orchestrator.yml), which supplies the two
+# payload scripts (repo-relative layout preserved) as a workflow artifact.
+# This workflow performs zero fetches of any kind — the checkout blackhole
+# class (NFM-5548/5556/5796/5798) cannot fail this lane by construction.
+#
+# The host-bound resources stay exactly where they were: the JSONL ledger
+# and processed-ledger paths flow through the NFMD_DEPLOY_EVENTS_PATH /
+# NFMD_DEPLOY_EVENTS_PROCESSED_PATH repo vars (host-absolute on the
+# runner), and gh api artifact queries run with the collector's token —
+# the hosted orchestrator never touches any of them (design 4f469b4f).
+#
+# repository_dispatch fires workflows from the DEFAULT branch only, so this
+# file must be on main to receive dispatches.
+# =============================================================================
+
+on:
+  repository_dispatch:
+    types: [nfmd-collect-events-exec]
+
+permissions:
+  # Cross-run artifact download (actions/download-artifact with run-id)
+  # plus the collector's gh api queries into runs/artifacts.
+  actions: read
+  contents: read
+
+# Serialise collector runs against each other (carried from the pre-split
+# collector's group). The atomic append is single-line POSIX O_APPEND and
+# would survive concurrent writers, but holding the lock makes per-run log
+# lines easier to read.
+concurrency:
+  group: prod-deploy-events-collect-exec
+  # A cancelled run could tear a ledger append mid-flight; queue instead
+  # (Leg A review 8fecf232 pt 5). The 11-04 queue-timeout evictions
+  # (41866246466 / 41866273808) prove queued runs do get cancelled
+  # externally, so this is load-bearing.
+  cancel-in-progress: false
+
+jobs:
+  collect-prod-events:
+    name: Collect production deploy events
+    # Self-hosted runner — pinned to the `production` label on the Mac Studio
+    # host (same machine as the prod compose stack per ADR-KR3-A1 §C6.1),
+    # where the persistent JSONL ledger lives.
+    runs-on: [self-hosted, production]
+    # Carried from the pre-split collector job (NFM-5798 P1 budget).
+    timeout-minutes: 18
+    env:
+      # Prefer a fine-grained PAT (`secrets.GH_TOKEN`) so the collector works
+      # even on forks; fall back to the per-run GITHUB_TOKEN which already has
+      # `actions: read` per the job's permissions block.
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      # ADR §C6.1.5 — repo variable `NFMD_DEPLOY_EVENTS_PATH`, a
+      # host-absolute path on the runner. When unset, the collector defaults
+      # to a path derived from its own location and refuses relative or
+      # per-payload paths loudly.
+      NFMD_DEPLOY_EVENTS_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PATH || '' }}
+      NFMD_DEPLOY_EVENTS_PROCESSED_PATH: ${{ vars.NFMD_DEPLOY_EVENTS_PROCESSED_PATH || '' }}
+    steps:
+      - name: Download payload from orchestrator run
+        uses: actions/download-artifact@v7
+        with:
+          name: collect-events-payload
+          run-id: ${{ github.event.client_payload.orchestrator_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Per-run staging dir (NFM-5556 isolation): the shared workspace is
+          # written by several independently-grouped jobs on this host.
+          path: ${{ runner.temp }}/payload-${{ github.run_id }}
+
+      - name: Verify payload manifest
+        id: verify-payload
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"
+          shasum -a 256 -c MANIFEST.sha256
+          echo "payload provenance: orchestrator run ${{ github.event.client_payload.orchestrator_run_id }} @ ${{ github.event.client_payload.sha }}"
+
+      - name: Collect deploy events into JSONL
+        # Only verified payload bytes may execute (Leg A provenance
+        # invariant). The glue resolves its repo root from its own staged
+        # location (payload/scripts/lib/), so it finds its Python sibling
+        # inside the verified payload.
+        if: steps.verify-payload.outcome == 'success'
+        run: |
+          set -euo pipefail
+          bash "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}/scripts/lib/collect_prod_run.sh"
+
+      - name: Clean payload
+        # The host is disk-pressured (NFM-5556 hygiene); the payload is
+        # reproducible from any later orchestrator fire.
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/payload-${GITHUB_RUN_ID}"

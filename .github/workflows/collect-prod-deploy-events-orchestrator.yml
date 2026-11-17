@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# NFM-5798 P2 Leg B — GitHub-hosted diversion of the deploy-events collector
+# (the checkout half only; the ledger work stays host-side).
+# =============================================================================
+# KR-COMPANY-3 / NFMD: the self-hosted collector polls
+# production-deployment.yml for new runs and appends validated events to
+# the persistent host-local JSONL. Its only failing step was ever its
+# checkout (NFM-5548 → 5556 → 5796 → 5798), so Leg B moves the FETCH, not
+# the job — same split as the Leg A watchdog pilot and the sibling
+# prod-deploy-event-collector orchestrator:
+#
+#   - THIS workflow (hosted): checks out at the fire's SHA on GitHub's
+#     healthy egress, stages the two payload scripts PRESERVING their
+#     scripts/lib/ layout (collect_prod_run.sh resolves its repo root two
+#     directories above itself and calls
+#     $REPO_ROOT/scripts/lib/collect_prod_events.py — a flat payload would
+#     strand collector 2 with a missing-collector error on every fire),
+#     plus a sha256 manifest, as a workflow artifact; then
+#     repository_dispatches the self-hosted executor with (run-id, sha)
+#     provenance.
+#   - collect-prod-deploy-events-executor.yml (self-hosted): downloads the
+#     artifact over the runner's own job channel — zero fetches by
+#     construction.
+#
+# Both trigger sources move here VERBATIM from the pre-split
+# collect-prod-deploy-events.yml: the */5 schedule (KR-COMPANY-3 is a
+# weekly metric; 5-min nominal stays well under the GHA budget) and the
+# manual workflow_dispatch door.
+# =============================================================================
+
+name: Collect Production Deploy Events Orchestrator
+
+on:
+  schedule:
+    # Every 5 minutes — KR-COMPANY-3 is a weekly metric so 5-min granularity
+    # is more than enough (and stays well under the GHA free-tier budget).
+    # Moved verbatim from collect-prod-deploy-events.yml by NFM-5798 P2 Leg B.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  # The dispatch POST to the executor needs contents: write (Leg A review
+  # 8fecf232 pt 3); the checkout rides the same token.
+  contents: write
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (hosted — healthy egress lane)
+        uses: actions/checkout@v7
+
+      - name: Stage collector payload
+        run: |
+          set -euo pipefail
+          mkdir -p payload/scripts/lib
+          cp scripts/lib/collect_prod_run.sh payload/scripts/lib/collect_prod_run.sh
+          cp scripts/lib/collect_prod_events.py payload/scripts/lib/collect_prod_events.py
+          (cd payload && sha256sum scripts/lib/collect_prod_run.sh scripts/lib/collect_prod_events.py > MANIFEST.sha256)
+          echo "payload staged from $GITHUB_SHA:"
+          cat payload/MANIFEST.sha256
+
+      - name: Upload payload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: collect-events-payload
+          path: payload/
+          retention-days: 7
+
+      - name: Dispatch self-hosted executor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/dispatches" \
+            -f event_type=nfmd-collect-events-exec \
+            -F 'client_payload[orchestrator_run_id]=${{ github.run_id }}' \
+            -F 'client_payload[sha]=${{ github.sha }}'
+          echo "dispatched nfmd-collect-events-exec (orchestrator run ${{ github.run_id }} @ ${{ github.sha }})"

@@ -298,3 +298,19 @@ class TestCeleryBeatIntegration:
         ):
             await orchestrator.sync_all_active_jobs()
             assert mock_update.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_sync_all_active_jobs_raises_when_listing_fails(self):
+        """NFM-5331 monitoring hole: listing failures must not be swallowed."""
+        orchestrator = _make_orchestrator()
+
+        with (
+            patch.object(
+                orchestrator,
+                "_get_active_jobs",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("DB connection failed"),
+            ),
+            pytest.raises(RuntimeError, match="DB connection failed"),
+        ):
+            await orchestrator.sync_all_active_jobs()

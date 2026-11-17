@@ -71,7 +71,7 @@ Alembic is the only migration runner in production. The two `apps/api/scripts/mi
   - It runs `alembic heads` inside the candidate image and asserts exactly one head.
   - A failure of any assertion exits the workflow with a distinct exit code; the `deploy-prod` job is `needs: [pre-deploy-assert]` and is skipped on assertion failure.
 - **D3**
-  - `docker/prod-api.Dockerfile` `CMD` is `["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]` (no `alembic upgrade head`).
+  - `docker/prod-api.Dockerfile` `CMD` is `["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75"]` (no `alembic upgrade head`; the keep-alive pin is NFM-5274 — the server must never close an idle connection inside the Node proxy's socket-reuse window, guarded by `apps/api/tests/compose/test_api_keepalive_timeout.py`).
   - The deploy-prod workflow runs `alembic upgrade head` against the prod DB before the `docker compose up -d` step. It uses an advisory lock or a deploy-time marker (e.g. a `nfmd_deploy_lock` row) to prevent concurrent migrators (cron jobs, manual operator ssh, parallel CI).
   - The worker's `command:` is updated to drop any migration reference (it inherits the api image and currently uses the api image's CMD via compose defaults — verify no per-service override exists).
 - **D4**

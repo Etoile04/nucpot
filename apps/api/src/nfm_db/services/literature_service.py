@@ -963,7 +963,7 @@ async def process_literature(db: AsyncSession, datasource_id: UUID) -> dict[str,
             # --- Step 5: build KG nodes/edges -------------------------
             from nfm_db.services.kg_re import GraphBuilder
 
-            builder = GraphBuilder(db, sync_to_age=False)
+            builder = GraphBuilder(db)
             build_result = await builder.build_from_extraction(raw_properties, source_id=ds.id)
             # NFM-3888 / NFM-3892: per-stage counter for the
             # GraphBuilder build so a nodes_created=0 + nodes_matched=0

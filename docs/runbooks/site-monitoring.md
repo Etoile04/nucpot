@@ -1,0 +1,611 @@
+# Site Monitoring — Two-Lane Architecture & Cadence Contract
+
+Owners: SRE (detection/paging) · Lead Engineer (workflow & detector code)
+References: NFM-18 (original monitor) · NFM-3337 (stale-container watchdog) ·
+NFM-5226 (starvation root cause + on-host sentinel) · NFM-5270 (AutoVC target
+fix) · **NFM-5309 (this contract + cadence watchdog)**
+
+## 1. The two lanes
+
+| | Primary (latency-critical) | Supplementary (this workflow) |
+|---|---|---|
+| Component | `~/bin/nfm-site-monitor.sh` launchd agent (NFM-5226) | `.github/workflows/site-monitor.yml` |
+| Cadence | 5 min (host cron — not starvable by GitHub) | Hourly nominal `23 * * * *` (the `17 */6` watchdog entry moved to `site-monitor-watchdog-orchestrator.yml`, NFM-5798 P2) |
+| Realistic delivery | 5 min (verified) | **~8 events/day** under chronic starvation |
+| Detection contract | ≤10 min worst case (2-probe P0 confirm) | Best-effort; no latency contract |
+| Vantage | The Mac Studio host (inside the tunnel) | **GitHub's network — outside the tunnel** |
+| Alerting | Sentinel log → SRE heartbeat (2h) | GitHub issue (`issues:write`, P0 label) |
+| Covers | All `scripts/health_check.py` targets | Public edge from outside + watchdog-executor health (runs-API staleness eye, NFM-5798 P2); the 6h container sanity itself now runs via the orchestrator/executor split (§9) |
+
+The lanes fail independently: the GitHub lane is the only *external-vantage*
+probe, which is why it is kept despite starvation — but nothing latency-
+critical may depend on it.
+
+## 2. Scheduled-event starvation (the constraint that shaped this)
+
+GitHub drops the overwhelming majority of this repo's scheduled events
+upstream of run creation — chronic, repo-wide, frequency-independent:
+
+| Window | `*/10` monitor nominal 144/d | delivered | `17 */6` watchdog nominal 4/d | delivered |
+|---|---|---|---|---|
+| W39 census (NFM-5226) | 144/d | ~11/day | 4/d | — |
+| W40 census (NFM-5309, 09-28→10-05) | 144/d | **7.9/day (5.5%)**, per-day 7/9/8/7/8/10/8/1 | 4/d | **5 runs in 14d (~9%)** |
+
+All delivered runs succeed — the jobs never fail; the events never arrive.
+Consequences:
+
+- Higher-frequency crons buy **nothing** (delivery is ~8/day regardless), so
+  NFM-5309 dropped the nominal from `*/10` to hourly. The workflow header now
+  documents this; do not "restore" `*/10`.
+- The `17 */6` entry's literal **was** load-bearing (the watchdog job's `if:`
+  string-matched `github.event.schedule == '17 */6 * * *'`). NFM-5798 P2
+  Leg A removed that guard with the diversion (§9): the 6h cron now lives in
+  `site-monitor-watchdog-orchestrator.yml` and the executor is
+  dispatch-only — there is no literal pair left to keep in sync, and the
+  dispatch-skip trap (RE smoke 41465022940) is structurally impossible.
+- Demonstrated cost of the blind spot: the 10-01 AutoVC SSL-EOF P0
+  (NFM-5277, 18 min) was retro-filed ~2.5 h later instead of live-caught.
+
+## 3. Cadence watchdog (under-firing now pages)
+
+`scripts/site_monitor_cadence_check.py` — runs **outside** GitHub Actions
+(a starved scheduler cannot be its own watchdog), installed via
+`scripts/cron/site-monitor-cadence.cron` (every 4h at :41).
+
+```
+python3 scripts/site_monitor_cadence_check.py --json   # SRE §3 census record
+# verdicts: OK · WARN (<4 runs/24h) · CRITICAL (0 runs/24h or newest >18h old)
+# exit codes: 0 OK · 1 execution error (never a cadence page) · 2 WARN · 3 CRIT
+```
+
+Thresholds are census-derived (baseline ~8/day): WARN at half-baseline,
+CRITICAL on silence. Tune via `--warn-below/--crit-below/--max-silence-hours`
+only with a fresh `--json` census in hand. Logic is unit-tested in
+`scripts/tests/test_site_monitor_cadence_check.py` (including the gh
+`--created` exact-day-filter trap the first implementation hit).
+
+## 4. KR-SRE-5 evaluation note (for SRE adjudication)
+
+The re-check criterion "≥50% cadence sustained" was written against the
+`*/10` nominal. Against the honest hourly schedule (28/day nominal with the
+watchdog entry; 24/day since NFM-5798 P2 moved it out — §9), current
+delivery (~8/day) is ~29% of nominal — the fraction
+does not magically improve by lowering the denominator, and it should not be
+gamed by starving the nominal further. Recommended reading: evaluate KR-SRE-5
+Green on (a) the cadence watchdog reading OK continuously, or (b) the next P0
+being live-caught by either lane — both already encoded in the NFM-5309
+re-check clause. The KR definition is SRE's to adjudicate; this note only
+flags the denominator change.
+
+## 5. GitHub Support escalation bundle (Lane 2 — owner action)
+
+Filing a support ticket requires the repo owner's account; Lead Engineering
+prepared this bundle for the CTO/owner to file as-is.
+
+- **Repo/workflow:** `Etoile04/nucpot` · `site-monitor.yml` (workflow id
+  295249236, state active) · default branch schedules only.
+- **Claim:** since at least 2026-09-14, scheduled events are delivered at
+  ~5–9% of nominal across ALL scheduled workflows in the repo,
+  frequency-independent (~8 events/day aggregate per workflow), while
+  non-scheduled Actions run normally.
+- **Evidence (repro):**
+  ```
+  gh run list --workflow site-monitor.yml --created "2026-09-28..2026-10-05" \
+    --json createdAt,conclusion   # → 58 runs, all success; 7.9/day vs 144/day
+  gh run list --workflow collect-prod-deploy-events.yml ...   # */5 → ~9/35h
+  gh run list --workflow update-stale-prs.yml ...             # hourly → 23%
+  ```
+- **Ruled out (NFM-5226 diagnosis):** runner capacity (0s queue times),
+  billing (public repo), repo-wide Actions outage (dispatch/other events
+  fine), workflow syntax (delivered runs succeed 100%).
+- **Ask:** confirm whether this repo is subject to scheduled-event
+  throttling, and what delivery floor GitHub commits to.
+
+## 6. Re-check protocol
+
+Per NFM-5309: 7 days after this lands, SRE re-censuses
+(`site_monitor_cadence_check.py --json`). Success = watchdog reads OK for the
+window (no WARN/CRIT) AND no monitoring-blindness incident recurred; the
+`*/10`-era expectation of 144/day is retired with this contract.
+
+## 7. Sentinel chunk-scan degraded contract (NFM-5446)
+
+The host sentinel's NFM-5418 chunk-ref scan (5 edge-HTML pages + ref HEAD
+verification) failed OPEN until 2026-10-11: it ran serially under a 240 s
+deadline, and on deadline expiry it recorded `0 0 scan-deadline-exceeded
+(fail-open)` as GREEN. During diurnal edge-interference windows
+(NFM-5262, 5-10.4 s/request) the serial scan could never fit 240 s, so
+BOTH watched lanes — P1 stale 1y-pins and P0 dead chunk refs — went
+unverified while the sentinel read green for hours (observed: ~30
+consecutive probes / 3 h 46 m with four pages still 1y-pinned).
+
+Post-NFM-5446 contract (`scripts/nfm-site-monitor.sh`, mirrored to
+`~/bin/nfm-site-monitor.sh`):
+
+- **Parallel scan**: page GETs and ref HEADs (pool of 24, NFM-5490) run concurrently
+  under one wall budget; the 240 s SIGALRM remains only as a backstop for
+  pathological hangs.
+- **Fail-closed-or-unknown**: a scan that cannot complete reports
+  `scan-degraded` with rc 3 (`--scan-once` exit 3) — never green. Coverage
+  caveats are explicit (`refs-unverified=N` — including refs beyond the
+  per-page cap of 45 distinct refs, `page-fetch-skipped=…`, `all page
+  fetches failed`).
+- **TTL spot-check lane (always runs)**: each page's s-maxage/age verdict is
+  captured from response headers before the body read, so stale-pin P1
+  detection survives ref-budget exhaustion — pins surface as WARN even
+  during degraded scans.
+- **Only 4xx is a definitive dead ref (P0)**; 5xx/network errors count as
+  unverified (transient origin trouble is owned by the base probe lane).
+- **Skip-rate escalation**: `scan_skip_streak` in the sentinel state counts
+  consecutive degraded scans; ≥3 (~15 min at 300 s cadence, matching
+  STALE_SENTINEL_SECONDS) escalates to a CRITICAL `sentinel chunk-scan
+  blind` page (monitoring-blindness class, latched `pending_page`, acked
+  via `--ack-page` like other CRITICALs). A completing scan resets the
+  streak and logs a RECOVERY if it ended a blind episode.
+
+SRE readers: a `WARN — chunk-scan DEGRADED` line means the P0 lane was
+unverified for that cycle (investigate if it persists); `CRITICAL —
+sentinel chunk-scan blind` pages the sentinel itself. The NFM-5418
+close-gate keeps requiring direct fresh-connection reads (s-maxage=300 on
+all watched pages) — sentinel green is necessary, not sufficient.
+
+**REF_CAP tuning (2026-10-11):** the per-page verification cap is a
+green-blocking ceiling — a page carrying more distinct chunk refs than
+REF_CAP truncates the tail into `refs-unverified`, so the scan degrades on
+EVERY cycle and the skip-streak CRITICAL latches permanently. This is
+deterministic (calm edge, all sampled HEADs 200s at 1–2 s), unlike a
+latency-window degradation. Observed: live `/materials` grew to 40
+distinct refs under the original cap of 30 → 10 refs dropped per scan →
+permanent `sentinel chunk-scan blind` from 10:47Z until the cap was raised
+to 45. **Operational rule: `refs-unverified=N > 0` persisting across scans
+while spot-check HEADs are fast means the site outgrew REF_CAP — raise it
+(keep ~10% headroom above the largest page's distinct-ref count) rather
+than acking the page.** Raising the cap increases worst-case scan cost
+(5 × REF_CAP HEADs through the pool); the 240 s budget still bounds it
+and a genuinely slow edge degrades exactly as before.
+
+**Latency hardening (NFM-5490, 2026-10-12):** episodes 1–4 (census: 2/day
+in the NFM-5262 latency regime) were adjudicated benign — P0 lane clean
+mid-blindness, fail-closed intact — but the ep-4 *live* adjudication added
+decisive evidence: patient-client HEADs from the same vantage returned
+40/40 HTTP 200 while the sentinel sat at refs-unverified=38. The blindness
+was partly self-inflicted client fragility, not edge impossibility. The
+HEAD verifier therefore (a) retries TRANSPORT failures once, budget-gated
+(SSL UNEXPECTED_EOF / handshake-reset / tail-latency timeout — the ep-4
+class), (b) runs REF_TIMEOUT at 15 s to cover the observed 5–10.4 s
+diurnal tail (was 8 s — below the tail, so the whole window converted to
+unverified), and (c) pools 24 parallel HEADs (was 12) so ~150 scan-wide
+refs at 5–10 s each still drain inside the post-page-stage budget. Verdict
+semantics are unchanged: a definitive 4xx is still an immediate P0, a 5xx
+is still unknown (base-probe lane owns outages), and persistent transport
+failure or budget exhaustion still degrades fail-closed — the retry can
+only convert a genuinely-recovered transport error into a real 200, never
+manufacture a false green. This is deliberately the OPPOSITE direction
+from the NFM-5488-rejected skip-rate allowance: verify more, never mask.
+The monitor User-Agent stays byte-identical — it selects the edge's
+monitor-UA HTML variant, and changing it would reset the pin-aging the
+TTL lane watches.
+
+**Page-lane retry (NFM-5572, 2026-10-18):** the 2026-10-17 mode-B census
+(7 `page-fetch-skip` cycles in one day, adjudicated in NFM-5571; every
+event carried refs-unverified=0, i.e. ~150 ref HEADs verified in-budget in
+the same cycles) showed the page GET lane had the exact defect shape
+NFM-5490 fixed for ref HEADs: one transport exception on ONE page GET
+(diurnal tail timeout / connection reset / TLS-EOF) → `page-fetch-skipped`,
+fetches=4/5, that page's chunk refs unverified for one self-healing 5-min
+cycle. `fetch_page()` now retries ONCE on transport exception only, gated
+against PAGE_STAGE_BUDGET (one more full PAGE_TIMEOUT must fit); a
+definitive HTTP verdict is never retried away, and a skip after the retry
+still counts as skipped — the retry can only turn a genuinely-dead
+transport error into a real 200, never a false green. Worst case +15 s per
+page; the 90 s stage budget and 240 s DEADLINE are unchanged. All 7 of the
+10-17 skips recovered on the immediately following cycle, so a single
+retry collapses most events; post-deploy, page-fetch-skip day-counts
+should return to the ≤1/day band (10-14..10-16 base rate).
+
+**Adjudication extraction note (ep-4 playbook addition):** RSC-payload
+(`self.__next_f`) chunk refs are JSON-escaped (`…js\"`). A naive
+`[^"']+` capture includes the trailing backslash → HEADing `URL\` yields
+phantom 404s (ep-4: 34 apparent dead refs → 0 real after
+`rstrip('\\')`). The sentinel's own `ref_re` character class cannot
+capture a backslash, so shipped extraction is immune; manual/ad-hoc
+adjudication regexes must normalize before HEADing.
+
+**Egress independence (ADR-023 / NFM-5542, 2026-10-15):** SUPERSEDED —
+the 2026-10-14 site-monitor blind windows earlier attributed to CN-side
+ClientHello DPI were LOCAL proxy-vantage defects (the sentinel's python
+lanes rode the macOS system proxy, v2cloud `127.0.0.1:7892`; see
+`docs/adr/ADR-023-NFM-5540-sentinel-egress-independence.md`). This
+supersession is site-monitor-scope only — ADR-013's broker/GitHub DPI
+rulings are a different subsystem and remain valid. Post-ADR-023 the
+sentinel's python egress is DIRECT as the primary lane everywhere
+(no-proxy openers in `health_check.py` and the scan heredoc; wrapper
+exports `no_proxy='*'` as defense-in-depth), so a VPN flap can no longer
+blind any lane. Every sentinel run logs a `proxy-state` line at startup
+and every degraded cycle carries `scutil-proxy: …` adjacent to its
+`mode=/fetches=` evidence: **the next flap adjudicates host-egress vs
+edge in one log line** — a healthy scutil proxy state on a mode-A blind
+cycle points at the direct lane/edge, an unhealthy one at host egress.
+The NFM-5525 confirmation ladder stays as the failure-path cross-check
+for direct-lane transients.
+
+## 8. Path-independent reference battery (NFM-5708 / NFM-5706)
+
+Motivation: the 2026-10-24 15:46–16:33Z multi-route P1 burst was
+indistinguishable from site-side degradation without a MANUAL reference
+battery — both sentinel hostnames ride ONE CN-to-CF-AMS transit path, so
+multi-hostname ≠ multi-path. Post-NFM-5708 the monitor runs a reference
+battery on every real-probe tick and classifies each nucpot DEGRADE tick
+against it.
+
+- **Lanes** (3 parallel lightweight GETs riding the existing 300 s tick —
+  no new schedule/daemon; worst case +REF_TIMEOUT per tick): int'l CF-edge
+  (`www.cloudflare.com`), int'l non-CF (`ghcr.io`), CN-domestic control
+  (`mirrors.ustc.edu.cn`; NFM-5712 swap 2026-10-25 — tuna.tsinghua.edu.cn
+  proved permanently unreachable from this vantage). Roles are fixed — the
+  classifier depends on
+  them. Egress is DIRECT per [ADR-023](../adr/ADR-023-NFM-5540-sentinel-egress-independence.md)
+  (no-proxy opener primary, wrapper `no_proxy='*'` defense-in-depth), so a
+  VPN flap cannot fake a brownout. Redirects are disabled: a 30x/4xx/5xx
+  is a definitive transport verdict and counts as a healthy path sample;
+  only transport failure reads UNAVAILABLE — a distinct token, so the
+  battery never emits `FAIL` and naive `grep FAIL` beat scans (NFM-4951
+  class) stay clean while only a reference is unreachable.
+- **Baselines** are per-ENDPOINT RELATIVE EMAs in
+  `~/.nfm-site-monitor.ref.state` (own file — the main state family is
+  untouched). A lane is slow iff the sample ≥ 2.5× that host's OWN EMA
+  (`NFM_REF_SLOW_RATIO`), never an absolute latency. Per-host outcome is
+  three-valued (NFM-5712): COMPLETED (any received HTTP status — 2xx/3xx/4xx
+  all count as a latency sample) / SLOW (completed but over the relative
+  threshold) / UNAVAILABLE (connection-level failure: URLError, TLS, no
+  response). A failed probe never touches the baseline and reads
+  UNAVAILABLE — never slow — so a dead lane can never manufacture
+  slow-based classes. Warmup is ATTEMPT-based (≥ `NFM_REF_BASELINE_MIN`=10
+  attempts): a permanently unreachable lane cannot hold the battery in
+  warmup forever, and during warmup the battery never suppresses a page.
+  The state file carries a `<lane>_url` marker per lane: re-pointing a lane
+  at a different URL starts a FRESH baseline (stale prior-host entries are
+  dropped on the next rewrite), so after an endpoint swap expect a fresh
+  warmup (~50 min at 300 s cadence) for the swapped lane, during which the
+  domestic leg records only — warmup dominates the batclass, so the battery
+  emits no confident verdict until the new EMA forms.
+- **Classification** rides every nucpot DEGRADE log line as
+  `[NFM-5706 class=<C>; refs: <per-host timings>]`. Full hint enum (CPO
+  charter addendum, folding NFM-5707): `TRANSIT_BROWNOUT` / `SITE_SIDE` /
+  `CN_DOMESTIC` / `clean`, with `UNCLASSIFIED` as the fail-open floor.
+  The internal battery verdict (`batclass=` in `--ref-probes-once`)
+  additionally carries `control_unavailable` — the CN-domestic control
+  lane failed at the transport level (see below):
+  - `TRANSIT_BROWNOUT` — nucpot slow + ALL int'l refs slow + domestic
+    pristine on a TRUSTED baseline (an untrusted-but-succeeding dom lane
+    reads slow=0 at any latency — its EMA may be seeded mid-degradation —
+    so it must not satisfy the conjunct; the verdict falls back to
+    mixed ⇒ `UNCLASSIFIED`, paging fail-open) ⇒ shared CN→int'l transit
+    trouble, NOT site-side: LOG-ONLY WARN, NON-PAGING, no SRE wake
+    (ruling 5206262b(d) + NFM-5705 R5). It
+    gates ONLY the streak≥2 base-lane CRITICAL page; the failure streak
+    keeps counting, so the existing page fires the moment transit recovers
+    or the classification clears — suppression can only DELAY the page,
+    never consume it.
+  - `SITE_SIDE` — refs pristine while nucpot degraded ⇒ the §1 detection
+    contract and watch-line escalation apply unchanged; the class token
+    and reference latencies ride the log lines as evidence.
+  - `CN_DOMESTIC` — the CN-domestic control (ustc) COMPLETED but slow
+    (NFM-5712: a control that failed at the transport level reads
+    UNAVAILABLE, never this class) ⇒
+    HINT class: int'l comparison is UNRELIABLE in that state (domestic
+    trouble usually slows the int'l lanes too), so the tick is not
+    force-fit into the two main classes. NO suppression — existing paging
+    path runs fail-open exactly like UNCLASSIFIED; the evidence token
+    carries `(intl comparison unreliable)`.
+  - `clean` — battery verdict when ALL lanes are pristine (observable as
+    `batclass=clean` in `--ref-probes-once` output). On a nucpot DEGRADE
+    tick a clean battery maps to `SITE_SIDE`. On a GREEN tick a clean
+    battery logs nothing (OK lines byte-stable); a CONFIDENT non-clean
+    verdict (`intl_brownout` / `cn_domestic`) logs one `NOTE — ref-battery`
+    line — recording only, zero page implications. This covers the
+    "int'l degraded but nucpot clean" observability row. Likewise, an
+    UNAVAILABLE control on an otherwise classifiable tick logs one
+    `NOTE — CONTROL_UNAVAILABLE` line (recording only, non-paging): the
+    domestic-pristine precondition is unverifiable, so `TRANSIT_BROWNOUT`
+    is unemittable that tick and the DEGRADE classification falls to
+    `UNCLASSIFIED` fail-open; an UNAVAILABLE int'l lane likewise forces
+    mixed ⇒ `UNCLASSIFIED` — suppression needs certainty, so a transport
+    failure can never manufacture the ALL-int'l-slow conjunct.
+  - `UNCLASSIFIED` — battery cannot testify (warmup / mixed int'l
+    evidence / internal error) ⇒ existing paging path runs fail-open.
+- **Replay validation (10-24 window):** the classifier is pinned by a
+  table-driven replay of the documented 2026-10-24 15:35–16:32Z burst
+  (cloudflare 8.25/3.54/3.01 s vs sub-second norm; ghcr.io 2.15 s vs
+  0.77 s baseline; tuna 0.19 s pristine; nucpot degraded ⇒ must classify
+  `TRANSIT_BROWNOUT`) plus the boundary rows (control completed-but-slow +
+  nucpot degraded ⇒ `CN_DOMESTIC`; all clean ⇒ `clean`/`SITE_SIDE`; int'l
+  degraded + nucpot clean ⇒ green-tick NOTE). The replay pins the 10-24
+  control host (tuna) as historical data; NFM-5712 adds truth-table rows
+  for the three-valued control semantics (control FAIL ⇒ never
+  `CN_DOMESTIC`, `TRANSIT_BROWNOUT` unemittable, one recording-only
+  `CONTROL_UNAVAILABLE` NOTE on green ticks). Run:
+  `python3 -m pytest scripts/tests/test_nfm5708_replay_20261024.py -v`.
+- **SRE diagnostic:** `--ref-probes-once` runs the battery once, prints
+  per-host timings + classification tokens, and updates ONLY the reference
+  baselines — never the main state (rc 0 ran / 3 internal error).
+- Suppressed (brownout) ticks do not advance the reminder clock, so the
+  first post-suppression CRITICAL is labeled correctly.
+- Tunables: `NFM_REF_TIMEOUT`, `NFM_REF_SLOW_RATIO`,
+  `NFM_REF_BASELINE_MIN`, `NFM_REF_{CF,NONCF,DOM}_URL`,
+  `NFM_MONITOR_REF_STATE`. Full threshold derivations and the drift policy
+  (ALPHA=0.125 healthy / ALPHA_SLOW=0.03 above-ratio) live in the
+  NFM-5708 header block of `scripts/nfm-site-monitor.sh`.
+
+## 9. Watchdog diversion — hosted orchestrator + checkout-free executor (NFM-5798 P2 Leg A)
+
+The self-hosted watchdog's only failing step was ever its CHECKOUT: the
+hand-rolled bounded git fetch of two self-contained scripts through the
+host's flaky egress lane (NFM-5548 → 5556 → 5796 → 5798; occurrence #8 ran
+a 3-streak, and P1's widened 960s envelope still hard-fails every fetch in
+a dead trough). The checks themselves are read-only docker/host probes that
+need nothing from the repo at runtime, so Leg A moves the FETCH, not the
+job:
+
+- `site-monitor-watchdog-orchestrator.yml` (hosted, ubuntu-latest) — owns
+  the `17 */6` cron (moved verbatim from this workflow) + a
+  `workflow_dispatch` canary door. Checks out at the fire's pinned SHA on
+  GitHub's healthy egress, stages the two payload scripts plus a sha256
+  manifest as the `watchdog-payload` artifact, then `repository_dispatch`es
+  the executor with (run-id, sha) provenance. `contents: write` is required
+  for the dispatch POST.
+- `site-monitor-watchdog-executor.yml` (self-hosted, `[self-hosted,
+  production]`, timeout-minutes 18 carried from the pre-split job) —
+  downloads the artifact over the runner's own job channel
+  (`download-artifact` cross-run with `actions: read`), verifies the
+  manifest, and runs both scripts with the host secrets. ZERO git
+  operations by construction (guarded by
+  `scripts/okr/tests/test_nfm_5798_p2_watchdog_diversion.py`), serialized
+  with `cancel-in-progress: false`. Dispatch-only trigger: the literal-cron
+  `if:` guard that silently skipped the watchdog leg on dispatch (RE smoke
+  41465022940) cannot regress.
+- Blind-spot closure: the hourly hosted `monitor` job reads the Actions
+  runs API for the executor's last SUCCESSFUL run (the run record IS the
+  heartbeat — no write channel) and files/comments an alert under the
+  `monitoring-alert` + `watchdog-stale` labels when no success is newer
+  than 12h (`NFMD_WATCHDOG_STALE_SECS`, 2x the 6h nominal cadence — above
+  the observed ~9h max fire gap under starvation).
+
+Operational notes:
+
+- `repository_dispatch` fires workflows from the DEFAULT branch only — the
+  executor path is exercisable post-merge; the Leg A canary is 3x
+  `workflow_dispatch` on the orchestrator across an egress flap window plus
+  one natural 6h fire green, gating Leg B (the two collectors). The gate
+  completed and was CR-ratified on 2026-11-05 (NFM-5798: natural fires 3/3
+  green, dispatch-entry coverage 3/3, executor execution proven on-host).
+- The cadence watchdog (§3) counts `site-monitor.yml` runs — monitor-only
+  after the split; watchdog cadence is now observed via the orchestrator's
+  run records and the staleness alert.
+- Rollback = revert (no data migrations, no host state changes).
+
+## 10. Collector diversion — hosted orchestrator + checkout-free executors (NFM-5798 P2 Leg B)
+
+Leg B (2026-11-05, operator card `3e23aa54`) applied the §9 split to both
+collector lanes — the 11-04 runner outage's starved lane (12h+ with no
+collector success, four runs stacked behind an offline host):
+
+- `prod-deploy-event-collector-orchestrator.yml` (hosted) — owns ALL three
+  original triggers verbatim: the `workflow_run` fast path off
+  `Production Deployment` `[completed]` (seconds-after-deploy pickup),
+  the `*/15` cron backstop, and the `workflow_dispatch` door whose
+  `dry_run` input rides the dispatch payload. Stages
+  `scripts/okr/prod_event_collector.py` + sha256 manifest as the
+  `prod-collector-payload` artifact.
+- `collect-prod-deploy-events-orchestrator.yml` (hosted) — owns the `*/5`
+  schedule + `workflow_dispatch` verbatim. Stages
+  `scripts/lib/collect_prod_run.sh` + `scripts/lib/collect_prod_events.py`
+  PRESERVING the `scripts/lib/` layout (the bash glue derives its repo
+  root two directories above itself) as the `collect-events-payload`
+  artifact.
+- `prod-deploy-event-collector-executor.yml` /
+  `collect-prod-deploy-events-executor.yml` (self-hosted,
+  `[self-hosted, production]`, `timeout-minutes: 18` carried) —
+  dispatch-only, zero git operations, manifest-verified payload
+  (`cancel-in-progress: false` is load-bearing: the executors append the
+  host-local ledgers, and queued runs DO get cancelled externally). The
+  host-bound resources stay host-side: master JSONL + sync state +
+  loopback SSH target in executor 1, `NFMD_DEPLOY_EVENTS_PATH` /
+  `NFMD_DEPLOY_EVENTS_PROCESSED_PATH` repo vars in executor 2.
+
+The old flat collector workflows are deleted — their triggers moved to
+the orchestrators and nothing consumed their names via `workflow_run`.
+With them go the last bounded-fetch carriers in the repo: the
+NFM-5548/5556/5796/5796-contract guard modules retired with their
+subjects, and the global "no workflow fetches on-host" invariant is
+pinned by
+`scripts/okr/tests/test_nfm_5798_p2_collector_diversion.py` +
+`test_nfm_5798_p2_watchdog_diversion.py`. P1's widened bounds remain
+defense-in-depth in git history (rollback = revert restores the
+workflows and guards together). Recovery playbook: see
+`docs/skills/self-hosted-runner-recovery.md`.
+
+### 10.1 Collector alerting transport (NFM-5936)
+
+The collector's three alert call sites (`alert_bad_fragment`,
+`alert_append_failure`, `alert_pending_failure` from NFM-5934's tripwire)
+have TWO transports, picked at fire time:
+
+1. **Feishu webhook (preferred)** — `ALERT_WEBHOOK` repo secret, wired in
+   the executor as `${{ secrets.ALERT_WEBHOOK }}`. While the secret is
+   unset this transport is skipped.
+2. **Dedup-keyed gh-issue fallback (NFM-5936)** — runs whenever the secret
+   is unset. ONE OPEN issue per alert class, titled
+   `[collector-alert] <class>` (`bad-fragment`, `append-failure`,
+   `pending-stall-<stage>`), labeled `collector-alert`. First fire creates
+   the issue; later fires of the same class comment into it until a human
+   closes it — closing resets the dedup key, so the next fire starts a
+   fresh issue. Dedup = exact-title scan over the newest 100 open
+   issues/PRs (PR titles never match). Uses the workflow `GITHUB_TOKEN`
+   (executor carries `issues: write` — no new secrets, no values in
+   logs/bodies). Alerting stays non-fatal: a failed fallback alert never
+   breaks the collect iteration (the stalled non-zero exit remains the
+   load-bearing tripwire surface).
+
+**Secret-route status (2026-11-10, P4):** setting `ALERT_WEBHOOK` is a
+human action — the nucpot-agent GitHub App installation carries no
+`secrets` permission (the secrets API 404s for it), and the SRE/ops
+Feishu-channel webhook URL is human-held. To switch transport: set the
+secret (repo Settings → Secrets and variables → Actions, or
+`gh secret set ALERT_WEBHOOK`) with the channel's webhook URL — never post
+the URL in issues, logs, or tickets. The fallback needs no code change to
+retire: next fire, the webhook path wins and the gh-issue issues simply
+stop growing.
+
+**Self-test door (NFM-5936):** the executor has a manual
+`workflow_dispatch` trigger that fires ONE `self-test` class fallback
+alert through the real executor context — no collection, no host-state
+writes (it runs before any sync-state/master/SSH resolution). It REQUIRES
+an `orchestrator_run_id` input naming an orchestrator run whose
+`prod-collector-payload` artifact it downloads and manifest-verifies first
+(the orchestrator gained a `self_test` dispatch input so a branch can
+stage a matching artifact; the artifact collector must carry the
+`--self-test-alert` flag, i.e. the NFM-5936 version). End-to-end proof =
+issue created + a second dispatch dedup'd into it. Close the
+`[collector-alert] self-test` issue after evidence capture so it never
+accumulates.
+
+**Rollback note (repo-only change, no host-level deltas):** revert the
+NFM-5936 PR. Pre-P4 behavior returns (alerts silently no-op while
+`ALERT_WEBHOOK` is unset); master JSONL / sync-state semantics are
+untouched by P4 by construction — the alert path never writes host state.
+
+### 10.2 Master-stall tripwire (NFM-5937)
+
+Parent NFM-5931 acceptance: warn when the newest master event is older
+than **7 days** WHILE production deploys ran in that window — the
+"deploys ran, capture silently stalled" signature (the 09-07 → 11-11
+stall was invisible for a month). The tripwire runs as its own executor
+step (`Master-stall tripwire (NFM-5937)`) on every collector fire, after
+the collect step:
+
+- **Condition (both required):** newest master event age > 7d
+  (strict — exactly 7d is not a stall), AND ≥ 1 completed
+  `Production Deployment` run created strictly after that newest event.
+  Any completed conclusion counts (`failure` / `cancelled` included):
+  a weather-killed deploy that still produced no event is exactly the
+  stall signature.
+- **Read-only vs master** (parent NFM-5932 hard constraint): the check
+  reads the master JSONL (max-`ts` scan, torn-tail tolerant); it never
+  appends, never touches sync-state or the failure sidecar, no SSH hop.
+  Master writes stay flock/reviewed-only.
+- **Transport:** rides §10.1 unchanged — Feishu webhook when set, else
+  the dedup-keyed `[collector-alert] master-stall` gh-issue (ONE open
+  issue per class, later fires comment into it).
+- **Scheduling:** rides the orchestrator's `*/15` backstop +
+  `workflow_run` fast path — no new schedule, no new workflow.
+- **Exit semantics:** fires → alert + `exit 1` from the tripwire step
+  (loud secondary surface, mirroring the collect-path tripwire
+  contract); silent → `exit 0`. The step runs on collect FAILURE via
+  `(success() || failure())` — a dead collect loop is when the signal
+  matters most — but keeps the manifest-verify gate as a first-class
+  condition (the Leg A provenance invariant: no bare `always()` on
+  payload steps). Skipped entirely in self-test mode (§10.1's door stays
+  single-purpose).
+- **Undefined state:** a missing/empty/unparseable master file leaves
+  the age rule undefined — the tripwire stays silent and says so on
+  stdout (total-capture loss is owned by the collect-path
+  `bad-fragment`/`append-failure` alerts).
+
+**Forced-old-state probe door:** run on the host with
+`--tripwire-max-age-days 0` — the age gate collapses and any completed
+in-window deploy run trips the real dedup-keyed alert (issue
+`[collector-alert] master-stall`), end-to-end, without writing anything
+to master. Close the probe issue after evidence capture so the dedup key
+resets.
+
+**Tests:** `scripts/okr/tests/test_nfm_5937_tripwire.py` (condition
+truth table incl. strict-boundary + zero-threshold probe door, torn-tail
+master reads, window listing filters + pagination, transport-priority
+mirror of §10.1, CLI dispatch/exit codes, executor step wiring +
+provenance gate).
+
+**Rollback note (repo-only change, no host-level deltas):** revert the
+NFM-5937 PR. The executor loses the tripwire step; no host files change
+(the tripwire exists only inside the staged payload + workflow), master
+and sync-state semantics are untouched by construction.
+
+## 11. Three probe lanes & the PARTIAL_DEGRADED classification (NFM-5876)
+
+Child of NFM-5872 (CTO ruling R4-3 on NFM-5862, 2026-11-07). The sentinel's
+per-tick classification now runs over THREE probe lanes, measured every tick
+with no new probe requests:
+
+| Lane | Probes | Mechanism / egress |
+|---|---|---|
+| **origin-direct** | `http://localhost:3000/` + `/browse` (the originService targets) | NFM-5797 discriminator, curl `--noproxy '*'`; localhost never transits a proxy (pin is defense-in-depth) |
+| **edge-tunnel** | `https://nucpot.dpdns.org/api/v1/health` — the **uncached API path through the edge hostname**; proven to transit the tunnel (returned 530 during the NFM-5862 e7/e8 windows) | the EXISTING "Backend API Health" P0 target — verified + extended per the scope guard, not duplicated; `NO_PROXY_OPENER` direct fetch under the wrapper's `no_proxy='*'` export (ADR-023/NFM-5542) |
+| **edge-cached** | Frontend Homepage + Frontend Browse Page HTML (edge-cached, `s-maxage=1800`); a chunk-scan `edge-html-desync` synthesis also counts as cached-lane failure | same direct-pinned python fetch (ADR-023) |
+
+Contract amendment (NFM-5797 → NFM-5876): the origin lane was evidence-ONLY;
+it now also gates the PARTIAL_DEGRADED conjunct (origin must be green for
+PD). It still never feeds streaks, state, or paging of its own.
+
+### Per-tick verdict line (AC1)
+
+Every real-probe tick (green and degrade alike) logs, before the summary
+line:
+
+```
+LANES — origin=ok edge-tunnel=ok edge-cached=ok verdict=ALL_OK [NFM-5876]
+LANES — origin=ok edge-tunnel=fail(HTTP 530:) edge-cached=ok verdict=PARTIAL_DEGRADED [NFM-5876]
+```
+
+The OK/WARN/CRITICAL summary line stays the tick's newest line (liveness
+read) and green OK lines stay byte-stable (NFM-5708 convention). The
+scan-blind exits (NFM-5446/NFM-5497) keep their early-exit shape — no LANES
+line on those CRITICAL exits.
+
+### Classification matrix
+
+| origin | edge-tunnel | edge-cached | Verdict | Behavior |
+|---|---|---|---|---|
+| ok | fail | ok | **PARTIAL_DEGRADED** | tunnel dark, users shielded by cache — see page rule below |
+| * | fail | fail | FULL_EDGE_OUTAGE | existing CRITICAL path byte-identical (streak≥2 lane + NFM-5666/5667 streak-1 rule untouched) |
+| ok | ok | ok | ALL_OK | OK (unchanged) |
+| fail | ok | ok | ORIGIN_DEGRADED | evidence only (probe green); existing path |
+| * | ok | fail | CACHED_DEGRADED | existing P1/P0 path (latency, stale pins, desync synthesis) |
+| fail | fail | ok | MIXED | fail-open: existing path (PD requires origin green) |
+| unknown | * | * | UNCLASSIFIED | fail-open: garbled tables keep the existing p0-unknown path |
+
+Fail-closed direction: PD can only relabel an already-failing P0 probe, and
+only when the cache shield is PROVEN (both cached lanes green from this
+vantage) and the origin is green. PD and the streak-1 full-edge rule are
+mutually exclusive by construction: PD requires both cached lanes green,
+capping edge failures at 4/6 — under the streak-1 conjunct of ≥5/6.
+
+### PARTIAL_DEGRADED page rule (NFM-5666 discipline for the new class)
+
+- **WARN immediately** at streak 1 (`WARN — PARTIAL_DEGRADED … page at
+  streak 2`).
+- **PAGE at streak 2**: `CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule …)`
+  + local notification + `pending_page` latch — so the NFM-5262
+  missed-page reconciliation (retro-file on self-recovery, `--ack-page`)
+  applies unchanged; REMINDER_RUNS reminder cadence while it persists.
+- TRANSIT_BROWNOUT precedence: the NFM-5706 brownout suppression is
+  evaluated first and still gates any page — an active brownout can only
+  DELAY a PD page, never consume it.
+- This is the NFM-5666 page-rule family extended by one class: full-edge
+  streak-1 (NFM-5666/5667), full-edge streak≥2 (NFM-5226 base lane), and
+  now PARTIAL_DEGRADED streak-2 (NFM-5876).
+
+### State, warmup, scope
+
+- No new state file: PD rides the existing streak/since_remind/pending_page
+  machinery, so RECOVERY, PAGE-UNACK and `--ack-page` behave uniformly
+  across alert classes.
+- No timed warmup of any kind (NFM-5862 ruling item b): the lane rides the
+  existing 300s cadence and the existing Backend API Health retry +
+  confirmation budget (NFM-5279/NFM-5525 ladder unchanged).
+- Scope guards: origin/cached probe targets and cadence unchanged; the
+  pre-existing PAGE-UNACK latch (e7 CRITICAL, 2026-11-06T18:14:58Z) is
+  NFM-5871's, untouched here.
+- Tests: `scripts/tests/test_nfm_site_monitor_three_lane.py` (PD truth
+  table, fail-closed negatives, full-edge/all-OK regression, scan-synthesis
+  classification). Soak gate: NFM-5877 (48h, zero false PARTIAL_DEGRADED
+  pages).

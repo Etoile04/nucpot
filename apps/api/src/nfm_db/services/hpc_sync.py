@@ -20,6 +20,12 @@ def sync_hpc_job_status() -> dict:
     This task is called by Celery beat every 30 seconds to update the status
     of all active HPC jobs in the system.
 
+    Failures raise instead of returning an error dict (NFM-5331 monitoring
+    hole): returning ``{'status': 'error'}`` left the task in celery's
+    SUCCESS state, which kept a 100%-failure beat loop invisible to every
+    watchdog.  A raised exception records a FAILURE state and fires the
+    celery error handlers.
+
     Returns:
         Dictionary with sync status and statistics
     """
@@ -28,53 +34,37 @@ def sync_hpc_job_status() -> dict:
     from nfm_db.services.hpc_ssh import SSHConnectionConfig, SSHConnectionManager
 
     async def _sync_jobs() -> dict:
+        config = SSHConnectionConfig.from_lists(
+            hosts=[os.getenv("NFM_HPC_PRIMARY_HOST", "login.example.com")],
+            username=os.getenv("NFM_HPC_PRIMARY_USER", "user"),
+            ssh_key_path=os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH", "/path/to/key"),
+            max_connections=int(os.getenv("NFM_HPC_MAX_CONNECTIONS", "10")),
+            backup_hosts=[os.getenv("NFM_HPC_BACKUP_HOST", "backup.example.com")]
+            if os.getenv("NFM_HPC_BACKUP_HOST")
+            else None,
+            backup_username=os.getenv("NFM_HPC_BACKUP_USER"),
+            backup_ssh_key_path=os.getenv("NFM_HPC_BACKUP_SSH_KEY_PATH"),
+            failover_threshold_seconds=int(os.getenv("NFM_HPC_FAILOVER_THRESHOLD_SECONDS", "300")),
+        )
+
+        manager = SSHConnectionManager(
+            host=config.hosts,
+            username=config.username,
+            ssh_key_path=config.ssh_key_path,
+            max_connections=config.max_connections,
+        )
+
         try:
-            config = SSHConnectionConfig.from_lists(
-                hosts=[os.getenv("NFM_HPC_PRIMARY_HOST", "login.example.com")],
-                username=os.getenv("NFM_HPC_PRIMARY_USER", "user"),
-                ssh_key_path=os.getenv("NFM_HPC_PRIMARY_SSH_KEY_PATH", "/path/to/key"),
-                max_connections=int(os.getenv("NFM_HPC_MAX_CONNECTIONS", "10")),
-                backup_hosts=[os.getenv("NFM_HPC_BACKUP_HOST", "backup.example.com")]
-                if os.getenv("NFM_HPC_BACKUP_HOST")
-                else None,
-                backup_username=os.getenv("NFM_HPC_BACKUP_USER"),
-                backup_ssh_key_path=os.getenv("NFM_HPC_BACKUP_SSH_KEY_PATH"),
-                failover_threshold_seconds=int(
-                    os.getenv("NFM_HPC_FAILOVER_THRESHOLD_SECONDS", "300")
-                ),
-            )
-
-            manager = SSHConnectionManager(
-                host=config.hosts,
-                username=config.username,
-                ssh_key_path=config.ssh_key_path,
-                max_connections=config.max_connections,
-            )
-
-            try:
-                await sync_all_active_jobs(manager)
-                return {
-                    "status": "success",
-                    "message": "HPC job status sync completed",
-                }
-            finally:
-                manager.cleanup()
-
-        except Exception as e:
-            logger.error(f"HPC job status sync failed: {e}")
+            await sync_all_active_jobs(manager)
             return {
-                "status": "error",
-                "message": str(e),
-                "jobs_processed": 0,
+                "status": "success",
+                "message": "HPC job status sync completed",
             }
+        finally:
+            manager.cleanup()
 
     try:
-        result = asyncio.run(_sync_jobs())
-        return result
-    except Exception as e:
-        logger.error(f"Failed to run job sync: {e}")
-        return {
-            "status": "error",
-            "message": str(e),
-            "jobs_processed": 0,
-        }
+        return asyncio.run(_sync_jobs())
+    except Exception:
+        logger.exception("HPC job status sync failed")
+        raise

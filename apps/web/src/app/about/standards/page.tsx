@@ -7,6 +7,8 @@ export const metadata: Metadata = {
     "NucPot 平台所遵循的数据元数据规范、势函数文件格式、引用与许可口径、参考的国际数据库。",
 }
 
+export const revalidate = 300
+
 // NFM-4991 (IA-REF P2): new /about/standards sub-page (platform-design
 // §1 站点地图 「关于 /about › 标准/规范」). The content here was previously
 // scattered inline across /about landing sections; consolidating it here
@@ -95,10 +97,7 @@ export default function StandardsPage() {
             NucPot 平台所遵循的元数据规范、势函数文件格式、引用与许可口径,
             以及与国际数据库的映射关系。本页内容是平台数据建模、收录与对外
             引用的口径基线,如需新增规范请联系{" "}
-            <a
-              href="mailto:liwenjie@npic.ac.cn"
-              className="text-blue-400 hover:underline"
-            >
+            <a href="mailto:liwenjie@npic.ac.cn" className="text-blue-400 hover:underline">
               liwenjie@npic.ac.cn
             </a>
             。
@@ -107,15 +106,11 @@ export default function StandardsPage() {
 
         {SECTIONS.map((section) => (
           <section key={section.title}>
-            <h2 className="text-2xl font-semibold mb-4 text-gray-100">
-              {section.title}
-            </h2>
+            <h2 className="text-2xl font-semibold mb-4 text-gray-100">{section.title}</h2>
             <dl className="space-y-4">
               {section.items.map((item) => (
                 <div key={item.label} className="border-l-2 border-gray-700 pl-4">
-                  <dt className="text-base font-semibold text-gray-100 mb-1">
-                    {item.label}
-                  </dt>
+                  <dt className="text-base font-semibold text-gray-100 mb-1">{item.label}</dt>
                   <dd className="text-sm text-gray-400 leading-relaxed">{item.body}</dd>
                 </div>
               ))}
@@ -126,15 +121,11 @@ export default function StandardsPage() {
         <section className="rounded-lg border border-gray-700 bg-gray-800/40 p-5">
           <h2 className="text-lg font-semibold mb-2 text-gray-100">数据完整性声明</h2>
           <p className="text-sm text-gray-400 leading-relaxed mb-3">
-            平台对每条势函数条目维护数据完整性元数据(字段完整性、文献关联、
-            文件校验和),具体口径见{" "}
-            <Link
-              href="/about/data-integrity"
-              className="text-blue-400 hover:underline"
-            >
+            平台对每条势函数条目维护数据完整性元数据(字段完整性、文献关联、 文件校验和),具体口径见{" "}
+            <Link href="/about/data-integrity" className="text-blue-400 hover:underline">
               数据完整性
-            </Link>
-            {" "}页面。
+            </Link>{" "}
+            页面。
           </p>
           <p className="text-sm text-gray-400 leading-relaxed">
             API 字段定义见{" "}
