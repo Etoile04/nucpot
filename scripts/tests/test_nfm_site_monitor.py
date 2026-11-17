@@ -84,9 +84,102 @@ def _require_seams() -> None:
     for seam in ("NFM_MONITOR_LOG", "NFM_MONITOR_STATE", "NFM_MONITOR_PROBE", "NFM_MONITOR_NOTIFY"):
         if seam + ":-" not in src:
             pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
-    for seam in ("NFM_SCAN_BASE", "NFM_SCAN_DEADLINE", "NFM_SCAN_REF_POOL"):
+    # NFM-5966: the replica lane must be fully seamable too — a stripped
+    # replica seam would make tests hit the REAL z203 over SSH and write
+    # the PRODUCTION ~/.nfm-site-monitor.replica.state.
+    for seam in (
+        "NFM_MONITOR_REPLICA_STATE:-",
+        "NFM_REPLICA_SSH:-",
+        "NFM_REPLICA_TARGET:-",
+        "NFM_REPLICA_TIMEOUT:-",
+        "NFM_REPLICA_FWD_URL:-",
+    ):
+        if seam not in src:
+            pytest.fail(
+                f"script lost its replica-lane env seam ({seam}) — refusing to run against production"
+            )
+    # NFM-5708: the reference-battery state file is part of the
+    # ~/.nfm-site-monitor.* family and must be seamable like the main state.
+    if "NFM_MONITOR_REF_STATE:-" not in src:
+        pytest.fail(
+            "script lost its NFM_MONITOR_REF_STATE env seam — refusing to run against production"
+        )
+    for seam in (
+        "NFM_SCAN_BASE",
+        "NFM_SCAN_DEADLINE",
+        "NFM_SCAN_REF_POOL",
+        "NFM_REF_CF_URL",
+        "NFM_REF_NONCF_URL",
+        "NFM_REF_DOM_URL",
+    ):
         if f'os.environ.get("{seam}"' not in src:
             pytest.fail(f"script lost its {seam} env seam — refusing to run against production")
+
+
+# -------- NFM-5966 replica-lane stub helpers (shared with the lane suites) ---
+# The replica lane SSHes to z203 on every real-probe tick; in tests the
+# `ssh` binary seam is swapped for an executable stub whose stdout is the
+# canned remote-battery output. The DEFAULT stub (used by the base env
+# fixture) reads units not-found — the NOTE-class, never-WARN verdict — so
+# every pre-existing test stays silent on the replica lane while still
+# exercising its parse path end-to-end.
+
+_replica_stub_counter = iter(range(10000))
+
+
+def replica_battery(
+    rep_load="not-found",
+    rep_active="inactive",
+    fwd_load="not-found",
+    fwd_active="inactive",
+    log_lines=None,
+    fwd_http="500 0.002",
+):
+    """Canned z203 battery stdout (the exact remote-script shape)."""
+    if log_lines is None:
+        log_lines = [
+            "tail: cannot open '/var/log/cloudflared-nucpot-replica.log': No such file or directory"
+        ]
+    return (
+        f"UNIT cloudflared-nucpot-replica.service LoadState={rep_load} ActiveState={rep_active} \n"
+        f"UNIT nfm-origin-forwarder.service LoadState={fwd_load} ActiveState={fwd_active} \n"
+        "LOGSTART\n" + "\n".join(log_lines) + "\nLOGEND\n"
+        f"FWDHTTP {fwd_http}\n"
+    )
+
+
+def reg_log_lines(age_s: int):
+    """A replica log tail whose only registration line is age_s old."""
+    import datetime
+    stamp = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=age_s)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    noise = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=max(age_s - 30, 0))).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    return [
+        f"{stamp} INF Registered tunnel connection connIndex=0 connection=deadbeef-0000-4000-8000-000000000000 event=0 ip=198.41.192.37 location=lax12 protocol=http2",
+        f"{noise} INF Connection terminated connIndex=0",
+    ]
+
+
+def write_replica_stub_ssh(tmp_path, battery_text):
+    """Executable stub `ssh` that prints the canned battery on stdout."""
+    p = tmp_path / f"stub_ssh_{next(_replica_stub_counter)}.sh"
+    p.write_text(
+        "#!/bin/bash\ncat <<'REPLICA_BATTERY_EOF'\n" + battery_text + "REPLICA_BATTERY_EOF\n",
+        encoding="utf-8",
+    )
+    p.chmod(0o755)
+    return str(p)
+
+
+def write_replica_stub_ssh_fail(tmp_path, rc=255):
+    """Stub `ssh` that fails at transport level (no output)."""
+    p = tmp_path / f"stub_ssh_{next(_replica_stub_counter)}.sh"
+    p.write_text(f"#!/bin/bash\necho 'ssh: connect to host z203 port 22: Connection timed out' >&2\nexit {rc}\n", encoding="utf-8")
+    p.chmod(0o755)
+    return str(p)
 
 
 def _ref(i: int) -> str:
@@ -112,6 +205,23 @@ class _MockEdge(BaseHTTPRequestHandler):
         return self.server.config["pages"].get(path)
 
     def do_GET(self):
+        # NFM-5708 reference lanes (path-independent probes): /ref-cf,
+        # /ref-ncf, /ref-dom — per-lane latency/status/drop config so tests
+        # can stage transit brownouts (int'l lanes slow, domestic pristine)
+        # without touching the nucpot page/ref lanes.
+        refspec = self.server.config.get("refs", {}).get(self.path)
+        if refspec is not None:
+            if refspec.get("drop", 0) > 0:
+                refspec["drop"] -= 1
+                self.close_connection = True
+                return
+            time.sleep(refspec.get("lat", 0.0))
+            body = b"pong"
+            self.send_response(refspec.get("code", 200))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith("/_next/static/"):
             self._serve_ref()
             return
@@ -187,6 +297,16 @@ def mock_site(tmp_path):
         },
         "ref_lat": 0.0,
         "ref_status": {},
+        # NFM-5708 reference lanes default to fast/pristine; tests stage
+        # brownouts by raising the two int'l lanes' lat. The 200 ms base
+        # keeps loopback jitter (per-lane overhead swings 50-200 ms under
+        # suite load => worst ~1.7x) well under the script's 2.5x
+        # SLOW_RATIO, while BROWNOUT_LAT (1.5 s) sits ~5x above it.
+        "refs": {
+            "/ref-cf": {"lat": 0.2},
+            "/ref-ncf": {"lat": 0.2},
+            "/ref-dom": {"lat": 0.2},
+        },
     }
 
     class _Srv(ThreadingHTTPServer):
@@ -225,6 +345,21 @@ def env(tmp_path, mock_site):
         "NFM_MONITOR_STATE": str(tmp_path / "monitor.state"),
         "NFM_MONITOR_PROBE": str(probe),
         "NFM_MONITOR_NOTIFY": "/bin/true",
+        # NFM-5708 reference-battery seams: hermetic lanes on the mock edge
+        # (roles: int'l CF-edge / int'l non-CF / CN-domestic control) + an
+        # isolated baseline state file. BASELINE_MIN=3 keeps warmup short in
+        # tests (production default is 10 — see the script header).
+        "NFM_MONITOR_REF_STATE": str(tmp_path / "monitor.ref.state"),
+        "NFM_REF_CF_URL": base + "/ref-cf",
+        "NFM_REF_NONCF_URL": base + "/ref-ncf",
+        "NFM_REF_DOM_URL": base + "/ref-dom",
+        "NFM_REF_TIMEOUT": "5",
+        "NFM_REF_BASELINE_MIN": "3",
+        # NFM-5966 replica-lane seams: isolated replica state file + a stub
+        # `ssh` whose battery reads units not-found (NOTE-class verdict,
+        # never WARN) — pre-existing tests stay silent on the replica lane.
+        "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
+        "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
     }
     yield e
 
@@ -304,7 +439,8 @@ def test_seam_guard_rejects_comment_only_mentions(tmp_path, monkeypatch):
                 "#!/usr/bin/env bash\n"
                 "# mentions NFM_SCAN_BASE NFM_SCAN_DEADLINE NFM_MONITOR_LOG\n"
                 "# NFM_MONITOR_STATE NFM_MONITOR_PROBE NFM_MONITOR_NOTIFY\n"
-                "# NFM_SCAN_REF_POOL in a comment only\n"
+                "# NFM_SCAN_REF_POOL NFM_MONITOR_REF_STATE NFM_REF_CF_URL\n"
+                "# NFM_REF_NONCF_URL NFM_REF_DOM_URL in a comment only\n"
                 "echo prod path\n"
             ),
         ),
@@ -322,10 +458,15 @@ def test_seam_guard_accepts_real_reads(tmp_path, monkeypatch):
             (
                 '#!/usr/bin/env bash\nLOG="${NFM_MONITOR_LOG:-x}"\n'
                 'STATE="${NFM_MONITOR_STATE:-x}"\nPROBE="${NFM_MONITOR_PROBE:-x}"\n'
-                'NOTIFY="${NFM_MONITOR_NOTIFY:-x}"\n'
+                'NOTIFY="${NFM_MONITOR_NOTIFY:-x}"\nREFSTATE="${NFM_MONITOR_REF_STATE:-x}"\n'
+                'REPSTATE="${NFM_MONITOR_REPLICA_STATE:-x}"\n'
+                'RSSH="${NFM_REPLICA_SSH:-x}"\nRTGT="${NFM_REPLICA_TARGET:-x}"\n'
+                'RTMO="${NFM_REPLICA_TIMEOUT:-x}"\nRFWD="${NFM_REPLICA_FWD_URL:-x}"\n'
                 "python3 - <<EOF\nimport os\n"
                 'os.environ.get("NFM_SCAN_BASE")\nos.environ.get("NFM_SCAN_DEADLINE")\n'
-                'os.environ.get("NFM_SCAN_REF_POOL")\nEOF\n'
+                'os.environ.get("NFM_SCAN_REF_POOL")\n'
+                'os.environ.get("NFM_REF_CF_URL")\nos.environ.get("NFM_REF_NONCF_URL")\n'
+                'os.environ.get("NFM_REF_DOM_URL")\nEOF\n'
             ),
         ),
     )
@@ -649,7 +790,7 @@ def test_integration_mode_a_streak_escalates_critical(env, mock_site):
     The degraded cycles are driven by an unreachable base (every page GET
     fails => fetched=0 => mode A), the genuine-edge-down shape.
     """
-    _base, config = mock_site
+    _base, _config = mock_site
     env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"  # nothing listens there
     env["NFM_SCAN_DEADLINE"] = "30"
     r1 = run_script(env)
@@ -699,7 +840,7 @@ def test_integration_mode_a_recovery_and_page_unack_unchanged(env, mock_site):
     """Mode-A recovery semantics are unchanged: a completed scan after a
     mode-A blind CRITICAL logs the same RECOVERY prefix and the PAGE-UNACK
     latch persists until --ack-page."""
-    _base, config = mock_site
+    _base, _config = mock_site
     env["NFM_SCAN_BASE"] = "http://127.0.0.1:1"
     env["NFM_SCAN_DEADLINE"] = "30"
     for _ in range(3):
@@ -749,7 +890,7 @@ def test_integration_mode_b_warn_line_carries_evidence(env, mock_site):
     env["NFM_SCAN_DEADLINE"] = "12"
     r = run_script(env)
     assert r.returncode == 0, r.stdout
-    warn = [ln for ln in log_text(env).splitlines() if "chunk-scan DEGRADED" in ln][0]
+    warn = next(ln for ln in log_text(env).splitlines() if "chunk-scan DEGRADED" in ln)
     assert "mode=B" in warn
     assert "fetches_failed=0/5" in warn
     assert "refs_unverified=" in warn
@@ -800,9 +941,7 @@ def test_integration_mode_b_with_p0_dead_ref_escalates_critical(env, mock_site):
 
     def _p0_cycle():
         # healthy scan that finds a definitive 4xx dead ref => rc 1 P0
-        config["pages"]["/"] = {
-            "lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)
-        }
+        config["pages"]["/"] = {"lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)}
         config["ref_lat"] = 0.0
         config["ref_status"] = {"r2-a1b2c3.js": 404}
         env["NFM_SCAN_DEADLINE"] = "240"
@@ -844,9 +983,7 @@ def test_integration_mode_b_flag_clears_on_clean_completed_scan(env, mock_site):
     assert run_script(env).returncode == 0
     assert run_script(env).returncode == 0
     # dead-ref P0 cycle latches the evidence...
-    config["pages"]["/"] = {
-        "lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)
-    }
+    config["pages"]["/"] = {"lat": 0.02, "cc": "public, s-maxage=300", "body": _page_body(3)}
     config["ref_lat"] = 0.0
     config["ref_status"] = {"r2-a1b2c3.js": 404}
     env["NFM_SCAN_DEADLINE"] = "240"

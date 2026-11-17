@@ -155,6 +155,18 @@ show it as waste.
    after your approval, the approval is dismissed and re-review is required.
 2. **3 required status checks** (Frontend, Backend, commit-ref-gate).
 3. `strict: true` + `enforce_admins: true` — no bypass path exists.
+4. **Merge authorization** (2026-11-07, dsh-adoption Task 13 — the discipline
+   was already practiced; this writes it down, wording aligned with DSH
+   auto-merge rules):
+   - An agent **never merges a PR it authored**. Self-merge
+     (author = approver = merger) is forbidden regardless of size.
+   - Bot-executed squash merge is permitted **only when ALL** hold:
+     the PR is human-authored, total diff **< 200 lines**, every required
+     check is green, and the approving review is stamped **on the current
+     head commit** (an approval dismissed by a later push does not count).
+   - Anything larger, or any doubt: a human merges.
+   - Post-merge content verification is mandatory either way — see
+     *Merge integrity* below; `MERGED` + green CI prove process, not content.
 
 **Auto-update workflow** (`.github/workflows/update-stale-prs.yml`) runs hourly
 and merges main into any PR whose `mergeable_state` is `BEHIND`. This keeps PRs
@@ -199,6 +211,14 @@ gh api repos/<owner>/<repo>/compare/<prev>...main --jq '.files[].additions'
   merge — then re-verify on `origin/main` before starting the next PR.
 - Multi-agent hosts: another agent can check out over your branch between your
   edit and your push. Re-verify immediately before every push.
+
+---
+
+## Package manager (NFM-5954)
+
+**pnpm only.** `pnpm-lock.yaml` is the sole tracked lockfile
+(`packageManager: pnpm@9.15.4` in `package.json`); no bun/npm/yarn workflow
+exists in this repo — `bun.lock` is gitignored and must never be committed.
 
 ---
 
