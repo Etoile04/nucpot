@@ -21,6 +21,17 @@ If the surrogate is upgraded in a way that changes the front shape, this
 test will surface the drift and the test failure comment should drive a
 golden regeneration via the adjacent ``generate_golden.py``.
 
+NFM-5481 re-baseline (NFM-6009 Q2 blessing): every artifact carries
+``schema_version`` 2 plus a machine-readable ``problem_identity`` block,
+and the cross-platform guard asserts golden<->fixture identity equality
+so a PRE-floor artifact fails loudly on problem mismatch instead of
+masquerading as ~3% front drift. The rank-pairing lesson is re-pinned
+synthetically
+(``test_set_metrics_survive_allocation_redistribution_rank_pairing_does_not``)
+so no frozen fixture is load-bearing for it. The PRE-floor linux fixture
+stays in-tree as an archival artifact
+(``test_zr_pareto_linux_cross_platform_fixture_prefloor_archival.json``).
+
 Run from the apps/api/ directory::
 
     PYTHONPATH=src pytest tests/test_optimizer/test_zr_pareto_regression.py -v
@@ -34,6 +45,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+# Shared problem-identity builder: the same constants the golden and
+# fixture generators embed, so tests assert artifacts against the live
+# code constants rather than a copied expectation (NFM-6009 Q2 cond. b).
+from generate_golden import N_GEN, POP_SIZE, SEED, build_problem_identity
+
 # pymoo 0.6.x — older versions haven't been pinned since NFM-4858.
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.operators.crossover.sbx import SBX
@@ -46,6 +62,12 @@ from nfm_db.optimization.zr_only import ZrOnlyProblem
 
 HERE = Path(__file__).resolve().parent
 GOLDEN_PATH = HERE / "test_zr_pareto_golden.json"
+FIXTURE_PATH = HERE / "test_zr_pareto_linux_cross_platform_fixture.json"
+#: PRE-floor artifact kept in-tree as archival (NFM-6009 Q2 recommendation);
+#: never referenced as a live front source — see the archival guard test.
+ARCHIVAL_FIXTURE_PATH = (
+    HERE / "test_zr_pareto_linux_cross_platform_fixture_prefloor_archival.json"
+)
 
 #: Acceptance tolerances — copied verbatim from the issue's acceptance
 #: criteria (NFM-5058 AC #3).
@@ -409,37 +431,90 @@ def test_front_drift_metric_variants_separate_permutation_from_shift():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason=(
-        "NFM-5481 re-baseline: this fixture freezes the linux/amd64 front "
-        "of the PRE role-spec-floor constraint set (U <= 0.90 window); the "
-        "golden now spans the widened U <= 0.95 window plus g5-g7, so the "
-        "frozen front reads 3.3% Hausdorff against the new golden. "
-        "Regenerate the fixture on linux/amd64 (CI run of the re-baselined "
-        "harness) and drop this marker.",
-    ),
-    strict=False,
-)
 def test_guard_accepts_linux_amd64_cross_platform_front():
-    """PR #1400 CI run 2, frozen: same front region, different allocation.
+    """Cross-platform acceptance + problem-identity gate (NFM-6009 Q2).
 
     The fixture holds the normalized front as computed on linux/amd64
-    (CI's architecture) from the same seed and lockfile as the
-    macOS-generated golden. It must PASS the AC #3 set metrics (it is the
-    same front region: per-axis set drift ~0.96%, Hausdorff 1.33%) while
-    the historical rank-paired element-wise comparison misread it at
-    [0.051, 0.0, 0.041] — the density-redistribution artifact that
-    motivated the set-semantics metric. If this test fails after a guard
-    change, the change regressed cross-platform acceptance; if the
-    rank-paired fingerprint assertion fails, the fixture drifted.
-    """
-    fixture_path = HERE / "test_zr_pareto_linux_cross_platform_fixture.json"
-    fixture = json.loads(fixture_path.read_text())
-    # Fixture rows are already normalized against the golden's spans (they
-    # were produced by the same _normalize_axis call the main test uses).
-    linux_norm = np.asarray(fixture["normalized_front"], dtype=np.float64)
+    (CI's architecture) under the re-baselined harness (g5-g7 + U
+    [0.80, 0.95]) from the same seed and pin set as the macOS-generated
+    golden. Guards, in order:
 
+    1. Problem identity: schema_version 2 and golden<->fixture
+       ``problem_identity`` equality — a PRE-floor artifact compared
+       against a post-floor golden fails LOUDLY here instead of
+       masquerading as ~3% "drift" (the exact xfail residue this test
+       carried until the NFM-6009 Q2 regeneration; see
+       ``test_zr_pareto_linux_cross_platform_fixture_prefloor_archival.json``).
+    2. Provenance pins: linux/amd64 platform, seed 42 / pop 200 /
+       gen 100, and the same prediction_service.py commit SHA as the
+       golden.
+    3. Operative front guards (unchanged per the ruling): >= 10 rows,
+       per-axis set drift <= 5%, bidirectional Hausdorff <= 2%.
+    4. Fixture self-consistency: the metrics recorded in
+       ``metrics_vs_golden`` at generation time match a live
+       recomputation from the frozen rows — a golden regen without the
+       matching fixture regen cannot pass silently. The historical
+       rank-paired fingerprint (>5% on the PRE-floor pair) is recorded
+       in that block rather than asserted; its lesson now lives in
+       ``test_set_metrics_survive_allocation_redistribution_rank_pairing_does_not``.
+    """
+    fixture = json.loads(FIXTURE_PATH.read_text())
     golden = _load_golden()
+
+    # 1. Problem identity (NFM-6009 Q2 condition b).
+    assert fixture.get("schema_version") == 2, (
+        f"fixture schema_version must be 2 (machine-readable problem "
+        f"identity); got {fixture.get('schema_version')!r}. Regenerate "
+        f"via `python3 tests/test_optimizer/generate_linux_fixture.py`."
+    )
+    fx_identity = fixture.get("problem_identity")
+    gd_identity = golden.get("problem_identity")
+    assert fx_identity is not None and gd_identity is not None, (
+        "missing problem_identity block on fixture and/or golden; "
+        "schema_version 2 artifacts must carry it (NFM-6009 Q2 cond. b)"
+    )
+    assert fx_identity == gd_identity, (
+        "PROBLEM-IDENTITY MISMATCH between the linux/amd64 fixture and "
+        f"the golden — they describe DIFFERENT optimization problems:\n"
+        f"  fixture: {fx_identity}\n"
+        f"  golden:  {gd_identity}\n"
+        "This is the PRE-floor-artifact-vs-post-floor-golden silent-"
+        "mixup class (NFM-6009 Q2 condition b): regenerate whichever "
+        "artifact is stale via generate_golden.py / "
+        "generate_linux_fixture.py; do NOT loosen this assertion."
+    )
+
+    # 2. Provenance pins.
+    prov = fixture.get("provenance", {})
+    assert prov.get("platform", {}).get("slug") == "linux/amd64", (
+        f"fixture platform must be pinned linux/amd64; got "
+        f"{prov.get('platform', {}).get('slug')!r}"
+    )
+    alg = prov.get("algorithm", {})
+    assert (alg.get("pop_size"), alg.get("n_gen"), alg.get("seed")) == (
+        POP_SIZE, N_GEN, SEED,
+    ), (
+        f"fixture harness pins drifted from the pinned config "
+        f"(pop {POP_SIZE}, gen {N_GEN}, seed {SEED}): got "
+        f"(pop {alg.get('pop_size')}, gen {alg.get('n_gen')}, "
+        f"seed {alg.get('seed')})"
+    )
+    fx_sha = prov.get("provenance_files", {}).get("prediction_service.py", "")
+    gd_sha = (
+        golden.get("provenance", {})
+        .get("provenance_files", {})
+        .get("prediction_service.py", "")
+    )
+    assert len(fx_sha) == 40 and all(c in "0123456789abcdef" for c in fx_sha), (
+        f"fixture prediction_service.py SHA must be 40-char hex; got {fx_sha!r}"
+    )
+    assert fx_sha == gd_sha, (
+        f"fixture was generated against a different surrogate commit "
+        f"(fixture {fx_sha} != golden {gd_sha}); regenerate the stale "
+        f"artifact"
+    )
+
+    # 3. Operative front guards (unchanged per the NFM-6009 Q2 ruling).
     front = golden["front"]
     spans = front["objective_axis_spans"]
     fmin = np.array([spans["rho_U"]["fmin"], spans["T_stable"]["fmin"],
@@ -454,30 +529,115 @@ def test_guard_accepts_linux_amd64_cross_platform_front():
     ])
     gold_norm = _normalize_axis(golden_min, fmin, fmax)
 
-    # Same region: both AC #3 set metrics comfortably inside tolerance.
-    assert float(_per_axis_drift(linux_norm, gold_norm).max()) <= PER_AXIS_DRIFT_MAX
-    assert _hausdorff_normalized(linux_norm, gold_norm) <= HAUSDORFF_MAX
+    # Fixture rows are already normalized against the golden's spans (they
+    # were produced by the same _normalize_axis call the main test uses).
+    linux_norm = np.asarray(fixture["normalized_front"], dtype=np.float64)
+    n_rows = prov.get("n_solutions")
+    assert n_rows == linux_norm.shape[0], (
+        f"fixture provenance n_solutions ({n_rows}) disagrees with the "
+        f"stored front ({linux_norm.shape[0]} rows); truncated fixture"
+    )
+    assert n_rows >= MIN_NON_DOMINATED, (
+        f"fixture front size {n_rows} is below the Q4 KR target of "
+        f"{MIN_NON_DOMINATED}"
+    )
 
-    # Fingerprint: the rank-paired element-wise comparison (on canonical
-    # order) misread this exact front as over-tolerance — pinned so the
-    # artifact this fixture exists for stays reproducible.
-    canon_pair_drift = np.max(
+    drift = _per_axis_drift(linux_norm, gold_norm)
+    assert float(drift.max()) <= PER_AXIS_DRIFT_MAX, (
+        f"linux/amd64 fixture per-axis set drift {drift.tolist()} "
+        f"(max={float(drift.max()):.4f}) exceeds the 5% tolerance — the "
+        f"cross-platform front genuinely moved; regenerate the fixture "
+        f"(see generate_linux_fixture.py).\n"
+        f"{_front_metrics_report(linux_norm, gold_norm)}"
+    )
+    haus = _hausdorff_normalized(linux_norm, gold_norm)
+    assert haus <= HAUSDORFF_MAX, (
+        f"linux/amd64 fixture Hausdorff distance {haus:.4f} exceeds the "
+        f"2% tolerance — the cross-platform front genuinely moved; "
+        f"regenerate the fixture (see generate_linux_fixture.py).\n"
+        f"{_front_metrics_report(linux_norm, gold_norm)}"
+    )
+
+    # 4. Recorded-vs-recomputed self-consistency: the fixture's own
+    # metrics_vs_golden block must match a fresh recomputation from the
+    # frozen rows. A golden regen without the matching fixture regen
+    # breaks this equality even when every tolerance above still holds.
+    recorded = fixture.get("metrics_vs_golden", {})
+    live_rank_paired = np.max(
         np.abs(_canonical_order(linux_norm) - _canonical_order(gold_norm)),
         axis=0,
     )
-    assert float(canon_pair_drift.max()) > PER_AXIS_DRIFT_MAX, (
-        "fixture fingerprint lost: rank-paired element-wise comparison no "
-        "longer reads this front as over-tolerance; the fixture must be "
-        "regenerated from a fresh cross-platform reproduction"
+    np.testing.assert_allclose(
+        np.asarray(recorded.get("rank_paired_elementwise", []), dtype=np.float64),
+        live_rank_paired,
+        atol=1e-9,
+        err_msg="recorded rank_paired_elementwise != recomputed; the "
+                "fixture metadata and the golden are out of sync",
     )
+    np.testing.assert_allclose(
+        np.asarray(recorded.get("per_axis_set_drift", []), dtype=np.float64),
+        drift,
+        atol=1e-9,
+        err_msg="recorded per_axis_set_drift != recomputed; the fixture "
+                "metadata and the golden are out of sync",
+    )
+    recorded_haus = recorded.get("hausdorff_normalized")
+    assert recorded_haus is not None and float(recorded_haus) == pytest.approx(
+        haus, abs=1e-9,
+    ), (
+        f"recorded hausdorff_normalized ({recorded_haus}) != recomputed "
+        f"({haus:.9f}); the fixture metadata and the golden are out of sync"
+    )
+
+
+@pytest.mark.unit
+def test_set_metrics_survive_allocation_redistribution_rank_pairing_does_not():
+    """NFM-6009 Q2 condition (a): the rank-pairing lesson, fixture-free.
+
+    Two fronts sampling the same curve segment with different interior
+    density allocation (t vs t^3) are the SAME front — the AC #3 set
+    metrics must read them as within tolerance — while the historical
+    rank-paired element-wise comparison (on canonical order) misreads
+    the redistribution as max |t - t^3| = 2/(3*sqrt(3)) ~= 0.385 > 0.05
+    at t = 1/sqrt(3). Canonical ordering reconciles same-point row
+    permutations, so the two permutation-hardening tests above pass even
+    under a reverted rank-paired metric; the frozen linux fixture used
+    to be the ONLY executable guard on that revert. This test replaces
+    it: exact, deterministic, golden-independent, and it survives every
+    artifact regen. If this fails after a metric change, someone
+    reintroduced rank-pairing as the AC metric.
+    """
+    n = 200
+    t = np.linspace(0.0, 1.0, n)
+    front_a = np.column_stack([t, np.full(n, 0.4), 1.0 - t])
+    t2 = t ** 3  # same segment, strong interior-density contrast
+    front_b = np.column_stack([t2, np.full(n, 0.4), 1.0 - t2])
+    # current AC metrics must read the same front region …
+    assert float(_per_axis_drift(front_a, front_b).max()) <= PER_AXIS_DRIFT_MAX
+    assert _hausdorff_normalized(front_a, front_b) <= HAUSDORFF_MAX
+    # … while canonical rank-pairing misreads it — the lesson, now platform-independent
+    canon = np.max(np.abs(_canonical_order(front_a) - _canonical_order(front_b)))
+    assert float(canon) > PER_AXIS_DRIFT_MAX
 
 
 @pytest.mark.unit
 def test_zr_pareto_golden_schema_is_well_formed():
     """The golden JSON carries the provenance + front-shape keys we test against."""
     golden = _load_golden()
-    assert golden.get("schema_version") == 1
+    assert golden.get("schema_version") == 2, (
+        f"golden schema_version must be 2 (NFM-6009 Q2 condition b: "
+        f"machine-readable problem identity); got "
+        f"{golden.get('schema_version')!r}. Regenerate via "
+        f"`python3 tests/test_optimizer/generate_golden.py`."
+    )
     assert golden.get("issue") == "NFM-5058"
+    assert golden.get("problem_identity") == build_problem_identity(), (
+        f"golden problem_identity drifted from the live code constants: "
+        f"golden={golden.get('problem_identity')!r} expected="
+        f"{build_problem_identity()!r}. The artifact describes a "
+        f"different optimization problem than the code runs — "
+        f"regenerate the golden; do NOT update the expected block by hand."
+    )
     prov = golden.get("provenance", {})
     assert prov.get("boundary", "").startswith("Zr-only"), (
         f"boundary provenance must declare Zr-only: got {prov.get('boundary')!r}"
@@ -517,4 +677,35 @@ def test_zr_pareto_golden_provenance_pins_prediction_service_sha():
         f"prediction_service.py provenance SHA must be a 40-char hex "
         f"commit hash; got {sha!r}. Regenerate the golden via "
         f"`python3 tests/test_optimizer/generate_golden.py`."
+    )
+
+
+@pytest.mark.unit
+def test_prefloor_fixture_remains_archival_not_live():
+    """NFM-6009 Q2 (recommended): the PRE-floor fixture stays citable.
+
+    The frozen PR #1400 CI run 2 fixture is a PRE-floor artifact: it
+    described a different optimization problem (U <= 0.90 window, no
+    g5-g7) and read ~3.3% Hausdorff against the post-floor golden —
+    "drift" that was really problem mismatch (observed rank-paired
+    misread vector [0.051, 0.0, 0.041]; Hausdorff history 1.33% on the
+    same-problem pair -> 3.3% on the different-problem pair). It stays
+    in-tree, renamed, with schema_version 1 so it can never be confused
+    with a live schema-2 artifact, and its header cites the supersession.
+    This test guards the archival header only — it never loads the
+    archived front as comparison data.
+    """
+    assert ARCHIVAL_FIXTURE_PATH != FIXTURE_PATH
+    archival = json.loads(ARCHIVAL_FIXTURE_PATH.read_text())
+    assert archival.get("schema_version") == 1, (
+        "the archival PRE-floor fixture must keep schema_version 1 so it "
+        "cannot pass as a live schema-2 artifact"
+    )
+    assert archival.get("issue") == "NFM-5063"
+    supersession = archival.get("superseded_by", {})
+    assert supersession.get("ruling") == "NFM-6009", (
+        "archival header must cite the NFM-6009 supersession ruling"
+    )
+    assert "NFM-5481" in archival.get("purpose", ""), (
+        "archival header must cite the NFM-5481 re-baseline"
     )

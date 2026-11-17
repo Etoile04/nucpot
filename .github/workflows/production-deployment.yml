@@ -213,6 +213,23 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # NFM-5857: the API suite writes multi-GB temp files (local-disk storage,
+      # backup cap-enforcement and oversized-upload tests). On ubuntu-26.04
+      # hosted VMs that straddles the OS-disk free-space margin: deploy run
+      # 41814087886 (2026-11-04) failed both attempts with "OSError: [Errno 122]
+      # Disk quota exceeded" from tests/test_storage_local_disk.py (92% mark)
+      # onward, while the identical SHA passed in the standalone test-api
+      # workflow minutes earlier. Free the preinstalled toolchains we never use
+      # and move pytest's temp tree to the larger ephemeral disk.
+      - name: Free disk space (NFM-5857)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/lib/jvm /usr/share/swift /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          sudo install -d -m 1777 /mnt/pytest-tmp
+          df -h /
+          df -h /mnt 2>/dev/null || true
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -230,6 +247,10 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run unit tests
+        env:
+          # NFM-5857: pytest's tmp_path tree lands under TMPDIR; keep the
+          # multi-GB suite temp writes off the OS disk.
+          TMPDIR: /mnt/pytest-tmp
         run: uv run pytest
 
       - name: Upload test results
@@ -1139,7 +1160,7 @@ jobs:
       #
       # Two-step durability hop: this step writes one JSONL line to a
       # per-run path on the runner, then the next step uploads it as a GHA
-      # artifact. The collector workflow (prod-deploy-event-collector.yml)
+      # artifact. The collector workflow (prod-deploy-event-collector-orchestrator.yml)
       # downloads prod-deploy-event-* artifacts and appends to the master
       # JSONL on the Mac Studio.
       #
@@ -1215,6 +1236,15 @@ jobs:
           fi
 
           _prod_emit() {
+            # NFM-5934: exactly ONE line per run. The direct call below
+            # AND the EXIT trap both used to append (deploy_event_emit
+            # appends unconditionally), producing 2-line fragments that
+            # validate_fragment rejects — every Era-B fragment was born
+            # invalid. A non-empty fragment means the event is already
+            # recorded: the second invocation (trap) becomes a no-op.
+            if [ -s "$FRAGMENT_PATH" ]; then
+              return 0
+            fi
             # Source the library; it NEVER fails its caller (acceptance criterion 5).
             # Override NFMD_DEPLOY_EVENTS_PATH so the write lands in the fragment
             # dir, not the default repo-relative path. The library strips
