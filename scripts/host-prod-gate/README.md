@@ -50,20 +50,22 @@ Operator doc: **`docs/runbooks/prod-compose-gate.md`** — start there.
 | `nfm_docker_gate/peercred.py` | AF_UNIX peer identity (macOS LOCAL_PEERCRED/PEERPID, Linux SO_PEERCRED) |
 | `nfm_docker_gate/audit.py` | JSONL audit log |
 | `nfm_docker_gate/watchdog.py` | socket-perms + docker-context watchdog |
-| `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat) |
+| `nfm_docker_gate/mirror_health.py` | NFM-4587 registry-mirror health probe (alarm writer for the heartbeat; NFM-5567 2-tick alarm-debounce grace) |
 | `nfm_docker_gate_proxy.py` | launchd entry for either proxy mode |
 | `entries/run-deploy.sh` | sanctioned deploy (deploy_prod.sh as nfmdeploy) |
-| `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion |
+| `entries/run-pre-deploy-assert.sh` | sanctioned pre-deploy DB↔code assertion; NFM-5397 preflight first refuses rc=78 (EX_CONFIG, before any docker reach) when `/var/log/nfm-g2` deviates from the host_setup.sh §6 shape — dir `0755`, the four pre-created lightrag-watchdog files `0644` (NFM-5523: includes the `.state.e1` preburst marker the daemon writes but cannot create) — since a non-0755 dir kills the watchdog's daemon spawn |
 | `entries/run-record-manifest.sh` | G4a deploy-manifest record as the deploy identity at the canonical G4 state dir (NFM-4273) |
 | `entries/run-recovery.sh` | NFM-1664 recovery: `restart <svc>` / `rollback --tag <sha>` / `lightrag-reprocess` (NFM-4816: re-enqueue FAILED/PENDING docs via the sidecar's `/documents/reprocess_failed`) |
 | `entries/run-worker-inspect.sh` | post-deploy celery inspect |
 | `entries/run-sql.sh` | run-migration.yml standalone SQL |
+| `entries/run-autovc-build.sh` | NFM-5524 sanctioned AutoVC image build (compose build of api/worker as nfmdeploy via the full gate; `DOCKER_BUILDKIT=0` — the desktop buildx builder is G5-fenced and the compose stanzas pin `network: host`, which the ro gate denies regardless of scope; refuses unpushed trees — NFM-5269 discipline; build-only, never restarts the stack) |
 | `entries/start-proxy.sh`, `entries/start-watchdog.sh`, `entries/start-mirror-health.sh` | launchd shims (read `upstream.conf` / `mirrors.json`) |
 | `entries/start-lightrag-watchdog.sh` | NFM-4804 LightRAG pipeline-stall watchdog (5-min tick as nfmdeploy via the full gate; on wedge: unwedges the host ollama MLX runner first — tiny-generate probe, `ollama stop`, SIGTERM via `ollama-runner-term.sh`, verify — NFM-4887, then restarts `lightrag` through `run-recovery.sh` and re-enqueues stranded docs via `lightrag-reprocess` — NFM-4816 — with a 30-min cooldown over the whole action set) |
 | `entries/ollama-runner-term.sh` | NFM-4887 root-owned validating chokepoint: SIGTERMs a wedged host ollama runner pid (refuses non-runner pids and `--model` mismatches; no SIGKILL escalation) — invoked by the lightrag watchdog via its nfmdeploy→root sudoers grant |
 | `entry-sync.sh` | NFM-5149 host-entry re-propagation: `--check` unprivileged drift probe (agents / CI / SRE canary), `--apply` operator-sudo staged apply of drifted `entries/*.sh` with NFM-4297 SHA binding (HEAD must be origin/main-reachable; working-tree bytes must equal the HEAD blob), per-apply backups + JSONL audit at `/var/log/nfm-g2/entry-sync.log`; no sudoers grant by design — the operator's interactive sudo is the per-release authorization. Runbook: `docs/runbooks/prod-deploy.md` §11 |
 | `sudoers.d/nfm-prod-deploy` | command-enumerated NOPASSWD grants (AC-G2.4) |
 | `launchd/*.plist` | LaunchDaemons (ro, full, watchdog, mirror-health, cleanup-daily — NFM-4802 daily 04:20 sanctioned cleanup; lightrag-watchdog — NFM-4804, the only one whose launchd `UserName` is nfmdeploy rather than root) |
+| `chown-deploy-home.sh` | NFM-5566 SIP-tolerant per-entry chown of `DEPLOY_HOME` (invoked by host_setup.sh §2): chowns everything chownable with `-h` (never dereferences the `Projects/nucpot` symlink into the operator's checkout), skips SIP-protected/EPERM entries with a counted WARNING so the installer always reaches the gate-file installs; fatal only when the walk is empty or nothing is chownable (systemic, not SIP) |
 | `host_setup.sh` | idempotent installer — `sudo bash host_setup.sh` |
 | `probe_g2.sh` | AC verification probe (run as the desktop user) |
 | `config.json` | prod scope prefixes (names, not files) |

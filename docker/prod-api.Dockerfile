@@ -40,11 +40,19 @@ COPY apps/api/migrations/ ./migrations/
 # the setuptools>=75.0 wheel (run 36003157519) and the pypi.org-direct leg
 # cannot carry a CN-egress build (files.pythonhosted.org read-timeout, run
 # 35991349533). Ladder: tuna -> aliyun -> pypi.org, every leg bounded.
+# NFM-5333: legs 1-2 run through the ci-throttle rate-limiting proxy
+# (build-arg proxy env set by deploy_prod.sh). The final pypi.org-direct
+# leg strips the proxy env, so a proxy that dies mid-build costs deploy
+# SPEED, never deploy SUCCESS — and reaching this leg is loud (stderr
+# marker) so the throttle log and the deploy log can be reconciled per
+# window.
 RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://pypi.tuna.tsinghua.edu.cn/simple . || \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://mirrors.aliyun.com/pypi/simple/ .) || \
-    pip install --no-cache-dir --default-timeout=180 --retries=15 .
+    (echo "NFM-5333: proxy-capped legs failed — final leg runs DIRECT/UNCAPPED" 1>&2 && \
+     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+       pip install --no-cache-dir --default-timeout=180 --retries=15 .)
 
 # Explicitly install xgboost as a defensive layer. The dependency is also
 # declared in apps/api/pyproject.toml, but pinning here ensures the package
@@ -57,7 +65,9 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,
       -i https://pypi.tuna.tsinghua.edu.cn/simple || \
     (sleep 5 && pip install --no-cache-dir --default-timeout=120 --retries=10 'xgboost>=3.0,<4' \
       -i https://mirrors.aliyun.com/pypi/simple/) || \
-    pip install --no-cache-dir --default-timeout=180 --retries=15 'xgboost>=3.0,<4'
+    (echo "NFM-5333: xgboost proxy-capped legs failed — final leg runs DIRECT/UNCAPPED" 1>&2 && \
+     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+       pip install --no-cache-dir --default-timeout=180 --retries=15 'xgboost>=3.0,<4')
 
 # NFM-2146 / ADR-NFM-2139 §5 D3: bake alembic.ini + migrations into the image
 # so the deploy-time migration step (scripts/prod_migrate.sh) can invoke
@@ -95,4 +105,12 @@ EXPOSE 8000
 
 # Serve only — migration is the deploy workflow's job (NFM-2146). The exact
 # command form is pinned by ADR-NFM-2139 §5 D3 acceptance criterion 1.
-CMD ["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+#
+# NFM-5273/NFM-5274: --timeout-keep-alive 75. nucpot-prod-web proxies /api/*
+# with Node client-side keep-alive socket reuse; uvicorn's default 5s idle
+# close raced that reuse window -> RST mid-reuse -> 'socket hang up' -> the
+# chronic public 500s (~4-5/day since 09-03). The server must never close
+# an idle conn inside the client's reuse window — 75s sits far past any
+# realistic pool-reuse interval. Guarded by
+# apps/api/tests/compose/test_api_keepalive_timeout.py.
+CMD ["uvicorn", "nfm_db.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "75"]

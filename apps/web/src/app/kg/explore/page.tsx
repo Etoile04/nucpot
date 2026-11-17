@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "探索核材料知识图谱，浏览材料、属性与实体关系",
 }
 
+export const revalidate = 300
+
 export default async function KgExplorePage() {
   const graphData = await fetchFullGraphData(100).catch(() => ({
     nodes: [],

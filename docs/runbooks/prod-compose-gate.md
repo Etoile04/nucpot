@@ -74,6 +74,12 @@ and re-enqueues stranded docs via `run-recovery.sh lightrag-reprocess`
 locks the raw socket, and points your docker context at the ro gate. It ends
 by running the verification probe — exit 0 or it fails loudly.
 
+Reruns are safe at any UTC hour (NFM-5555): when the §6 daemon reload lands
+inside the E-1 burst window (03:25-05:00Z), `lightrag-e1-kickstart.sh`
+immediately kickstarts `com.nfm.g2.lightrag-watchdog` so the in-window 60s
+tick cadence resumes within seconds instead of after a blind 5-8 min gap;
+outside the window the reload keeps its normal one-interval first fire.
+
 ## Verify (AC probe)
 
 ```bash
@@ -96,6 +102,7 @@ behavior in `scripts/tests/test_nfm_docker_gate_*`.
 | Image/build-cache retention cleanup (NFM-4273/4802; the prune-class 403 routes here since NFM-5168) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-cleanup.sh [--keep-candidates N] [--keep-shas N] [--until HOURS]` (image tags, dangling layers, build cache only — no containers/volumes/restarts; also runs daily 04:20 via `com.nfm.g2.cleanup-daily`) |
 | Reprocess lightrag FAILED/PENDING docs (NFM-4816) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-recovery.sh lightrag-reprocess` (sidecar `/documents/reprocess_failed` via docker exec through the full gate; the NFM-4804 watchdog also runs this after every wedge restart) |
 | Standalone SQL (run-migration.yml) | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-sql.sh <repo-relative.sql>` (or `-` for stdin) |
+| AutoVC image build (NFM-5524) | repo owner syncs `~/Projects/nucpot-autovc-repo` first (and pushes — the entry refuses a HEAD no origin ref contains, NFM-5269 discipline), then `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-autovc-build.sh [--service api\|worker\|all] [--tag LABEL]` (compose build via the full gate, legacy builder — the ro gate denies the stanzas' `network: host` regardless of scope; build-only: restart the stack separately through a sanctioned path) |
 | Celery inspect | `sudo -n -u nfmdeploy /usr/local/lib/nfm-g2/run-worker-inspect.sh` |
 
 All entries validate arguments before touching docker and log identity to

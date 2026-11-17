@@ -334,7 +334,7 @@ Webhook回调       ░░░░░░░░░░░░░░░░░░░░
 | # | 指标 | 阈值 | 现状 | 满足度 | 关键差距 |
 |---|------|------|------|--------|----------|
 | 1 | 批量导入成功率 | **100%** | `batch_import_service` 已建;近期 NFM-2009 发现 silent failure | 🟡 | 需加同步 DB 验证 + worker health check |
-| 2 | KG 查询响应 (1k节点/10k关系) | ≤5s | AGE + LightRAG 已实装;无压测 | 🟡 | 需 M4 节点前完成基准压测 |
+| 2 | KG 查询响应 (1k节点/10k关系) | ≤5s | KG 关系表 (kg_nodes/kg_edges) + LightRAG 已实装(AGE 已退役 2026-10, NFM-5215);无压测 | 🟡 | 需 M4 节点前完成基准压测 |
 | 3 | 人工校验界面加载单条 | ≤3s | Phase 3 复核 UI 已部署验证(06 截图) | ✅ | — |
 | 4 | 数据来源记录完整度 (抽查 10 条) | **100%** | `data_sources.file_path` + `extraction_results.source_paragraph/page` 完整 | ✅ | — |
 | 5 | KG 实体识别准确率 | ≥85% | 实体抽取 pipeline 已建;无 CNAS 量化 | 🔴 | 需 M4 前 2 月启动自评 + CNAS 排期 |
@@ -343,7 +343,7 @@ Webhook回调       ░░░░░░░░░░░░░░░░░░░░
 | 8 | 云端部署可用性 | ≥99.9% | 6 服务 healthcheck + 飞书 webhook;无 SLA | 🟡 | 需 Prometheus SLA 报告 |
 | 9 | 资源节点离线任务成功率 | **100%** | ❌ 无资源节点概念 | 🔴 | 需 M2 架构落地 |
 | 10 | 资源节点重连同步成功率 | **100%** | ❌ 无同步引擎 | 🔴 | 需 M2 架构落地 |
-| 11 | 跨引擎复杂查询响应 | ≤5s | AGE + PG + LightRAG 联合查询已有;无压测 | 🟡 | 需 M4 前完成压测 |
+| 11 | 跨引擎复杂查询响应 | ≤5s | PG 关系表 + LightRAG 联合查询已有(AGE 已退役 2026-10);无压测 | 🟡 | 需 M4 前完成压测 |
 | 12 | 多引擎协同压力测试 | 无故障/无丢失 | 🔴 未做系统性压测 | 🔴 | M5 前完成压测报告 |
 | 13 | API 接口文档覆盖率 | **100%** | FastAPI 自动 OpenAPI;覆盖率需 grep 验证 | ✅* | 需 CI 加自动化校验 |
 | 14 | 培训学时 | ≥12 学时 | 🔴 未启动 | 🔴 | M5 后启动培训材料 |
@@ -739,7 +739,7 @@ Service Layer 写入校验
 | **API后端** | FastAPI + SQLAlchemy + Alembic + PostgreSQL | 已建基础，异步高性能，类型安全 |
 | **ML框架** | scikit-learn + XGBoost + pymoo (NSGA-II) | 轻量级，适合小样本核材料数据 |
 | **势函数验证** | LAMMPS + KIM API + MTP | 已集成，支持EAM/MEAM/MTP/DeepMD |
-| **知识图谱** | **Apache AGE** (替换 Neo4j) + PostgreSQL + 自建可视化 | v1.7 替换说明：合同规格书写"Neo4j",实现采用 Apache AGE（同属 PG 生态,单库双引擎,部署运维更简单,SQL/cypher 双语法支持,资源节点分发零成本）。同等能力下减少 1 个独立服务,降低信创/涉密迁移成本（仅需迁移 PG）|
+| **知识图谱** | ~~**Apache AGE** (替换 Neo4j)~~ + PostgreSQL + 自建可视化 | **已退役（2026-10, NFM-5215）**：AGE 镜像代码路径已删除,知识图谱底座为关系型表（kg_nodes/kg_edges）+ pgvector。原 v1.7 替换说明（同属 PG 生态,单库双引擎等）见《图数据库选型变更说明》历史文档 |
 | **RAG** | LightRAG + 向量数据库 | 已集成基础框架 |
 | **MCP** | Paperclip MCP Server | 已建7类工具，支持智能体调用 |
 | **文件存储** | StorageBackend 抽象层 + boto3（S3 API） | S3 API 事实开放标准；文献PDF/提取产物与元数据分离存储 |
@@ -1350,7 +1350,7 @@ Phase 4A   B-Phase 3: 信创适配（2-3月）
 | 周 | 任务 | 交付物 | 负责 |
 |----|------|--------|------|
 | W1 | DB Schema 设计 + Alembic migration | `hub_nodes` / `resource_nodes` / `data_dna` / `classification_level` / `upload_sessions` / `ingest_logs` 6 张表 | BE |
-| W1 | Neo4j → Apache AGE 架构文档(向甲方解释替换方案) | 《图数据库选型变更说明》 | CTO |
+| W1 | ~~Neo4j → Apache AGE 架构文档(向甲方解释替换方案)~~ **已退役(2026-10, NFM-5215),AGE 方案不再实施** | 《图数据库选型变更说明》(历史文档,含退役附录) | CTO |
 | W2 | 资源节点客户端 SDK(Python) | `nfm_node_client` PyPI 包 | BE |
 | W2 | 中心节点管理 API + Hub Admin UI(节点注册/心跳/发现) | `GET/POST /api/v1/hub/nodes/*` + `/admin/hub` | BE + FE |
 | W3-4 | 断点续传 API(分块上传 + resume_token + sha256 分块校验) | `POST /api/v1/upload/init` + `/chunk` + `/complete` | BE |
@@ -1567,7 +1567,7 @@ Paperclip任务跟踪 → 分配子任务 → Sprint推进 → 阶段检查点�
 | **大赛评审偏好** | **技术深度方案可能得分偏低** | **低** | **强化应用场景+商业叙事+Plan B降级叙事** |
 | **R11（v1.7 新增）合同 M2 数据汇交延期** | M3 节点演示无法完成,影响 M4/M5/M6 全部后续节点 | 🔴 高 | 立即启动 M2 8-10 周专项 Sprint (§7.9.2);配置 1 主程 + 1 前端全职;每周 CEO 审查进度;**默认 Plan B**:若 M3 节点前无法完成 5 资源节点最小集,优先做 1 中心 + 2 资源节点(满足"1+N"基本形态) + 离线缓存简化版 |
 | **R12（v1.7 新增）100% 类硬指标不达标**（批量导入/同步/文档覆盖率） | 合同验收不通过,触发违约金条款 | 🔴 中 | 每周 Sprint 评审时强制检查 14 项硬指标 (#1/#9/#10/#13);不达标项立即修复 +48 小时 SLA;批量导入端点加同步 DB 验证(避免 NFM-2009 silent failure 复现) |
-| **R13（v1.7 新增）Neo4j→Apache AGE 替换未获甲方认可** | 合同 §1.2 知识图谱模块验收存疑 | 🟡 中 | 提交《图数据库选型变更说明》给甲方(§7.9.2 W1 交付物);强调同等能力 + 部署简化 + 信创迁移成本降低;**默认 Plan B**:如甲方坚持 Neo4j,2 周内可切换(AGE cypher 与 Neo4j cypher 90% 兼容,服务化封装层支持热切换) |
+| **R13 ~~Neo4j→Apache AGE 替换未获甲方认可~~（已失效,2026-10 AGE 退役 NFM-5215）** | ~~合同 §1.2 知识图谱模块验收存疑~~ | ⚪ 低 | AGE 方案已退役(NFM-5407 删除代码路径),KG 底座为关系型表 + pgvector;如甲方对图能力提出要求,按关系型递归查询/后续图底座选型重新评估,本风险项不再适用 |
 | **R14（v1.7 新增）CNAS 第三方测试机构排期延后** | M4 节点(D0+10)错过,影响 M5/M6 | 🟡 中 | M2 启动后 2 周内联系 3 家备选 CNAS 机构(中科院计算所/中国电科/中国赛宝);同步启动内部准确率自评(§7.9.3);**默认 Plan B**:如 CNAS 排期不可达,先用内部测试报告 + 第三方专家评审替代,M5 节点前补 CNAS 正式报告 |
 
 ---

@@ -2,7 +2,7 @@
 # LightRAG Sidecar — Knowledge Graph + RAG Service
 # =============================================================================
 # Runs alongside the NFM FastAPI backend as an isolated sidecar process.
-# Connects to the shared PostgreSQL instance (pgvector + Apache AGE).
+# Connects to the shared PostgreSQL instance (pgvector).
 #
 # ⚠️  LightRAG is currently in Beta. See docker/README.md for details.
 #

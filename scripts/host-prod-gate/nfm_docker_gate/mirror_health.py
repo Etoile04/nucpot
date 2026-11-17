@@ -26,7 +26,8 @@ This module is the gate-side half of the fix:
     detect). Classifies the result into ``ok`` / ``unexpected_status`` /
     ``tls_timeout`` / ``unreachable``.
   * ``summarize(results, threshold)`` aggregates a probe run: total
-    healthy count, whether ANY prod allowlisted mirror is dark, and a
+    healthy count, whether ANY prod allowlisted mirror is still serving
+    (the prod pull path; NFM-5553 — quorum is any-of, not all-of), and a
     boolean ``healthy_below_threshold`` that drives the alarm writer.
   * ``write_alarm_if_below`` appends an ``alarm`` JSONL record to the
     mirror-health audit log when below threshold OR when the prod
@@ -39,6 +40,18 @@ This module is the gate-side half of the fix:
     across BOTH verdict events — ``alarm`` (tripped) and ``recovery``
     (cleared, NFM-4805) — so the standing verdict reflects current
     fleet state instead of latching the last alarm forever.
+  * NFM-5567 grace: the alarm arm is debounced by a 2-tick window
+    (``--grace-ticks``; 2 ticks at the 30s cadence = 60s). A tripped
+    tick inside the window writes a NON-verdict ``grace`` record
+    carrying the full alarm detail; only the Nth consecutive tripped
+    tick writes the ``alarm``. Recovery semantics (NFM-4805) are
+    untouched, a healthy tick resets the counter, and the post-startup
+    first tick bypasses grace so a restart into a dark fleet alarms at
+    once. When a grace window closes on a healthy tick (tripped ticks
+    inside the window, alarm never fired), a NON-verdict ``grace_clear``
+    closure record is written (NFM-5699) — otherwise a lone blip leaves
+    its ``grace`` record as the audit-log tail indefinitely, which reads
+    identically to a wedged watcher or ongoing degradation.
 
 The launchd loop wrapper (``entries/start-mirror-health.sh``) polls on
 a fixed interval, runs a probe + summarize + write per tick, and the
@@ -72,9 +85,10 @@ from .audit import AuditLog
 
 # Default probe path: Docker registry API v2 root. Returns 401 unauth
 # on every working Docker registry; works for all the public mirrors
-# (daocloud, 1panel, dockerproxy, ustc). /auth/token was tried but the
-# handshake times out on the same flaky paths — using /v2/ keeps the
-# probe orthogonal to the failure mode it monitors.
+# (NFM-5553 fleet: daocloud, 1panel, 1ms, xuanyuan, dockerproxy.net).
+# /auth/token was tried but the handshake times out on the same flaky
+# paths — using /v2/ keeps the probe orthogonal to the failure mode it
+# monitors.
 _DEFAULT_PROBE_PATH = "/v2/"
 # Auth sub-resource on Docker registry v2; used as a fallback if /v2/
 # returns something unexpected (some mirrors wrap 401s differently).
@@ -100,8 +114,11 @@ class Mirror:
     can still return 200/401 — the AC's "≥2 mirrors return 200/401"
     passes, but the AC's "real docker pull of nucpot-prod-api:latest
     succeeds" fails. So ``fronts_prod_images=True`` mirrors gate the
-    ``prod_mirror_healthy`` flag on the summary, and a dark prod mirror
-    alone trips the alarm even when the global healthy count is fine.
+    ``prod_mirror_healthy`` flag on the summary, and the LAST live prod
+    mirror going dark trips the alarm even when the global healthy count
+    is fine (NFM-5553: with several prod mirrors configured, the quorum
+    is any-of — one live prod path keeps pulls working, so a single
+    prod-mirror blip must not red the heartbeat).
     """
 
     name: str
@@ -335,7 +352,15 @@ def summarize(
             name: result for name, result in ((r.name, r) for r in results_tuple)
             if mirrors_by_name.get(name, Mirror(name=name, url="")).fronts_prod_images
         }
-        prod_healthy = bool(prod_results) and all(
+        # NFM-5553: the quorum is ANY, not ALL. The flag guards "prod
+        # pulls deadlock", which needs exactly one live prod path; the
+        # old all() turned a single prod-mirror blip (daocloud's chronic
+        # intermittent 502 with 1panel still serving) into a standing
+        # alarm that red-ed G2.7 around the clock. The alarm record's
+        # per-mirror detail still names a degraded prod mirror, so a
+        # blipped primary stays operator-visible without tripping the
+        # heartbeat verdict.
+        prod_healthy = bool(prod_results) and any(
             result.status == "ok" for result in prod_results.values()
         )
     return HealthSummary(
@@ -347,22 +372,11 @@ def summarize(
     )
 
 
-def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> None:
-    """Append an ``alarm`` JSONL record when AC conditions are violated.
-
-    Two conditions trip the alarm:
-      1. ``summary.healthy_count < threshold`` (default AC: ≥2 mirrors)
-      2. ``summary.prod_mirror_healthy is False`` (the prod allowlist
-         mirror is dark; pulls of nucpot-prod-* will deadlock even when
-         fallback mirrors look healthy).
-
-    The audit record carries every input the operator needs to triage
-    without re-running the probe: per-mirror status names, the global
-    healthy count, the threshold, and the prod-mirror flag.
-    """
-    if not summary.healthy_below_threshold and summary.prod_mirror_healthy:
-        return
-    unhealthy = [
+def _unhealthy_detail(summary: HealthSummary) -> list[dict]:
+    """Per-mirror detail for every non-ok result, shared by the ``alarm``
+    and ``grace`` writers so a record — verdict or suppressed — always
+    explains itself without a re-probe."""
+    return [
         {
             "name": result.name,
             "status": result.status,
@@ -373,6 +387,24 @@ def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> No
         for result in summary.results
         if result.status != "ok"
     ]
+
+
+def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> None:
+    """Append an ``alarm`` JSONL record when AC conditions are violated.
+
+    Two conditions trip the alarm:
+      1. ``summary.healthy_count < threshold`` (default AC: ≥2 mirrors)
+      2. ``summary.prod_mirror_healthy is False`` (EVERY prod allowlist
+         mirror is dark; pulls of nucpot-prod-* will deadlock even when
+         fallback mirrors look healthy — under the NFM-5553 any-of
+         quorum one live prod mirror suppresses this arm).
+
+    The audit record carries every input the operator needs to triage
+    without re-running the probe: per-mirror status names, the global
+    healthy count, the threshold, and the prod-mirror flag.
+    """
+    if not summary.healthy_below_threshold and summary.prod_mirror_healthy:
+        return
     audit.write(
         "alarm",
         None,
@@ -380,13 +412,96 @@ def write_alarm_if_below(audit, summary: HealthSummary, *, threshold: int) -> No
         threshold=threshold,
         prod_mirror_healthy=summary.prod_mirror_healthy,
         unhealthy=[result.name for result in summary.results if result.status != "ok"],
-        unhealthy_detail=unhealthy,
+        unhealthy_detail=_unhealthy_detail(summary),
+    )
+
+
+def write_grace(
+    audit,
+    summary: HealthSummary,
+    *,
+    threshold: int,
+    consecutive_tripped: int,
+    grace_ticks: int,
+) -> None:
+    """Append a NON-verdict ``grace`` record for a tripped tick inside the
+    NFM-5567 debounce window.
+
+    The fleet's chronic failure mode is a lone ~30s mirror blip that
+    self-heals by the next tick; an immediate ``alarm`` reds G2.7 for a
+    condition that is already gone by the time a human looks. A grace
+    record is the operator-visible trace of the suppressed alarm: it
+    carries the full alarm detail plus the debounce context (which
+    consecutive tick tripped, how deep the window is). It is NOT a
+    verdict event — ``latest_verdict``/probe_g2.sh read only
+    ``alarm``/``recovery``, so G2.7 stays green through a blip.
+    """
+    audit.write(
+        "grace",
+        None,
+        healthy_count=summary.healthy_count,
+        threshold=threshold,
+        prod_mirror_healthy=summary.prod_mirror_healthy,
+        unhealthy=[result.name for result in summary.results if result.status != "ok"],
+        unhealthy_detail=_unhealthy_detail(summary),
+        consecutive_tripped=consecutive_tripped,
+        grace_ticks=grace_ticks,
+    )
+
+
+def write_grace_clear(
+    audit,
+    summary: HealthSummary,
+    *,
+    threshold: int,
+    consecutive_tripped: int,
+    grace_ticks: int,
+) -> None:
+    """Append a NON-verdict ``grace_clear`` record when a grace window
+    closes on a healthy tick (NFM-5699).
+
+    Recovery (NFM-4805) only fires when the previous tick ALARMED; a grace
+    tick leaves ``previous_tripped`` False, so the grace→healthy transition
+    used to write NOTHING — and a lone blip left its ``grace`` record as
+    the audit-log tail for days, indistinguishable from a wedged watcher
+    or ongoing degradation (the NFM-5698 CEO recon flag: a grace record
+    sat as the log tail 3h20m while the fleet was healthy the whole time).
+    This closure marker carries the healthy summary plus the debounce
+    context of the window it closes. Like ``grace`` it is NOT a verdict
+    event — ``latest_verdict``/probe_g2.sh read only ``alarm``/``recovery``,
+    so G2.7 semantics are untouched.
+    """
+    audit.write(
+        "grace_clear",
+        None,
+        healthy_count=summary.healthy_count,
+        threshold=threshold,
+        prod_mirror_healthy=summary.prod_mirror_healthy,
+        consecutive_tripped=consecutive_tripped,
+        grace_ticks=grace_ticks,
     )
 
 
 def _tripped(summary: HealthSummary) -> bool:
     """The alarm condition for one tick: below threshold OR prod mirror dark."""
     return summary.healthy_below_threshold or not summary.prod_mirror_healthy
+
+
+def _alarm_due(
+    previous_tripped: Optional[bool], consecutive_tripped: int, grace_ticks: int
+) -> bool:
+    """NFM-5567 debounce decision for a tripped tick.
+
+    The post-startup first tick (``previous_tripped is None``) bypasses
+    grace — a watchdog restart into a dark fleet alarms immediately, so
+    the window can never mask an outage that spans a restart. After
+    startup, the alarm fires once the count of consecutive tripped
+    ticks (including this one) reaches ``grace_ticks``; ``grace_ticks``
+    below 1 disables the debounce (classic alarm-on-every-tripped-tick).
+    """
+    if previous_tripped is None:
+        return True
+    return consecutive_tripped >= max(grace_ticks, 1)
 
 
 def write_recovery(
@@ -442,9 +557,11 @@ def _latest_event(path: str, events: tuple[str, ...]) -> Optional[dict]:
 
 
 # Verdict events: the records that carry a standing fleet verdict. The
-# watchdog writes ``alarm`` while tripped and ``recovery`` when the alarm
-# clears (or on a healthy first tick after startup); everything else
-# (``startup``, ``drift``) is lifecycle noise, not a verdict.
+# watchdog writes ``alarm`` while tripped (post-grace) and ``recovery``
+# when the alarm clears (or on a healthy first tick after startup);
+# everything else (``startup``, ``drift``, the NFM-5567 non-verdict
+# ``grace`` marker, and its NFM-5699 ``grace_clear`` closure) is
+# lifecycle/trace noise, not a verdict.
 _VERDICT_EVENTS = ("alarm", "recovery")
 
 
@@ -477,6 +594,11 @@ def latest_verdict(path: str) -> Optional[dict]:
 # has to edit one place.
 DEFAULT_THRESHOLD = 2
 DEFAULT_PROBE_TIMEOUT = 5.0
+# NFM-5567: consecutive tripped ticks before the alarm writes. 2 ticks at
+# the default 30s cadence = 60s of grace — deep enough to ride out a lone
+# mirror blip, shallow enough that a real outage still pages well inside
+# the AC's <90s worst-case latency budget.
+DEFAULT_GRACE_TICKS = 2
 
 
 def _run_once(
@@ -486,26 +608,61 @@ def _run_once(
     threshold: int,
     timeout: float,
     previous_tripped: Optional[bool] = None,
+    consecutive_tripped: int = 0,
+    grace_ticks: int = 0,
 ) -> HealthSummary:
-    """Probe + summarize + write the tick's verdict record.
+    """Probe + summarize + write the tick's record.
 
-    ``previous_tripped`` is the previous tick's alarm state (``None``
-    before the first tick after startup). A tripped tick writes an
-    ``alarm`` record every tick (operator-visible persistence of an
-    ongoing condition). A healthy tick writes a ``recovery`` record only
-    on the alarmed→healthy transition or on the first tick after
-    startup — so steady-state health stays quiet, but the NEWEST record
-    in the log always carries the current verdict for
-    ``latest_verdict``/probe_g2.sh instead of latching the last alarm.
+    ``previous_tripped`` is the previous tick's ALARMED state (``None``
+    before the first tick after startup; a grace tick leaves it False).
+    ``consecutive_tripped`` is the debounce counter carried in from the
+    caller's tick loop; ``grace_ticks`` is the NFM-5567 window depth (0
+    disables the debounce — classic behavior for direct callers).
+
+    A tripped tick writes an ``alarm`` record once the debounce is
+    satisfied (startup tick, or ``consecutive_tripped + 1 >=
+    grace_ticks``), and a non-verdict ``grace`` record carrying the same
+    detail while inside the window — operator-visible persistence
+    either way. A healthy tick writes a ``recovery`` record only on the
+    alarmed→healthy transition or on the first tick after startup, and a
+    non-verdict ``grace_clear`` closure record when it ends a
+    grace-only stretch (``consecutive_tripped > 0`` with no alarm
+    written; NFM-5699) — so steady-state health stays quiet, but the
+    NEWEST verdict record in the log always carries the current verdict
+    for ``latest_verdict``/probe_g2.sh instead of latching the last
+    alarm, and no grace record is left dangling as the log tail.
+    Callers must reset ``consecutive_tripped`` to 0 on a healthy tick
+    (see ``main``).
     """
     results = tuple(probe_mirror(mirror, timeout=timeout) for mirror in mirrors)
     mirrors_by_name = {mirror.name: mirror for mirror in mirrors}
     summary = summarize(results, threshold=threshold, mirrors_by_name=mirrors_by_name)
     if _tripped(summary):
-        write_alarm_if_below(audit, summary, threshold=threshold)
+        consecutive = consecutive_tripped + 1
+        if _alarm_due(previous_tripped, consecutive, grace_ticks):
+            write_alarm_if_below(audit, summary, threshold=threshold)
+        else:
+            write_grace(
+                audit,
+                summary,
+                threshold=threshold,
+                consecutive_tripped=consecutive,
+                grace_ticks=grace_ticks,
+            )
     elif previous_tripped is None or previous_tripped:
         write_recovery(
             audit, summary, threshold=threshold, first_tick=previous_tripped is None
+        )
+    elif consecutive_tripped > 0:
+        # NFM-5699: a healthy tick closing an open grace window (tripped
+        # ticks inside the window, alarm never fired) writes the closure
+        # marker — without it the grace record stays the log tail forever.
+        write_grace_clear(
+            audit,
+            summary,
+            threshold=threshold,
+            consecutive_tripped=consecutive_tripped,
+            grace_ticks=grace_ticks,
         )
     return summary
 
@@ -539,6 +696,15 @@ def main(argv: Optional[list[str]] = None) -> None:
         default=DEFAULT_THRESHOLD,
         help="minimum healthy mirrors required to suppress alarm (AC default: 2)",
     )
+    parser.add_argument(
+        "--grace-ticks",
+        type=int,
+        default=DEFAULT_GRACE_TICKS,
+        help=(
+            "consecutive tripped ticks before the alarm fires "
+            "(NFM-5567 debounce; default 2 = 60s at the 30s cadence; <1 disables)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     audit = AuditLog(args.log, "mirror-health")
@@ -556,13 +722,20 @@ def main(argv: Optional[list[str]] = None) -> None:
         mirrors=[mirror.name for mirror in mirrors],
         interval=args.interval,
         threshold=args.threshold,
+        grace_ticks=args.grace_ticks,
     )
     # Alarm-state carry across ticks: None until the first tick completes,
-    # then the tick's _tripped() verdict. A watchdog restart resets this to
-    # None, so the first post-startup tick always writes a verdict record
-    # (alarm if tripped, recovery if healthy) — clearing any stale
-    # pre-restart alarm the probe would otherwise latch onto (NFM-4805).
+    # then whether that tick ALARMED (a grace tick leaves False). A watchdog
+    # restart resets this to None, so the first post-startup tick always
+    # writes a verdict record (alarm if tripped, recovery if healthy) —
+    # clearing any stale pre-restart alarm the probe would otherwise latch
+    # onto (NFM-4805). consecutive_tripped carries the NFM-5567 debounce
+    # counter and resets on any healthy tick, so blips never accumulate; a
+    # healthy tick that ends a grace-only stretch writes the NFM-5699
+    # ``grace_clear`` closure record inside _run_once (the counter is reset
+    # only AFTER the tick, so the tick still sees the open window).
     previous_tripped = None
+    consecutive_tripped = 0
     while True:
         try:
             summary = _run_once(
@@ -571,8 +744,18 @@ def main(argv: Optional[list[str]] = None) -> None:
                 threshold=args.threshold,
                 timeout=args.timeout,
                 previous_tripped=previous_tripped,
+                consecutive_tripped=consecutive_tripped,
+                grace_ticks=args.grace_ticks,
             )
-            previous_tripped = _tripped(summary)
+            passed_tripped = previous_tripped
+            if _tripped(summary):
+                consecutive_tripped += 1
+                previous_tripped = _alarm_due(
+                    passed_tripped, consecutive_tripped, args.grace_ticks
+                )
+            else:
+                consecutive_tripped = 0
+                previous_tripped = False
         except (OSError, ValueError) as error:
             audit.write("drift", {"known": False}, detail=f"probe tick failed: {error}")
         time.sleep(args.interval)

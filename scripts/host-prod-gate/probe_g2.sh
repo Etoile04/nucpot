@@ -97,7 +97,7 @@ else
 fi
 
 # ---- AC-G2.3: sanctioned entries live and root-owned ------------------------
-for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh run-cleanup.sh run-backup.sh; do
+for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh run-cleanup.sh run-backup.sh run-autovc-build.sh; do
   INFO="$(stat -f '%u %Lp' "${G2}/${ENTRY}" 2>/dev/null || true)"
   OWNER="${INFO%% *}"; PERMS="${INFO##* }"
   # %Lp is octal (e.g. 755); the write bit sits in digits {2,3,6,7}. The
@@ -120,7 +120,7 @@ if [ -n "${NOPASSWD_LINES}" ]; then
   else
     bad "G2.4 stray NOPASSWD grant(s) outside nfm-g2: ${STRAY}"
   fi
-  for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh run-cleanup.sh run-backup.sh; do
+  for ENTRY in run-deploy.sh run-pre-deploy-assert.sh run-recovery.sh run-worker-inspect.sh run-sql.sh run-record-manifest.sh run-cleanup.sh run-backup.sh run-autovc-build.sh; do
     if printf '%s\n' "${NOPASSWD_LINES}" | grep -q "${ENTRY}"; then
       ok "G2.4 sudo grant present: ${ENTRY}"
     else
@@ -158,8 +158,13 @@ fi
 # ---- AC-G2.7: NFM-4587 mirror health (≥2 mirrors returning 200/401) ----------
 # probe_g2.sh reads the LATEST VERDICT record from /var/log/nfm-g2/mirror-health.log.
 # The mirror-health watchdog (launchd com.nfm.g2.mirror-health) writes an
-# "alarm" record per tick while below threshold OR while the prod allowlist
-# mirror is dark, and a "recovery" record when the alarm clears or on its
+# "alarm" record while below threshold OR while the prod allowlist mirror
+# is dark — debounced by the NFM-5567 2-tick grace window, so a tripped
+# tick inside the window writes a NON-verdict "grace" record instead
+# (the post-startup first tick bypasses grace; a healthy tick that ends a
+# grace-only stretch writes the NON-verdict "grace_clear" closure,
+# NFM-5699) — and a "recovery" record
+# when the alarm clears or on its
 # first healthy tick after startup (NFM-4805: reading only the latest ALARM
 # latched G2.7 red forever — healthy ticks write nothing, so the
 # 2026-09-12T15:03Z alarm kept failing the probe hours after both prod
