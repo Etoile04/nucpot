@@ -45,7 +45,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import test_nfm_site_monitor as base  # noqa: F401 — registers the mock_site fixture
-from test_nfm_site_monitor import log_text, mock_site, run_script, state_dict
+from test_nfm_site_monitor import (
+    log_text,
+    mock_site,
+    replica_battery,
+    run_script,
+    state_dict,
+    write_replica_stub_ssh,
+)
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "..", "nfm-site-monitor.sh")
 HEALTH_CHECK = os.path.join(os.path.dirname(__file__), "..", "health_check.py")
@@ -183,6 +190,9 @@ def env(tmp_path, mock_site):
         "NFM_MONITOR_S1_STATE": str(tmp_path / "monitor.s1.state"),
         "NFM_MONITOR_PROBE": str(probe),
         "NFM_MONITOR_NOTIFY": _recording_notify(tmp_path),
+        # NFM-5966 replica-lane seams (units not-found = NOTE-class, silent)
+        "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
+        "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
     }
     return e
 

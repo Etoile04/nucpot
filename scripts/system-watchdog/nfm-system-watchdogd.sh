@@ -92,4 +92,22 @@ if [[ -x /usr/bin/python3 && -f /usr/local/lib/nfm-watchdog/nfm-registration-gap
   /usr/bin/python3 /usr/local/lib/nfm-watchdog/nfm-registration-gap-gate.py >> "$LOG" 2>&1 || true
 fi
 
+
+# --- 4. replica-gap gate (NFM-5966, D2-G3; gate pattern NFM-5880) -------------
+# Additive window-gated restart gate for the z203 HA replica connector
+# (cloudflared-nucpot-replica.service). Same dual-signal design as section 3,
+# with Signal 2 (registration staleness) read from the z203 replica log over
+# tailscale SSH and the action a remote `sudo -n systemctl restart` of the
+# pinned unit — the verify tunnels (Mac + the z203 cloudflared-verify-replica
+# soak unit) are asserted out of scope inside the module. Runs AS THE CONSOLE
+# USER via launchctl asuser + sudo -u (the section-1 wedge-proven pattern) so
+# the SSH probe uses the operator's z203 identity — the same key/known_hosts
+# the site-monitor lane probe uses (one dependency surface). Caps/backoff and
+# the DRY_RUN default are inherited from the section-3 gate, unchanged;
+# rollback = flip/delete /usr/local/lib/nfm-watchdog/replica-gap-gate.mode or
+# remove this section. Decision lines carry the rep-gap-gate-replica: tag.
+if [[ -x /usr/bin/python3 && -f /usr/local/lib/nfm-watchdog/nfm-replica-gap-gate.py ]]; then
+  launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" /usr/bin/python3 /usr/local/lib/nfm-watchdog/nfm-replica-gap-gate.py >> "$LOG" 2>&1 || true
+fi
+
 exit 0

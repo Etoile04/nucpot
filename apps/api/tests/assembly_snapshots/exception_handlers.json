@@ -1,0 +1,9 @@
+[
+  "builtins.Exception",
+  "fastapi.exceptions.HTTPException",
+  "fastapi.exceptions.RequestValidationError",
+  "fastapi.exceptions.WebSocketRequestValidationError",
+  "nfm_db.services.upload_service.PotentialUploadError",
+  "slowapi.errors.RateLimitExceeded",
+  "starlette.exceptions.HTTPException"
+]
