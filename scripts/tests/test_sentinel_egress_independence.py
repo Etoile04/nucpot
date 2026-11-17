@@ -78,7 +78,9 @@ from test_nfm_site_monitor import (  # noqa: E402
     _degrade_refs,
     log_text,
     mock_site,  # noqa: F401  (pytest fixture)
+    replica_battery,
     run_script,
+    write_replica_stub_ssh,
 )
 from test_nfm_site_monitor import (  # noqa: E402
     env as monitor_env,  # noqa: F401  (pytest fixture)
@@ -471,6 +473,9 @@ def test_base_lane_critical_carries_scutil_evidence(tmp_path, mock_site):  # noq
         "NFM_MONITOR_STATE": str(tmp_path / "monitor.state"),
         "NFM_MONITOR_PROBE": str(probe),
         "NFM_MONITOR_NOTIFY": "/bin/true",
+        # NFM-5966 replica-lane seams (units not-found = NOTE-class, silent)
+        "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
+        "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
     }
     run_script(local_env)  # streak 1/2 — WARN
     r2 = run_script(local_env)  # streak 2/2 — CRITICAL

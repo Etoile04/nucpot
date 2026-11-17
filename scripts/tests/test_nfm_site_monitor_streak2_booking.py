@@ -32,7 +32,14 @@ from pathlib import Path
 
 import pytest
 
-from test_nfm_site_monitor import log_text, mock_site, run_script, state_dict
+from test_nfm_site_monitor import (
+    log_text,
+    mock_site,
+    replica_battery,
+    run_script,
+    state_dict,
+    write_replica_stub_ssh,
+)
 
 SCRIPT = Path(__file__).resolve().parent.parent / "nfm-site-monitor.sh"
 
@@ -91,6 +98,9 @@ def env(tmp_path, mock_site):
         "NFM_REF_TIMEOUT": "5",
         "NFM_REF_BASELINE_MIN": "3",
         "NFM_ORIGIN_BASE": base,
+        # NFM-5966 replica-lane seams (units not-found = NOTE-class, silent)
+        "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
+        "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
     }
 
 

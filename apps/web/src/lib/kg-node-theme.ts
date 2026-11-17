@@ -1,8 +1,8 @@
 /**
  * KG node-type visual tokens (NFM-1337 fix F3).
  *
- * Centralizes the Tailwind badge palette previously duplicated as inline
- * `TYPE_COLORS` records in `KgNodeDetailContent.tsx` and `KgSearchContent.tsx`.
+ * Centralizes the Tailwind badge palette previously duplicated as an
+ * inline `TYPE_COLORS` record in `KgSearchContent.tsx`.
  *
  * Why a separate module:
  *   - `graph-theme.ts` exposes raw hex strings consumed by D3 renderers and
