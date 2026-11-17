@@ -1236,6 +1236,15 @@ jobs:
           fi
 
           _prod_emit() {
+            # NFM-5934: exactly ONE line per run. The direct call below
+            # AND the EXIT trap both used to append (deploy_event_emit
+            # appends unconditionally), producing 2-line fragments that
+            # validate_fragment rejects — every Era-B fragment was born
+            # invalid. A non-empty fragment means the event is already
+            # recorded: the second invocation (trap) becomes a no-op.
+            if [ -s "$FRAGMENT_PATH" ]; then
+              return 0
+            fi
             # Source the library; it NEVER fails its caller (acceptance criterion 5).
             # Override NFMD_DEPLOY_EVENTS_PATH so the write lands in the fragment
             # dir, not the default repo-relative path. The library strips

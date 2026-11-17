@@ -28,8 +28,7 @@ import type { ReviewQueueItem } from "@/lib/admin/review-queue-api"
 const { Title, Text } = Typography
 
 // Lazy-load the GraphCanvas so the sidebar's per-row paint stays cheap
-// when the page is opened from a direct link. The same dynamic-import
-// pattern is used by /materials/[id]/graph (MaterialGraphView).
+// when the page is opened from a direct link.
 const GraphCanvas = dynamic(
   () => import("@/components/graph").then((mod) => ({ default: mod.GraphCanvas })),
   {
