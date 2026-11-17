@@ -69,7 +69,7 @@ class Graph:
     """Directed import graph for the services package.
 
     Nodes are dotted module names like ``nfm_db.services.auth_service`` or
-    ``nfm_db.services.providers.openkim``. Self-edges and intra-statement
+    ``nfm_db.services.dataset_service``. Self-edges and intra-statement
     duplicates are dropped — each consumer-producer pair contributes at most
     one edge regardless of how many names were imported from the producer.
     """
@@ -110,7 +110,7 @@ def discover_modules(services_dir: Path) -> dict[Path, str]:
 
     Returns ``{absolute_path: dotted_module}``. ``__init__.py`` files are
     mapped to the package itself (e.g. ``nfm_db.services``,
-    ``nfm_db.services.providers``) so that ``from nfm_db.services import x``
+    ``nfm_db.services.extraction``) so that ``from nfm_db.services import x``
     and ``from . import x`` both resolve cleanly.
     """
     # Anchor the dotted path at the ``src`` directory so module names include
@@ -489,7 +489,7 @@ def render(graph: Graph) -> str:
         "6. Tarjan SCC identifies circular dependency chains; SCCs of "
         "size ≥ 2 are reported as cycles.\n"
         "7. Cross-`providers/` edges are the subset where at least one "
-        "endpoint is under `nfm_db.services.providers.` and the other is "
+        "endpoint is under the ``providers/`` subpackage and the other is "
         "not, or both are in `providers/` but in different modules."
     )
     lines.append("")

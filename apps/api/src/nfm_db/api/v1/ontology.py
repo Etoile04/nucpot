@@ -5,11 +5,11 @@ NVL contract envelope derived read-only from ``_ref_gap_fill_staging``. The
 viewer (Phase 0) swaps its static data URL for this endpoint with zero code
 change (contract-as-firewall invariant).
 
-Phase 2 (NFM-820): Adds 4 new AGE-backed endpoints for graph queries:
+Phase 2 (NFM-820): Adds 3 more graph-query endpoints, reading the
+relational kg_nodes/kg_edges tables directly:
 - Node + Neighbors: GET /api/v1/ontology/node/{id}
 - Fuzzy Search: GET /api/v1/ontology/search
 - Shortest Path: GET /api/v1/ontology/path
-- Sync: POST /api/v1/ontology/sync
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nfm_db.api.v1.auth import require_admin_or_domain_expert, require_editor
+from nfm_db.api.v1.auth import require_admin_or_domain_expert
 from nfm_db.database import get_db
 from nfm_db.models.kg import KGEdge, KGNode
 from nfm_db.models.user import User
@@ -38,7 +38,6 @@ from nfm_db.schemas.ontology_query import (
     SearchResponse,
     SearchResultItem,
     ShortestPathResponse,
-    SyncResponse,
 )
 from nfm_db.services.gap_scanner import compute_ontology_coverage
 from nfm_db.services.ontology_service import (
@@ -47,11 +46,6 @@ from nfm_db.services.ontology_service import (
     OntologyCorporaResponse,
     derive_ontology_graph,
     list_queryable_corpora,
-)
-from nfm_db.services.ontology_sync import (
-    GraphNotFoundError,
-    OntologySyncError,
-    rebuild_graph,
 )
 from nfm_db.services.rate_limit import ontology_rate_limit
 
@@ -161,7 +155,8 @@ async def get_corpus_graph(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: AGE-backed graph query endpoints (NFM-820)
+# Phase 2: graph query endpoints (NFM-820) — relational reads over
+# kg_nodes/kg_edges
 # ---------------------------------------------------------------------------
 
 
@@ -362,7 +357,7 @@ async def search_nodes(
     response_model=ShortestPathResponse,
     response_model_by_alias=True,
     summary="查找两节点间最短路径",
-    description="使用AGE Cypher查询两个本体节点之间的最短路径。\n\nFind shortest path between two nodes using AGE Cypher.",
+    description="查找两个本体节点之间的最短路径（当前为基于关系型 kg_nodes/kg_edges 的占位实现）。\n\nFind the shortest path between two ontology nodes (relational placeholder implementation).",
 )
 async def get_shortest_path(
     from_id: uuid.UUID = Query(..., description="Start node ID", alias="from"),
@@ -371,7 +366,10 @@ async def get_shortest_path(
     session: AsyncSession = Depends(get_db),
     _rate: None = Depends(ontology_rate_limit),
 ) -> ShortestPathResponse:
-    """Find shortest path between two nodes using AGE Cypher.
+    """Find shortest path between two ontology nodes (relational placeholder).
+
+    Reads the relational kg_nodes rows; the traversal itself is a
+    placeholder pending a graph-query substrate.
 
     Returns:
         Shortest path with nodes, edges, and path length
@@ -390,54 +388,12 @@ async def get_shortest_path(
         )
 
     # For now, return a placeholder implementation
-    # Full AGE Cypher integration requires the graph to be built first
+    # (traversal needs a query substrate; endpoints/nodes are relational rows)
     return ShortestPathResponse(
         from_=PathNode.model_validate(from_node),
         to=PathNode.model_validate(to_node),
         path=[],
         length=0,
-    )
-
-
-@router.post(
-    "/ontology/sync",
-    response_model=SyncResponse,
-    response_model_by_alias=True,
-    summary="重建语料库的AGE图",
-    description="从关系数据重建指定语料库的Apache AGE图结构。\n\nRebuild the AGE graph for a corpus from relational data.",
-)
-async def sync_corpus_graph(
-    _current_user: Annotated[User, Depends(require_editor)],
-    corpus_id: str = Query(..., description="Corpus to rebuild", pattern=CORPUS_ID_PATTERN),
-    session: AsyncSession = Depends(get_db),
-    _rate: None = Depends(ontology_rate_limit),
-) -> SyncResponse:
-    """Rebuild the AGE graph for a corpus from relational data.
-
-    Returns:
-        Sync statistics with nodes/edges synced and duration
-    """
-    try:
-        sync_stats = await rebuild_graph(session, corpus_id)
-    except GraphNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=str(e),
-        ) from e
-    except OntologySyncError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"sync failed: {e}",
-        ) from e
-
-    graph_name = f"ontology_{corpus_id.replace('-', '_')[:58]}"
-
-    return SyncResponse(
-        corpus_id=corpus_id,
-        graph_name=graph_name,
-        nodes_synced=sync_stats.nodes_synced,
-        edges_synced=sync_stats.edges_synced,
-        duration_ms=sync_stats.duration_ms,
     )
 
 

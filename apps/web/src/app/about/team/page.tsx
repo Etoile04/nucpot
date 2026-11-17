@@ -3,9 +3,10 @@ import type { Metadata } from "next"
 
 export const metadata: Metadata = {
   title: "团队 - NucPot",
-  description:
-    "NucPot 核材料势函数平台的维护团队、协作单位与对外联系方式。",
+  description: "NucPot 核材料势函数平台的维护团队、协作单位与对外联系方式。",
 }
+
+export const revalidate = 300
 
 // NFM-4991 (IA-REF P2): new /about/team sub-page (platform-design §1
 // 站点地图 「关于 /about › 团队」). The 协作团队 inline section that
@@ -65,8 +66,8 @@ export default function TeamPage() {
             NucPot 平台由以下团队与个人协作维护。如希望加入协作,请通过{" "}
             <Link href="/feedback" className="text-blue-400 hover:underline">
               反馈页
-            </Link>
-            {" "}或邮件联系。
+            </Link>{" "}
+            或邮件联系。
           </p>
         </header>
 
@@ -78,10 +79,7 @@ export default function TeamPage() {
           <h2 className="text-lg font-semibold mb-2 text-gray-100">联系方式</h2>
           <p className="text-sm text-gray-400 leading-relaxed mb-3">
             合作意向与学术联系:{" "}
-            <a
-              href="mailto:liwenjie@npic.ac.cn"
-              className="text-blue-400 hover:underline"
-            >
+            <a href="mailto:liwenjie@npic.ac.cn" className="text-blue-400 hover:underline">
               liwenjie@npic.ac.cn
             </a>
           </p>
@@ -115,9 +113,7 @@ function TeamGroup({ title, entries }: TeamGroupProps) {
           >
             <div className="text-base font-semibold text-gray-100">
               {entry.name}
-              <span className="ml-2 text-xs text-gray-500 font-normal">
-                {entry.affiliation}
-              </span>
+              <span className="ml-2 text-xs text-gray-500 font-normal">{entry.affiliation}</span>
             </div>
             <p className="text-sm text-gray-400 mt-1">{entry.role}</p>
           </li>

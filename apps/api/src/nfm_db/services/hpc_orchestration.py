@@ -345,20 +345,20 @@ class HPCOrchestrator:
 
         Calls self methods (not module-level functions) so that tests
         can patch.object(orchestrator, '_get_active_jobs') etc.
+
+        Listing failures propagate (NFM-5331 monitoring hole: the
+        previous catch-and-log kept a 100%-failure beat loop invisible
+        to every watchdog); per-job failures stay isolated and logged.
         """
-        try:
-            active_jobs = await self._get_active_jobs()
+        active_jobs = await self._get_active_jobs()
 
-            for job in active_jobs:
-                try:
-                    await self.update_job_status(str(job.verification_job_id), job.hpc_job_id)
-                except Exception as e:
-                    logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
+        for job in active_jobs:
+            try:
+                await self.update_job_status(str(job.verification_job_id), job.hpc_job_id)
+            except Exception as e:
+                logger.error(f"Failed to sync job {job.hpc_job_id}: {e}")
 
-            logger.info(f"Synced {len(active_jobs)} active jobs")
-
-        except Exception as e:
-            logger.error(f"Failed to sync active jobs: {e}")
+        logger.info(f"Synced {len(active_jobs)} active jobs")
 
     # =========================================================================
     # File transfer delegates

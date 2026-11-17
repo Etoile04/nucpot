@@ -1,0 +1,82 @@
+name: NucPot Watchdog Orchestrator
+
+# =============================================================================
+# NFM-5798 P2 Leg A — GitHub-hosted diversion of the site-monitor watchdog.
+# =============================================================================
+# The self-hosted watchdog's only failing step was ever its checkout: the
+# hand-rolled bounded fetch of two self-contained scripts through the host's
+# flaky egress lane (NFM-5548 → 5556 → 5796 → 5798; occurrence #8 minted a
+# 3-streak, and P1's widened bounds still hard-fail every fetch in a dead
+# trough). The checks themselves are read-only docker/host probes needing
+# nothing from the repo at runtime. So this diversion moves the fetch, not
+# the job:
+#
+#   - THIS workflow (hosted): checks out at the fire's pinned SHA on
+#     GitHub's healthy egress, stages the two payload scripts plus a sha256
+#     manifest as a workflow artifact, then repository_dispatches the
+#     self-hosted executor with (run-id, sha) provenance.
+#   - site-monitor-watchdog-executor.yml (self-hosted): downloads the
+#     artifact over the runner's own job channel — zero fetches by
+#     construction.
+#
+# The 6h cron moves here VERBATIM from site-monitor.yml. The NFM-5309
+# cadence contract still applies: GitHub chronically starves scheduled
+# events in this repo (~9% delivery observed for this entry) — do not
+# raise the frequency expecting more deliveries.
+#
+# Executor health is watched by the hourly hosted monitor job in
+# site-monitor.yml via the Actions runs API (stale alert when no
+# successful executor run in >2x the 6h nominal cadence) — the run record
+# IS the heartbeat; no write channel (review 8fecf232 pt 2).
+#
+# Canary contract before Leg B (the two collectors): 3x workflow_dispatch
+# across an egress flap window + one natural scheduled fire green.
+# =============================================================================
+
+on:
+  schedule:
+    # Stale-container watchdog (NFM-3337) — every 6h, offset 17min.
+    # Moved verbatim from site-monitor.yml by NFM-5798 P2 Leg A.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  # The dispatch POST to the executor needs contents: write (review pt 3);
+  # the checkout rides the same token.
+  contents: write
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (hosted — healthy egress lane)
+        uses: actions/checkout@v7
+
+      - name: Stage watchdog payload
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          cp tools/post-deploy-cutover-watchdog/watchdog.sh payload/
+          cp tools/post-deploy-cutover-watchdog/container_sanity_check.sh payload/
+          (cd payload && sha256sum watchdog.sh container_sanity_check.sh > MANIFEST.sha256)
+          echo "payload staged from $GITHUB_SHA:"
+          cat payload/MANIFEST.sha256
+
+      - name: Upload payload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: watchdog-payload
+          path: payload/
+          retention-days: 7
+
+      - name: Dispatch self-hosted executor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/dispatches" \
+            -f event_type=nfmd-watchdog-exec \
+            -F 'client_payload[orchestrator_run_id]=${{ github.run_id }}' \
+            -F 'client_payload[sha]=${{ github.sha }}'
+          echo "dispatched nfmd-watchdog-exec (orchestrator run ${{ github.run_id }} @ ${{ github.sha }})"

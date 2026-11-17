@@ -727,18 +727,20 @@ class TestSyncAllActiveJobs:
                 mock_update.assert_not_called()
 
     @pytest.mark.unit
-    async def test_sync_handles_get_active_jobs_failure(
+    async def test_sync_raises_when_get_active_jobs_fails(
         self, orchestrator: HPCOrchestrator
     ) -> None:
-        """Should not raise when _get_active_jobs fails."""
-        with patch.object(
-            orchestrator,
-            "_get_active_jobs",
-            new_callable=AsyncMock,
-            side_effect=Exception("DB error"),
+        """Listing failures must propagate (NFM-5331 monitoring hole)."""
+        with (
+            patch.object(
+                orchestrator,
+                "_get_active_jobs",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+            pytest.raises(Exception, match="DB error"),
         ):
             await orchestrator.sync_all_active_jobs()
-            # Should not raise
 
 
 # ---------------------------------------------------------------------------

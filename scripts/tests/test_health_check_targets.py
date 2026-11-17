@@ -102,3 +102,50 @@ def test_targets_do_not_combine_verify_host_with_api_v1_path() -> None:
 def test_is_verify_api_v1_classifier(url: str, expected: bool) -> None:
     """The classifier itself matches the spec — no false positives or negatives."""
     assert _is_verify_api_v1(url) is expected
+
+
+AUTOVC_HEALTH_URL = "https://verify.nucpot.dpdns.org/api/health"
+
+
+def test_autovc_health_target_is_monitored() -> None:
+    """The AutoVC public health endpoint must stay in TARGETS (NFM-5269/NFM-5270).
+
+    The 2026-09-29 AutoVC outage served 502 for ~2h while this sentinel
+    reported all-checks-passed, precisely because no `verify.*` target
+    existed: the NFM-4070/4071 cleanup removed the three malformed targets
+    and the correct re-add (the "AC-1 follow-up" blessed above) never
+    landed. Guard the re-add so the blind spot cannot silently return.
+    """
+    matches = [t for t in health_check.TARGETS if t.url == AUTOVC_HEALTH_URL]
+    assert matches, (
+        f"{AUTOVC_HEALTH_URL} is missing from health_check.TARGETS — the "
+        "NFM-5269 monitoring blind spot is back. Re-add it (P0, expected "
+        "200, body contains '\"ok\"', root `/` is an origin-normal 404 and "
+        "must NOT be monitored)."
+    )
+    target = matches[0]
+    assert target.expected_status == 200
+    assert target.expected_contains == '"ok"'
+    assert target.severity == "P0", "AutoVC is a public product endpoint; its outage is P0 (NFM-5269 was SRE-CRITICAL)"
+    # Availability budget must equal the hard socket timeout (NFM-5263
+    # flap-cluster mitigation; the CN↔edge tail on this route reaches ~2.4s).
+    assert target.max_response_ms == health_check.TIMEOUT_SECONDS * 1000
+
+
+def test_autovc_root_path_is_not_monitored() -> None:
+    """Root `/` on verify.* is an origin-normal 404 (headless API) — never monitor it.
+
+    Guards against a well-meaning "monitor the homepage" re-add that would
+    page forever on a healthy origin.
+    """
+    verify_roots = [
+        t.url
+        for t in health_check.TARGETS
+        if (urlparse(t.url).hostname or "").lower() == "verify.nucpot.dpdns.org"
+        and (urlparse(t.url).path or "/") in ("", "/")
+    ]
+    assert not verify_roots, (
+        "verify.nucpot.dpdns.org root targets found: "
+        f"{verify_roots}. The AutoVC root is a headless API whose origin-"
+        "normal response is 404 — monitor /api/health instead (NFM-5269)."
+    )

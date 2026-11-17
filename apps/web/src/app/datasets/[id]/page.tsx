@@ -1,179 +1,85 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { Alert, Descriptions, Spin, Tag } from "antd"
+import { cache } from "react"
+import { Alert } from "antd"
 import {
   getDatasetServer,
   type DatasetDetail,
 } from "@/lib/datasets-server"
+import { DatasetDetailContent } from "./DatasetDetailContent"
 
 interface PageProps {
   params: Promise<{ id: string }>
 }
 
+// NFM-5321 (Visual-Truth Gate retro-gate D1/D2/D4): metadata renders the
+// dataset's real title (not a truncated UUID), the description is
+// user-facing copy with no internal ticket ids, and the fetch resolves
+// material/source names so no raw UUIDs reach the page. `cache` dedupes
+// the no-store fetch across generateMetadata and the page render; the
+// outcome shape keeps the API's specific error message (e.g. 404 →
+// 「数据集不存在」) available to the page body.
+//
+// NFM-5321 hotfix (deploy of d4c33eb6a): the antd-rendering subtree
+// moved into DatasetDetailContent ("use client") — antd Typography
+// statics (.Title/.Text) resolve to undefined in the server-component
+// runtime and SSR-crashed every detail request with HTTP 500. This page
+// stays a Server Component for the cached fetch + metadata; see
+// DatasetDetailContent.tsx for the root-cause notes.
+type DatasetOutcome = { dataset: DatasetDetail; error: null } | { dataset: null; error: string }
+
+const fetchDatasetOutcome = cache(
+  async (id: string): Promise<DatasetOutcome> => {
+    // Server component → Node fetch: the server module resolves an
+    // absolute API base (NFM-5020) and unwraps the envelope; errors
+    // resolve to the error arm so generateMetadata can fall back to a
+    // generic title instead of throwing during <head> generation.
+    try {
+      return { dataset: await getDatasetServer(id, { expand: "material,source" }), error: null }
+    } catch (err) {
+      return {
+        dataset: null,
+        error: err instanceof Error ? err.message : "数据集加载失败",
+      }
+    }
+  },
+)
+
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const { id } = await params
+  const { dataset } = await fetchDatasetOutcome(id)
   return {
-    title: `数据集 ${id.slice(0, 8)} - NucPot`,
-    description: "核材料数据集详情，包含 §5.2 attribution 块 (NFM-4159)。",
+    title: dataset ? `${dataset.title} - NucPot` : "数据集详情 - NucPot",
+    description: dataset
+      ? `查看数据集「${dataset.title}」的测量材料、数据来源、测量日期与数据归属状态。`
+      : "查看核材料数据集详情：测量材料、数据来源、测量日期与数据归属状态。",
   }
-}
-
-async function fetchDataset(id: string): Promise<DatasetDetail> {
-  // Server component → Node fetch: the server module resolves an
-  // absolute API base (NFM-5020) and unwraps the envelope; throw on
-  // error so the page can render a friendly error boundary.
-  return await getDatasetServer(id)
 }
 
 export default async function DatasetDetailPage({ params }: PageProps) {
   const { id } = await params
-  let dataset: DatasetDetail | null = null
-  let errorMessage: string | null = null
-
-  try {
-    dataset = await fetchDataset(id)
-  } catch (err) {
-    errorMessage =
-      err instanceof Error ? err.message : "数据集加载失败"
-  }
+  const { dataset, error: errorMessage } = await fetchDatasetOutcome(id)
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
-      <main className="mx-auto max-w-4xl px-6 py-10 space-y-6">
-        <nav className="text-sm text-gray-400">
-          <Link href="/datasets" className="hover:text-blue-300 hover:underline">
-            ← 返回数据集列表
-          </Link>
-        </nav>
+    <main className="max-w-[1200px] mx-auto px-6 py-8">
+      <nav className="text-sm mb-4">
+        <Link href="/datasets" className="text-blue-400 hover:text-blue-300 hover:underline">
+          ← 返回数据集列表
+        </Link>
+      </nav>
 
-        {errorMessage ? (
-          <Alert
-            type="error"
-            showIcon
-            message="数据集加载失败"
-            description={errorMessage}
-          />
-        ) : null}
+      {errorMessage ? (
+        <Alert
+          type="error"
+          showIcon
+          message="数据集加载失败"
+          description={errorMessage}
+        />
+      ) : null}
 
-        {!errorMessage && !dataset ? (
-          <div className="flex justify-center py-12">
-            <Spin />
-          </div>
-        ) : null}
-
-        {dataset ? (
-          <>
-            <header className="space-y-2">
-              <h1 className="text-3xl font-bold">{dataset.title}</h1>
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="font-mono text-xs text-gray-400">
-                  {dataset.id}
-                </span>
-                {dataset.is_verified ? (
-                  <Tag color="green">已审核</Tag>
-                ) : (
-                  <Tag color="default">未审核</Tag>
-                )}
-                <AttributionBadge status={dataset.attribution.status} />
-              </div>
-            </header>
-
-            {/* NFM-4159 §5.2 attribution disclosure: when status is
-                'placeholder' the dataset title already carries the
-                disclosure per CEO §4.2 — this block is a confirmation
-                banner, not the primary disclosure surface. */}
-            {dataset.attribution.status === "placeholder" ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="占位数据集 (placeholder)"
-                description={
-                  <span>
-                    此数据集来自迁移 070 的 recast 复原集合(参见 NFM-4159
-                    §5.2 与 NFM-4136)。placeholder 状态是合规披露而非异常,
-                    标题字段本身就是披露渠道。
-                  </span>
-                }
-              />
-            ) : null}
-
-            <Descriptions
-              column={1}
-              bordered
-              size="middle"
-              className="text-gray-200"
-              items={[
-                {
-                  key: "material",
-                  label: "材料",
-                  children: (
-                    <Link
-                      href={`/materials/${dataset.material_id}`}
-                      className="font-mono text-xs text-blue-400 hover:text-blue-300 hover:underline"
-                    >
-                      {dataset.material_id}
-                    </Link>
-                  ),
-                },
-                {
-                  key: "source",
-                  label: "数据源",
-                  children:
-                    dataset.source_id ? (
-                      <Link
-                        href={`/publications/${dataset.source_id}`}
-                        className="font-mono text-xs text-blue-400 hover:text-blue-300 hover:underline"
-                      >
-                        {dataset.source_id}
-                      </Link>
-                    ) : (
-                      <span className="text-gray-500">无</span>
-                    ),
-                },
-                {
-                  key: "measurement_date",
-                  label: "测量日期",
-                  children: dataset.measurement_date ?? "—",
-                },
-                {
-                  key: "description",
-                  label: "描述",
-                  children: dataset.description ? (
-                    <span className="whitespace-pre-wrap text-sm text-gray-300">
-                      {dataset.description}
-                    </span>
-                  ) : (
-                    <span className="text-gray-500">无</span>
-                  ),
-                },
-                {
-                  key: "created",
-                  label: "创建时间",
-                  children: new Date(dataset.created_at).toISOString().slice(0, 19),
-                },
-                {
-                  key: "updated",
-                  label: "更新时间",
-                  children: new Date(dataset.updated_at).toISOString().slice(0, 19),
-                },
-              ]}
-            />
-          </>
-        ) : null}
-      </main>
-    </div>
+      {dataset ? <DatasetDetailContent dataset={dataset} /> : null}
+    </main>
   )
-}
-
-function AttributionBadge({
-  status,
-}: {
-  status: "placeholder" | "intact"
-}) {
-  if (status === "placeholder") {
-    return <Tag color="orange">placeholder</Tag>
-  }
-  return <Tag color="blue">intact</Tag>
 }

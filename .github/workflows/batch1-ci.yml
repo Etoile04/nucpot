@@ -32,6 +32,11 @@ on:
       - "scripts/check_schema_compat.py"
       - "scripts/verify_fixture_coverage.py"
       - "scripts/tests/**"
+      # NFM-5441: legacy chunk shim guard — removing the Dockerfile COPY
+      # block or the chunk dir without touching scripts/tests/ must still
+      # fire the guard test at PR time.
+      - "docker/web.Dockerfile"
+      - "docker/legacy-chunks/**"
       # Schema baseline is a frozen snapshot; any change to it is itself
       # the B1.7 baseline-bump signal.
       - "schemas/.compat-baseline/**"

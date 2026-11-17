@@ -12,7 +12,7 @@
 #   * /usr/local/lib/nfm-g2/  — gate proxy package, config, root-owned
 #     sanctioned entry scripts (run-deploy / run-pre-deploy-assert /
 #     run-recovery / run-worker-inspect / run-record-manifest /
-#     run-backup) + launchd start scripts
+#     run-backup / run-autovc-build) + launchd start scripts
 #   * /usr/local/var/nfm-g2/  — NFM-4273 canonical shared G4 state dir
 #     (deploy manifest + deploy lock): deploy-identity-writable,
 #     world-readable so the desktop-user drift cron (G4b) reads the same
@@ -53,6 +53,10 @@ USER_HOME="$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory | awk '{print $
 [ -n "${USER_HOME}" ] || die "could not resolve home for ${SUDO_USER}"
 REPO_REAL="${USER_HOME}/Projects/nucpot"
 [ -d "${REPO_REAL}/.git" ] || die "expected repo checkout at ${REPO_REAL} (run on the production host)"
+# NFM-5524: the AutoVC stack checkout (separate repo, Etoile04/nucpot-autovc).
+# Optional per host — the sanctioned build entry (run-autovc-build.sh) only
+# works where the stack actually lives.
+AUTOVC_REAL="${USER_HOME}/Projects/nucpot-autovc-repo"
 
 # --- resolve the real Docker engine socket (the thing we lock) -------------
 RAW_SOCK="${USER_HOME}/.docker/run/docker.sock"
@@ -130,12 +134,25 @@ fi
 # =============================================================================
 mkdir -p "${DEPLOY_HOME}/Projects" "${DEPLOY_HOME}/.docker/cli-plugins"
 ln -sfn "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"
+# NFM-5524: same symlink treatment for the AutoVC checkout so the
+# sanctioned build entry reads it as the deploy identity.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  ln -sfn "${AUTOVC_REAL}" "${DEPLOY_HOME}/Projects/nucpot-autovc-repo"
+fi
 # No credsStore config (NFM-848: locked keychain breaks daemon-side pulls in
 # sshd/sudo contexts) and a compose plugin link into the real CLI install.
 printf '{}\n' > "${DEPLOY_HOME}/.docker/config.json"
 ln -sfn "${USER_HOME}/.docker/cli-plugins/docker-compose" \
   "${DEPLOY_HOME}/.docker/cli-plugins/docker-compose"
-chown -R "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"
+# NFM-5566: the bare chown -R here aborted the whole installer (set -e)
+# once SIP-protected paths appeared inside DEPLOY_HOME after macOS daemons
+# first ran as nfmdeploy (containermanagerd / Mail entries — EPERM even as
+# root; the 2026-10-17 apply died before §4's gate-file installs and the
+# live mirror_health module stayed on the old all() quorum → G2.7
+# false-red). The helper chowns per entry — SIP entries are skipped with a
+# counted WARNING — and stays fatal only when NOTHING is chownable
+# (systemic, not SIP), so set -e keeps its teeth for real misconfig.
+bash "${SRC}/chown-deploy-home.sh" "${DEPLOY_USER}:staff" "${DEPLOY_HOME}"
 
 # =============================================================================
 # 3. read access for the deploy identity (ACLs, guarded + inheritable)
@@ -176,6 +193,31 @@ if ! ls -led "${REPO_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
     | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
 fi
 
+# NFM-5524: same read grant for the AutoVC checkout when present — the
+# build entry (run-autovc-build.sh) runs git rev-parse / branch -r in it
+# and tars the whole tree as the docker build context.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  if ! ls -led "${AUTOVC_REAL}" 2>/dev/null | grep -q "nfmdeploy"; then
+    chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${AUTOVC_REAL}"
+    find "${AUTOVC_REAL}" -type d -name .git -prune -o -type d -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit"
+    chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${AUTOVC_REAL}/.git"
+    find "${AUTOVC_REAL}/.git" -type d -not -path "${AUTOVC_REAL}/.git" -not -path "*/worktrees*" 2>/dev/null \
+      | while read -r d; do
+          if ! ls -led "${d}" 2>/dev/null | grep -q "nfmdeploy"; then
+            chmod +a "user:${DEPLOY_USER} allow list,search,read,file_inherit,directory_inherit" "${d}"
+          fi
+        done
+    # gitignored secrets the build reads directly: the autovc compose keeps
+    # its env at the repo ROOT (.env — env_file + compose interpolation),
+    # plus the same .git read pass as nucpot.
+    find "${AUTOVC_REAL}" -maxdepth 1 -type f ! -perm -o=r -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
+    find "${AUTOVC_REAL}/.git" -type f ! -perm -o=r -not -path "*/worktrees/*" -print0 2>/dev/null \
+      | xargs -0 chmod +a "user:${DEPLOY_USER} allow read" 2>/dev/null || true
+  fi
+fi
+
 # git refuses repos owned by another user (dubious-ownership) — allow both
 # the symlinked and real paths. Absolute /usr/bin/git: PATH may resolve
 # Homebrew git, whose dylibs (libintl from a 0700 Cellar) are unreadable by
@@ -185,6 +227,14 @@ for P in "${REPO_REAL}" "${DEPLOY_HOME}/Projects/nucpot"; do
     sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
   fi
 done
+# NFM-5524: the build entry runs git in the AutoVC checkout too.
+if [ -d "${AUTOVC_REAL}/.git" ]; then
+  for P in "${AUTOVC_REAL}" "${DEPLOY_HOME}/Projects/nucpot-autovc-repo"; do
+    if ! sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${P}"; then
+      sudo -u "${DEPLOY_USER}" -H /usr/bin/git config --global --add safe.directory "${P}"
+    fi
+  done
+fi
 
 # =============================================================================
 # 4. install gate code + entries (root-owned — the wall depends on this)
@@ -204,7 +254,7 @@ install -m 0755 -o root -g wheel "${SRC}/nfm_docker_gate_proxy.py" "${G2}/nfm_do
 for MOD in __init__ policy proxy peercred audit watchdog mirror_health; do
   install -m 0644 -o root -g wheel "${SRC}/nfm_docker_gate/${MOD}.py" "${G2}/nfm_docker_gate/${MOD}.py"
 done
-for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup start-proxy start-watchdog start-mirror-health start-lightrag-watchdog ollama-runner-term; do
+for ENTRY in run-deploy run-pre-deploy-assert run-recovery run-worker-inspect run-sql run-record-manifest run-cleanup run-backup run-autovc-build start-proxy start-watchdog start-mirror-health start-lightrag-watchdog ollama-runner-term; do
   install -m 0755 -o root -g wheel "${SRC}/entries/${ENTRY}.sh" "${G2}/${ENTRY}.sh"
 done
 # NFM-5149: entry-sync re-propagates the entries above per release. It is
@@ -250,7 +300,13 @@ mkdir -p "${LOG_DIR}"; chmod 0755 "${LOG_DIR}"
 # ${LOG_DIR} is root-owned — its decision log, cooldown state, and launchd
 # stdio file must be pre-created deploy-writable or the first probe tick
 # EACCES-aborts under set -e before any recovery can fire.
-for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log; do
+# NFM-5523: the set also carries the e1 preburst marker (STATE + ".e1").
+# The daemon WRITES today's date into it after the §1a preburst recycle to
+# enforce "exactly once per UTC day", but cannot CREATE it in the root-owned
+# dir — absent a pre-create, the marker read stays empty, the once-per-day
+# guard never short-circuits, and E-1 unconditionally recycles the serving
+# runner on every <=60s in-window tick.
+for WD_FILE in lightrag-watchdog.log lightrag-watchdog.state lightrag-watchdog-launchd.log lightrag-watchdog.state.e1; do
   touch "${LOG_DIR}/${WD_FILE}"
   chown "${DEPLOY_USER}:wheel" "${LOG_DIR}/${WD_FILE}"
   chmod 0644 "${LOG_DIR}/${WD_FILE}"
@@ -268,6 +324,16 @@ for PLIST in com.nfm.g2.docker-ro com.nfm.g2.docker-full com.nfm.g2.socket-watch
   launchctl bootstrap system "${PLIST_DIR}/${PLIST}.plist"
   launchctl enable "system/${PLIST}" 2>/dev/null || true
 done
+
+# NFM-5555: the bootout above killed any in-window E-1 wrapper, and the
+# fresh lightrag-watchdog bootstrap has no RunAtLoad (boot-race convention)
+# — first fire is a full 300s away. When the reload lands inside the E-1
+# burst window, kickstart the label so the wrapper re-enters within seconds
+# instead of blinding the lane kill-to-next-fire (~8 min on 2026-10-16,
+# 03:48-03:56Z, across the chronic 03:30Z wedge hour). The helper no-ops
+# outside the window; the || guard keeps an unexpected helper failure from
+# killing a sanctioned host_setup run mid-flow.
+bash "${SRC}/lightrag-e1-kickstart.sh" || log "WARNING: e1 kickstart helper failed (lane blind until next 300s fire — pre-NFM-5555 behavior)"
 
 # NFM-4805: the mirror-health watchdog's first tick lands up to ~10s after
 # bootstrap (sequential per-mirror probes, 5s timeout each). probe_g2.sh's
@@ -377,4 +443,6 @@ log "  backup:   sudo -n -u ${DEPLOY_USER} ${G2}/run-backup.sh [--keep N] [--des
 log "            (NFM-4750 Plan B: full-gate pg_dump + 4 prod volume tars; ro gate denies these)"
 log "  cleanup:  sudo -n -u ${DEPLOY_USER} ${G2}/run-cleanup.sh [--keep-candidates N] [--keep-shas N] [--until HOURS]"
 log "            (NFM-4802: also runs daily 04:20 via the com.nfm.g2.cleanup-daily LaunchDaemon)"
+log "  autovc:   sudo -n -u ${DEPLOY_USER} ${G2}/run-autovc-build.sh [--service api|worker|all] [--tag LABEL]"
+log "            (NFM-5524: sanctioned AutoVC image build; HEAD must be pushed — refuses unpushed trees)"
 log "audit log: ${LOG_DIR}/gate-ro.log (+ gate-full.log, watchdog.log)"

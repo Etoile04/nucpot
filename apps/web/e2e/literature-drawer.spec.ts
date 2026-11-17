@@ -55,7 +55,9 @@ test.describe("Literature drawer feedback + resize (NFM-3765)", { tag: "@integra
     expect(ariaLabel).toMatch(/拖动调整详情面板宽度/)
   })
 
-  test("re-extract / 删除 buttons show loading state during in-flight request", async ({ page }) => {
+  test("re-extract / 删除 buttons show loading state during in-flight request", async ({
+    page,
+  }) => {
     // Slow down /reextract so we can observe the spinner. We never
     // expect the request to succeed (the live site returns 401 to
     // anonymous users); the assertion is purely on the in-flight UI.
@@ -122,7 +124,9 @@ test.describe("Literature drawer feedback + resize (NFM-3765)", { tag: "@integra
   const isLive = process.env.E2E_TARGET === "live"
   test.skip(isLive, "Drag resize unreliable against live site — covered by unit tests")
 
-  test("drag the resize handle and verify width updates + persists to localStorage", async ({ page }) => {
+  test("drag the resize handle and verify width updates + persists to localStorage", async ({
+    page,
+  }) => {
     await page.goto(BASE_URL + LIT_PATH)
     const row = page.locator("table tbody tr").first()
     await expect(row).toBeVisible({ timeout: 15_000 })
@@ -132,6 +136,22 @@ test.describe("Literature drawer feedback + resize (NFM-3765)", { tag: "@integra
 
     const handle = page.locator(".ant-drawer [role='separator']").first()
     await expect(handle).toBeVisible({ timeout: 5_000 })
+
+    // Wait for the drawer's slide-in animation to finish before reading
+    // any coordinates. `toBeVisible()` passes the instant the drawer
+    // starts opening, while `.ant-drawer-content-wrapper` is still
+    // translating in (e.g. handle at x≈1277 under translateX(100%),
+    // vs x≈557 at rest in the default 1280px viewport). A boundingBox()
+    // read at that moment returns the mid-flight position, so the
+    // mouse.down() below lands on drawer content instead of the handle
+    // and the drag silently no-ops (width never changes). At rest the
+    // computed transform is `none` (or an identity matrix) — poll for
+    // that instead of a wall-clock sleep so the wait tracks the actual
+    // animation state (NFM-5334).
+    await expect(async () => {
+      const transform = await drawer.evaluate((el) => getComputedStyle(el as HTMLElement).transform)
+      expect(transform === "none" || transform === "matrix(1, 0, 0, 1, 0, 0)").toBe(true)
+    }).toPass({ timeout: 5_000 })
 
     // Read starting width
     const startBox = await drawer.boundingBox()

@@ -22,7 +22,12 @@
 # Requires (validated up front): DEPLOY_SHA.
 # Optional: PROXY_PORT (ADR-018 / NFM-4762) — when set, applies HTTP_PROXY/
 # HTTPS_PROXY for the deploy session. Default unset = direct egress everywhere.
-# Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert.
+# Exit codes: 1 general; 71-74 reserved by tools/post-deploy-cutover-assert;
+# 80 = NFM-5253 enforced deploy-lock refusal — DEFAULT since NFM-5259 (flip
+#      2026-10-05, gated on the NFM-5258 SRE shadow-week sign-off); explicit
+#      NFM_DEPLOY_LOCK_ENFORCE=0 is the emergency-disable back to shadow;
+# 81 = NFM-5259 epoch mint/lock-acquire unavailable under enforcement
+#      (helper-fatal, no legacy lock fallback — CTO condition 1, 2026-09-28).
 # ============================================================================
 set -euo pipefail
 
@@ -84,9 +89,139 @@ if [ -z "${NFM_DEPLOY_LOCK:-}" ]; then
   fi
 fi
 mkdir -p "$(dirname "$NFM_DEPLOY_LOCK")"
-printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
-trap 'rm -f "$NFM_DEPLOY_LOCK"' EXIT
+
+# NFM-5527 — host-side apply journal. Evidence run 38419888271 (2026-10-14):
+# the deploy job was cancelled externally at 06:01:54Z, yet the host-side
+# apply survived the ssh/sudo teardown and completed the cutover at
+# 06:24:48Z — the GHA conclusion (`cancelled`) mislabels reality and the
+# in-job cutover guard was skipped by the cancel. This append-only JSONL
+# journal, one line per apply start/end, lives beside the deploy lock (same
+# G2 var dir, deploy-identity-writable, world-readable) so "did the apply
+# finish after a cancel, and for which sha" is answerable FROM THE HOST,
+# not inferred from the run conclusion. Advisory only: a journal-append
+# failure must never fail the deploy (the manifest at the end of this
+# script remains the sanctioned-drift baseline). NFM_DEPLOY_JOURNAL is a
+# test hook; production resolves through the lock's own directory chain.
+NFMD_JOURNAL="${NFM_DEPLOY_JOURNAL:-$(dirname "$NFM_DEPLOY_LOCK")/prod-deploy.journal}"
+NFMD_JOURNAL_ARMED=0
+nfmd_journal_line() {
+  # $1 = event ("apply-start" | "apply-end"); $2 = exit rc (end records).
+  # DEPLOY_ACTOR is sanitized to a JSON-safe charset (gh-runner handles and
+  # user names are [A-Za-z0-9-] plus the ':' separator, but never trust).
+  local ev="$1" rc="${2:-}" epoch_val extra=""
+  if [ -n "${DEPLOY_EPOCH_MINTED}" ]; then
+    epoch_val="${DEPLOY_EPOCH_MINTED}"
+  else
+    epoch_val="null"
+  fi
+  if [ -n "$rc" ]; then
+    extra=", \"rc\": ${rc}, \"status\": \"$( [ "$rc" = "0" ] && printf ok || printf failed )\""
+  fi
+  printf '{"ts": "%s", "event": "%s", "epoch": %s, "sha": "%s", "pid": %s, "actor": "%s"%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$epoch_val" "${DEPLOY_SHA}" "$$" \
+    "$(printf '%s' "${DEPLOY_ACTOR:-deploy_prod.sh:$(id -un)}" | tr -d '"\\')" \
+    "$extra" >> "$NFMD_JOURNAL" 2>/dev/null \
+    || echo "WARNING (NFM-5527): apply-journal append failed for ${ev} (${NFMD_JOURNAL})" >&2
+}
+
+# NFM-5253 (NFM-4848 T4, deploy-epoch fencing) / NFM-5259 (enforcement flip,
+# 2026-10-05, gated on the NFM-5258 SRE shadow-week sign-off — week clean,
+# epochs 1→7 strict +1): the lockfile acquire is an epoch-aware CAS instead
+# of a blind `>` overwrite, and the refusal is now ENFORCED BY DEFAULT. One
+# primitive: scripts/deploy_epoch.py mints the next epoch (monotonic int at
+# ${G2_VAR_DIR}/prod-deploy.epoch, fcntl-serialized) and, inside that same
+# critical section, decides whether THIS run may take the lock — refuse iff
+# a fresh lock (age <= 7200s) is held by a live pid. Under enforcement a
+# refusal exits 80 WITHOUT touching the holder's lock (before cutover).
+# NFM_DEPLOY_LOCK_ENFORCE defaults to 1; the explicit emergency-disable is
+# NFM_DEPLOY_LOCK_ENFORCE=0 (shadow semantics: the decision — EPOCH_MINTED /
+# LOCK_DECISION / deploy_epoch_lock JSON — is logged, but a "refuse" still
+# proceeds like the old blind overwrite). NFM-5259 / CTO condition 1: under
+# enforcement a missing/broken helper is FATAL (rc 81) — the legacy blind
+# lock write would mint no epoch and silently bypass the fence. AC6: the
+# minted epoch + lock decision ride the deploy log (ssh stdout → Actions
+# log) with no new infrastructure.
+DEPLOY_EPOCH_MINTED=""
+NFM5253_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NFM5253_ENFORCE_FLAG="--enforce"
+case "${NFM_DEPLOY_LOCK_ENFORCE:-1}" in
+  1|"") ;;
+  0) NFM5253_ENFORCE_FLAG="" ;;
+  *)
+    echo "WARNING (NFM-5259): unrecognized NFM_DEPLOY_LOCK_ENFORCE='${NFM_DEPLOY_LOCK_ENFORCE}' — treating as ENFORCED; only the exact value 0 is the emergency-disable." >&2
+    ;;
+esac
+# NFM-5527 — QUEUE instead of instant rc-80 refusal. Under enforcement, a
+# second apply that finds a fresh lock held by a live pid now WAITS up to
+# NFM_DEPLOY_LOCK_WAIT_SECS (polling inside deploy_epoch.py lock-acquire,
+# never minting per poll) before the single mint+decide — so a deploy that
+# lands while an in-flight apply (including an orphaned apply whose job was
+# cancelled — evidence 38419888271, cutover 23 min after the cancel) holds
+# the lock queues behind it instead of going red. Budget exhaustion keeps
+# today's rc-80 refusal. 0 restores the instant refusal. Default 2400s:
+# a cold build is ~30 min, and the window stays under the drift checker's
+# 2h --max-lock-age freshness bound.
+NFM_DEPLOY_LOCK_WAIT_SECS="${NFM_DEPLOY_LOCK_WAIT_SECS:-2400}"
+case "${NFM_DEPLOY_LOCK_WAIT_SECS}" in
+  ''|*[!0-9]*)
+    echo "WARNING (NFM-5527): NFM_DEPLOY_LOCK_WAIT_SECS='${NFM_DEPLOY_LOCK_WAIT_SECS}' is not a non-negative integer — using the 2400s default." >&2
+    NFM_DEPLOY_LOCK_WAIT_SECS=2400
+    ;;
+esac
+NFM5253_WAIT_FLAG="--wait-secs=${NFM_DEPLOY_LOCK_WAIT_SECS}"
+NFM5253_ACQUIRE_RC=0
+NFM5253_ACQUIRE_OUT="$(python3 "${NFM5253_SCRIPT_DIR}/deploy_epoch.py" lock-acquire \
+  --lock "$NFM_DEPLOY_LOCK" --sha "${DEPLOY_SHA}" --pid "$$" ${NFM5253_ENFORCE_FLAG} ${NFM5253_WAIT_FLAG} 2>&1)" \
+  || NFM5253_ACQUIRE_RC=$?
+if [ "${NFM5253_ACQUIRE_RC}" -eq 0 ]; then
+  printf '%s\n' "${NFM5253_ACQUIRE_OUT}"
+  DEPLOY_EPOCH_MINTED="$(printf '%s\n' "${NFM5253_ACQUIRE_OUT}" | sed -n 's/^EPOCH_MINTED=//p' | tail -n 1)"
+  DEPLOY_LOCK_DECISION="$(printf '%s\n' "${NFM5253_ACQUIRE_OUT}" | sed -n 's/^LOCK_DECISION=//p' | tail -n 1)"
+  # Machine anchor: the workflow's deploy step greps this out of ssh stdout
+  # into GITHUB_OUTPUT; the emit step's FIRST_POLL gate then requires the
+  # health marker to carry THIS epoch (T1 — a stale marker can structurally
+  # never attest).
+  echo "DEPLOY_EPOCH_MINTED=${DEPLOY_EPOCH_MINTED}"
+  echo "==> deploy epoch ${DEPLOY_EPOCH_MINTED} minted; lock decision: ${DEPLOY_LOCK_DECISION:-unknown} (NFM-5253 enforced)"
+  # NFM-5527: this body is now an APPLY — journal its start so a cancel can
+  # never make its outcome unanswerable from the host.
+  NFMD_JOURNAL_ARMED=1
+  nfmd_journal_line "apply-start"
+  if [ "${DEPLOY_LOCK_DECISION}" = "refuse" ]; then
+    echo "WARNING (NFM-5253 shadow): lock conflict detected but NOT enforced — proceeding (explicit NFM_DEPLOY_LOCK_ENFORCE=0 emergency-disable; the NFM-5259 default is enforced)."
+  fi
+elif [ "${NFM5253_ACQUIRE_RC}" -eq 80 ]; then
+  printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
+  echo "FATAL (NFM-5253): deploy REFUSED — the deploy lock is held by a live concurrent deploy (fresh lock, live pid). Not overwriting." >&2
+  exit 80
+else
+  if [ -n "${NFM5253_ENFORCE_FLAG}" ]; then
+    # NFM-5259 / CTO condition 1 (2026-09-28): under enforcement the legacy
+    # blind lock write is a silent-bypass vector — a lock with no epoch
+    # would also blind the drift checker's activated epoch stand-down
+    # comparison. A missing/broken helper REFUSES the deploy (rc 81).
+    printf '%s\n' "${NFM5253_ACQUIRE_OUT}" >&2
+    echo "FATAL (NFM-5259): epoch mint/lock-acquire unavailable under enforcement (rc=${NFM5253_ACQUIRE_RC}) — refusing to deploy; no legacy fallback while NFM_DEPLOY_LOCK_ENFORCE=1. Restore scripts/deploy_epoch.py, or set NFM_DEPLOY_LOCK_ENFORCE=0 ONLY as a deliberate emergency-disable." >&2
+    exit 81
+  fi
+  # NFM_DEPLOY_LOCK_ENFORCE=0 (explicit emergency-disable) — shadow-mode
+  # tolerance: a missing/broken helper must not block deploys (pre-fencing
+  # hosts, partial checkouts). Legacy blind write, no epoch.
+  echo "WARNING (NFM-5253): epoch mint/lock-acquire unavailable (rc=${NFM5253_ACQUIRE_RC}) — falling back to the legacy lock write: ${NFM5253_ACQUIRE_OUT}"
+  printf '{"pid": %s, "deploy_sha": "%s", "started": "%s"}\n' "$$" "${DEPLOY_SHA}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$NFM_DEPLOY_LOCK"
+  # NFM-5527: this is still a real apply — journal it (epoch null: the
+  # helper was unavailable, so no epoch was minted).
+  NFMD_JOURNAL_ARMED=1
+  nfmd_journal_line "apply-start"
+fi
+# NFM-5527: fold the apply-journal end-record into the same single EXIT
+# trap (armed only after a successful lock acquisition — a refused or
+# helper-fatal run never journaled an apply-start and must not journal an
+# end for an apply that never began). rc is captured BEFORE any trap work;
+# leaving the exit code untouched at the end of the trap preserves the
+# original status.
+trap 'rc=$?; if [ "${NFMD_JOURNAL_ARMED:-0}" = "1" ]; then nfmd_journal_line "apply-end" "$rc"; fi; rm -f "$NFM_DEPLOY_LOCK"' EXIT
 
 # NFM-3328: fail-fast semantics. Prior deploys slid past failed steps (build
 # errors, `docker compose` unavailable) into green health checks against
@@ -129,7 +264,8 @@ else
   NFMD_DC_PRIVATE=1
   # fold private-dir cleanup into the deploy-lock EXIT trap (line 89);
   # single trap statement — a second `trap ... EXIT` would replace it
-  trap 'rm -f "$NFM_DEPLOY_LOCK"; if [ "${NFMD_DC_PRIVATE:-}" = "1" ]; then rm -rf "${DOCKER_CONFIG:-}"; fi' EXIT
+  # (NFM-5527: the replacement carries the apply-journal end-record too)
+  trap 'rc=$?; if [ "${NFMD_JOURNAL_ARMED:-0}" = "1" ]; then nfmd_journal_line "apply-end" "$rc"; fi; rm -f "$NFM_DEPLOY_LOCK"; if [ "${NFMD_DC_PRIVATE:-}" = "1" ]; then rm -rf "${DOCKER_CONFIG:-}"; fi' EXIT
 fi
 mkdir -p "${DOCKER_CONFIG}/cli-plugins"
 printf '{}' > "${DOCKER_CONFIG}/config.json"
@@ -139,6 +275,14 @@ printf '{}' > "${DOCKER_CONFIG}/config.json"
 # the emit fragment report "health-gate-first-poll-passed true" for a deploy
 # that never cut over. Scrub it at the top of every deploy so the marker can
 # only ever attest to THIS run's health gate.
+#
+# NFM-5253 (NFM-4848 T1): the scrub is now HYGIENE, not the defense. The
+# marker written after the health gate carries {"epoch", "sha"} where epoch
+# is THIS run's minted deploy-epoch; the workflow's emit step reports
+# FIRST_POLL only when marker.epoch == the run's minted epoch (surfaced via
+# the DEPLOY_EPOCH_MINTED ssh-stdout anchor). A stale marker now fails the
+# comparison structurally — poisoning it can no longer produce a false
+# attest even if the scrub were skipped.
 #
 # NFM-4333 RC8: marker must live under $HOME, NOT /tmp. /tmp is mode 1777
 # sticky; a marker left over from a prior lwj04-as-runner run (e.g. an
@@ -235,27 +379,117 @@ python3 scripts/check_prod_image_tag.py \
 # pre-deploy-assert (D2, NFM-2149) has already validated the DB↔code alembic
 # match against the candidate image before this point.
 # --no-cache on all builds (NFM-2376 root cause: stale layer cache).
-echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
-# NFM-2502: clear proxy for Docker build (apt/pip use CN mirrors directly)
-# NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
-# ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
-# it as deploy_sha and the CI smoke identity assertion compares it to the
-# green tree (NFM-3835 class: hot-patched image passing grep-style checks).
-HTTP_PROXY= HTTPS_PROXY= DOCKER_BUILDKIT=0 \
-  docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
-    -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+#
+# --- NFM-5333: cap CI build-download throughput -----------------------------
+# NFM-5273 RCA (owner-accepted via NFM-5262 card a109200b): the three
+# --no-cache builds below re-download the full pip + pnpm dependency trees
+# every deploy at line rate, saturating the shared broadband and stalling
+# the host↔CF-edge leg past the sentinel 5s public-edge P0 budget (P0s
+# 2026-09-28 07:30Z, 2026-09-29 15:59:44Z). Mitigation (a): route the
+# build-time downloads through the loopback rate-limiting proxy
+# (scripts/ci_throttle_proxy.py, LaunchAgent io.nfmd.ci-throttle).
+#
+# Build containers reach the host listener via host.docker.internal
+# (Docker Desktop resolves it to the host's loopback) — 127.0.0.1 inside
+# a build container is the container itself, so the URL differs by
+# client. The legacy (DOCKER_BUILDKIT=0) builder forwards HTTP(S)_PROXY
+# env as predefined build args into every RUN step, which pip/pnpm/
+# corepack all honor. (NFM-5389 correction, 2026-10-08: that forwarding
+# does NOT happen on the current docker CLI — only explicit predefined
+# --build-arg forms reach legacy RUN containers; see the gate below.)
+#
+# NFM-2502 interplay: that fix cleared proxy env because the SYSTEM
+# v2cloud proxy tunneled the CN mirrors abroad. This proxy egresses
+# DIRECT — tuna/aliyun/npmmirror keep their fast domestic route, only
+# rate-capped. On any proxy failure we fall back to the exact NFM-2502
+# behavior (cleared env, uncapped), and each Dockerfile keeps an
+# unproxied last-resort leg so a proxy that dies MID-build cannot fail
+# the deploy. The subshell overrides the legacy PROXY_PORT export for
+# the builds only.
+NFMD_CI_THROTTLE_HOST_URL="http://127.0.0.1:7899"
+NFMD_CI_THROTTLE_BUILD_URL="http://host.docker.internal:7899"
+NFMD_CI_THROTTLE_PROBE_IMAGE="ghcr.io/etoile04/nucpot-build-base:stable"
+nfmd_ci_throttle_ready() {
+  curl -fsS --max-time 4 -x "$NFMD_CI_THROTTLE_HOST_URL" \
+    "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1
+}
+# NFM-5389: the host probe above only proves the proxy answers on loopback.
+# Build containers reach it via host.docker.internal, a Docker-Desktop
+# gateway alias that can silently stop forwarding (and whose breakage a
+# host-shell probe cannot see). What failed on 2026-10-07 was subtler:
+# Docker Desktop stopped INJECTING proxy env into legacy-build RUN
+# containers after the manual-proxy clearance + daemon restart, so every
+# "capped" deploy from then on downloaded UNCAPPED with green gates
+# while the alias path itself kept working (verified 2026-10-08: an
+# HTTPS relay through host.docker.internal:7899 from a container moves
+# capped bytes; the earlier "alias dead" reads were artifacts of
+# requesting host.docker.internal as an upstream URL, which the
+# host-side proxy cannot resolve). Probe the exact container path so a
+# cap claim always proves builds can reach the proxy: proxy-form GET
+# with Host pinned to 127.0.0.1 so the proxy answers health instead of
+# relaying host.docker.internal (which does not resolve on the host).
+nfmd_ci_throttle_path_ready() {
+  docker run --rm "$NFMD_CI_THROTTLE_PROBE_IMAGE" \
+    curl -fsS --max-time 6 -x "$NFMD_CI_THROTTLE_BUILD_URL" \
+    "${NFMD_CI_THROTTLE_HOST_URL}/__nfmd_ci_throttle_health" >/dev/null 2>&1
+}
 
-echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
-DOCKER_BUILDKIT=0 \
-  docker build --no-cache -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
-    -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
+(
+  # NFM-5389: env-prefix proxy exports do NOT reach legacy RUN containers
+  # on this docker CLI (verified 2026-10-08: `HTTP_PROXY=… docker build`
+  # yields NO-PROXY-ENV inside RUN; only explicit predefined --build-arg
+  # forms do). The historical capped traffic rode Docker Desktop's
+  # daemon-side proxy injection, which the 2026-10-07 proxy clearance
+  # killed. The cap is therefore passed explicitly, and only when the
+  # container-path probe proves builds can actually reach the proxy.
+  if nfmd_ci_throttle_ready; then
+    if nfmd_ci_throttle_path_ready; then
+      echo "==> NFM-5333/NFM-5389: ci-throttle healthy (host + container path) — build downloads capped via ${NFMD_CI_THROTTLE_BUILD_URL} (log: ~/Library/Logs/nfmd-ci-throttle.log)"
+      export HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL" HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+      export http_proxy="$NFMD_CI_THROTTLE_BUILD_URL" https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+      export NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1"
+      THROTTLE_BUILD_ARGS=(
+        --build-arg HTTP_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg HTTPS_PROXY="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg http_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg https_proxy="$NFMD_CI_THROTTLE_BUILD_URL"
+        --build-arg NO_PROXY="localhost,127.0.0.1,::1"
+        --build-arg no_proxy="localhost,127.0.0.1,::1"
+      )
+    else
+      echo "==> NFM-5389: ci-throttle healthy on host BUT container path ${NFMD_CI_THROTTLE_BUILD_URL} BROKEN — building UNCAPPED (Docker Desktop proxy-alias regression; see NFM-5389 — do not trust the cap until fixed)"
+      unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
+    fi
+  else
+    echo "==> NFM-5333: ci-throttle NOT reachable — building uncapped (pre-NFM-5333 / NFM-2502 behavior)"
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy || true
+  fi
 
-echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
-DOCKER_BUILDKIT=0 \
-  docker build --no-cache -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
-    -f docker/web.Dockerfile \
-    --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
-    --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
+  echo "==> Building nucpot-prod-api:${PROD_IMAGE_TAG}"
+  # NFM-848: BUILDKIT=0 — daemon-side metadata resolution, no keychain
+  # ADR-015 §4: bake the deploying SHA into the image; /api/v1/health exposes
+  # it as deploy_sha and the CI smoke identity assertion compares it to the
+  # green tree (NFM-3835 class: hot-patched image passing grep-style checks).
+  # THROTTLE_BUILD_ARGS uses the bash-3.2 set-u-safe empty-array idiom.
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache --build-arg GIT_SHA="${DEPLOY_SHA}" \
+      ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
+      -t "nucpot-prod-api:${PROD_IMAGE_TAG}" -f docker/prod-api.Dockerfile .
+
+  echo "==> Building nucpot-prod-lightrag:${PROD_IMAGE_TAG}"
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
+      -t "nucpot-prod-lightrag:${PROD_IMAGE_TAG}" \
+      -f docker/lightrag.Dockerfile --build-arg LIGHTRAG_VERSION=1.5.4 .
+
+  echo "==> Building nucpot-prod-web:${PROD_IMAGE_TAG}"
+  DOCKER_BUILDKIT=0 \
+    docker build --no-cache ${THROTTLE_BUILD_ARGS[@]+"${THROTTLE_BUILD_ARGS[@]}"} \
+      -t "nucpot-prod-web:${PROD_IMAGE_TAG}" \
+      -f docker/web.Dockerfile \
+      --build-arg API_SERVER_URL=http://nucpot-prod-api:8000 \
+      --build-arg LIGHTRAG_WEBUI_URL=http://nucpot-prod-lightrag:9621 .
+)
 
 # NFM-2146 / ADR-NFM-2139 §5 D3 (revised by NFM-2196): deploy-time migration
 # runs BEFORE the new containers come up. The Postgres advisory lock
@@ -291,6 +525,17 @@ echo "==> Capturing BEFORE snapshot of nucpot-prod-* containers..."
 bash tools/post-deploy-cutover-assert/assert.sh \
   --phase before \
   --snapshot-dir "${NFM_CUTOVER_SNAPSHOT_DIR}"
+
+# NFM-5898 — per-deploy ISR warm-up token. Generated HERE (never provisioned
+# in docker/.env.prod) so the secret lives only for this deploy session: it
+# is interpolated into the web container's environment by compose
+# (ISR_WARMUP_TOKEN passthrough in docker-compose.prod.yml) and reused by the
+# post-health-gate warm-up block below. An empty value would leave the
+# endpoint fail-closed (503) and the cold window unmitigated, so generate
+# unconditionally; openssl exists on the deploy host, /dev/urandom is the
+# fallback. Both sides of the endpoint's comparison are hashed before
+# timingSafeEqual, and the token never appears in any log line.
+export ISR_WARMUP_TOKEN="$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 # Restart ALL containers using the SHA-tagged images. PROD_IMAGE_TAG resolves
 # each service's `image:` to the matching SHA-tagged image we just built.
@@ -379,13 +624,173 @@ health_first_poll() {
 echo "Checking API health..."
 rm -f "${NFMD_HEALTH_MARKER}"
 if health_first_poll http://localhost:8001/api/v1/health 12 5; then
-  touch "${NFMD_HEALTH_MARKER}"
+  # NFM-5253 (T1): the marker carries THIS run's minted epoch + sha. The
+  # emit step's epoch comparison (not the scrub) is the defense: a marker
+  # from any other run — stale, overlapping, or poisoned — fails
+  # marker.epoch == run epoch and can never attest FIRST_POLL. The
+  # epoch-less touch is the shadow-mode fallback when the epoch helper was
+  # unavailable (the emit step then reports FIRST_POLL=false, conservative).
+  if [ -n "${DEPLOY_EPOCH_MINTED}" ]; then
+    printf '{"epoch": %s, "sha": "%s"}\n' "${DEPLOY_EPOCH_MINTED}" "${DEPLOY_SHA}" \
+      > "${NFMD_HEALTH_MARKER}"
+    echo "==> health marker written with epoch ${DEPLOY_EPOCH_MINTED} (NFM-5253)"
+  else
+    touch "${NFMD_HEALTH_MARKER}"
+  fi
 else
   exit 1
 fi
 
 echo "Checking Web health..."
 health_first_poll http://localhost:3000/ 12 5 || exit 1
+
+# =============================================================================
+# NFM-5898 — post-cutover ISR warm-up: kill the ~30min cold window on '/' and
+# '/browse'. Every deploy serves the web image's BUILD-TIME prerender for
+# these routes: the ISR freshness clock is anchored at `next build`
+# (revalidate = 1800), and the build stage cannot reach the API (the compose
+# network does not exist inside docker build), so home-data.ts fail-soft
+# bakes empty sections — the 77150B cold payload SRE decoded on the NFM-5897
+# thread. A warm-up GET alone cache-HITs the same build-anchored entry; the
+# routes need FORCED on-demand revalidation via the token-guarded
+# POST /api/revalidate-landing handler
+# (apps/web/src/app/api/revalidate-landing/route.ts). '/browse' shares the
+# /potentials ISR entry (NFM-5228 afterFiles alias rewrite), so one
+# revalidate covers both site-monitor targets (scripts/health_check.py).
+#
+# Ordering contract (scripts/tests/test_deploy_prod_isr_warmup.py): AFTER the
+# web health gate (origin verified live) and BEFORE the NFM-5420 CF purge —
+# the edge's first refetch after purge must hit a warm origin.
+#
+# Failure policy (NFM-5149 / NFM-5426 precedent): advisory-only. By this
+# point the origin cutover is complete and verified; a failed warm-up must
+# never retro-red a healthy deploy. Loud anchors for log triage:
+# ISR_WARMUP_COMPLETED_OK / ISR_WARMUP_FAILED / ISR_WARMUP_SKIPPED.
+# =============================================================================
+echo "==> NFM-5898 ISR warm-up: cold-window capture + forced revalidation of '/' and '/browse'"
+nfmd5898_cap_dir="${NFM_CUTOVER_SNAPSHOT_DIR}/coldwindow-nfm-5898"
+mkdir -p "${nfmd5898_cap_dir}" \
+  || echo "  WARNING (NFM-5898): mkdir ${nfmd5898_cap_dir} failed (exit $?) — cold-window capture unavailable" >&2
+nfmd5898_fetch() {
+  # $1 = URL, $2 = output file — single bounded GET, advisory-only on failure
+  # (NFM-5208 diagnostics precedent: a capture gap must log, never abort).
+  curl -fsS --max-time 30 -o "$2" "$1" \
+    || echo "  WARNING (NFM-5898): GET $1 failed (curl exit $?) — capture incomplete" >&2
+}
+# Cold-window capture FIRST: the served build-time prerender, byte-for-byte
+# what the first post-cutover site-monitor ticks see (NFM-5897 residual: the
+# 77150B body was never content-captured).
+nfmd5898_fetch "http://127.0.0.1:3000/" "${nfmd5898_cap_dir}/cold-index.html"
+nfmd5898_fetch "http://127.0.0.1:3000/browse" "${nfmd5898_cap_dir}/cold-browse.html"
+
+if [ -z "${ISR_WARMUP_TOKEN:-}" ]; then
+  echo "ISR_WARMUP_SKIPPED: ISR_WARMUP_TOKEN not exported — endpoint is fail-closed, cold window unmitigated" >&2
+else
+  # Block internals stay lowercase: the NFM5898_* namespace is reserved for
+  # env knobs (test hooks like NFM5898_RETRY_DELAY_S), and a reassigned
+  # inherited env var keeps its export attribute — an uppercase runtime
+  # variable here would leak its value into every child process.
+  nfmd5898_post_rc=1
+  nfmd5898_post_body=""
+  for nfmd5898_attempt in 1 2; do
+    nfmd5898_post_rc=0
+    nfmd5898_post_body="$(curl -fsS --max-time 30 -X POST \
+      -H "x-nfm-warmup-token: ${ISR_WARMUP_TOKEN}" \
+      http://127.0.0.1:3000/api/revalidate-landing 2>/dev/null)" || nfmd5898_post_rc=$?
+    if [ "${nfmd5898_post_rc}" -eq 0 ]; then
+      break
+    fi
+    if [ "${nfmd5898_attempt}" -lt 2 ]; then
+      echo "  ISR warm-up POST attempt ${nfmd5898_attempt}/2 failed (curl exit ${nfmd5898_post_rc}); retrying in ${NFM5898_RETRY_DELAY_S:-5}s"
+      # `|| true`: the knob is an env/test hook and may hold a value sleep
+      # rejects (non-numeric, GNU "5s" suffix on BSD). Under set -euo
+      # pipefail a failed sleep must not errexit the deploy post-health-gate
+      # — the advisory-only failure policy is total for this block.
+      sleep "${NFM5898_RETRY_DELAY_S:-5}" || true
+    else
+      echo "  ISR warm-up POST attempt 2/2 failed (curl exit ${nfmd5898_post_rc})"
+    fi
+  done
+  if [ "${nfmd5898_post_rc}" -ne 0 ]; then
+    echo "ISR_WARMUP_FAILED: POST /api/revalidate-landing did not succeed after 2 attempts (last curl exit ${nfmd5898_post_rc}) — '/' and '/browse' serve the build prerender until build+1800s" >&2
+  else
+    echo "==> ISR warm-up revalidated: ${nfmd5898_post_body}"
+    # Warm capture: the first GETs after the purge render against the live
+    # API inside the container network — the prod-data payload the monitor
+    # baselines (126848B / 86823B class).
+    nfmd5898_fetch "http://127.0.0.1:3000/" "${nfmd5898_cap_dir}/warm-index.html"
+    nfmd5898_fetch "http://127.0.0.1:3000/browse" "${nfmd5898_cap_dir}/warm-browse.html"
+    for nfmd5898_route in index browse; do
+      if [ -f "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" ] && [ -f "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" ]; then
+        nfmd5898_cold_b="$(wc -c < "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" | tr -d ' ')"
+        nfmd5898_warm_b="$(wc -c < "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" | tr -d ' ')"
+        echo "==> NFM-5898 ${nfmd5898_route}: cold prerender ${nfmd5898_cold_b}B -> warm regen ${nfmd5898_warm_b}B"
+        diff -u "${nfmd5898_cap_dir}/cold-${nfmd5898_route}.html" \
+          "${nfmd5898_cap_dir}/warm-${nfmd5898_route}.html" \
+          > "${nfmd5898_cap_dir}/${nfmd5898_route}.diff" 2>/dev/null || true
+      else
+        echo "  WARNING (NFM-5898): ${nfmd5898_route} capture incomplete — cold/warm pair missing, byte report skipped" >&2
+      fi
+    done
+    echo "ISR_WARMUP_COMPLETED_OK sha=${DEPLOY_SHA} cap_dir=${nfmd5898_cap_dir}"
+  fi
+fi
+
+# NFM-5420 task 3 / NFM-5426 — post-cutover Cloudflare edge purge. Static
+# HTML is edge-cached by origin s-maxage; before NFM-5419 that was a 1-year
+# pin, so every deploy that changed chunk hashes left warm colos serving
+# HTML with dead /_next/static refs (NFM-5418). Origin now emits s-maxage=1800
+# (NFM-5863; was 300), which bounds NEW entries, but the previous entry still
+# occupies the cache key until it expires or is purged — so the deploy itself
+# must purge.
+# purge_everything (not a route list) on purpose: it is the only form that
+# implicitly covers ALIAS paths like the /browse → /potentials rewrite in
+# apps/web/next.config.ts LEGACY_ALIAS_REWRITES, which a canonical-route
+# purge list misses (NFM-5426's exact failure mode).
+#
+# Credentials come from (first match wins):
+#   1. exported CF_ZONE_PURGE_TOKEN / CF_ZONE_ID — manual on-host runs;
+#   2. docker/.env.prod — the operator-managed env file compose already
+#      reads (--env-file, nfmdeploy-readable, untracked so it survives the
+#      runner's `git reset --hard`). This is the GH-runner path: run-deploy.sh
+#      sudo env_keep only passes DEPLOY_SHA/PROXY_PORT through, so the env
+#      file is the sanctioned channel that needs no sudoers or workflow
+#      change. Plain unquoted values (CF tokens are [A-Za-z0-9_-]).
+# Deliberately NOT fatal (NFM-5149 advisory precedent): by this point the
+# origin cutover above is complete and verified; a failed or skipped purge
+# leaves stale edge HTML for at most the old entry's TTL and must never
+# retro-red a healthy deploy.
+echo "==> Cloudflare edge purge (NFM-5420/NFM-5426)"
+if [ -z "${CF_ZONE_PURGE_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+  if [ -f docker/.env.prod ]; then
+    # Heredoc (not a pipe) so the export survives in this shell.
+    while IFS='=' read -r cf_k cf_v; do
+      case "${cf_k}" in
+        CF_ZONE_PURGE_TOKEN|CF_ZONE_ID)
+          [ -n "${cf_v}" ] && export "${cf_k}=${cf_v}"
+          ;;
+      esac
+    done <<EOF
+$(grep -E '^(CF_ZONE_PURGE_TOKEN|CF_ZONE_ID)=' docker/.env.prod 2>/dev/null || true)
+EOF
+  fi
+fi
+if [ -n "${CF_ZONE_PURGE_TOKEN:-}" ] && [ -n "${CF_ZONE_ID:-}" ]; then
+  cf_purge_rc=0
+  curl -fsS --max-time 30 -X POST \
+    -H "Authorization: Bearer ${CF_ZONE_PURGE_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"purge_everything":true}' \
+    "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+    >/dev/null 2>&1 || cf_purge_rc=$?
+  if [ "$cf_purge_rc" -eq 0 ]; then
+    echo "==> CF purge_everything issued (alias paths incl. /browse covered)"
+  else
+    echo "!! NFM-5426: CF purge FAILED (curl exit ${cf_purge_rc}) — edge HTML stays stale until s-maxage expiry. Purge manually: CF dashboard → zone → Caching → Configuration → Purge Everything." >&2
+  fi
+else
+  echo "!! NFM-5426: CF purge SKIPPED — CF_ZONE_PURGE_TOKEN / CF_ZONE_ID not in env nor docker/.env.prod. Edge HTML can outlive this build (NFM-5418 class); purge manually if chunk hashes changed." >&2
+fi
 
 # NFM-4271 / ADR-013 §2 G4a — record the deploy manifest now that cutover and
 # health gates have passed. The manifest (one JSON artifact, overwritten per
@@ -491,3 +896,18 @@ done
 echo "==> Post-prune nucpot-prod-* tag count: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c '^nucpot-prod-')"
 echo "==> DEPLOY SCRIPT CUTOVER END (anchor for NFM-3777 diagnosis)"
 echo "DEPLOY_SCRIPT_COMPLETED_OK sha=${DEPLOY_SHA}"
+
+# NFM-5578 / ADR-013 G5 amendment (NFM-5101 CTO ruling 2026-10-18, Option
+# D): after a SUCCESSFUL deploy, fire the sanctioned G5 cleanup wrapper
+# with args byte-identical to the 20:20Z daily cron. Deliberately AFTER
+# the completion anchor so cutover watchers are never delayed by prune
+# minutes. Never fatal (ruling constraint 1): the helper is exit-0 by
+# construction and a trim failure logs an SRE-visible WARNING while the
+# deploy stays green — the daily cron backstops. Concurrency vs the cron
+# and overlapping deploys is guarded inside the wrapper entry (single
+# flock-class guard, ruling constraint 2).
+if [ -f scripts/post_deploy_trim.sh ]; then
+  bash scripts/post_deploy_trim.sh || echo "WARNING (NFM-5578): post-deploy trim helper itself failed rc=$? — deploy NOT affected; the 20:20Z daily cron backstop converges"
+else
+  echo "==> NOTE (NFM-5578): scripts/post_deploy_trim.sh absent from this checkout — post-deploy G5 trim skipped"
+fi

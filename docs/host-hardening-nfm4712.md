@@ -120,6 +120,16 @@ runner-spawned processes anyway.
 
 ## Drift detection
 
+> **ADR-024 exception lane (2026-10-18):**
+> [ADR-024](./adr/ADR-024-NFM-5582-runner-egress-terminating-proxy.md)
+> pre-authorizes a staged terminating-proxy egress lane for this exact runner
+> (`production`). While the lane stays staged, the Layer-2 invariant below is
+> unchanged and the audit remains authoritative. If the lane is activated under
+> ADR-024 §4's pre-authorized triggers, the sanctioned proxy enrollment will
+> intentionally trip this audit — treat that as an ADR-024 activation
+> (update the plist/audit expectation alongside its kill-switch), not as
+> drift to revert silently.
+
 `bin/audit-runner-plist.sh` asserts (Layer-2 default):
 
 | Check | Failure mode caught |

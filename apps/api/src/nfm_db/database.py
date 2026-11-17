@@ -12,7 +12,6 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Protocol
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -42,116 +41,8 @@ _engine: AsyncEngine | None = None
 _default_factory: async_sessionmaker[AsyncSession] | None = None
 _engine_lock = threading.Lock()
 
-# NFM-5213: process-level circuit breaker for the AGE connect listener.
-# Prod (nucpot-prod-db on pgvector/pgvector:pg16) has no AGE binary, so
-# ``LOAD 'age'`` fails with undefined_file (58P01) on every fresh pooled
-# connection — ~24 traceback warnings/hour in nucpot-prod-api.  The first
-# proof-of-absence trips ``_age_absent``; later connections skip the
-# attempt entirely and the warning fires exactly once per process.
-# Only failures that PROVE the binary is missing server-side trip it;
-# transient errors keep the historical per-connection warning.  A process
-# restart (or the test-isolation hook) re-arms the probe, so an image that
-# later ships AGE resumes loading it without a code change.
-_age_absent: bool = False
-_age_state_lock = threading.Lock()
-
-# SQLSTATE 58P01 = undefined_file ("could not access file" for a LOAD target).
-_AGE_UNDEFINED_FILE_SQLSTATE = "58P01"
-_AGE_ABSENT_MESSAGE_MARKER = 'could not access file "age"'
-
-
-def _is_age_absent_error(exc: BaseException) -> bool:
-    """True when a ``LOAD 'age'`` failure proves the binary is absent server-side.
-
-    Matches whichever signal the driver surfaces: asyncpg raises
-    ``UndefinedFileError`` carrying ``sqlstate == '58P01'``; other drivers
-    leave only the class name or the server's message text.
-    """
-    if getattr(exc, "sqlstate", None) == _AGE_UNDEFINED_FILE_SQLSTATE:
-        return True
-    if type(exc).__name__ == "UndefinedFileError":
-        return True
-    return _AGE_ABSENT_MESSAGE_MARKER in str(exc)
-
-
-def _rollback_fresh_connection(dbapi_conn: object) -> None:
-    """Best-effort rollback of the connect listener's aborted transaction.
-
-    A failed statement (e.g. ``LOAD 'age'`` → 58P01) aborts the fresh
-    connection's implicit transaction; the next statement on it fails with
-    ``InFailedSQLTransactionError``, so the request that triggered the
-    connect gets a 500 that does not reflect actual health (NFM-5223).
-    Guarded: a rollback that itself fails must not raise out of the
-    connect event — that would fail connection creation outright.
-    """
-    rollback = getattr(dbapi_conn, "rollback", None)
-    if rollback is None:
-        return
-    try:
-        rollback()
-    except Exception:
-        logger.warning(
-            "AGE listener rollback failed; pooled connection stays poisoned "
-            "until pool recycle (NFM-5223)",
-            exc_info=True,
-        )
-
-
-def _load_age_extension(dbapi_conn: object, connection_record: object) -> None:
-    """Load Apache AGE extension on PostgreSQL connections.
-
-    This sets search_path so AGE graph functions are available
-    alongside normal relational queries.  No-op on non-PostgreSQL
-    backends (e.g. SQLite for tests).  Once ``_age_absent`` is tripped
-    (NFM-5213) it is a no-op for the rest of the process: the server
-    provably lacks the AGE binary.
-    """
-    global _age_absent
-    if _age_absent:
-        return
-    cursor_factory = getattr(dbapi_conn, "cursor", None)
-    if cursor_factory is None:
-        return
-    # DB-API 2.0 (PEP 249): ``Connection.cursor`` is a METHOD that returns
-    # a cursor instance; ``.execute`` lives on the cursor, not the
-    # connection.  Calling execute on the factory itself raised
-    # ``AttributeError: 'function' object has no attribute 'execute'``
-    # on every fresh PostgreSQL connection (NFM-5191).
-    cursor = cursor_factory()
-    try:
-        cursor.execute("SELECT current_database()")
-        cursor.execute("LOAD 'age';")
-        cursor.execute('SET search_path TO ag_catalog, "$current_schema";')
-    except Exception as exc:
-        # NFM-5223: the failing statement left this connection's implicit
-        # transaction aborted.  Roll it back BEFORE any return path (breaker
-        # trip, silent concurrent loser, transient warning) hands the
-        # connection to the requesting session — every exit below must
-        # return a connection whose transaction is usable.
-        _rollback_fresh_connection(dbapi_conn)
-        if not _is_age_absent_error(exc):
-            # Unknown/transient failure — stays observable per connection.
-            logger.warning(
-                "AGE extension not available, skipping LOAD 'age' setup",
-                exc_info=True,
-            )
-            return
-        with _age_state_lock:
-            if _age_absent:
-                # A concurrent connection already tripped the breaker and
-                # emitted the one warning — stay silent.
-                return
-            logger.warning(
-                "AGE extension binary absent (undefined_file/58P01): "
-                "skipping LOAD 'age' on all future connections of this "
-                "process (NFM-5213)",
-                exc_info=True,
-            )
-            _age_absent = True
-
-
 def _new_engine(poolclass: type[Pool] | None = None) -> AsyncEngine:
-    """Build a fresh engine with the AGE connect listener attached.
+    """Build a fresh engine.
 
     Never cached here — the shared engine is cached by :func:`get_engine`;
     task-scoped engines are built and disposed per task.
@@ -160,7 +51,6 @@ def _new_engine(poolclass: type[Pool] | None = None) -> AsyncEngine:
     if poolclass is not None:
         kwargs["poolclass"] = poolclass
     engine = create_async_engine(get_settings().database_url, **kwargs)
-    event.listens_for(engine.sync_engine, "connect")(_load_age_extension)
     return engine
 
 
@@ -205,16 +95,12 @@ def reset_for_tests() -> None:
     ``__resetFlagCacheForTests``): production code must never call it.
     Needed because a provider built under one test's env (e.g. an
     in-memory SQLite ``NFM_DATABASE_URL``) must not leak into later
-    tests that expect a fresh resolve.  Also re-arms the NFM-5213 AGE
-    absent-breaker so a tripped probe cannot silence a later test (or,
-    in production terms, a restart re-probes after an image upgrade).
+    tests that expect a fresh resolve.
     """
-    global _engine, _default_factory, _age_absent
+    global _engine, _default_factory
     with _engine_lock:
         _engine = None
         _default_factory = None
-    with _age_state_lock:
-        _age_absent = False
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -242,9 +128,6 @@ async def task_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSessio
     with ``Future attached to a different loop``.  This adapter gives every
     task its own engine bound to the task's loop and disposes it on exit,
     so no pool state crosses the task boundary (ADR-NFM-4076 D3).
-
-    The AGE extension listener is attached like on the shared engine so
-    graph functions resolve identically in and out of tasks.
     """
     engine = _new_engine(poolclass=NullPool)
     try:

@@ -71,8 +71,12 @@ RUN pip install --no-cache-dir --default-timeout=120 --retries=10 \
     (sleep 10 && pip install --no-cache-dir --default-timeout=120 --retries=10 \
       -i https://mirrors.aliyun.com/pypi/simple/ \
       "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0') || \
-    (sleep 15 && pip install --no-cache-dir --default-timeout=180 --retries=15 \
-      "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0')
+    # NFM-5333: the final leg strips the ci-throttle proxy env — a proxy
+    # that dies mid-build costs speed, never the deploy.
+    (echo "NFM-5333: lightrag proxy-capped legs failed — final leg runs DIRECT/UNCAPPED" 1>&2 && \
+     env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+       pip install --no-cache-dir --default-timeout=180 --retries=15 \
+       "lightrag-hku[api]==${LIGHTRAG_VERSION}" asyncpg 'ollama>=0.6.0' httpx 'pgvector>=0.3.0,<1.0')
 
 # Knowledge graph data directory (persisted via volume mount)
 RUN mkdir -p /app/data

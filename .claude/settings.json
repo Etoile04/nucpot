@@ -1,0 +1,31 @@
+{
+  "env": {
+    "PCMR_ENFORCE": "1"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "TaskUpdate|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}/scripts/hooks/pre_completion_merge.py\"",
+            "timeout": 45
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "TaskUpdate|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_ROOT:-${PAPERCLIP_WORKSPACE_WORKTREE_PATH:-.}}/scripts/hooks/pre_completion_merge.py\"",
+            "timeout": 45
+          }
+        ]
+      }
+    ]
+  }
+}

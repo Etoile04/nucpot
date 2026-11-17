@@ -7,6 +7,13 @@ export const metadata: Metadata = {
     "NucPot 核材料势函数开放平台:项目背景、数据来源、平台遵循的标准与规范、贡献指南与协作团队。",
 }
 
+// NFM-5418: without this, a fully-static page emits Next.js's default
+// s-maxage=31536000 HTML header, so the Cloudflare edge pins it for a year
+// and any deploy that changes chunk hashes orphans the cached refs
+// (NFM-5335 class). Match the home page's ISR window instead: the shell
+// revalidates every 5 min behind stale-while-revalidate.
+export const revalidate = 300
+
 // NFM-4991 (IA-REF P2): refactored /about to a landing page that matches
 // platform-design.md §1 站点地图 — the three first-level sub-entries below
 // (标准/规范, 贡献指南, 团队) are now real routes under /about/* rather
@@ -32,14 +39,12 @@ const SUB_CARDS: readonly SubCard[] = [
   {
     href: "/about/contribute",
     title: "贡献指南",
-    description:
-      "势函数与文献数据的提交、审核、版本与发布流程;数据完整性与署名归属要求。",
+    description: "势函数与文献数据的提交、审核、版本与发布流程;数据完整性与署名归属要求。",
   },
   {
     href: "/about/team",
     title: "团队",
-    description:
-      "平台维护团队、协作单位、贡献者与对外联系方式。",
+    description: "平台维护团队、协作单位、贡献者与对外联系方式。",
   },
 ]
 
@@ -116,12 +121,8 @@ export default function AboutPage() {
                   border: "1px solid var(--color-border)",
                 }}
               >
-                <div className="text-base font-semibold text-gray-100 mb-1">
-                  {card.title}
-                </div>
-                <p className="text-sm text-gray-400 leading-relaxed">
-                  {card.description}
-                </p>
+                <div className="text-base font-semibold text-gray-100 mb-1">{card.title}</div>
+                <p className="text-sm text-gray-400 leading-relaxed">{card.description}</p>
               </Link>
             ))}
           </div>

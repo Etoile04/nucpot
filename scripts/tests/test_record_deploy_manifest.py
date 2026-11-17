@@ -9,6 +9,15 @@ diffs live ``docker inspect`` state against it.
 Contract (issue NFM-4271; field names FROZEN for the sibling alarm):
   {deploy_sha, image_tags, image_digests, service_containers, timestamp, actor}
 
+NFM-5253 added ``deploy_epoch`` as an ADDITIVE shadow key — present only when
+epoch state exists (that shape is pinned in test_deploy_epoch.py, including
+the drift-checker running against an epoch-carrying manifest). This suite
+pins the legacy 6-key contract with the epoch-resolution chain scrubbed
+(NFM-5264): on the prod host, where the smoke job also runs, the canonical
+epoch file has existed since the first live mint (2026-09-28), and the
+ambient read leaked the shadow key into every fixture manifest, red-running
+the schema test on every deploy after it.
+
 Digest precedence (documented for the G4b sibling): ``RepoDigests[0]`` when
 the image was pulled/pushed (true RepoDigest form); otherwise the container's
 immutable image-ID digest (``.Image``, ``sha256:...``). Prod images are BUILT
@@ -195,6 +204,24 @@ def fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return _load
 
 
+@pytest.fixture(autouse=True)
+def hermetic_epoch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Scrub the ambient deploy-epoch resolution chain (NFM-5264).
+
+    record_deploy_manifest.py resolves the additive ``deploy_epoch`` field
+    via ``$NFM_DEPLOY_EPOCH > $NFM_G2_VAR_DIR > /usr/local/var/nfm-g2 >
+    ~/.nfmd`` — every link is ambient host state. This suite also runs on
+    the prod host (deploy workflow smoke job), where the canonical epoch
+    file has existed since the first live mint, so the recorder subprocess
+    inherited a live epoch and emitted the shadow key into fixture
+    manifests. Mirrors ``clean_epoch_env`` in test_deploy_epoch.py:
+    NFM_G2_VAR_DIR is pinned to a NONEXISTENT dir so the chain falls
+    through to the sandbox HOME, never the live file."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("NFM_G2_VAR_DIR", str(tmp_path / "absent-g2"))
+    monkeypatch.delenv("NFM_DEPLOY_EPOCH", raising=False)
+
+
 def run_recorder(
     *args: str,
     manifest: Path,
@@ -244,7 +271,13 @@ def test_success_records_all_running_services(fake_docker, tmp_path):
 
 
 def test_manifest_schema_core_keys_exact(fake_docker, tmp_path):
-    """Field names are a frozen contract for the G4b drift alarm sibling."""
+    """Field names are a frozen contract for the G4b drift alarm sibling.
+
+    Pins the legacy (pre-enforcement-flip) shape: with no epoch state —
+    the scrubbed chain from hermetic_epoch_env — the manifest carries
+    exactly the six frozen keys. The epoch-present additive shape is
+    pinned in test_deploy_epoch.py; extending THIS set is the NFM-5253
+    flip owner's deliberate change, not ambient host state."""
     fake_docker(prod_containers())
     manifest = tmp_path / "m" / "prod-deploy-manifest.json"
 

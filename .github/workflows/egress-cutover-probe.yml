@@ -1,0 +1,26 @@
+name: Egress cutover probe
+
+# NFM-5583 / NFM-5587 (AC6 instrument): minimal no-op workflow that runs on
+# the `production` self-hosted runner. During the W4 controlled cutover (and
+# later SRE activation validation) a green run of this workflow proves the
+# full lane end-to-end: broker long-poll job dispatch, actions/checkout over
+# TLS, and completion callbacks — all through the terminating-TLS egress
+# proxy. It does no product work and must stay that way.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  noop-probe:
+    runs-on: [self-hosted, production]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (exercises git-over-TLS on the runner's egress lane)
+        uses: actions/checkout@v7
+      - name: No-op probe
+        run: |
+          echo "egress cutover probe ok: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "runner: ${RUNNER_NAME:-unknown} labels: ${RUNNER_LABELS:-unknown}"
