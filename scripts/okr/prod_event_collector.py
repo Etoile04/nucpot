@@ -46,8 +46,9 @@ CLI usage:
 
 Required environment:
     GH_TOKEN              repo-scope PAT or workflow token.
-    ALERT_WEBHOOK         Feishu incoming-webhook URL (optional;
-                          skipped if unset).
+    ALERT_WEBHOOK         Feishu incoming-webhook URL (optional; when
+                          unset, alerts fall back to the NFM-5936
+                          dedup-keyed gh-issue transport).
 """
 
 # ruff: noqa: N818, SIM105
@@ -118,6 +119,39 @@ MAX_CONSECUTIVE_FAILURES = 3
 PAGE_SIZE = 100
 MAX_PAGES = 5
 
+# NFM-5936: when the ``ALERT_WEBHOOK`` Feishu secret is unset (its true
+# state since ~09-07 — every alert was dropped), alerts fall back to a
+# dedup-keyed GitHub issue: ONE OPEN issue per alert class, titled
+# ``[collector-alert] <class>``. The first fire creates it; later fires
+# comment into it until a human closes it (closing resets the key, so
+# the next fire starts a fresh issue). The webhook stays the preferred
+# transport — the fallback only runs when the secret is unset.
+ALERT_ISSUE_LABEL = "collector-alert"
+ALERT_ISSUE_TITLE_PREFIX = "[collector-alert]"
+ALERT_REASON_MAX_CHARS = 400
+ALERT_DEDUP_SCAN_LIMIT = 100
+
+# NFM-5936: fixed alert classes — the dedup key suffix. The pending-stall
+# class embeds the stage so a download stall and an append stall never
+# share an issue.
+ALERT_CLASS_BAD_FRAGMENT = "bad-fragment"
+ALERT_CLASS_APPEND_FAILURE = "append-failure"
+ALERT_CLASS_SELF_TEST = "self-test"
+
+# NFM-5937: master-stall tripwire. Warns when the newest master event is
+# older than MASTER_STALL_MAX_AGE_DAYS (parent NFM-5931 acceptance: 7
+# days) WHILE completed Production Deployment runs exist in that same
+# window — "deploys ran, capture silently stalled". Read-only against
+# master; alarms ride the NFM-5936 transport priority. A 0-day threshold
+# is the forced-old-state probe door (--tripwire-max-age-days 0).
+ALERT_CLASS_MASTER_STALL = "master-stall"
+MASTER_STALL_MAX_AGE_DAYS = 7.0
+
+# The deploy workflow the collector (and the tripwire window) track.
+# NFM-5937: hoisted from the literal in ``list_production_runs`` so the
+# tripwire cannot drift from the collector's own notion of "a deploy".
+DEPLOY_WORKFLOW_NAME = "Production Deployment"
+
 
 # ---------------------------------------------------------------------------
 # Domain types
@@ -131,6 +165,21 @@ class Run:
     run_id: int
     created_at: datetime  # tz-aware UTC
     artifact_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeployRunRecord:
+    """One completed deploy workflow run, for tripwire windows (NFM-5937).
+
+    Conclusion is the raw GH API value (``success`` / ``failure`` /
+    ``cancelled`` / …). Any completed conclusion counts as "a deploy
+    ran" — a weather-killed deploy that still produced no event is
+    exactly the stall signature this tripwire exists to catch.
+    """
+
+    run_id: int
+    created_at: datetime  # tz-aware UTC
+    conclusion: str
 
 
 @dataclass
@@ -234,6 +283,91 @@ def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# NFM-5937 master-stall tripwire (read-only vs master)
+# ---------------------------------------------------------------------------
+
+
+def newest_master_event_ts(master_jsonl_path: str | Path) -> datetime | None:
+    """Parse the newest event ``ts`` from the master JSONL. Read-only.
+
+    Scans every line and keeps the max so a torn final line (a mid-append
+    read without the flock — master appends are the only writers, under
+    flock, so readers never take it) cannot hide the newest complete
+    event. Returns ``None`` when the file is missing, empty, or has no
+    parseable line at all.
+    """
+    path = Path(master_jsonl_path)
+    if not path.exists():
+        return None
+    newest: datetime | None = None
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = str(json.loads(line).get("ts", ""))
+                candidate = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+    return newest
+
+
+def master_stall_tripwire(
+    backend: Backend,
+    *,
+    master_jsonl_path: str | Path,
+    now: datetime | None = None,
+    max_age_days: float = MASTER_STALL_MAX_AGE_DAYS,
+) -> bool:
+    """Warn when capture stalled while deploys kept running (NFM-5937).
+
+    Fires — alert via the NFM-5936 transport priority — iff BOTH:
+      - the newest master event is older than ``max_age_days`` (strictly,
+        so exactly 7d is not a stall), AND
+      - at least one completed ``Production Deployment`` run was created
+        after that newest event (the window).
+
+    Any completed conclusion counts: a weather-killed deploy that still
+    produced no event is precisely the stall signature. A missing/empty
+    master leaves the age rule undefined — the tripwire stays silent (the
+    collect-path ``bad-fragment``/``append-failure`` alerts own total-
+    capture loss) and prints why.
+
+    Returns whether the alert fired. Read-only against master: no append,
+    no sync-state, no failure sidecar, no SSH hop.
+    """
+    now = now or datetime.now(UTC)
+    newest = newest_master_event_ts(master_jsonl_path)
+    if newest is None:
+        print(
+            "[tripwire] no parseable master events — age condition undefined, not firing"
+        )
+        return False
+    age = now - newest
+    if age <= timedelta(days=max_age_days):
+        print(
+            f"[tripwire] OK: newest master event age {age} <= {max_age_days:g}d — no stall"
+        )
+        return False
+    window_runs = backend.list_deploy_runs_in_window(newest, until=now)
+    if not window_runs:
+        print(
+            f"[tripwire] OK: newest master event age {age} > {max_age_days:g}d "
+            f"but no completed {DEPLOY_WORKFLOW_NAME} runs in the window — no stall"
+        )
+        return False
+    backend.alert_master_stall(newest, age, window_runs)
+    print(
+        f"[tripwire] FIRED: master-stall — newest event {age.total_seconds() / 86400:.2f}d old, "
+        f"{len(window_runs)} completed deploy run(s) in window"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Backend protocol + GH implementation (subprocess boundary — swappable in tests)
 # ---------------------------------------------------------------------------
 
@@ -252,6 +386,14 @@ class Backend(Protocol):
     def alert_append_failure(self, reason: str) -> None: ...
     def alert_pending_failure(
         self, run_id: int, stage: str, attempts: int, reason: str
+    ) -> None: ...
+
+    # NFM-5937 master-stall tripwire
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]: ...
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
     ) -> None: ...
 
 
@@ -431,8 +573,18 @@ class FailureStore:
         return min(created) if created else ""
 
 
-def _gh_api(repo: str, *args: str) -> Any:
-    """Invoke ``gh api`` against the configured repo. Raises on non-zero exit."""
+def _gh_api(
+    repo: str,
+    *args: str,
+    method: str = "GET",
+    fields: dict[str, str] | None = None,
+) -> Any:
+    """Invoke ``gh api`` against the configured repo. Raises on non-zero exit.
+
+    NFM-5936: ``method`` + ``fields`` extend the read-only helper to the
+    issue-write calls the alert fallback needs (``POST`` with ``-f``
+    form fields). Defaults keep every existing read call verbatim.
+    """
     # ``gh api`` accepts a SINGLE endpoint positional. Concatenate any
     # path/query parts so we never pass a second positional, which gh
     # rejects with "accepts 1 arg(s), received 2". See NFM-2754.
@@ -442,6 +594,10 @@ def _gh_api(repo: str, *args: str) -> Any:
     else:
         endpoint = f"repos/{repo}"
     cmd = ["gh", "api", endpoint]
+    if method != "GET":
+        cmd += ["-X", method]
+    for key, value in (fields or {}).items():
+        cmd += ["-f", f"{key}={value}"]
     proc = subprocess.run(
         cmd,
         capture_output=True,
@@ -452,6 +608,42 @@ def _gh_api(repo: str, *args: str) -> Any:
     if proc.returncode != 0:
         raise RuntimeError(f"gh api failed ({proc.returncode}): {proc.stderr.strip()}")
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+
+def _build_alert_issue_body(
+    alert_class: str,
+    details: list[tuple[str, str]],
+    *,
+    repeat: bool = False,
+) -> str:
+    """Markdown body for a fallback alert issue or dedup comment (NFM-5936).
+
+    Values are truncated at :data:`ALERT_REASON_MAX_CHARS` — reasons can
+    embed ``gh`` stderr, which is unbounded and must not flood the issue.
+    The footer documents the dedup + transport contract for whoever
+    triages the issue.
+    """
+    lines = [
+        f"## {ALERT_ISSUE_TITLE_PREFIX} {alert_class}",
+        "",
+        f"**fired_at (UTC)**: {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "",
+    ]
+    if repeat:
+        lines += ["*Repeat fire — dedup'd into this open issue.*", ""]
+    for key, value in details:
+        lines.append(f"**{key}**: {str(value)[:ALERT_REASON_MAX_CHARS]}")
+    lines += [
+        "",
+        "---",
+        "> Dedup key: this issue's title — ONE open issue per alert class. "
+        "Later fires comment here; close this issue once resolved and the "
+        "next fire starts a fresh one.",
+        f"> Transport: ``ALERT_WEBHOOK`` is unset — this is the NFM-5936 "
+        f"gh-issue fallback (``{ALERT_ISSUE_LABEL}``). The Feishu webhook "
+        f"takes priority once the secret is set.",
+    ]
+    return "\n".join(lines)
 
 
 class GhBackend:
@@ -489,7 +681,7 @@ class GhBackend:
             items = data.get("workflow_runs", [])
             for item in items:
                 name = item.get("name", "")
-                if name != "Production Deployment":
+                if name != DEPLOY_WORKFLOW_NAME:
                     continue
                 if item.get("status") != "completed":
                     continue
@@ -510,6 +702,60 @@ class GhBackend:
                 file=sys.stderr,
             )
         return runs
+
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]:
+        """Completed deploy runs created strictly inside ``(since, until]``.
+
+        NFM-5937 tripwire window listing: like ``list_production_runs``
+        (same workflow, same completed-only rule, same pagination) but
+        WITHOUT the per-run artifact listing — the tripwire only needs to
+        know that a deploy ran — and anchored at the newest master event
+        with no skew: the window must not reach back before the event
+        that already exists, or quiet periods after a captured deploy
+        would look active.
+        """
+        iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        records: list[DeployRunRecord] = []
+        page = 1
+        while page <= MAX_PAGES:
+            data = _gh_api(
+                self.repo,
+                f"actions/runs?created=>={iso}&per_page={PAGE_SIZE}&page={page}",
+            )
+            items = data.get("workflow_runs", [])
+            for item in items:
+                if item.get("name", "") != DEPLOY_WORKFLOW_NAME:
+                    continue
+                if item.get("status") != "completed":
+                    continue
+                try:
+                    run_id = int(item["id"])
+                    created = datetime.fromisoformat(
+                        item["created_at"].replace("Z", "+00:00")
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if created <= since or created > until:
+                    continue
+                records.append(
+                    DeployRunRecord(
+                        run_id=run_id,
+                        created_at=created,
+                        conclusion=str(item.get("conclusion", "")),
+                    )
+                )
+            if len(items) < PAGE_SIZE:
+                break
+            page += 1
+        else:
+            print(
+                f"[tripwire] WARN: window listing hit the {MAX_PAGES}-page cap "
+                f"({MAX_PAGES * PAGE_SIZE} runs) — older window runs were not considered",
+                file=sys.stderr,
+            )
+        return records
 
     def _list_artifact_ids(self, run_id: int) -> tuple[int, ...]:
         data = _gh_api(self.repo, f"actions/runs/{run_id}/artifacts")
@@ -611,28 +857,26 @@ class GhBackend:
                 f"remote append failed (rc={proc.returncode}): {proc.stderr.strip()}"
             )
 
-    def alert_bad_fragment(self, run_id: int, reason: str) -> None:
+    def _alert_via_webhook(self, title: str, markdown: str) -> bool:
+        """Post a Feishu interactive card when ``ALERT_WEBHOOK`` is set.
+
+        Returns True when the webhook transport owns this alert (secret
+        set — attempted or failed), False when the secret is unset so the
+        NFM-5936 gh-issue fallback must take it. Transport failures are
+        swallowed: alerting is non-fatal by contract.
+        """
         webhook = os.environ.get("ALERT_WEBHOOK", "")
         if not webhook:
-            return
+            return False
         body = json.dumps(
             {
                 "msg_type": "interactive",
                 "card": {
                     "header": {
-                        "title": {"tag": "plain_text", "content": "Bad prod deploy-event fragment"},
+                        "title": {"tag": "plain_text", "content": title},
                         "template": "red",
                     },
-                    "elements": [
-                        {
-                            "tag": "markdown",
-                            "content": (
-                                f"**run_id**: `{run_id}`\n"
-                                f"**reason**: {reason}\n"
-                                f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
-                            ),
-                        }
-                    ],
+                    "elements": [{"tag": "markdown", "content": markdown}],
                 },
             }
         )
@@ -654,12 +898,115 @@ class GhBackend:
                 timeout=10,
             )
         except Exception:
-            # Alert failure is non-fatal — the run_id is already in
-            # ``bad_run_ids`` so it will retry on the next iteration.
+            # Alert failure is non-fatal — the underlying condition is
+            # already recorded (bad_run_ids / failure sidecar) and the
+            # tripped surfaces (stalled exit) carry the recurrence.
             pass
+        return True
+
+    def _alert_fallback_issue(self, alert_class: str, details: list[tuple[str, str]]) -> int | None:
+        """Fire the dedup-keyed gh-issue fallback alert (NFM-5936).
+
+        Key semantics: ONE OPEN issue per ``alert_class`` — title
+        ``[collector-alert] <class>``. The first fire creates it (with
+        the ``collector-alert`` label; retried bare if the label can't be
+        created), later fires comment into it until a human closes it.
+        Dedup scans the newest 100 open issues/PRs for an exact title
+        match, skipping PRs (the issues endpoint returns both) and other
+        classes. Returns the issue number, or None when the transport
+        failed — this is the belt behind the non-fatal alert contract,
+        never a caller-visible exception.
+
+        Race note: the executor lane serializes collector invocations via
+        its concurrency group, so two simultaneous creators can't split
+        the key.
+        """
+        title = f"{ALERT_ISSUE_TITLE_PREFIX} {alert_class}"
+        try:
+            open_items = _gh_api(
+                self.repo, f"issues?state=open&per_page={ALERT_DEDUP_SCAN_LIMIT}"
+            )
+            target = None
+            for item in open_items:
+                if item.get("title") == title and "pull_request" not in item:
+                    target = item
+                    break
+            if target is not None:
+                number = int(target["number"])
+                _gh_api(
+                    self.repo,
+                    f"issues/{number}/comments",
+                    method="POST",
+                    fields={
+                        "body": _build_alert_issue_body(alert_class, details, repeat=True)
+                    },
+                )
+                print(f"[collector] alert (fallback): dedup'd into issue #{number} ({title})")
+                return number
+            issue = self._create_alert_issue(title, alert_class, details)
+            print(f"[collector] alert (fallback): created issue #{issue['number']} ({title})")
+            return int(issue["number"])
+        except Exception as exc:
+            # Transport failure is non-fatal — the tripped condition is
+            # already recorded in sync-state / the failure sidecar, and
+            # the pending-stall non-zero exit is the load-bearing surface.
+            print(f"[collector] WARN: fallback issue alert failed: {exc}", file=sys.stderr)
+            return None
+
+    def _create_alert_issue(
+        self,
+        title: str,
+        alert_class: str,
+        details: list[tuple[str, str]],
+    ) -> dict[str, Any]:
+        """Create the class issue with the ``collector-alert`` label.
+
+        The label create can fail on permission-shaped responses; the
+        bare-title retry keeps the alert flowing (the title prefix alone
+        remains the dedup key).
+        """
+        try:
+            return _gh_api(
+                self.repo,
+                "issues",
+                method="POST",
+                fields={
+                    "title": title,
+                    "body": _build_alert_issue_body(alert_class, details),
+                    "labels[]": ALERT_ISSUE_LABEL,
+                },
+            )
+        except RuntimeError:
+            return _gh_api(
+                self.repo,
+                "issues",
+                method="POST",
+                fields={
+                    "title": title,
+                    "body": _build_alert_issue_body(alert_class, details),
+                },
+            )
+
+    def alert_bad_fragment(self, run_id: int, reason: str) -> None:
+        if not self._alert_via_webhook(
+            "Bad prod deploy-event fragment",
+            (
+                f"**run_id**: `{run_id}`\n"
+                f"**reason**: {reason}\n"
+                f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_BAD_FRAGMENT,
+                [
+                    ("run_id", str(run_id)),
+                    ("reason", reason),
+                    ("action", "skipped; recorded in sync-state ``bad_run_ids``."),
+                ],
+            )
 
     def alert_append_failure(self, reason: str) -> None:
-        """Notify the channel when ``append_and_advance`` raised.
+        """Notify when ``append_and_advance`` raised.
 
         ADR §Failure-mode 1 talks about a partial-line tail-recovery as
         "logged + alerted"; the same belt-and-braces is required for the
@@ -669,57 +1016,27 @@ class GhBackend:
         when the runner is down, which is exactly the situation where the
         cron fallback's silent stderr line is least actionable.
         """
-        webhook = os.environ.get("ALERT_WEBHOOK", "")
-        if not webhook:
-            return
-        body = json.dumps(
-            {
-                "msg_type": "interactive",
-                "card": {
-                    "header": {
-                        "title": {
-                            "tag": "plain_text",
-                            "content": "Prod deploy-event append failed",
-                        },
-                        "template": "red",
-                    },
-                    "elements": [
-                        {
-                            "tag": "markdown",
-                            "content": (
-                                f"**reason**: {reason}\n"
-                                "**action**: state NOT advanced; same fragments will be "
-                                "re-attempted on the next collector iteration. The "
-                                "POSIX flock is released on SSH process death, so the "
-                                "master JSONL is not corrupted by a mid-sync exit."
-                            ),
-                        }
-                    ],
-                },
-            }
-        )
-        try:
-            subprocess.run(
+        if not self._alert_via_webhook(
+            "Prod deploy-event append failed",
+            (
+                f"**reason**: {reason}\n"
+                "**action**: state NOT advanced; same fragments will be "
+                "re-attempted on the next collector iteration. The "
+                "POSIX flock is released on SSH process death, so the "
+                "master JSONL is not corrupted by a mid-sync exit."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_APPEND_FAILURE,
                 [
-                    "curl",
-                    "-sf",
-                    "-X",
-                    "POST",
-                    webhook,
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
+                    ("reason", reason),
+                    (
+                        "action",
+                        "state NOT advanced; same fragments re-attempted on the "
+                        "next collector iteration.",
+                    ),
                 ],
-                capture_output=True,
-                check=False,
-                timeout=10,
             )
-        except Exception:
-            # Alert failure is non-fatal — the run will retry on the next
-            # iteration, and the next successful iteration trips the same
-            # code path again.
-            pass
 
     def alert_pending_failure(self, run_id: int, stage: str, attempts: int, reason: str) -> None:
         """Tripwire alert: a pending run keeps failing at ``stage``.
@@ -730,59 +1047,88 @@ class GhBackend:
         ``MAX_CONSECUTIVE_FAILURES`` threshold; the non-zero step exit
         (``CollectOutcome.stalled``) carries the recurring surface.
         """
-        webhook = os.environ.get("ALERT_WEBHOOK", "")
-        if not webhook:
-            return
-        body = json.dumps(
-            {
-                "msg_type": "interactive",
-                "card": {
-                    "header": {
-                        "title": {
-                            "tag": "plain_text",
-                            "content": "Prod deploy-event pending run stalled",
-                        },
-                        "template": "red",
-                    },
-                    "elements": [
-                        {
-                            "tag": "markdown",
-                            "content": (
-                                f"**run_id**: `{run_id}`\n"
-                                f"**stage**: {stage}\n"
-                                f"**consecutive failures**: {attempts} (cap "
-                                f"{MAX_CONSECUTIVE_FAILURES})\n"
-                                f"**reason**: {reason}\n"
-                                "**action**: run stays pending and is retried; the "
-                                "collector step now exits non-zero until it resolves."
-                            ),
-                        }
-                    ],
-                },
-            }
-        )
-        try:
-            subprocess.run(
+        if not self._alert_via_webhook(
+            "Prod deploy-event pending run stalled",
+            (
+                f"**run_id**: `{run_id}`\n"
+                f"**stage**: {stage}\n"
+                f"**consecutive failures**: {attempts} (cap "
+                f"{MAX_CONSECUTIVE_FAILURES})\n"
+                f"**reason**: {reason}\n"
+                "**action**: run stays pending and is retried; the "
+                "collector step now exits non-zero until it resolves."
+            ),
+        ):
+            self._alert_via_fallback(
+                f"pending-stall-{stage}",
                 [
-                    "curl",
-                    "-sf",
-                    "-X",
-                    "POST",
-                    webhook,
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
+                    ("run_id", str(run_id)),
+                    ("stage", stage),
+                    ("consecutive failures", str(attempts)),
+                    ("reason", reason),
+                    (
+                        "action",
+                        "run stays pending and is retried; the collector step "
+                        "exits non-zero until it resolves.",
+                    ),
                 ],
-                capture_output=True,
-                check=False,
-                timeout=10,
             )
-        except Exception:
-            # Alert failure is non-fatal — the non-zero exit is the
-            # load-bearing surface; the next crossing-free tick still
-            # exits non-zero via ``stalled``.
-            pass
+
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
+    ) -> None:
+        """Tripwire alert: master stalled while deploys ran (NFM-5937).
+
+        Transport priority mirrors ``alert_bad_fragment``: the Feishu
+        webhook when ``ALERT_WEBHOOK`` is set, else the dedup-keyed
+        ``[collector-alert] master-stall`` gh-issue fallback — ONE open
+        issue for the class, later fires comment into it.
+        """
+        age_days = age.total_seconds() / 86400.0
+        newest_iso = newest_ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        shown = window_runs[:5]
+        summary = ", ".join(f"{r.run_id}:{r.conclusion or 'completed'}" for r in shown)
+        if len(window_runs) > 5:
+            summary += f", … +{len(window_runs) - 5} more"
+        if not self._alert_via_webhook(
+            "Master deploy-event stall (KR-3)",
+            (
+                f"**newest_master_event_ts**: `{newest_iso}`\n"
+                f"**event_age_days**: {age_days:.2f} (threshold "
+                f"{MASTER_STALL_MAX_AGE_DAYS:g})\n"
+                f"**deploy_runs_in_window**: {summary}\n"
+                "**action**: capture stalled while deploys ran — check "
+                "prod-deploy-event-collector-executor runs + sync-state; "
+                "do NOT re-baseline (parent NFM-5932)."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_MASTER_STALL,
+                [
+                    ("newest_master_event_ts", newest_iso),
+                    ("event_age_days", f"{age_days:.2f} (threshold {MASTER_STALL_MAX_AGE_DAYS:g})"),
+                    ("deploy_runs_in_window", summary),
+                    ("window_size", str(len(window_runs))),
+                    (
+                        "action",
+                        "capture stalled while deploys ran — check "
+                        "prod-deploy-event-collector-executor runs + sync-state; "
+                        "do NOT re-baseline (parent NFM-5932).",
+                    ),
+                ],
+            )
+
+    def _alert_via_fallback(self, alert_class: str, details: list[tuple[str, str]]) -> None:
+        """Fallback-route an alert, guaranteed non-throwing.
+
+        Belt over :meth:`_alert_fallback_issue`'s own swallow: the alert
+        methods sit inside the collect loop and must never break an
+        iteration that already recorded its state.
+        """
+        try:
+            self._alert_fallback_issue(alert_class, details)
+        except Exception as exc:  # pragma: no cover - defense in depth
+            print(f"[collector] WARN: alert routing failed: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1113,7 +1459,64 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate + plan only; do not call backend side effects.",
     )
+    parser.add_argument(
+        "--self-test-alert",
+        action="store_true",
+        help="NFM-5936: fire ONE fallback alert (class 'self-test') through "
+        "the real alert transport and exit. Reads and writes NO collector "
+        "state — no sync-state, no master JSONL, no failure sidecar, no "
+        "SSH hop.",
+    )
+    parser.add_argument(
+        "--tripwire",
+        action="store_true",
+        help="NFM-5937: run the master-stall tripwire and exit (no "
+        "collection). Fires the NFM-5936 transport when the newest master "
+        "event is older than --tripwire-max-age-days while completed "
+        "Production Deployment runs exist in the window. Read-only "
+        "against master; exit 1 = tripped.",
+    )
+    parser.add_argument(
+        "--tripwire-max-age-days",
+        type=float,
+        default=MASTER_STALL_MAX_AGE_DAYS,
+        help="NFM-5937 stall threshold in days (default %(default)s). 0 "
+        "is the forced-old-state probe door: any in-window deploy run "
+        "trips the alert.",
+    )
     args = parser.parse_args(argv)
+
+    if args.self_test_alert:
+        # NFM-5936 end-to-end alert-path probe: exercise the real dedup +
+        # issue transport in the executor context and exit. Deliberately
+        # runs BEFORE any state-path or SSH-target resolution so the probe
+        # cannot touch host-bound collector state. Non-zero exit = the
+        # transport failed (that's the proof surface).
+        backend = GhBackend(args.repo, "", "", "")
+        details = [("note", "NFM-5936 end-to-end alert-path test — no collector state read or written")]
+        executor_run = os.environ.get("GITHUB_RUN_ID", "")
+        if executor_run:
+            details.append(("executor_run_id", executor_run))
+        fired = backend._alert_fallback_issue(ALERT_CLASS_SELF_TEST, details)
+        if fired is None:
+            print("[collector] self-test alert FAILED to fire", file=sys.stderr)
+            return 1
+        print(f"[collector] self-test alert fired into issue #{fired}")
+        return 0
+
+    if args.tripwire:
+        # NFM-5937 master-stall tripwire: same no-host-state contract as
+        # the self-test door above — only the master JSONL is READ.
+        # Exit 1 on fire is the loud secondary surface (the alert issue
+        # is primary), mirroring the collect-path tripwire contract.
+        backend = GhBackend(args.repo, "", "", "")
+        master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
+        tripped = master_stall_tripwire(
+            backend,
+            master_jsonl_path=master_jsonl_path,
+            max_age_days=args.tripwire_max_age_days,
+        )
+        return 1 if tripped else 0
 
     sync_state_path = _resolve_sync_state_path(args.sync_state)
     master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
