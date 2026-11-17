@@ -87,7 +87,7 @@ jobs:
       COLLECTOR_SELF_TEST: ${{ github.event.client_payload.self_test == 'true' || inputs.self_test == true }}
     steps:
       - name: Download payload from orchestrator run
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: prod-collector-payload
           # repository_dispatch carries the orchestrator run id in the
