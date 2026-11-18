@@ -101,6 +101,12 @@ def env(tmp_path, mock_site):
         # NFM-5966 replica-lane seams (units not-found = NOTE-class, silent)
         "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
         "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
+        # NFM-5875 cache-state seam: hermetic dead-port pin — this file keeps
+        # its own env dict (it does not inherit the shared fixture), so the
+        # shared-fixture pin does not reach it. Without the pin the probe
+        # defaults to the LIVE edge and CI can leak real responses into the
+        # booking scenario contracts (2026-11-18 CI failure class).
+        "NFM_CACHE_STATE_BASE": "http://127.0.0.1:9",
     }
 
 
