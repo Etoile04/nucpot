@@ -7,7 +7,8 @@
 #   %admin ALL=(nfmdeploy) NOPASSWD: /usr/local/lib/nfm-g2/run-recovery.sh
 #
 # The NFM-1664 deterministic recovery playbook, command-enumerated to
-# exactly three shapes:
+# exactly three shapes (restart / rollback / lightrag-reprocess below), plus
+# the NFM-6026 window-gated dark-test shape (fourth block):
 #
 #   run-recovery.sh restart <api|web|worker|lightrag|db>
 #       docker restart nucpot-prod-<svc> through the full gate.
@@ -29,10 +30,6 @@
 #       sidecar). Prod lightrag 9621 is not host-published (NFM-4481), so
 #       docker exec through the full gate is the only sanctioned reach.
 #
-# Anything else exits 64 (EX_USAGE) before touching docker. This is the
-# ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
-# issue for anything not covered here.
-#
 # NFM-4822 out-of-scope note (rerank side-service): the rerank backend at
 # 127.0.0.1:8109 is NOT a compose service — it is the per-user launchd agent
 # ai.nfm.rerank-server (~/Library/LaunchAgents/ai.nfm.rerank-server.plist,
@@ -41,6 +38,44 @@
 # Sanctioned restart is the service owner's own command (no sudo needed):
 #   launchctl kickstart -k gui/$(id -u)/ai.nfm.rerank-server
 # (verified 2026-09-13: clears RSS bloat / stalls; service back in ~4s).
+#
+# NFM-6026 (5973-AC2 Option B, CPO ruling on the NFM-5973 forfeit-#5 ask):
+# window-restricted dark-test stop/start for the standing nightly z203
+# prober dark window (21:35–21:55Z cadence, NFM-5973). This is the ONLY
+# scripted prod-container stop, and it is fail-closed:
+#
+#   run-recovery.sh dark-test stop api
+#       Stop nucpot-prod-api. REFUSED with exit 65 — before docker is ever
+#       touched — unless a dark-window token exists at
+#       /Users/Shared/nfm-5973-dark-window.json (override with
+#       NFM_G2_DARK_TOKEN for hermetic tests; sudo env_reset never passes
+#       it in production) AND every check passes: JSON parses; lane ==
+#       NFM-5973; token svc == requested svc; start_epoch/end_epoch are
+#       integers with end > start; window ≤ 2h (fat-finger cap); now inside
+#       [start,end]. The SRE executioner stamps the token at T0 AFTER
+#       announcing the window on NFM-5973 — the announce is the record, the
+#       token is the key.
+#
+#   run-recovery.sh dark-test start api
+#       Start nucpot-prod-api. NO token required, on purpose: the recovery
+#       direction must never be blocked by window bookkeeping (a refused
+#       start after window-end would leave prod dark), and starting a
+#       stopped container is strictly weaker than the already-sanctioned
+#       `restart api` shape (restart = stop + start).
+#
+#   run-recovery.sh dark-test status
+#       Print the window the gate currently sees. Read-only; never fails.
+#
+#   Service enumeration is api ONLY, never a wildcard: the dark window
+#   exists to produce prober-visible darkness on nucpot-prod-api for the
+#   NFM-5973 3-fail → INCIDENT-OPEN → DOWN-page chain. AC4 (NFM-6026): any
+#   other prod container stop remains refused exactly as before — the ro
+#   docker gate denies prod mutations and this script's only stop path is
+#   the window-gated one above.
+#
+# Anything else exits 64 (EX_USAGE) before touching docker. This is the
+# ONLY sanctioned route for out-of-band prod mutations; file a Paperclip
+# issue for anything not covered here.
 # ============================================================================
 set -euo pipefail
 
@@ -55,6 +90,10 @@ usage (NFM-1664 recovery, NFM-4270 sanctioned):
   run-recovery.sh restart <api|web|worker|lightrag|db>
   run-recovery.sh rollback --tag <sha-of-last-good-deploy>
   run-recovery.sh lightrag-reprocess
+  run-recovery.sh dark-test stop api      (NFM-6026: refused unless inside the
+                                           NFM-5973 announced dark window)
+  run-recovery.sh dark-test start api     (recovery direction; no window needed)
+  run-recovery.sh dark-test status        (print the window the gate sees)
 (rerank 8109 is the owner's user launchd agent, not a compose service —
  restart it as the agent owner: launchctl kickstart -k gui/$UID/ai.nfm.rerank-server)
 EOF
@@ -151,6 +190,107 @@ for attempt in range(1, RETRIES + 1):
     python3 scripts/record_deploy_manifest.py \
       --deploy-sha "${TAG}" \
       --actor "${ACTOR}"
+    ;;
+  dark-test)
+    # NFM-6026 window-gated dark-test — see the header block above for the
+    # full contract (stop: fail-closed token checks, exit 65 on refusal,
+    # refusal happens BEFORE docker is touched; start: recovery direction,
+    # no token; status: read-only). Service enumeration: api only.
+    [ $# -ge 2 ] || { usage; exit 64; }
+    DARK_TOKEN_FILE="${NFM_G2_DARK_TOKEN:-/Users/Shared/nfm-5973-dark-window.json}"
+    case "$2" in
+      stop|start)
+        [ $# -eq 3 ] || { usage; exit 64; }
+        case "$3" in
+          api) : ;;
+          *) echo "service '$3' not enumerated for dark-test (api only, never wildcard)" >&2; exit 64 ;;
+        esac
+        ;;
+      status)
+        [ $# -eq 2 ] || { usage; exit 64; }
+        python3 - "$DARK_TOKEN_FILE" <<'PYTOKEN' || true
+import json, sys, time
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        tok = json.load(fh)
+    now = int(time.time())
+    start, end = tok.get("start_epoch"), tok.get("end_epoch")
+    if not isinstance(start, int) or isinstance(start, bool) \
+            or not isinstance(end, int) or isinstance(end, bool) or end <= start:
+        print("dark-window token INVALID (%r..%r) — dark-test stop will REFUSE" % (start, end))
+    elif start <= now <= end:
+        print("dark-window OPEN svc=%s until %sZ (%ds left) lane=%s" % (
+            tok.get("svc"), time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(end)),
+            end - now, tok.get("lane")))
+    else:
+        print("dark-window CLOSED (window %s..%sZ does not contain now)" % (
+            time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(start)),
+            time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(end))))
+except FileNotFoundError:
+    print("dark-window CLOSED (no token at %s)" % sys.argv[1])
+except Exception as exc:
+    print("dark-window token UNREADABLE (%s) — dark-test stop will REFUSE" % exc)
+PYTOKEN
+        exit 0
+        ;;
+      *)
+        echo "unknown dark-test action '$2' (stop|start|status)" >&2
+        usage
+        exit 64
+        ;;
+    esac
+    if [ "$2" = start ]; then
+      # Recovery direction: no window token required (see header rationale).
+      echo "[nfm-g2] sanctioned dark-test: start nucpot-prod-$3 identity=$(id -un)"
+      exec docker start "nucpot-prod-$3"
+    fi
+    # dark-test stop — the ONLY scripted prod-container stop; window-gated,
+    # fail-closed. Every refusal below happens BEFORE docker is touched.
+    DARK_WINDOW="$(python3 - "$DARK_TOKEN_FILE" "$3" <<'PYTOKEN'
+import json, sys, time
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        tok = json.load(fh)
+    svc, lane = sys.argv[2], tok.get("lane")
+    tsvc = tok.get("svc")
+    start, end = tok.get("start_epoch"), tok.get("end_epoch")
+    for name, value in (("start_epoch", start), ("end_epoch", end)):
+        if not isinstance(value, int) or isinstance(value, bool):
+            print("token %s missing or not an integer (%r)" % (name, value))
+            sys.exit(1)
+    if lane != "NFM-5973":
+        print("token lane %r is not NFM-5973" % (lane,))
+        sys.exit(1)
+    if tsvc != svc:
+        print("token svc %r != requested %r" % (tsvc, svc))
+        sys.exit(1)
+    if end <= start:
+        print("token window empty or inverted (%d..%d)" % (start, end))
+        sys.exit(1)
+    if end - start > 7200:
+        print("token window longer than the 2h cap (%ds)" % (end - start))
+        sys.exit(1)
+    now = int(time.time())
+    if now < start:
+        print("window not yet open (starts in %ds)" % (start - now))
+        sys.exit(1)
+    if now > end:
+        print("window already closed %ds ago" % (now - end))
+        sys.exit(1)
+    print("OK %d..%d" % (start, end))
+except FileNotFoundError:
+    print("no dark window token at %s — announce the window on NFM-5973 first" % sys.argv[1])
+    sys.exit(1)
+except Exception as exc:
+    print("dark window token unparsable (%s)" % exc)
+    sys.exit(1)
+PYTOKEN
+)" || {
+      echo "[nfm-g2] dark-test REFUSED: ${DARK_WINDOW:-token validation failed}" >&2
+      exit 65
+    }
+    echo "[nfm-g2] sanctioned dark-test: stop nucpot-prod-$3 identity=$(id -un) window=${DARK_WINDOW#OK } (NFM-5973 announced window)"
+    exec docker stop "nucpot-prod-$3"
     ;;
   -h|--help) usage; exit 0 ;;
   "")         usage; exit 64 ;;
