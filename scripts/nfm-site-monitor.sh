@@ -531,6 +531,34 @@
 #     The close path is unchanged — once open=1, the next green tick books
 #     the episode close with its existing RECOVERY line.
 #
+# NFM-6006 (2026-11-16, LE adjudication of the SRE retro-file) — booking
+# gate widened from the paging conjuncts to the episode shape:
+#   - Episode (11-11 11:42:09Z -> 12:19:42Z, ~37.5m): confirmed CRITICAL on
+#     the streak>=2 lane (all-connection-error / SSL UNEXPECTED_EOF shape)
+#     but booked NOTHING — no t2-ledger append, no open window, no episode
+#     close RECOVERY line, no fresh latch timestamp (pending_page kept
+#     e23's 10:59:31Z) — because the NFM-5892 call was gated on s1_match,
+#     whose conjunct 4 (hard>latency) is a PAGING precision rule (fx3
+#     latency-dominant exclusion) that a 100% connection-error episode can
+#     never satisfy. LE verdict: conjunct-4 page exclusion BY DESIGN; the
+#     evidence loss a DEFECT (the exact NFM-5892 class resurfacing one
+#     conjunct deeper). NOT reboot state loss — streak continuity survived
+#     the 11:47-48Z restart (first-failure 11:42:09Z persisted into the
+#     11:49:44Z CRITICAL; all state is file-backed).
+#   - Fix: s1_classify also sets s1_episode_match (conjuncts 1-3 only);
+#     the streak>=2 booking gate uses it. The streak-1 early-page rule is
+#     byte-for-byte unchanged (conjunct 4 keeps excluding latency-dominant
+#     sets from the PAGE; rate-limited s1 matches already book anyway).
+#   - Rate-limit semantics (unchanged, now documented): last_page counts
+#     LANE EMISSION stamps (s1 pages + s2 bookings), never delivery —
+#     notify_page is best-effort osascript with no delivery feedback. The
+#     1/1800s cooldown gates only the streak-1 lane; the streak>=2 lane's
+#     notify is unconditional. pending_page is a single keep-earliest slot
+#     armed at page-emission / first-CRITICAL tick — a second episode under
+#     an unacked older latch stays timestamp-invisible (the 11:42 episode's
+#     reconciliation trail pointed at e23); multi-episode latch semantics
+#     remain a CTO-level follow-up, NOT changed here.
+#
 # NFM-5947 (2026-11-11, SRE; CPO triage 2026-11-10T16:03Z on QA courier
 # NFM-5947, per the NFM-5858 precedent) — Homepage P1 single family
 # disposition + standing courier escalation bar. COMMENT-ONLY record;
@@ -917,6 +945,18 @@ s1_classify() {
      && (( s1_hard > s1_latency )); then
     s1_match=1
   fi
+  # NFM-6006: episode-shape gate — conjuncts 1-3 WITHOUT the paging-only
+  # hard>latency conjunct. A latency-dominant (connection-error) full-edge
+  # set is excluded from the streak-1 early PAGE by design (fx3/NFM-5262
+  # diurnal-flap exclusion) but is still a real full-edge episode: booking
+  # evidence must not hinge on a paging precision conjunct (the 11-11
+  # 11:42:09Z episode CRITICALed on the streak>=2 lane and booked nothing).
+  s1_episode_match=0
+  if (( s1_edge_failed >= S1_FAILED_MIN )) \
+     && (( s1_p0_failed >= S1_P0_MIN )) \
+     && (( s1_main_failed >= 1 && s1_verify_failed >= 1 )); then
+    s1_episode_match=1
+  fi
 }
 
 s1_class_hist() { # "502 502 530 " -> "502x2,530x1"
@@ -1001,7 +1041,12 @@ s1_handle_match() { # streak first_fail since_remind
 # last_page rate-limit marker + open=1/win_first) for episodes whose FIRST
 # full-edge-shaped tick arrives at streak>=2 (the e9 class — header NFM-5892
 # block). Called from the streak>=2 CRITICAL lane AFTER the TRANSIT_BROWNOUT
-# early-exit with s1_match already classified. Booking is gated on an
+# early-exit with the shape already classified. NFM-6006: the gate is the
+# EPISODE shape (s1_episode_match = conjuncts 1-3), not the paging
+# conjuncts — the 11-11T11:42:09Z latency-dominant (all connection-error)
+# episode CRITICALed here and booked nothing while s1_match=0 gated the
+# call; conjunct 4 (hard>latency) stays a streak-1-PAGE-only precision
+# rule (fx3), never an evidence rule. Booking is gated on an
 # open==0 window (idempotent: reminder ticks never re-append) and reuses
 # the ruling §2 by-episode separation (a window re-opening after <10 min
 # green is the SAME episode — count, no append). The PAGE itself stays on
@@ -2496,7 +2541,8 @@ if (( RC == 1 )); then
       exit 1
     fi
     # NFM-5892: book the full-edge episode AT this streak>=2 CRITICAL tick
-    # when the s1 conjuncts match (s1_match=1) and no window is open — the
+    # when the episode shape matches (s1_episode_match=1, NFM-6006 gate) and
+    # no window is open — the
     # e9 class: episodes entering full-edge via lane-by-lane escalation
     # (tunnel dark -> cached edge dark next tick) previously paged with NO
     # ledger append, NO t2-ledger count, NO rate-limit marker and NO open
@@ -2508,7 +2554,10 @@ if (( RC == 1 )); then
     # byte-identical when nothing books).
     s2_book_ev=""
     s1_classify
-    if (( s1_match == 1 )); then
+    # NFM-6006: gate on the EPISODE shape (conjuncts 1-3), not the paging
+    # conjuncts — a latency-dominant full-edge CRITICAL books like any other
+    # full-edge episode; conjunct 4 keeps gating only the streak-1 early page.
+    if (( s1_episode_match == 1 )); then
       s1_book_streak2
     fi
     # NFM-5876: PARTIAL_DEGRADED page rule — the edge-tunnel lane is dark

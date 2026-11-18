@@ -214,6 +214,14 @@ gh api repos/<owner>/<repo>/compare/<prev>...main --jq '.files[].additions'
 
 ---
 
+## Package manager (NFM-5954)
+
+**pnpm only.** `pnpm-lock.yaml` is the sole tracked lockfile
+(`packageManager: pnpm@9.15.4` in `package.json`); no bun/npm/yarn workflow
+exists in this repo — `bun.lock` is gitignored and must never be committed.
+
+---
+
 ## See also
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — the same rule written for human readers.

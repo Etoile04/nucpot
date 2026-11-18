@@ -425,6 +425,111 @@ defense-in-depth in git history (rollback = revert restores the
 workflows and guards together). Recovery playbook: see
 `docs/skills/self-hosted-runner-recovery.md`.
 
+### 10.1 Collector alerting transport (NFM-5936)
+
+The collector's three alert call sites (`alert_bad_fragment`,
+`alert_append_failure`, `alert_pending_failure` from NFM-5934's tripwire)
+have TWO transports, picked at fire time:
+
+1. **Feishu webhook (preferred)** — `ALERT_WEBHOOK` repo secret, wired in
+   the executor as `${{ secrets.ALERT_WEBHOOK }}`. While the secret is
+   unset this transport is skipped.
+2. **Dedup-keyed gh-issue fallback (NFM-5936)** — runs whenever the secret
+   is unset. ONE OPEN issue per alert class, titled
+   `[collector-alert] <class>` (`bad-fragment`, `append-failure`,
+   `pending-stall-<stage>`), labeled `collector-alert`. First fire creates
+   the issue; later fires of the same class comment into it until a human
+   closes it — closing resets the dedup key, so the next fire starts a
+   fresh issue. Dedup = exact-title scan over the newest 100 open
+   issues/PRs (PR titles never match). Uses the workflow `GITHUB_TOKEN`
+   (executor carries `issues: write` — no new secrets, no values in
+   logs/bodies). Alerting stays non-fatal: a failed fallback alert never
+   breaks the collect iteration (the stalled non-zero exit remains the
+   load-bearing tripwire surface).
+
+**Secret-route status (2026-11-10, P4):** setting `ALERT_WEBHOOK` is a
+human action — the nucpot-agent GitHub App installation carries no
+`secrets` permission (the secrets API 404s for it), and the SRE/ops
+Feishu-channel webhook URL is human-held. To switch transport: set the
+secret (repo Settings → Secrets and variables → Actions, or
+`gh secret set ALERT_WEBHOOK`) with the channel's webhook URL — never post
+the URL in issues, logs, or tickets. The fallback needs no code change to
+retire: next fire, the webhook path wins and the gh-issue issues simply
+stop growing.
+
+**Self-test door (NFM-5936):** the executor has a manual
+`workflow_dispatch` trigger that fires ONE `self-test` class fallback
+alert through the real executor context — no collection, no host-state
+writes (it runs before any sync-state/master/SSH resolution). It REQUIRES
+an `orchestrator_run_id` input naming an orchestrator run whose
+`prod-collector-payload` artifact it downloads and manifest-verifies first
+(the orchestrator gained a `self_test` dispatch input so a branch can
+stage a matching artifact; the artifact collector must carry the
+`--self-test-alert` flag, i.e. the NFM-5936 version). End-to-end proof =
+issue created + a second dispatch dedup'd into it. Close the
+`[collector-alert] self-test` issue after evidence capture so it never
+accumulates.
+
+**Rollback note (repo-only change, no host-level deltas):** revert the
+NFM-5936 PR. Pre-P4 behavior returns (alerts silently no-op while
+`ALERT_WEBHOOK` is unset); master JSONL / sync-state semantics are
+untouched by P4 by construction — the alert path never writes host state.
+
+### 10.2 Master-stall tripwire (NFM-5937)
+
+Parent NFM-5931 acceptance: warn when the newest master event is older
+than **7 days** WHILE production deploys ran in that window — the
+"deploys ran, capture silently stalled" signature (the 09-07 → 11-11
+stall was invisible for a month). The tripwire runs as its own executor
+step (`Master-stall tripwire (NFM-5937)`) on every collector fire, after
+the collect step:
+
+- **Condition (both required):** newest master event age > 7d
+  (strict — exactly 7d is not a stall), AND ≥ 1 completed
+  `Production Deployment` run created strictly after that newest event.
+  Any completed conclusion counts (`failure` / `cancelled` included):
+  a weather-killed deploy that still produced no event is exactly the
+  stall signature.
+- **Read-only vs master** (parent NFM-5932 hard constraint): the check
+  reads the master JSONL (max-`ts` scan, torn-tail tolerant); it never
+  appends, never touches sync-state or the failure sidecar, no SSH hop.
+  Master writes stay flock/reviewed-only.
+- **Transport:** rides §10.1 unchanged — Feishu webhook when set, else
+  the dedup-keyed `[collector-alert] master-stall` gh-issue (ONE open
+  issue per class, later fires comment into it).
+- **Scheduling:** rides the orchestrator's `*/15` backstop +
+  `workflow_run` fast path — no new schedule, no new workflow.
+- **Exit semantics:** fires → alert + `exit 1` from the tripwire step
+  (loud secondary surface, mirroring the collect-path tripwire
+  contract); silent → `exit 0`. The step runs on collect FAILURE via
+  `(success() || failure())` — a dead collect loop is when the signal
+  matters most — but keeps the manifest-verify gate as a first-class
+  condition (the Leg A provenance invariant: no bare `always()` on
+  payload steps). Skipped entirely in self-test mode (§10.1's door stays
+  single-purpose).
+- **Undefined state:** a missing/empty/unparseable master file leaves
+  the age rule undefined — the tripwire stays silent and says so on
+  stdout (total-capture loss is owned by the collect-path
+  `bad-fragment`/`append-failure` alerts).
+
+**Forced-old-state probe door:** run on the host with
+`--tripwire-max-age-days 0` — the age gate collapses and any completed
+in-window deploy run trips the real dedup-keyed alert (issue
+`[collector-alert] master-stall`), end-to-end, without writing anything
+to master. Close the probe issue after evidence capture so the dedup key
+resets.
+
+**Tests:** `scripts/okr/tests/test_nfm_5937_tripwire.py` (condition
+truth table incl. strict-boundary + zero-threshold probe door, torn-tail
+master reads, window listing filters + pagination, transport-priority
+mirror of §10.1, CLI dispatch/exit codes, executor step wiring +
+provenance gate).
+
+**Rollback note (repo-only change, no host-level deltas):** revert the
+NFM-5937 PR. The executor loses the tripwire step; no host files change
+(the tripwire exists only inside the staged payload + workflow), master
+and sync-state semantics are untouched by construction.
+
 ## 11. Three probe lanes & the PARTIAL_DEGRADED classification (NFM-5876)
 
 Child of NFM-5872 (CTO ruling R4-3 on NFM-5862, 2026-11-07). The sentinel's

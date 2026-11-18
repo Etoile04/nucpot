@@ -1131,3 +1131,175 @@ unusable-retry-delay case).
   pinned and must NOT be lowered to "fix" this (it sits above the
   site-monitor probe cadence by contract, NFM-5863).
 
+## 14. HA tunnel replica cut-over window (D2 / NFM-5963)
+
+> **Scope:** execution of the board-approved D2 reversal — a decorrelated
+> cloudflared replica connector on z203 joining the MAIN tunnel
+> (`04b1e559`) pool, plus the failure drill, the `KeepAlive=true` flip, and
+> the verify-tunnel disposition. Charter: [NFM-5963](../../issues/NFM-5963);
+> window ticket: [NFM-5968](../../issues/NFM-5968) (window LOCKED Fri
+> 2026-11-13 19:00–21:00 UTC). Artifacts: `scripts/z203-replica/`
+> (units, Caddyfile, install/rollback/KeepAlive scripts) — CR-passed on
+> NFM-5965 (D2-G2) before ANY host apply (NFM-5670 discipline).
+>
+> **Hard fences:** the primary connector must never be improvisationally
+> edited mid-window; ANY red ⇒ `rollback-replica.sh --mode abort` ⇒
+> primary-only state ⇒ window ABORTED ⇒ report on NFM-5968 + route to CTO.
+> Do not touch edge configs (no agent-side Cloudflare credentials exist;
+> ingress is remotely-managed — the forwarder IS the design).
+
+### 14.1. Ground truth snapshot (re-verify day-of; drift is expected)
+
+| Fact | Value | Measured |
+|---|---|---|
+| MAIN tunnel / plist | `04b1e559…`, `/Library/LaunchDaemons/com.cloudflare.cloudflared-nucpot.plist`, KeepAlive dict `{SuccessfulExit: false}`, ThrottleInterval 10, token literal in plist | CTO 2026-11-11 |
+| VERIFY tunnel / plist | `847668eb…`, `…cloudflared-verify.plist`, same shape | CTO 2026-11-11 |
+| Mac cloudflared | 2026.6.1 (`/opt/homebrew/bin/cloudflared`) | CPO 2026-11-12 |
+| Mac tailscale IP | `100.65.21.27` | CPO 2026-11-12 |
+| z203 | `z203@z203-thinkstation-p3-tower`, Ubuntu 22.04, systemd 249, tailscale `100.70.30.21`, x86_64 | CTO 2026-11-11 |
+| **z203 :3000 owner** | ⚠️ operator container `nucpot-prod-linux-web` (0.0.0.0:3000, up 2wks) | CPO 2026-11-12 |
+| **z203 :8002 owner** | ⚠️ operator container `nucpot-autovc-api-1` (0.0.0.0:8002, up 2wks) | CPO 2026-11-12 |
+| **z203 legacy cloudflared** | ⚠️ `/etc/systemd/system/cloudflared.service` (locally-managed, dead creds, "Unauthorized: Tunnel not found" retry loop; routes prod hostname → z203:3100 in its stale config) | CPO 2026-11-12 |
+| Origin reachability | `100.65.21.27:3000/api/v1/health` → 200; `:8002` → 404-on-probe (by design, uvicorn, no health route) | CPO 2026-11-12 |
+| NFM-5880 watchdog | mode file `/usr/local/lib/nfm-watchdog/reg-gap-gate.mode` = **LIVE** (as of 11-12; re-check day-of) | CPO 2026-11-12 |
+
+**The two ⚠️ rows are the G2 design gate:** the remotely-managed edge pins the
+origin to `localhost:3000`/`localhost:8002` ON THE REPLICA, and those ports
+are occupied by the operator's own containers as of 2026-11-12. The
+installed stack FAILS CLOSED on this: `install-replica.sh preflight` refuses
+to proceed while the ports are taken or the zombie cloudflared runs.
+Resolution paths (CTO adjudication pending on NFM-5965/5963):
+
+- **(C) Ports freed** — operator remaps `nucpot-prod-linux-web` (3000) and
+  `nucpot-autovc-api-1` (8002) host mappings + disables the zombie. Design
+  proceeds exactly as specced (this is the path the artifacts implement).
+- **(D) Netns redesign** — replica + forwarder inside an isolated network
+  namespace (compose). No operator asks, but re-specces unit names (G3 pins
+  three names) ⇒ CTO re-adjudication, artifacts amended, re-review.
+
+### 14.2. Pre-window gate checklist (ALL required before T+0)
+
+1. Consent card answered on NFM-5963 (z203 replica host + verify-pool soak),
+   including the port-freed ask from §14.1 path (C).
+2. D2-G1 path verdict recorded on NFM-5964 (YES, or CAVEAT with CTO note).
+3. D2-G2 artifacts CR-passed AND merged (NFM-5965; G4 start condition).
+4. D2-G3 liveness lane deployed in DRY_RUN ≥24h (NFM-5966).
+5. `install-replica.sh --mode preflight` transcript PASSES on the day
+   (attach to NFM-5968). It re-checks §14.1's ⚠️ rows, sudo availability
+   (non-interactive sudo on z203 — else one operator sudo session needed),
+   binary sources, tailscale path, and both plist token extractions.
+   For state-changing modes prefer `--staged-caddy` (Mac-side binary) —
+   the on-z203 download crosses the CN line; without a staged binary the
+   script downloads the pinned caddy release and sha256-verifies it against
+   the release `.sha256` (fails closed on mismatch or unreachable).
+6. Watchdog mode re-read: `cat /usr/local/lib/nfm-watchdog/reg-gap-gate.mode`
+   (record the value in the window evidence; §14.4 drill step depends on it).
+
+### 14.3. Window sequence (T+ steps; evidence marker after each)
+
+**T+0 — KeepAlive flip (only primary-side change).**
+
+```bash
+scripts/z203-replica/macos-set-main-keepalive-true.sh apply \
+  --replica-state expected-absent   # replica not yet in MAIN pool at this step
+```
+
+Script gates: replica-state envelope check → plist+generator backups →
+parameterized generator edit (MAIN `always`, VERIFY legacy dict; the script
+never runs `sync_plist`/`pkill`) → PlistBuddy dict→bool rewrite + `plutil -lint`
+→ bootout+bootstrap → pid + public-200 + fresh registration checks. On any
+failure it names its backups; `rollback` mode restores both and reloads.
+*Ordering note:* flipping while the replica already carries MAIN traffic
+(z203 switch first) gives a zero-gap reload; the 5968 sequence puts the flip
+first, which costs one ~10s primary restart INSIDE the window. Either order
+is executable with the `--replica-state` flag; the window executor picks per
+CTO guidance and records which was used.
+
+**T+5m — z203 soak→cutover switch (verify unit down, MAIN unit up).**
+
+```bash
+scripts/z203-replica/install-replica.sh --mode cutover --yes
+```
+
+Requires a prior soak install (`--mode soak --yes`, D2-G4). Cutover stops the
+VERIFY replica, enables the MAIN replica, then self-checks: unit states,
+`Registered tunnel connection` in `/var/log/cloudflared-nucpot-replica.log`,
+forwarder round-trips `localhost:3000 → 200` and `localhost:8002 → 404` on
+z203.
+
+**T+10m — green check (~10m).** Edge pool for `04b1e559` shows 2 connectors
+(Mac log + z203 replica log both carrying registrations); origin/edge/cached
+lanes green in the site-monitor tick (`~/Library/Logs/nfm-site-monitor.log`);
+public 200; zero origin errors in EITHER connector log.
+
+**T+20m — FAILURE DRILL (10m primary unload).**
+
+```bash
+sudo launchctl bootout system/com.cloudflare.cloudflared-nucpot
+# for 10 minutes: replica MUST carry public traffic
+watch curl -s -o /dev/null -w '%{http_code}\n' https://nucpot.dpdns.org   # 200 throughout
+tail -f /var/log/cloudflared-nucpot-replica.log                          # z203: serving
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.cloudflared-nucpot.plist
+```
+
+Watchdog interaction — check the deployed mode FIRST (§14.2 step 6):
+
+- mode `LIVE` (current): the NFM-5880 dual-signal gate should NOT fire — its
+  sentinel full-edge signal stays green BECAUSE the replica is serving, even
+  while the primary connector is dark. Record the NON-fire with timestamps;
+  that is the discriminating-signal evidence. If it DOES fire mid-drill,
+  record its actions and do NOT fight it (no operator OK to disable
+  mid-window); the primary's bootstrap at drill end reconciles state.
+- mode `DRY_RUN`: record expected-fire evidence only.
+
+**T+35m — ROLLBACK DRILL (10m replica unload).**
+
+```bash
+scripts/z203-replica/rollback-replica.sh --mode abort
+# 10 minutes: primary-only green (public 200, connector log quiet on z203)
+scripts/z203-replica/install-replica.sh --mode cutover --yes   # re-join
+```
+
+This is the charter's "rollback tested" evidence. `--keep-forwarder` may
+speed the re-join; record which was used.
+
+**T+50m — verify-tunnel disposition (record verbatim on NFM-5968).** The
+verify tunnel stays host-single-path after the window (the replica returns
+to verify-only duty); residual single-path risk on the non-P0 verify surface
+is accepted; revisit trigger = any verify-class P0.
+
+**T+55m — 48h soak watch starts** (monitor lane + ledger). Charter
+acceptance requires a clean 48h episode soak post-window.
+
+### 14.4. Failure handling
+
+ANY red at any step ⇒ `rollback-replica.sh --mode abort` (or `--mode full`
+if the KeepAlive flip already happened: it restores the plist+generator and
+reloads the primary BEFORE unloading z203, so the primary's reload gap is
+covered by the still-serving replica) ⇒ confirm primary-only green ⇒ window
+ABORTED ⇒ post the transcript on NFM-5968 and route to CTO for re-attempt
+adjudication. No mid-window improvisation on the prod edge.
+
+### 14.5. Evidence checklist (PC-3)
+
+| # | Evidence | Where |
+|---|---|---|
+| 1 | KeepAlive=true in the LIVE plist (`PlistBuddy -c 'Print :KeepAlive'`) | NFM-5968 comment |
+| 2 | Preflight PASS transcript (day-of) | NFM-5968 comment |
+| 3 | KeepAlive apply transcript incl. backups paths | NFM-5968 comment |
+| 4 | 2-connector edge state (both registration log lines, timestamps) | NFM-5968 comment |
+| 5 | Failure-drill transcript (10m replica-carries-traffic + watchdog non-fire/expected-fire) | NFM-5968 comment |
+| 6 | Rollback-drill transcript (primary-only 10m + re-join) | NFM-5968 comment |
+| 7 | verify-tunnel disposition text | NFM-5968 comment |
+| 8 | 48h post-window soak: monitor tick + ledger, zero episodes | NFM-5963 |
+
+### 14.6. References
+
+- [NFM-5963](../../issues/NFM-5963) — D2-EXEC charter (board-approved 05:02Z 11-11).
+- [NFM-5964](../../issues/NFM-5964) — D2-G1 path measurement.
+- [NFM-5965](../../issues/NFM-5965) — D2-G2 artifacts (this runbook section).
+- [NFM-5966](../../issues/NFM-5966) — D2-G3 liveness extension.
+- [NFM-5967](../../issues/NFM-5967) — D2-G4 enrollment + shadow soak.
+- [NFM-5968](../../issues/NFM-5968) — window execution ticket.
+- `scripts/z203-replica/` — units, Caddyfile, install/rollback/KeepAlive scripts.
+- Operator one-pager: [../deployment/z203-ha-replica-operator-onepager.md](../deployment/z203-ha-replica-operator-onepager.md).
