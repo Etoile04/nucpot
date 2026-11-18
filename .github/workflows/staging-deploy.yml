@@ -8,34 +8,46 @@ name: Staging Deploy
 # health gate + auto-rollback), then scripts/staging_smoke_test.py. A failing
 # health gate auto-rolls back on the host; a failing smoke test fails the run.
 #
-# SSH transport (NFM-150 rev 2 — self-hosted runner): the GHA runner is
-# self-hosted on the ThinkStation itself (registered with labels `self-hosted`
-# + `staging`), so the three appleboy/ssh-action steps SSH to the host over
-# loopback (127.0.0.1:22) using the host's own OpenSSH sshd. No tunnel,
-# bastion, or Access service token is involved. The deploy scripts themselves
-# are unchanged.
+# SSH transport (NFM-1564 — runner host moved off the staging host): the GHA
+# runner with labels `self-hosted` + `staging` is registered on the Mac Studio
+# (`nucpot-staging-macstudio`), NOT on the ThinkStation. The three
+# appleboy/ssh-action steps therefore SSH to the staging host over its
+# Tailscale address (`vars.STAGING_SSH_HOST`, default 100.70.30.21) using the
+# host's own OpenSSH sshd. No tunnel, bastion, or Access service token is
+# involved. The deploy scripts themselves are unchanged.
 #
-# Why this transport (NFM-150 spec rev 2, decision card fbd66b94, option
-# `app-selfhost`): the Cloudflare Tunnel + Access transport shipped in NFM-151
-# (PR #15) required Cloudflare Access, which is paid-only on the board's tier
-# and therefore unusable. The board pivoted to running the runner on the
-# ThinkStation directly. Full architecture + security review: NFM-150 spec.
+# Why the runner moved (NFM-1564, measured 2026-11-18): the staging host's
+# egress could not sustain job dispatch. `vstoken.actions.githubusercontent.com`
+# POST success from that host was 2-3/10 (curl AND openssl stacks alike, so
+# not a TLS-fingerprint issue and not a long-connection reset), while the same
+# POST from the Mac Studio was 10/10. Consequence: OAuth token refresh kept
+# failing → broker session expired (`TaskAgentSessionExpiredException`) → the
+# job assignment was invalidated (`job assignment is invalid`) → the queued job
+# was cancelled by GitHub after ~6 min with `runner=NONE`. The ADR-024
+# terminating proxy was NOT the fix: it targets ClientHello-fingerprint DPI,
+# which the measurement above rules out here.
+#
+# Historical transport (NFM-150 rev 2 — self-hosted runner ON the ThinkStation):
+# the runner used to be registered on the ThinkStation itself, so the steps
+# SSHed over loopback (127.0.0.1:22). Full architecture + security review:
+# NFM-150 spec. The loopback assumption is what NFM-1564 removes.
 #
 # REQUIRED GitHub secrets (create before first run — see NFM-112 / NFM-150):
 #   STAGING_SSH_USER  SSH user with docker access on the host
 #   STAGING_SSH_KEY   private key for the SSH user (PEM)
 #   GHCR_TOKEN        GitHub Container Registry token (if using GHCR images)
 #
-# SSH host: this workflow hardcodes host: 127.0.0.1 (port 22) because the
-# runner runs on the same box, so loopback reaches the host sshd. It no longer
-# reads STAGING_SSH_HOST; that secret was only consumed by the now-removed
-# cloudflared forward and can be deleted from repo secrets. The
-# TUNNEL_SERVICE_TOKEN_* secrets are likewise obsolete and can be deleted.
+# SSH host (NFM-1564): the target is no longer hardcoded to loopback. It is
+# read from the `staging` environment VARIABLE `STAGING_SSH_HOST` (the
+# staging host's Tailscale address; default 100.70.30.21 if the variable is
+# unset). The runner lives on the Mac Studio, so the steps SSH across the
+# Tailscale tailnet instead of over loopback. The TUNNEL_SERVICE_TOKEN_*
+# secrets are obsolete and can be deleted.
 #
 # Prerequisite: the host must expose an OpenSSH sshd on :22 that accepts
-# STAGING_SSH_KEY for STAGING_SSH_USER (set up in NFM-112). If only
-# Tailscale-SSH is available, loopback SSH cannot work — the CTO would switch
-# to NFM-150 Variant B (direct-run, no SSH).
+# STAGING_SSH_KEY for STAGING_SSH_USER (set up in NFM-112), and the host
+# must be reachable from the runner host at the configured address (today:
+# Tailscale, direct connection).
 #
 # Runs in the `staging` environment (Actions → Environments → New "staging").
 # =============================================================================
@@ -102,7 +114,7 @@ jobs:
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: 127.0.0.1
+          host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
@@ -144,7 +156,7 @@ jobs:
         if: ${{ inputs.skip_smoke != true }}
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: 127.0.0.1
+          host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
@@ -160,7 +172,7 @@ jobs:
         if: always()
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: 127.0.0.1
+          host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
