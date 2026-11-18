@@ -21,13 +21,17 @@ const QUICK_ENTRIES: readonly { href: string; title: string; description: string
   { href: "/potentials/compare", title: "势函数对比", description: "并排比较多条势函数" },
 ]
 
-// Real counts (统计数据与 API 一致), ISR-refreshed at most 5 min behind
-// the API (NFM-5267): fresh enough for a stats strip, and the page emits
-// s-maxage=300 so the Cloudflare edge can serve the shell without the
-// cross-region tunnel round trip. Sections stay fail-soft; a build-time
-// prerender with an unreachable API bakes empty sections that self-heal
-// on the first revalidate window after deploy.
-export const revalidate = 300
+// Real counts (统计数据与 API 一致), ISR-refreshed at most 30 min behind
+// the API (NFM-5267; widened from 5 min by NFM-5863 — still fresh enough
+// for a stats strip). The revalidate window IS the emitted s-maxage, and
+// it must sit above the site-monitor probe cadence (~320-400s observed)
+// so edge probes never land on the cold-fill path (5.3-9.4s P1 singles,
+// NFM-5862), while staying below the NFM-5418 stale-pin lane ceiling of
+// 3600s. The page emits s-maxage=1800 so the Cloudflare edge can serve
+// the shell without the cross-region tunnel round trip. Sections stay
+// fail-soft; a build-time prerender with an unreachable API bakes empty
+// sections that self-heal on the first revalidate window after deploy.
+export const revalidate = 1800
 
 export default async function HomePage() {
   const [homeData, allPosts] = await Promise.all([getHomeData(), Promise.resolve(getAllPosts())])

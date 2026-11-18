@@ -113,7 +113,7 @@ _Avoid_: 缩放工具、画布操作
 `viewportApi` 的 TypeScript 类型,4 个方法(zoomIn/zoomOut/fit/reset)与运行时同名;`fit` 与 `reset` 当前等价(spec parity)。源:`apps/web/src/components/graph/types.ts`。
 
 **useGraphView (useGraphView)**:
-图谱视图统一的 5 态数据状态机 hook(`loading` | `fetch` | `error` | `empty` | `retry`),内部封装 TanStack Query `useQuery`,供 `KgExploreView` / `MaterialGraphView` / `MaterialSubgraphView` 共用同一 `data / status / retry` 形态。源:`apps/web/src/hooks/useGraphView.ts`。
+图谱视图统一的 5 态数据状态机 hook(`loading` | `fetch` | `error` | `empty` | `retry`),内部封装 TanStack Query `useQuery`,供 `KgExploreView` / `MaterialSubgraphView` 共用同一 `data / status / retry` 形态。源:`apps/web/src/hooks/useGraphView.ts`。
 
 **layoutStatus (layoutStatus)**:
 力导向布局的 3 态收敛信号(`running` | `converged` | `settled`),由 `useForceGraph` 导出,`running` 表示模拟在飞、`converged` 为自然结束、`settled` 为超时定格或空数据/错误兜底;与历史 `isRunning` 兼容。源:`apps/web/src/components/graph/useForceGraph.ts`。

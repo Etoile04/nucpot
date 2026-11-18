@@ -9,14 +9,28 @@ collector:
    ``environment == "production"``, UUIDv4 ``event_id``).
 3. On validation failure: appends the run_id to ``bad_run_ids`` and
    fires a Feishu alert (the fragment is skipped).
-4. SSHes to the host, opens ``flock`` on the master JSONL, runs a
-   tail-1 sanity check (truncating if the last line is malformed),
-   appends each valid fragment, and writes the new sync-state — all
-   under the same lock.
+4. SSHes to the host and runs the critical section
+   (``_build_remote_append_script``): ``fcntl.flock`` on the master
+   JSONL lock file, tail-1 sanity check (truncating if the last line
+   is malformed), appends each valid fragment, writes the new
+   sync-state — all under the same lock. NFM-5934: the pre-5934 bash
+   version called the ``flock(1)`` binary, which the macOS prod host
+   does not ship, so every append failed with rc 127 → ``exit 99``.
 5. Sync-state advances ONLY after a confirmed append. A network
    partition that kills the SSH process mid-append leaves the lock
    released and the state unadvanced; the next iteration picks up the
    same fragment.
+
+NFM-5934 surfacing guarantees:
+
+- Pending runs persist per-run consecutive-failure counts in a sidecar
+  next to the sync-state; more than ``MAX_CONSECUTIVE_FAILURES``
+  consecutive failures fire the alert path once and keep the step
+  exit non-zero until resolved (never a silent infinite retry).
+- The listing window anchors at the oldest unresolved pending run, and
+  a never-synced install bootstraps from ``BOOTSTRAP_LOOKBACK_DAYS``.
+- ``--dry-run`` is validate-only by construction (no append, no
+  alerts, no state or failure-count mutation).
 
 This module is structured so the pure functions (``validate_fragment``,
 ``SyncState``, ``Run``) are importable and unit-testable. The SSH/flock
@@ -32,8 +46,9 @@ CLI usage:
 
 Required environment:
     GH_TOKEN              repo-scope PAT or workflow token.
-    ALERT_WEBHOOK         Feishu incoming-webhook URL (optional;
-                          skipped if unset).
+    ALERT_WEBHOOK         Feishu incoming-webhook URL (optional; when
+                          unset, alerts fall back to the NFM-5936
+                          dedup-keyed gh-issue transport).
 """
 
 # ruff: noqa: N818, SIM105
@@ -43,6 +58,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -80,6 +96,62 @@ _UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 # ADR-KR3-A2 §Failure-mode 3: clock-skew window between GH API and host.
 SYNC_SKEW_MINUTES = 5
 
+# NFM-5934: a fresh install (``last_synced_at`` empty) previously anchored
+# its listing window at ``now - SYNC_SKEW_MINUTES``. A deploy run's
+# ``created_at`` is ~50 min before its fragment artifact uploads (the
+# fragment is emitted at deploy completion), so a 10-minute effective
+# window meant even the workflow_run fast path listed nothing and every
+# run aged out unlisted — the literal captured state of run 42473687433
+# (uploaded, in NEITHER bad_run_ids NOR synced). Bootstrap instead from a
+# bounded lookback; deeper history stays the reviewed P3 one-shot's job.
+BOOTSTRAP_LOOKBACK_DAYS = 7
+
+# NFM-5934 tripwire: a pending run or the append transport failing more
+# than this many CONSECUTIVE attempts is surfaced loudly — the step exits
+# non-zero and the alert path fires once on crossing. The run itself stays
+# pending (no data loss, never a silent infinite retry). Matches the
+# parent ADR phase text: "fails >3 consecutive attempts".
+MAX_CONSECUTIVE_FAILURES = 3
+
+# NFM-5934: the bootstrap lookback lists repo-wide workflow runs (the
+# collector filters by name client-side), so page through instead of
+# silently truncating at the first 100.
+PAGE_SIZE = 100
+MAX_PAGES = 5
+
+# NFM-5936: when the ``ALERT_WEBHOOK`` Feishu secret is unset (its true
+# state since ~09-07 — every alert was dropped), alerts fall back to a
+# dedup-keyed GitHub issue: ONE OPEN issue per alert class, titled
+# ``[collector-alert] <class>``. The first fire creates it; later fires
+# comment into it until a human closes it (closing resets the key, so
+# the next fire starts a fresh issue). The webhook stays the preferred
+# transport — the fallback only runs when the secret is unset.
+ALERT_ISSUE_LABEL = "collector-alert"
+ALERT_ISSUE_TITLE_PREFIX = "[collector-alert]"
+ALERT_REASON_MAX_CHARS = 400
+ALERT_DEDUP_SCAN_LIMIT = 100
+
+# NFM-5936: fixed alert classes — the dedup key suffix. The pending-stall
+# class embeds the stage so a download stall and an append stall never
+# share an issue.
+ALERT_CLASS_BAD_FRAGMENT = "bad-fragment"
+ALERT_CLASS_APPEND_FAILURE = "append-failure"
+ALERT_CLASS_SELF_TEST = "self-test"
+
+# NFM-5937: master-stall tripwire. Warns when the newest master event is
+# older than MASTER_STALL_MAX_AGE_DAYS (parent NFM-5931 acceptance: 7
+# days) WHILE completed Production Deployment runs exist in that same
+# window — "deploys ran, capture silently stalled". Read-only against
+# master; alarms ride the NFM-5936 transport priority. A 0-day threshold
+# is the forced-old-state probe door (--tripwire-max-age-days 0).
+ALERT_CLASS_MASTER_STALL = "master-stall"
+MASTER_STALL_MAX_AGE_DAYS = 7.0
+
+# The deploy workflow the collector (and the tripwire window) track.
+# NFM-5937: hoisted from the literal in ``list_production_runs`` so the
+# tripwire cannot drift from the collector's own notion of "a deploy".
+DEPLOY_WORKFLOW_NAME = "Production Deployment"
+
 
 # ---------------------------------------------------------------------------
 # Domain types
@@ -93,6 +165,21 @@ class Run:
     run_id: int
     created_at: datetime  # tz-aware UTC
     artifact_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeployRunRecord:
+    """One completed deploy workflow run, for tripwire windows (NFM-5937).
+
+    Conclusion is the raw GH API value (``success`` / ``failure`` /
+    ``cancelled`` / …). Any completed conclusion counts as "a deploy
+    ran" — a weather-killed deploy that still produced no event is
+    exactly the stall signature this tripwire exists to catch.
+    """
+
+    run_id: int
+    created_at: datetime  # tz-aware UTC
+    conclusion: str
 
 
 @dataclass
@@ -196,6 +283,91 @@ def validate_fragment(run_id: int, text: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# NFM-5937 master-stall tripwire (read-only vs master)
+# ---------------------------------------------------------------------------
+
+
+def newest_master_event_ts(master_jsonl_path: str | Path) -> datetime | None:
+    """Parse the newest event ``ts`` from the master JSONL. Read-only.
+
+    Scans every line and keeps the max so a torn final line (a mid-append
+    read without the flock — master appends are the only writers, under
+    flock, so readers never take it) cannot hide the newest complete
+    event. Returns ``None`` when the file is missing, empty, or has no
+    parseable line at all.
+    """
+    path = Path(master_jsonl_path)
+    if not path.exists():
+        return None
+    newest: datetime | None = None
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = str(json.loads(line).get("ts", ""))
+                candidate = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+    return newest
+
+
+def master_stall_tripwire(
+    backend: Backend,
+    *,
+    master_jsonl_path: str | Path,
+    now: datetime | None = None,
+    max_age_days: float = MASTER_STALL_MAX_AGE_DAYS,
+) -> bool:
+    """Warn when capture stalled while deploys kept running (NFM-5937).
+
+    Fires — alert via the NFM-5936 transport priority — iff BOTH:
+      - the newest master event is older than ``max_age_days`` (strictly,
+        so exactly 7d is not a stall), AND
+      - at least one completed ``Production Deployment`` run was created
+        after that newest event (the window).
+
+    Any completed conclusion counts: a weather-killed deploy that still
+    produced no event is precisely the stall signature. A missing/empty
+    master leaves the age rule undefined — the tripwire stays silent (the
+    collect-path ``bad-fragment``/``append-failure`` alerts own total-
+    capture loss) and prints why.
+
+    Returns whether the alert fired. Read-only against master: no append,
+    no sync-state, no failure sidecar, no SSH hop.
+    """
+    now = now or datetime.now(UTC)
+    newest = newest_master_event_ts(master_jsonl_path)
+    if newest is None:
+        print(
+            "[tripwire] no parseable master events — age condition undefined, not firing"
+        )
+        return False
+    age = now - newest
+    if age <= timedelta(days=max_age_days):
+        print(
+            f"[tripwire] OK: newest master event age {age} <= {max_age_days:g}d — no stall"
+        )
+        return False
+    window_runs = backend.list_deploy_runs_in_window(newest, until=now)
+    if not window_runs:
+        print(
+            f"[tripwire] OK: newest master event age {age} > {max_age_days:g}d "
+            f"but no completed {DEPLOY_WORKFLOW_NAME} runs in the window — no stall"
+        )
+        return False
+    backend.alert_master_stall(newest, age, window_runs)
+    print(
+        f"[tripwire] FIRED: master-stall — newest event {age.total_seconds() / 86400:.2f}d old, "
+        f"{len(window_runs)} completed deploy run(s) in window"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Backend protocol + GH implementation (subprocess boundary — swappable in tests)
 # ---------------------------------------------------------------------------
 
@@ -212,10 +384,207 @@ class Backend(Protocol):
     ) -> None: ...
     def alert_bad_fragment(self, run_id: int, reason: str) -> None: ...
     def alert_append_failure(self, reason: str) -> None: ...
+    def alert_pending_failure(
+        self, run_id: int, stage: str, attempts: int, reason: str
+    ) -> None: ...
+
+    # NFM-5937 master-stall tripwire
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]: ...
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
+    ) -> None: ...
 
 
-def _gh_api(repo: str, *args: str) -> Any:
-    """Invoke ``gh api`` against the configured repo. Raises on non-zero exit."""
+def _build_remote_append_script(
+    master_path: str,
+    state_path: str,
+    payload_b64: str,
+    state_b64: str,
+) -> str:
+    """Build the remote critical-section script run over SSH.
+
+    NFM-5934: this used to be a bash script relying on ``flock(1)``,
+    ``head -n -1`` (GNU), and ``base64 -d`` — none portable to the macOS
+    prod host, which ships no ``flock`` binary at all (``flock -n 9`` was
+    rc 127 → ``exit 99`` on every append since Era-B went live) and a BSD
+    head that rejects negative line counts. The critical section is now a
+    stdlib-only python3 program using ``fcntl.flock`` — the same pattern
+    already proven on this host by ``scripts/lib/collect_prod_events.py``.
+
+    Exit codes: 99 = lock busy (retry next tick, same as before); any
+    other non-zero = unexpected failure (stderr carries the traceback).
+    """
+    # %-formatting on purpose: the template is full of literal braces
+    # (f-strings/.format() would need every one of them escaped).
+    template = """\
+import base64
+import base64
+import fcntl
+import json
+import os
+import sys
+
+master = %(master)r
+state = %(state)r
+payload = json.loads(base64.b64decode(%(payload_b64)r).decode("utf-8"))
+new_state_text = base64.b64decode(%(state_b64)r).decode("utf-8")
+
+lock_fd = os.open(master + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    print("[collector] master lock busy — retry next tick (rc=99)", file=sys.stderr)
+    sys.exit(99)
+try:
+    # Tail-1 sanity check: if the master JSONL ends in a partial line,
+    # truncate it so the next append starts at a clean boundary (ADR
+    # §Failure-mode 1). Portable: no GNU negative head counts (BSD head).
+    if os.path.exists(master) and os.path.getsize(master) > 0:
+        with open(master, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        stripped = text.rstrip("\\n")
+        if stripped:
+            last_line = stripped.rsplit("\\n", 1)[-1]
+            try:
+                json.loads(last_line)
+            except json.JSONDecodeError:
+                print(
+                    "[collector] WARN: master JSONL tail is malformed, truncating",
+                    file=sys.stderr,
+                )
+                cut = text.rfind(last_line)
+                tmp = master + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(text[:cut])
+                os.replace(tmp, master)
+
+    # Append each valid fragment as one JSONL line.
+    with open(master, "a", encoding="utf-8") as f:
+        for item in payload:
+            f.write(item["text"] + "\\n")
+
+    # Advance the sync-state under the same lock (atomic via rename).
+    tmp = state + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(new_state_text)
+    os.replace(tmp, state)
+finally:
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    os.close(lock_fd)
+"""
+    return template % {
+        "master": master_path,
+        "state": state_path,
+        "payload_b64": payload_b64,
+        "state_b64": state_b64,
+    }
+
+
+class CollectOutcome(SyncState):
+    """The sync-state a :func:`collect` iteration produced, plus tripwire data.
+
+    ``to_json()``/field shape is inherited from :class:`SyncState` so every
+    existing caller (state compare, ``_save_state``) keeps working. The
+    extra ``stalled`` field carries human-readable reasons for pending
+    runs / the append transport that failed more than
+    ``MAX_CONSECUTIVE_FAILURES`` consecutive attempts — ``main()`` turns a
+    non-empty ``stalled`` into a non-zero exit (the loud surface).
+    """
+
+    def __init__(self, *args: Any, stalled: tuple[str, ...] = (), **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.stalled = stalled
+
+
+class FailureStore:
+    """Persisted per-run consecutive-failure counts (NFM-5934 sidecar).
+
+    Lives NEXT to the sync-state (``<sync-state-stem>-failures.json``) — the
+    sync-state JSON shape is mirrored verbatim by other tooling and must not
+    grow keys. Shape::
+
+        {"runs": {"<run_id>": {"failures": n, "stage": "download",
+                               "last_error": str, "created_at": iso}},
+         "append": {"failures": n, "last_error": str}}
+
+    Only UNRESOLVED pending runs are tracked: download success, validation
+    bad-mark, and append success all clear their entries. With ``path=None``
+    the store is in-memory (unit tests); ``main()`` always passes a real
+    path so counts survive across collector ticks.
+    """
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
+        self.data: dict[str, Any] = {"runs": {}, "append": {"failures": 0, "last_error": ""}}
+        self.reload()
+
+    def reload(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        try:
+            obj = json.loads(self.path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(obj, dict):
+            return
+        runs = obj.get("runs", {})
+        if isinstance(runs, dict):
+            self.data["runs"] = runs
+        append = obj.get("append", {})
+        if isinstance(append, dict):
+            self.data["append"] = append
+
+    def flush(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data, indent=2) + "\n")
+
+    def record_run_failure(self, run_id: int, stage: str, reason: str, created_at: str) -> int:
+        entry = self.data["runs"].setdefault(
+            str(run_id), {"failures": 0, "stage": stage, "last_error": "", "created_at": created_at}
+        )
+        entry["failures"] = min(int(entry.get("failures", 0)) + 1, 9999)
+        entry["stage"] = stage
+        entry["last_error"] = reason[:500]
+        return int(entry["failures"])
+
+    def clear_run(self, run_id: int) -> None:
+        self.data["runs"].pop(str(run_id), None)
+
+    def record_append_failure(self, reason: str) -> int:
+        append = self.data["append"]
+        append["failures"] = min(int(append.get("failures", 0)) + 1, 9999)
+        append["last_error"] = reason[:500]
+        return int(append["failures"])
+
+    def clear_append(self) -> None:
+        self.data["append"] = {"failures": 0, "last_error": ""}
+
+    def oldest_pending_created_at(self) -> str:
+        """ISO created_at of the oldest unresolved pending run ('' if none)."""
+        created = [
+            str(entry.get("created_at", ""))
+            for entry in self.data["runs"].values()
+            if entry.get("created_at")
+        ]
+        return min(created) if created else ""
+
+
+def _gh_api(
+    repo: str,
+    *args: str,
+    method: str = "GET",
+    fields: dict[str, str] | None = None,
+) -> Any:
+    """Invoke ``gh api`` against the configured repo. Raises on non-zero exit.
+
+    NFM-5936: ``method`` + ``fields`` extend the read-only helper to the
+    issue-write calls the alert fallback needs (``POST`` with ``-f``
+    form fields). Defaults keep every existing read call verbatim.
+    """
     # ``gh api`` accepts a SINGLE endpoint positional. Concatenate any
     # path/query parts so we never pass a second positional, which gh
     # rejects with "accepts 1 arg(s), received 2". See NFM-2754.
@@ -225,6 +594,10 @@ def _gh_api(repo: str, *args: str) -> Any:
     else:
         endpoint = f"repos/{repo}"
     cmd = ["gh", "api", endpoint]
+    if method != "GET":
+        cmd += ["-X", method]
+    for key, value in (fields or {}).items():
+        cmd += ["-f", f"{key}={value}"]
     proc = subprocess.run(
         cmd,
         capture_output=True,
@@ -235,6 +608,42 @@ def _gh_api(repo: str, *args: str) -> Any:
     if proc.returncode != 0:
         raise RuntimeError(f"gh api failed ({proc.returncode}): {proc.stderr.strip()}")
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+
+def _build_alert_issue_body(
+    alert_class: str,
+    details: list[tuple[str, str]],
+    *,
+    repeat: bool = False,
+) -> str:
+    """Markdown body for a fallback alert issue or dedup comment (NFM-5936).
+
+    Values are truncated at :data:`ALERT_REASON_MAX_CHARS` — reasons can
+    embed ``gh`` stderr, which is unbounded and must not flood the issue.
+    The footer documents the dedup + transport contract for whoever
+    triages the issue.
+    """
+    lines = [
+        f"## {ALERT_ISSUE_TITLE_PREFIX} {alert_class}",
+        "",
+        f"**fired_at (UTC)**: {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "",
+    ]
+    if repeat:
+        lines += ["*Repeat fire — dedup'd into this open issue.*", ""]
+    for key, value in details:
+        lines.append(f"**{key}**: {str(value)[:ALERT_REASON_MAX_CHARS]}")
+    lines += [
+        "",
+        "---",
+        "> Dedup key: this issue's title — ONE open issue per alert class. "
+        "Later fires comment here; close this issue once resolved and the "
+        "next fire starts a fresh one.",
+        f"> Transport: ``ALERT_WEBHOOK`` is unset — this is the NFM-5936 "
+        f"gh-issue fallback (``{ALERT_ISSUE_LABEL}``). The Feishu webhook "
+        f"takes priority once the secret is set.",
+    ]
+    return "\n".join(lines)
 
 
 class GhBackend:
@@ -254,25 +663,99 @@ class GhBackend:
 
     def list_production_runs(self, since: datetime) -> list[Run]:
         # ``created=>=ISO`` filters server-side. Add 5-minute skew on top.
+        # NFM-5934: only COMPLETED runs are listed. A deploy run is ~50 min
+        # in flight before its fragment artifact uploads; listing it
+        # in-progress made collect() permanently bad-mark it as "no
+        # prod-deploy-event-* artifact" — a false negative that would eat
+        # every real fragment the moment ticks got frequent enough to land
+        # inside a deploy window.
         skewed = (since - timedelta(minutes=SYNC_SKEW_MINUTES)).astimezone(UTC)
         iso = skewed.strftime("%Y-%m-%dT%H:%M:%SZ")
-        data = _gh_api(
-            self.repo,
-            f"actions/runs?created=>={iso}&per_page=100",
-        )
         runs: list[Run] = []
-        for item in data.get("workflow_runs", []):
-            name = item.get("name", "")
-            if name != "Production Deployment":
-                continue
-            try:
-                run_id = int(item["id"])
-                created = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
-            except (KeyError, TypeError, ValueError):
-                continue
-            artifact_ids = self._list_artifact_ids(run_id)
-            runs.append(Run(run_id=run_id, created_at=created, artifact_ids=artifact_ids))
+        page = 1
+        while page <= MAX_PAGES:
+            data = _gh_api(
+                self.repo,
+                f"actions/runs?created=>={iso}&per_page={PAGE_SIZE}&page={page}",
+            )
+            items = data.get("workflow_runs", [])
+            for item in items:
+                name = item.get("name", "")
+                if name != DEPLOY_WORKFLOW_NAME:
+                    continue
+                if item.get("status") != "completed":
+                    continue
+                try:
+                    run_id = int(item["id"])
+                    created = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                artifact_ids = self._list_artifact_ids(run_id)
+                runs.append(Run(run_id=run_id, created_at=created, artifact_ids=artifact_ids))
+            if len(items) < PAGE_SIZE:
+                break
+            page += 1
+        else:
+            print(
+                f"[collector] WARN: runs listing hit the {MAX_PAGES}-page cap "
+                f"({MAX_PAGES * PAGE_SIZE} runs) — older runs in the window were not considered",
+                file=sys.stderr,
+            )
         return runs
+
+    def list_deploy_runs_in_window(
+        self, since: datetime, *, until: datetime
+    ) -> list[DeployRunRecord]:
+        """Completed deploy runs created strictly inside ``(since, until]``.
+
+        NFM-5937 tripwire window listing: like ``list_production_runs``
+        (same workflow, same completed-only rule, same pagination) but
+        WITHOUT the per-run artifact listing — the tripwire only needs to
+        know that a deploy ran — and anchored at the newest master event
+        with no skew: the window must not reach back before the event
+        that already exists, or quiet periods after a captured deploy
+        would look active.
+        """
+        iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        records: list[DeployRunRecord] = []
+        page = 1
+        while page <= MAX_PAGES:
+            data = _gh_api(
+                self.repo,
+                f"actions/runs?created=>={iso}&per_page={PAGE_SIZE}&page={page}",
+            )
+            items = data.get("workflow_runs", [])
+            for item in items:
+                if item.get("name", "") != DEPLOY_WORKFLOW_NAME:
+                    continue
+                if item.get("status") != "completed":
+                    continue
+                try:
+                    run_id = int(item["id"])
+                    created = datetime.fromisoformat(
+                        item["created_at"].replace("Z", "+00:00")
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if created <= since or created > until:
+                    continue
+                records.append(
+                    DeployRunRecord(
+                        run_id=run_id,
+                        created_at=created,
+                        conclusion=str(item.get("conclusion", "")),
+                    )
+                )
+            if len(items) < PAGE_SIZE:
+                break
+            page += 1
+        else:
+            print(
+                f"[tripwire] WARN: window listing hit the {MAX_PAGES}-page cap "
+                f"({MAX_PAGES * PAGE_SIZE} runs) — older window runs were not considered",
+                file=sys.stderr,
+            )
+        return records
 
     def _list_artifact_ids(self, run_id: int) -> tuple[int, ...]:
         data = _gh_api(self.repo, f"actions/runs/{run_id}/artifacts")
@@ -287,6 +770,9 @@ class GhBackend:
         return tuple(ids)
 
     def download_artifact(self, run_id: int, artifact_id: int, dest: Path) -> None:
+        # NFM-5934: clear any stale/partial extraction from a previous
+        # attempt so a retry can never validate leftover bytes.
+        shutil.rmtree(dest, ignore_errors=True)
         dest.parent.mkdir(parents=True, exist_ok=True)
         # ``gh run download`` extracts a single artifact to a directory.
         proc = subprocess.run(
@@ -317,14 +803,20 @@ class GhBackend:
     ) -> None:
         """SSH to host, flock master JSONL, append, advance state, release.
 
-        A single ``flock`` covers BOTH the master JSONL append AND the
-        sync-state write, so the two stay atomic. The tail-1 sanity
+        A single ``fcntl.flock`` covers BOTH the master JSONL append AND
+        the sync-state write, so the two stay atomic. The tail-1 sanity
         check truncates the master if its last line is malformed (ADR
         §Failure-mode 1 recovery).
 
+        NFM-5934: the remote critical section is the python3 program from
+        :func:`_build_remote_append_script` — the previous bash version
+        depended on ``flock(1)`` (absent on the macOS prod host, so every
+        append failed with rc 127 → ``exit 99`` since Era-B went live)
+        and ``head -n -1`` (GNU-only).
+
         The fragment payload and new sync-state are sent base64-encoded
-        on the SSH command line so we don't have to worry about shell
-        quoting the JSON.
+        inside the script so we don't have to worry about shell quoting
+        the JSON.
 
         IMPORTANT: this method must NOT advance ``new_state`` in any
         caller-visible way before the SSH succeeds — that contract is
@@ -337,40 +829,12 @@ class GhBackend:
         payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
         state_b64 = base64.b64encode(new_state_json.encode("utf-8")).decode("ascii")
 
-        # Build the remote shell script. We intentionally do NOT advance
-        # sync-state before the master JSONL append finishes — both are
-        # inside the same flock so they are atomic from any other
-        # process's perspective.
-        remote_script_lines = [
-            "set -euo pipefail",
-            f"MASTER='{self.master_jsonl_path}'",
-            f"STATE='{self.sync_state_path}'",
-            'exec 9>"$MASTER.lock"',
-            "flock -n 9 || exit 99",
-            "",
-            "# Tail-1 sanity check: if the master JSONL ends in a partial",
-            "# line, truncate so the next append starts at a clean boundary.",
-            'if [ -s "$MASTER" ]; then',
-            '  LAST_LINE="$(tail -n 1 "$MASTER")"',
-            '  if [ -n "$LAST_LINE" ] && ! printf \'%s\' "$LAST_LINE" | jq -e . >/dev/null 2>&1; then',
-            '    echo "[collector] WARN: master JSONL tail is malformed, truncating" >&2',
-            '    head -n -1 "$MASTER" > "$MASTER.tmp" && mv "$MASTER.tmp" "$MASTER"',
-            "  fi",
-            "fi",
-            "",
-            "# Decode + append each valid fragment as one JSONL line.",
-            f"echo '{payload_b64}' | base64 -d | jq -c '.[]' | while read -r item; do",
-            "  TEXT=\"$(printf '%s' \"$item\" | jq -r '.text')\"",
-            '  printf \'%s\\n\' "$TEXT" >> "$MASTER"',
-            "done",
-            "",
-            "# Advance the sync-state under the same lock.",
-            f"echo '{state_b64}' | base64 -d > \"$STATE.tmp\"",
-            'mv "$STATE.tmp" "$STATE"',
-            "",
-            "flock -u 9",
-        ]
-        remote_script = "\n".join(remote_script_lines) + "\n"
+        remote_script = _build_remote_append_script(
+            self.master_jsonl_path,
+            self.sync_state_path,
+            payload_b64,
+            state_b64,
+        )
 
         proc = subprocess.run(
             [
@@ -380,8 +844,8 @@ class GhBackend:
                 "-i",
                 os.path.expanduser("~/.ssh/deploy_key"),
                 self.ssh_target,
-                "bash",
-                "-s",
+                "python3",
+                "-",
             ],
             input=remote_script,
             capture_output=True,
@@ -393,28 +857,26 @@ class GhBackend:
                 f"remote append failed (rc={proc.returncode}): {proc.stderr.strip()}"
             )
 
-    def alert_bad_fragment(self, run_id: int, reason: str) -> None:
+    def _alert_via_webhook(self, title: str, markdown: str) -> bool:
+        """Post a Feishu interactive card when ``ALERT_WEBHOOK`` is set.
+
+        Returns True when the webhook transport owns this alert (secret
+        set — attempted or failed), False when the secret is unset so the
+        NFM-5936 gh-issue fallback must take it. Transport failures are
+        swallowed: alerting is non-fatal by contract.
+        """
         webhook = os.environ.get("ALERT_WEBHOOK", "")
         if not webhook:
-            return
+            return False
         body = json.dumps(
             {
                 "msg_type": "interactive",
                 "card": {
                     "header": {
-                        "title": {"tag": "plain_text", "content": "Bad prod deploy-event fragment"},
+                        "title": {"tag": "plain_text", "content": title},
                         "template": "red",
                     },
-                    "elements": [
-                        {
-                            "tag": "markdown",
-                            "content": (
-                                f"**run_id**: `{run_id}`\n"
-                                f"**reason**: {reason}\n"
-                                f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
-                            ),
-                        }
-                    ],
+                    "elements": [{"tag": "markdown", "content": markdown}],
                 },
             }
         )
@@ -436,12 +898,115 @@ class GhBackend:
                 timeout=10,
             )
         except Exception:
-            # Alert failure is non-fatal — the run_id is already in
-            # ``bad_run_ids`` so it will retry on the next iteration.
+            # Alert failure is non-fatal — the underlying condition is
+            # already recorded (bad_run_ids / failure sidecar) and the
+            # tripped surfaces (stalled exit) carry the recurrence.
             pass
+        return True
+
+    def _alert_fallback_issue(self, alert_class: str, details: list[tuple[str, str]]) -> int | None:
+        """Fire the dedup-keyed gh-issue fallback alert (NFM-5936).
+
+        Key semantics: ONE OPEN issue per ``alert_class`` — title
+        ``[collector-alert] <class>``. The first fire creates it (with
+        the ``collector-alert`` label; retried bare if the label can't be
+        created), later fires comment into it until a human closes it.
+        Dedup scans the newest 100 open issues/PRs for an exact title
+        match, skipping PRs (the issues endpoint returns both) and other
+        classes. Returns the issue number, or None when the transport
+        failed — this is the belt behind the non-fatal alert contract,
+        never a caller-visible exception.
+
+        Race note: the executor lane serializes collector invocations via
+        its concurrency group, so two simultaneous creators can't split
+        the key.
+        """
+        title = f"{ALERT_ISSUE_TITLE_PREFIX} {alert_class}"
+        try:
+            open_items = _gh_api(
+                self.repo, f"issues?state=open&per_page={ALERT_DEDUP_SCAN_LIMIT}"
+            )
+            target = None
+            for item in open_items:
+                if item.get("title") == title and "pull_request" not in item:
+                    target = item
+                    break
+            if target is not None:
+                number = int(target["number"])
+                _gh_api(
+                    self.repo,
+                    f"issues/{number}/comments",
+                    method="POST",
+                    fields={
+                        "body": _build_alert_issue_body(alert_class, details, repeat=True)
+                    },
+                )
+                print(f"[collector] alert (fallback): dedup'd into issue #{number} ({title})")
+                return number
+            issue = self._create_alert_issue(title, alert_class, details)
+            print(f"[collector] alert (fallback): created issue #{issue['number']} ({title})")
+            return int(issue["number"])
+        except Exception as exc:
+            # Transport failure is non-fatal — the tripped condition is
+            # already recorded in sync-state / the failure sidecar, and
+            # the pending-stall non-zero exit is the load-bearing surface.
+            print(f"[collector] WARN: fallback issue alert failed: {exc}", file=sys.stderr)
+            return None
+
+    def _create_alert_issue(
+        self,
+        title: str,
+        alert_class: str,
+        details: list[tuple[str, str]],
+    ) -> dict[str, Any]:
+        """Create the class issue with the ``collector-alert`` label.
+
+        The label create can fail on permission-shaped responses; the
+        bare-title retry keeps the alert flowing (the title prefix alone
+        remains the dedup key).
+        """
+        try:
+            return _gh_api(
+                self.repo,
+                "issues",
+                method="POST",
+                fields={
+                    "title": title,
+                    "body": _build_alert_issue_body(alert_class, details),
+                    "labels[]": ALERT_ISSUE_LABEL,
+                },
+            )
+        except RuntimeError:
+            return _gh_api(
+                self.repo,
+                "issues",
+                method="POST",
+                fields={
+                    "title": title,
+                    "body": _build_alert_issue_body(alert_class, details),
+                },
+            )
+
+    def alert_bad_fragment(self, run_id: int, reason: str) -> None:
+        if not self._alert_via_webhook(
+            "Bad prod deploy-event fragment",
+            (
+                f"**run_id**: `{run_id}`\n"
+                f"**reason**: {reason}\n"
+                f"**action**: skipped; recorded in sync-state ``bad_run_ids``."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_BAD_FRAGMENT,
+                [
+                    ("run_id", str(run_id)),
+                    ("reason", reason),
+                    ("action", "skipped; recorded in sync-state ``bad_run_ids``."),
+                ],
+            )
 
     def alert_append_failure(self, reason: str) -> None:
-        """Notify the channel when ``append_and_advance`` raised.
+        """Notify when ``append_and_advance`` raised.
 
         ADR §Failure-mode 1 talks about a partial-line tail-recovery as
         "logged + alerted"; the same belt-and-braces is required for the
@@ -451,57 +1016,119 @@ class GhBackend:
         when the runner is down, which is exactly the situation where the
         cron fallback's silent stderr line is least actionable.
         """
-        webhook = os.environ.get("ALERT_WEBHOOK", "")
-        if not webhook:
-            return
-        body = json.dumps(
-            {
-                "msg_type": "interactive",
-                "card": {
-                    "header": {
-                        "title": {
-                            "tag": "plain_text",
-                            "content": "Prod deploy-event append failed",
-                        },
-                        "template": "red",
-                    },
-                    "elements": [
-                        {
-                            "tag": "markdown",
-                            "content": (
-                                f"**reason**: {reason}\n"
-                                "**action**: state NOT advanced; same fragments will be "
-                                "re-attempted on the next collector iteration. The "
-                                "POSIX flock is released on SSH process death, so the "
-                                "master JSONL is not corrupted by a mid-sync exit."
-                            ),
-                        }
-                    ],
-                },
-            }
-        )
-        try:
-            subprocess.run(
+        if not self._alert_via_webhook(
+            "Prod deploy-event append failed",
+            (
+                f"**reason**: {reason}\n"
+                "**action**: state NOT advanced; same fragments will be "
+                "re-attempted on the next collector iteration. The "
+                "POSIX flock is released on SSH process death, so the "
+                "master JSONL is not corrupted by a mid-sync exit."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_APPEND_FAILURE,
                 [
-                    "curl",
-                    "-sf",
-                    "-X",
-                    "POST",
-                    webhook,
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    body,
+                    ("reason", reason),
+                    (
+                        "action",
+                        "state NOT advanced; same fragments re-attempted on the "
+                        "next collector iteration.",
+                    ),
                 ],
-                capture_output=True,
-                check=False,
-                timeout=10,
             )
-        except Exception:
-            # Alert failure is non-fatal — the run will retry on the next
-            # iteration, and the next successful iteration trips the same
-            # code path again.
-            pass
+
+    def alert_pending_failure(self, run_id: int, stage: str, attempts: int, reason: str) -> None:
+        """Tripwire alert: a pending run keeps failing at ``stage``.
+
+        NFM-5934: download failures used to be stderr-only with no alert
+        and no cap — run 42473687433 (artifact provably uploaded) sat in
+        limbo for days. This fires ONCE, on crossing the
+        ``MAX_CONSECUTIVE_FAILURES`` threshold; the non-zero step exit
+        (``CollectOutcome.stalled``) carries the recurring surface.
+        """
+        if not self._alert_via_webhook(
+            "Prod deploy-event pending run stalled",
+            (
+                f"**run_id**: `{run_id}`\n"
+                f"**stage**: {stage}\n"
+                f"**consecutive failures**: {attempts} (cap "
+                f"{MAX_CONSECUTIVE_FAILURES})\n"
+                f"**reason**: {reason}\n"
+                "**action**: run stays pending and is retried; the "
+                "collector step now exits non-zero until it resolves."
+            ),
+        ):
+            self._alert_via_fallback(
+                f"pending-stall-{stage}",
+                [
+                    ("run_id", str(run_id)),
+                    ("stage", stage),
+                    ("consecutive failures", str(attempts)),
+                    ("reason", reason),
+                    (
+                        "action",
+                        "run stays pending and is retried; the collector step "
+                        "exits non-zero until it resolves.",
+                    ),
+                ],
+            )
+
+    def alert_master_stall(
+        self, newest_ts: datetime, age: timedelta, window_runs: list[DeployRunRecord]
+    ) -> None:
+        """Tripwire alert: master stalled while deploys ran (NFM-5937).
+
+        Transport priority mirrors ``alert_bad_fragment``: the Feishu
+        webhook when ``ALERT_WEBHOOK`` is set, else the dedup-keyed
+        ``[collector-alert] master-stall`` gh-issue fallback — ONE open
+        issue for the class, later fires comment into it.
+        """
+        age_days = age.total_seconds() / 86400.0
+        newest_iso = newest_ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        shown = window_runs[:5]
+        summary = ", ".join(f"{r.run_id}:{r.conclusion or 'completed'}" for r in shown)
+        if len(window_runs) > 5:
+            summary += f", … +{len(window_runs) - 5} more"
+        if not self._alert_via_webhook(
+            "Master deploy-event stall (KR-3)",
+            (
+                f"**newest_master_event_ts**: `{newest_iso}`\n"
+                f"**event_age_days**: {age_days:.2f} (threshold "
+                f"{MASTER_STALL_MAX_AGE_DAYS:g})\n"
+                f"**deploy_runs_in_window**: {summary}\n"
+                "**action**: capture stalled while deploys ran — check "
+                "prod-deploy-event-collector-executor runs + sync-state; "
+                "do NOT re-baseline (parent NFM-5932)."
+            ),
+        ):
+            self._alert_via_fallback(
+                ALERT_CLASS_MASTER_STALL,
+                [
+                    ("newest_master_event_ts", newest_iso),
+                    ("event_age_days", f"{age_days:.2f} (threshold {MASTER_STALL_MAX_AGE_DAYS:g})"),
+                    ("deploy_runs_in_window", summary),
+                    ("window_size", str(len(window_runs))),
+                    (
+                        "action",
+                        "capture stalled while deploys ran — check "
+                        "prod-deploy-event-collector-executor runs + sync-state; "
+                        "do NOT re-baseline (parent NFM-5932).",
+                    ),
+                ],
+            )
+
+    def _alert_via_fallback(self, alert_class: str, details: list[tuple[str, str]]) -> None:
+        """Fallback-route an alert, guaranteed non-throwing.
+
+        Belt over :meth:`_alert_fallback_issue`'s own swallow: the alert
+        methods sit inside the collect loop and must never break an
+        iteration that already recorded its state.
+        """
+        try:
+            self._alert_fallback_issue(alert_class, details)
+        except Exception as exc:  # pragma: no cover - defense in depth
+            print(f"[collector] WARN: alert routing failed: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -509,46 +1136,98 @@ class GhBackend:
 # ---------------------------------------------------------------------------
 
 
-def collect(state: SyncState, backend: Backend) -> SyncState:
+def collect(
+    state: SyncState,
+    backend: Backend,
+    *,
+    dry_run: bool = False,
+    failures: FailureStore | None = None,
+) -> CollectOutcome:
     """Top-level orchestration. Returns the next state to persist.
 
     The caller persists the returned state ONLY if it differs from the
     input (an SSH/append failure leaves the original state untouched,
     so the caller can detect that case by comparing).
+
+    NFM-5934 additions:
+
+    - ``dry_run`` is validate-only BY CONSTRUCTION here: download +
+      validation run (read-only), but no append, no alert, no
+      failure-count mutation ever happens. (On main the append ran
+      BEFORE main()'s dry-run gate — harmless only while every append
+      failed on the missing flock binary; gating it here is what keeps
+      --dry-run validate-only once the transport is fixed.)
+    - ``failures`` persists per-run consecutive-failure counts. A run
+      (or the append transport) failing more than
+      ``MAX_CONSECUTIVE_FAILURES`` consecutive attempts populates
+      ``CollectOutcome.stalled`` — main() exits non-zero — and fires the
+      alert once on crossing the threshold. The run itself stays
+      pending: retried, never silently dropped.
+    - The listing window anchors at the oldest unresolved pending run,
+      so a stuck run below a newer successful sync keeps being retried
+      (head-of-line), and the high-water mark never regresses.
     """
-    # Decide the lower bound from the previous sync. If we have never
-    # synced, start from the SYNC_SKEW window before "now" so we don't
-    # pull the entire history (we only care about recent runs).
+    if failures is None:
+        failures = FailureStore()
+
+    # Decide the lower bound from the previous sync. A fresh install
+    # (never synced) bootstraps from BOOTSTRAP_LOOKBACK_DAYS instead of
+    # "now" — see the constant's comment for the 42473687433 trap.
     if state.last_synced_at:
         try:
             since = datetime.fromisoformat(state.last_synced_at.replace("Z", "+00:00"))
         except ValueError:
             since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
     else:
-        since = datetime.now(UTC) - timedelta(minutes=SYNC_SKEW_MINUTES)
+        since = datetime.now(UTC) - timedelta(days=BOOTSTRAP_LOOKBACK_DAYS)
+
+    # Head-of-line anchor: keep the oldest unresolved pending run inside
+    # the window even after a newer run advanced the high-water mark.
+    oldest_pending = failures.oldest_pending_created_at()
+    if oldest_pending:
+        try:
+            pending_since = datetime.fromisoformat(oldest_pending.replace("Z", "+00:00"))
+            since = min(since, pending_since)
+        except ValueError:
+            pass
 
     runs = sorted(
         backend.list_production_runs(since),
         key=lambda r: r.run_id,
     )
+    print(
+        f"[collector] window since={since.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} "
+        f"runs_listed={len(runs)} run_ids={[r.run_id for r in runs]} dry_run={dry_run}"
+    )
 
-    next_state = SyncState(
+    next_state = CollectOutcome(
         last_synced_run_id=state.last_synced_run_id,
         last_synced_at=state.last_synced_at,
         bad_run_ids=list(state.bad_run_ids),
     )
 
     pending: list[tuple[int, str]] = []
+    stalled: list[str] = []
+    append_failed = False
 
     for run in runs:
-        if run.run_id <= next_state.last_synced_run_id:
+        # Runs at/below the high-water mark are integrated — UNLESS they
+        # are tracked as unresolved pending (head-of-line retry).
+        tracked = str(run.run_id) in failures.data["runs"]
+        if run.run_id <= next_state.last_synced_run_id and not tracked:
             continue
         if run.run_id in next_state.bad_run_ids:
+            if tracked and not dry_run:
+                failures.clear_run(run.run_id)
             continue
 
         if not run.artifact_ids:
+            if tracked and not dry_run:
+                failures.clear_run(run.run_id)
             next_state.bad_run_ids.append(run.run_id)
-            backend.alert_bad_fragment(run.run_id, "no prod-deploy-event-* artifact uploaded")
+            print(f"[collector] run {run.run_id}: no prod-deploy-event-* artifact -> bad_run_ids")
+            if not dry_run:
+                backend.alert_bad_fragment(run.run_id, "no prod-deploy-event-* artifact uploaded")
             continue
 
         artifact_id = run.artifact_ids[0]
@@ -556,57 +1235,116 @@ def collect(state: SyncState, backend: Backend) -> SyncState:
         try:
             backend.download_artifact(run.run_id, artifact_id, dest)
         except Exception as exc:
-            # Transient: leave state alone so the next iteration retries.
+            # Transient: leave state alone so the next iteration retries,
+            # but COUNT the consecutive failures — after the cap the run
+            # is surfaced loudly (alert once on crossing + non-zero exit)
+            # instead of retrying invisibly forever.
+            count = 0
+            if not dry_run:
+                count = failures.record_run_failure(
+                    run.run_id,
+                    "download",
+                    str(exc),
+                    run.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
             print(
-                f"[collector] download failed for run_id={run.run_id}: {exc}",
+                f"[collector] run {run.run_id}: download FAILED "
+                f"({count} consecutive attempts): {exc}",
                 file=sys.stderr,
             )
+            if count > MAX_CONSECUTIVE_FAILURES:
+                if count == MAX_CONSECUTIVE_FAILURES + 1:
+                    backend.alert_pending_failure(run.run_id, "download", count, str(exc))
+                stalled.append(
+                    f"run {run.run_id} failed download {count} consecutive attempts "
+                    f"(cap {MAX_CONSECUTIVE_FAILURES}): {str(exc)[:200]}"
+                )
             continue
 
         fragment_path = dest / f"{run.run_id}.jsonl"
         if not fragment_path.exists():
             candidates = list(dest.glob("*.jsonl"))
             if not candidates:
+                if tracked and not dry_run:
+                    failures.clear_run(run.run_id)
                 next_state.bad_run_ids.append(run.run_id)
+                print(f"[collector] run {run.run_id}: artifact has no .jsonl -> bad_run_ids")
                 backend.alert_bad_fragment(run.run_id, "artifact contains no .jsonl file")
                 continue
             fragment_path = candidates[0]
 
         text = fragment_path.read_text(errors="replace")
+        print(
+            f"[collector] run {run.run_id}: fragment {fragment_path.name} "
+            f"({len(text.splitlines())} line(s), {len(text)} bytes)"
+        )
         try:
             events = validate_fragment(run.run_id, text)
         except FragmentInvalid as exc:
+            if tracked and not dry_run:
+                failures.clear_run(run.run_id)
             next_state.bad_run_ids.append(run.run_id)
-            backend.alert_bad_fragment(run.run_id, exc.reason)
+            print(f"[collector] run {run.run_id}: fragment INVALID -> bad_run_ids: {exc.reason}")
+            if not dry_run:
+                backend.alert_bad_fragment(run.run_id, exc.reason)
             continue
 
+        if tracked and not dry_run:
+            failures.clear_run(run.run_id)
+        print(f"[collector] run {run.run_id}: fragment VALID -> queued for append")
         pending.append((run.run_id, json.dumps(events[0], separators=(",", ":"))))
 
     if pending:
-        # Runs are already sorted by ``run_id`` (see the call to
-        # ``sorted(..., key=lambda r: r.run_id)`` above), so the
-        # advance target is the highest run_id in ``pending``.
-        next_state.last_synced_run_id = pending[-1][0]
-        next_state.last_synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            backend.append_and_advance(pending, next_state)
-        except Exception as exc:
-            # Network partition mid-sync: the lock is released on SSH
-            # process death (POSIX flock semantics) and the master JSONL
-            # tail-1 sanity check truncates any partial line on the next
-            # iteration. We leave ``state`` UNCOMMITTED and alert so the
-            # self-host outage is not silently invisible — the
-            # ``workflow_run`` trigger is itself unreliable when the
-            # runner is down, which is exactly the situation where the
-            # cron fallback's silent stderr line is least actionable.
-            reason = f"{type(exc).__name__}: {exc}"
+        # Runs are sorted by ``run_id``; the advance target never moves
+        # the high-water mark backwards (a below-mark head-of-line retry
+        # appends its fragment but leaves the mark alone).
+        target = max(next_state.last_synced_run_id, pending[-1][0])
+        if dry_run:
             print(
-                f"[collector] append failed, state NOT advanced: {reason}",
-                file=sys.stderr,
+                f"[collector] DRY-RUN: would append {len(pending)} fragment(s) "
+                f"runs={sorted(rid for rid, _ in pending)} and advance to run_id {target}"
             )
-            backend.alert_append_failure(reason)
-            return state
+            next_state.last_synced_run_id = target
+            next_state.last_synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            next_state.last_synced_run_id = target
+            next_state.last_synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                backend.append_and_advance(pending, next_state)
+            except Exception as exc:
+                # Network partition mid-sync: the lock is released on SSH
+                # process death (POSIX flock semantics) and the master JSONL
+                # tail-1 sanity check truncates any partial line on the next
+                # iteration. We leave ``state`` UNCOMMITTED and alert so the
+                # self-host outage is not silently invisible — and NFM-5934
+                # counts the streak: past the cap the step exits non-zero.
+                append_failed = True
+                reason = f"{type(exc).__name__}: {exc}"
+                count = failures.record_append_failure(reason)
+                print(
+                    f"[collector] append failed, state NOT advanced "
+                    f"({count} consecutive attempts): {reason}",
+                    file=sys.stderr,
+                )
+                backend.alert_append_failure(reason)
+                if count > MAX_CONSECUTIVE_FAILURES:
+                    stalled.append(
+                        f"append transport failed {count} consecutive attempts "
+                        f"(cap {MAX_CONSECUTIVE_FAILURES}): {reason[:200]}"
+                    )
 
+    if not dry_run:
+        failures.flush()
+
+    if append_failed:
+        # State stays uncommitted; the stalled reasons still surface.
+        return CollectOutcome(
+            last_synced_run_id=state.last_synced_run_id,
+            last_synced_at=state.last_synced_at,
+            bad_run_ids=list(state.bad_run_ids),
+            stalled=tuple(stalled),
+        )
+    next_state.stalled = tuple(stalled)
     return next_state
 
 
@@ -721,12 +1459,74 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate + plan only; do not call backend side effects.",
     )
+    parser.add_argument(
+        "--self-test-alert",
+        action="store_true",
+        help="NFM-5936: fire ONE fallback alert (class 'self-test') through "
+        "the real alert transport and exit. Reads and writes NO collector "
+        "state — no sync-state, no master JSONL, no failure sidecar, no "
+        "SSH hop.",
+    )
+    parser.add_argument(
+        "--tripwire",
+        action="store_true",
+        help="NFM-5937: run the master-stall tripwire and exit (no "
+        "collection). Fires the NFM-5936 transport when the newest master "
+        "event is older than --tripwire-max-age-days while completed "
+        "Production Deployment runs exist in the window. Read-only "
+        "against master; exit 1 = tripped.",
+    )
+    parser.add_argument(
+        "--tripwire-max-age-days",
+        type=float,
+        default=MASTER_STALL_MAX_AGE_DAYS,
+        help="NFM-5937 stall threshold in days (default %(default)s). 0 "
+        "is the forced-old-state probe door: any in-window deploy run "
+        "trips the alert.",
+    )
     args = parser.parse_args(argv)
+
+    if args.self_test_alert:
+        # NFM-5936 end-to-end alert-path probe: exercise the real dedup +
+        # issue transport in the executor context and exit. Deliberately
+        # runs BEFORE any state-path or SSH-target resolution so the probe
+        # cannot touch host-bound collector state. Non-zero exit = the
+        # transport failed (that's the proof surface).
+        backend = GhBackend(args.repo, "", "", "")
+        details = [("note", "NFM-5936 end-to-end alert-path test — no collector state read or written")]
+        executor_run = os.environ.get("GITHUB_RUN_ID", "")
+        if executor_run:
+            details.append(("executor_run_id", executor_run))
+        fired = backend._alert_fallback_issue(ALERT_CLASS_SELF_TEST, details)
+        if fired is None:
+            print("[collector] self-test alert FAILED to fire", file=sys.stderr)
+            return 1
+        print(f"[collector] self-test alert fired into issue #{fired}")
+        return 0
+
+    if args.tripwire:
+        # NFM-5937 master-stall tripwire: same no-host-state contract as
+        # the self-test door above — only the master JSONL is READ.
+        # Exit 1 on fire is the loud secondary surface (the alert issue
+        # is primary), mirroring the collect-path tripwire contract.
+        backend = GhBackend(args.repo, "", "", "")
+        master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
+        tripped = master_stall_tripwire(
+            backend,
+            master_jsonl_path=master_jsonl_path,
+            max_age_days=args.tripwire_max_age_days,
+        )
+        return 1 if tripped else 0
 
     sync_state_path = _resolve_sync_state_path(args.sync_state)
     master_jsonl_path = _resolve_master_jsonl_path(args.master_jsonl)
     ssh_target = _resolve_ssh_target(args.ssh_target)
     state = _load_state(sync_state_path)
+
+    # NFM-5934: consecutive-failure sidecar NEXT to the sync-state (the
+    # sync-state JSON shape is mirrored verbatim elsewhere and must not
+    # grow keys). Powers the >3-consecutive-attempts tripwire.
+    failures = FailureStore(sync_state_path.parent / (sync_state_path.stem + "-failures.json"))
 
     backend: Backend = GhBackend(
         args.repo,
@@ -735,7 +1535,7 @@ def main(argv: list[str] | None = None) -> int:
         str(sync_state_path),
     )
     try:
-        next_state = collect(state, backend)
+        next_state = collect(state, backend, dry_run=args.dry_run, failures=failures)
     except Exception as exc:
         print(f"[collector] iteration failed: {exc}", file=sys.stderr)
         return 1
@@ -748,6 +1548,10 @@ def main(argv: list[str] | None = None) -> int:
                     "would_advance_to_run_id": next_state.last_synced_run_id,
                     "would_advance_at": next_state.last_synced_at,
                     "bad_run_ids": next_state.bad_run_ids,
+                    "pending_failures": {
+                        run_id: entry.get("failures", 0)
+                        for run_id, entry in failures.data["runs"].items()
+                    },
                 },
                 indent=2,
             )
@@ -762,10 +1566,19 @@ def main(argv: list[str] | None = None) -> int:
                 "last_synced_run_id": next_state.last_synced_run_id,
                 "last_synced_at": next_state.last_synced_at,
                 "bad_run_ids": next_state.bad_run_ids,
+                "stalled": list(next_state.stalled),
             },
             indent=2,
         )
     )
+    # NFM-5934 tripwire: a pending run (or the append transport) past the
+    # consecutive-failure cap keeps the step RED until it resolves — the
+    # alert path may be a no-op until P4 lands, so the non-zero exit is
+    # the load-bearing surface.
+    if next_state.stalled:
+        for reason in next_state.stalled:
+            print(f"[collector] TRIPWIRE: {reason}", file=sys.stderr)
+        return 1
     return 0
 
 
