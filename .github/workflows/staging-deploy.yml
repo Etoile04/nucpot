@@ -109,13 +109,22 @@ jobs:
       # an NFM-162 constraint). Backup mirror if gh-proxy.com is ever down:
       # https://ghproxy.net/https://github.com/appleboy/drone-ssh/releases/download
       DRONE_SSH_RELEASE_URL: https://gh-proxy.com/https://github.com/appleboy/drone-ssh/releases/download
-    timeout-minutes: 30
+    # NFM-1564: the step-level command_timeout (45m) must stay below the job
+    # backstop so a stuck deploy fails the STEP (clean signal) rather than the
+    # whole job (which shows up as a cancelled run).
+    timeout-minutes: 55
     steps:
       - name: Configure SSH + deploy on staging host
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
+          # NFM-1564: the default 10m command_timeout is too short once the
+          # deploy runs cross-host — the compose build re-pulls the GHCR base
+          # image layers and rebuilds the web bundle (the loopback era hit a
+          # fully cached build and finished well inside 10m). Measured: the
+          # 2026-11-18 run was cut at exactly 10m while still pulling layers.
+          command_timeout: 45m
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
@@ -158,6 +167,12 @@ jobs:
         with:
           host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
+          # NFM-1564: the default 10m command_timeout is too short once the
+          # deploy runs cross-host — the compose build re-pulls the GHCR base
+          # image layers and rebuilds the web bundle (the loopback era hit a
+          # fully cached build and finished well inside 10m). Measured: the
+          # 2026-11-18 run was cut at exactly 10m while still pulling layers.
+          command_timeout: 45m
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
@@ -174,6 +189,12 @@ jobs:
         with:
           host: ${{ vars.STAGING_SSH_HOST || '100.70.30.21' }}
           port: 22
+          # NFM-1564: the default 10m command_timeout is too short once the
+          # deploy runs cross-host — the compose build re-pulls the GHCR base
+          # image layers and rebuilds the web bundle (the loopback era hit a
+          # fully cached build and finished well inside 10m). Measured: the
+          # 2026-11-18 run was cut at exactly 10m while still pulling layers.
+          command_timeout: 45m
           username: ${{ secrets.STAGING_SSH_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           envs: STAGING_REPO_DIR,DRONE_SSH_RELEASE_URL
