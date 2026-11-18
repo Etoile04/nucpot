@@ -37,7 +37,8 @@ http://localhost:3000 {
 # path by design (measured 2026-11-12 from the Mac vantage), so the active
 # healthcheck pins the expected status at 404 — any other code (or a
 # timeout) marks the upstream unhealthy.
-http://localhost:8002 {
+:8002 {
+	bind 127.0.0.1 ::1
 	reverse_proxy 100.65.21.27:8002 {
 		health_uri /
 		health_port 8002
