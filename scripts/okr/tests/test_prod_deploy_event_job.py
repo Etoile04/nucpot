@@ -11,9 +11,11 @@ The bug is that ``github.run_started_at`` is **not a property of the
 Actions expands an unknown context property to the empty string rather than
 erroring, so the defect is invisible in review and only appears at runtime.
 
-These are static assertions rather than a live run, because the failure mode
-is a *template* bug: by the time a runner could tell us, we have already
-burned a production deploy.
+The ``github.*`` guards are static assertions rather than a live run, because
+that failure mode is a *template* bug: by the time a runner could tell us, we
+have already burned a production deploy. Plain-shell computation in the emit
+step (duration/health, NFM-5984) has no such excuse and is executed
+end-to-end below.
 
 The contract each test below pins one clause of:
 
@@ -25,7 +27,10 @@ still be emitted and the artifact must still upload, carrying sentinel ``0``.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -192,6 +197,126 @@ def test_fragment_emit_is_emit_once(emit_step_run: str) -> None:
     assert '_prod_emit "$SUCCESS" "$FIRST_POLL"' in emit_step_run
     # The guard must sit INSIDE _prod_emit, i.e. before the trap arming.
     assert emit_step_run.index(guard) < emit_step_run.index("trap '_prod_emit")
+
+
+def _run_fragment_emit_step(
+    emit_step_run: str,
+    tmp_path: Path,
+    *,
+    start_ms: str,
+    run_epoch: str,
+    marker_epoch: str | None,
+) -> list[dict[str, Any]]:
+    """Execute the REAL deploy-prod fragment-emit run body (parsed from the
+    workflow, GH expressions and the runner-host marker path substituted
+    with fakes) against a fake RUNNER_TEMP; returns the parsed JSONL
+    fragment lines. The duration/health computation under test is plain
+    shell arithmetic and comparison, so unlike the ``github.*`` template
+    guards above it is exercised here end-to-end through deploy_event.sh."""
+    marker = tmp_path / "nfmd_prod_health_passed"
+    if marker_epoch is not None:
+        marker.write_text(f'{{"epoch": {marker_epoch}, "sha": "abc1234"}}\n', encoding="utf-8")
+
+    run_id = "42473687433"
+    for expr, value in (
+        ("${{ github.run_id }}", run_id),
+        ("${{ steps.deploy.outcome }}", "success"),
+        ("${{ steps.external-smoke-tests.outcome }}", "success"),
+        ("${{ steps.deploy.outputs.epoch }}", run_epoch),
+        ("${{ steps.deploy.outputs.start_ms }}", start_ms),
+        ("/var/lib/nfmdeploy/.nfmd/nfmd_prod_health_passed", str(marker)),
+    ):
+        emit_step_run = emit_step_run.replace(expr, value)
+    assert "${{" not in emit_step_run, "unsubstituted GH expression would not survive bash"
+
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    proc = subprocess.run(
+        ["bash", "-c", emit_step_run],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin",
+            "RUNNER_TEMP": str(runner_temp),
+            "GITHUB_WORKSPACE": str(REPO_ROOT),
+            "GITHUB_ACTOR_VAL": "tester",
+            "GITHUB_SHA_VAL": "deadbee",
+        },
+    )
+    assert proc.returncode == 0, (
+        f"the emit step must never fail the deploy-prod job (set +e + "
+        f"never-fail lib), but exited {proc.returncode}:\n"
+        f"{proc.stdout}\n{proc.stderr}"
+    )
+    fragment = runner_temp / "prod-deploy-events" / f"{run_id}.jsonl"
+    lines = fragment.read_text(encoding="utf-8").splitlines() if fragment.exists() else []
+    return [json.loads(line) for line in lines]
+
+
+def test_fragment_emits_computed_duration_and_gate_derived_health(
+    emit_step_run: str, tmp_path: Path
+) -> None:
+    """NFM-5984: the fragment step hardcoded ``--duration-ms 0`` and passed no
+    ``--health-status`` at all, so deploy_event.sh's defaults leaked into
+    every master event — even green deploys with
+    ``health_gate_first_poll_passed=true`` recorded ``duration_ms=0`` and
+    ``health_status="error"`` (epochs 71-72, e.g. event 7f3b7e8d… @
+    2026-11-15T13:53:20Z).
+
+    Contract, executed against the real step body: duration is computed from
+    the deploy step's ``start_ms`` output — a start-anchored wall clock like
+    staging's exit-trap figure, but measured through post-deploy verification
+    (cutover, external smoke, Celery verify all run between deploy and emit),
+    so prod durations run systematically larger — and health_status is
+    derived from the SAME FIRST_POLL boolean the event emits, so the fields
+    cannot contradict each other. This fails on the pre-fix body, which
+    emitted ``duration_ms=0`` for a green attested deploy.
+    """
+    # Wiring check: the step must consume the deploy step's start_ms output.
+    assert "steps.deploy.outputs.start_ms" in emit_step_run, (
+        "the emit step must read the deploy step's start_ms output to compute "
+        "duration_ms (NFM-5984)"
+    )
+
+    start_ms = str(int(time.time() * 1000) - 5000)
+    events = _run_fragment_emit_step(
+        emit_step_run, tmp_path, start_ms=start_ms, run_epoch="7", marker_epoch="7"
+    )
+
+    assert len(events) == 1, f"expected exactly one fragment line, got: {events!r}"
+    event = events[0]
+    assert event["health_gate_first_poll_passed"] is True
+    assert event["first_pass_success"] is True
+    assert event["health_status"] == "ok", (
+        "a green deploy with an attested health marker must record "
+        "health_status=ok, not the lib's conservative default (NFM-5984)"
+    )
+    assert isinstance(event["duration_ms"], int)
+    assert 4000 <= event["duration_ms"] < 60_000, (
+        f"duration_ms must reflect the ~5s start→emit span from start_ms, "
+        f"got {event['duration_ms']} — a hardcoded 0 or wrong anchor fails here"
+    )
+
+
+def test_fragment_falls_back_to_sentinel_duration_and_error_health(
+    emit_step_run: str, tmp_path: Path
+) -> None:
+    """When the deploy died before minting a start time and nothing attests
+    the health gate, the fragment still emits (a metric may not fail the
+    event it annotates — NFM-2119 doctrine) carrying the sentinel
+    ``duration_ms=0`` and ``health_status="error"`` consistent with
+    ``health_gate_first_poll_passed=false``.
+    """
+    events = _run_fragment_emit_step(
+        emit_step_run, tmp_path, start_ms="", run_epoch="", marker_epoch=None
+    )
+
+    assert len(events) == 1, f"expected exactly one fragment line, got: {events!r}"
+    event = events[0]
+    assert event["health_gate_first_poll_passed"] is False
+    assert event["health_status"] == "error"
+    assert event["duration_ms"] == 0
 
 
 @pytest.fixture(scope="module")
