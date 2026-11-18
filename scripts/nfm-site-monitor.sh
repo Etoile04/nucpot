@@ -469,8 +469,11 @@
 #     age>1800 — serve-stale observed, healthy SWR behavior), dynamic
 #     (200 + MISS/DYNAMIC/BYPASS/none — eligibility-drift hint), error
 #     (non-200/transport). Tick context (origin-dependent): shield=<n>
-#     routes serving 200 while the origin lane is dark (users
-#     cache-shielded); gap=<n> routes erroring at the edge while the
+#     routes PROVEN cache-served (fresh|stale classes only) while the
+#     origin lane is dark (users cache-shielded — a 200 with ccs
+#     miss/bypass means the edge reached the origin, contradicting an
+#     origin-dark verdict, so it is never shield); gap=<n> routes erroring
+#     at the edge while the
 #     origin lane is dark (the ADR-026 stale-contract gap — 502/530
 #     instead of stale; FIRST NATURAL EXPOSURE 2026-11-16 ~07:35Z, episode
 #     NFM-6016: rule verified enabled, edge returned 502-no-stale — AC6
@@ -1718,12 +1721,19 @@ cache_state_probes() { # prints "cache-state: /=fresh(200,ccs=hit,a=254) ..."; r
 
 # Classify the cache-state tokens into per-class counts + a one-word tick
 # class. Needs LANE_ORIGIN (call after ORIGIN_EV exists). Sets:
-#   CS_FRESH CS_STALE CS_DYN CS_ERR CS_SHIELD CS_GAP CS_DRIFT CS_BATCLASS
-# Counting rules: CS_SHIELD = treated routes serving 200 while the origin
-# lane is DARK (users cache-shielded — fresh or stale alike); CS_GAP =
-# routes erroring at the edge while the origin lane is DARK (the ADR-026
-# stale-contract gap class); CS_ERR = edge errors with the origin UP.
-# CS_BATCLASS precedence: gap family (page-relevant) > edge-degraded >
+#   CS_FRESH CS_STALE CS_DYN CS_ERR CS_SHIELD CS_GAP CS_DRIFT CS_BATVERDICT
+# Counting rules: CS_SHIELD = treated routes PROVEN cache-served (fresh or
+# stale classes only — ccs HIT/REVALIDATED/STALE/UPDATING) while the origin
+# lane is DARK. A 200 whose ccs is miss/dynamic/bypass/none (the dynamic
+# class) means the edge REACHED the origin to serve it — contradictory
+# evidence for an origin-dark verdict, so it is neither shield nor gap;
+# CS_GAP = routes erroring at the edge while the origin lane is DARK (the
+# ADR-026 stale-contract gap class); CS_ERR = edge errors with the origin
+# UP. The tick token is spelled batverdict= (NOT batclass=): the legacy
+# green-tick format guards pin `class=` as absent from the verdict segment
+# (test_nfm_site_monitor_refs / test_nfm5708 replay) and the refs battery
+# already owns the batclass= token — one token per meaning.
+# CS_BATVERDICT precedence: gap family (page-relevant) > edge-degraded >
 # shielded > stale > drift > fresh > mixed (fail-open floor).
 cache_state_classify() {
   CS_FRESH=0; CS_STALE=0; CS_DYN=0; CS_ERR=0
@@ -1741,28 +1751,32 @@ cache_state_classify() {
       *"=err("*)     CS_ERR=$((CS_ERR + 1)) ;;
     esac
     [[ "$tok" == *"!" ]] && CS_DRIFT=$((CS_DRIFT + 1))
-    # served-200 anchor: the token shape is cls(<code>,ccs=...,a=...), so
-    # "(200," is exact and cannot false-positive on an a=200 age.
-    if [[ "$tok" == *"(200,"* ]]; then
+    # class-prefix anchor: the token shape is cls(<code>,ccs=...,a=...),
+    # so "=fresh(" / "=stale(" are exact and cannot false-positive on an
+    # a=200 age or a route substring.
+    if [[ "$tok" == *"=fresh("* || "$tok" == *"=stale("* ]]; then
+      # cache-PROVEN classes only (see the counting-rules comment above):
+      # HIT/REVALIDATED/STALE/UPDATING cannot be produced by a live origin,
+      # so they are the only 200s that prove users are cache-shielded.
       [[ "$LANE_ORIGIN" == "fail" ]] && CS_SHIELD=$((CS_SHIELD + 1))
-    elif [[ "$LANE_ORIGIN" == "fail" ]]; then
+    elif [[ "$tok" != *"(200,"* && "$LANE_ORIGIN" == "fail" ]]; then
       CS_GAP=$((CS_GAP + 1))
     fi
   done
   if (( CS_GAP > 0 )); then
-    if (( CS_SHIELD > 0 )); then CS_BATCLASS="stale-gap"; else CS_BATCLASS="gap"; fi
+    if (( CS_SHIELD > 0 )); then CS_BATVERDICT="stale-gap"; else CS_BATVERDICT="gap"; fi
   elif (( CS_ERR > 0 )); then
-    CS_BATCLASS="edge-degraded"
+    CS_BATVERDICT="edge-degraded"
   elif (( CS_SHIELD > 0 )); then
-    CS_BATCLASS="shielded"
+    CS_BATVERDICT="shielded"
   elif (( CS_STALE > 0 )); then
-    CS_BATCLASS="stale"
+    CS_BATVERDICT="stale"
   elif (( CS_DRIFT > 0 )); then
-    CS_BATCLASS="drift"
+    CS_BATVERDICT="drift"
   elif (( CS_FRESH == 5 )); then
-    CS_BATCLASS="fresh"
+    CS_BATVERDICT="fresh"
   else
-    CS_BATCLASS="mixed"
+    CS_BATVERDICT="mixed"
   fi
 }
 
@@ -2305,7 +2319,7 @@ log "LANES — origin=$LANE_ORIGIN edge-tunnel=$LANE_TUNNEL_TOK edge-cached=$LAN
 # stays the tick's newest line (liveness read preserved). AC5: the
 # cache-state classification is visible in the monitor output as a
 # dimension.
-log "CACHE-STATE — ${CACHE_STATE_OUT#cache-state: } — fresh=$CS_FRESH stale=$CS_STALE err=$CS_ERR dyn=$CS_DYN shield=$CS_SHIELD gap=$CS_GAP drift=$CS_DRIFT batclass=$CS_BATCLASS [NFM-5875]"
+log "CACHE-STATE — ${CACHE_STATE_OUT#cache-state: } — fresh=$CS_FRESH stale=$CS_STALE err=$CS_ERR dyn=$CS_DYN shield=$CS_SHIELD gap=$CS_GAP drift=$CS_DRIFT batverdict=$CS_BATVERDICT [NFM-5875]"
 
 # NFM-5966: replica lane evidence — every real-probe tick (green + degrade
 # alike), after the LANES line so the OK/WARN/CRITICAL line stays the tick's

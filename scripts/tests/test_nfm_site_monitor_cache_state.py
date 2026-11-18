@@ -15,7 +15,7 @@ What is pinned here:
     tick's newest line (liveness contract) and stays byte-stable on green.
   - Per-route freshness classification from CF-native headers (fresh /
     stale / dynamic / error) + tick context counts (shield / gap / drift)
-    + a one-word batclass.
+    + a one-word batverdict.
   - New verdict ORIGIN_OUTAGE_STALE_SERVED — origin + edge-tunnel dark
     while the cached edge PROVABLY serves treated routes (shield >= 1).
     Previously MIXED. Fail-open: without shield evidence the tick stays
@@ -213,7 +213,7 @@ def test_require_cache_seams_present(env):
 
 def test_green_tick_carries_cache_state_line_fresh(env, mock_site, cache_edge):
     """AC5: a green tick carries a CACHE-STATE line with per-route tokens,
-    batclass=fresh; the OK line stays the newest and byte-stable; the
+    batverdict=fresh; the OK line stays the newest and byte-stable; the
     CACHE-STATE line sits between LANES and REPLICA."""
     base_url, specs = cache_edge
     specs.update(_all_fresh_contract())
@@ -227,7 +227,7 @@ def test_green_tick_carries_cache_state_line_fresh(env, mock_site, cache_edge):
     lines = log_text(env).strip().splitlines()
     cs = [ln for ln in lines if "CACHE-STATE — " in ln]
     assert cs, "CACHE-STATE line missing on a green tick"
-    assert "batclass=fresh" in cs[-1]
+    assert "batverdict=fresh" in cs[-1]
     assert "fresh=5" in cs[-1] and "stale=0" in cs[-1] and "shield=0" in cs[-1] and "gap=0" in cs[-1] and "drift=0" in cs[-1]
     assert "/=fresh(200,ccs=hit,a=" in cs[-1]
     lanes_idx = next(i for i, ln in enumerate(lines) if "LANES — " in ln)
@@ -240,9 +240,9 @@ def test_green_tick_carries_cache_state_line_fresh(env, mock_site, cache_edge):
     assert "verdict=ALL_OK" in lines[lanes_idx]
 
 
-def test_stale_while_origin_ok_batclass_stale(env, mock_site, cache_edge):
+def test_stale_while_origin_ok_batverdict_stale(env, mock_site, cache_edge):
     """Serve-stale observed while the origin lane is green: per-route stale
-    class from cf-cache-status/age, batclass=stale, shield=0."""
+    class from cf-cache-status/age, batverdict=stale, shield=0."""
     base_url, specs = cache_edge
     specs.update(_all_stale_contract())
     _origin_green(env, mock_site)
@@ -253,14 +253,14 @@ def test_stale_while_origin_ok_batclass_stale(env, mock_site, cache_edge):
     assert r.returncode == 0, (r.returncode, log_text(env))
 
     cs = _cache_lines(env)[-1]
-    assert "batclass=stale" in cs
+    assert "batverdict=stale" in cs
     assert "stale=5" in cs and "shield=0" in cs and "gap=0" in cs
     assert "=stale(200,ccs=stale,a=5400)" in cs
 
 
 def test_drift_flag_counts_contract_delta(env, mock_site, cache_edge):
     """cache-control bytes off the NFM-5873 contract on 200s => drift
-    counted, batclass=drift (revert-trigger detection)."""
+    counted, batverdict=drift (revert-trigger detection)."""
     base_url, specs = cache_edge
     specs.update({r: (200, "HIT", 50, "public, max-age=300") for r in ROUTES})
     _origin_green(env, mock_site)
@@ -272,7 +272,7 @@ def test_drift_flag_counts_contract_delta(env, mock_site, cache_edge):
 
     cs = _cache_lines(env)[-1]
     assert "drift=5" in cs
-    assert "batclass=drift" in cs
+    assert "batverdict=drift" in cs
     assert cs.count("!") == 5
 
 
@@ -293,7 +293,7 @@ def test_error_pages_do_not_count_drift(env, mock_site, cache_edge):
     cs = _cache_lines(env)[-1]
     assert "drift=0" in cs, "error pages must not flag drift"
     assert "gap=0" in cs and "shield=0" in cs, "origin green => no shield/gap context"
-    assert "batclass=edge-degraded" in cs and "err=5" in cs
+    assert "batverdict=edge-degraded" in cs and "err=5" in cs
 
 
 # --------------------------------------------- ORIGIN_OUTAGE_STALE_SERVED
@@ -316,7 +316,7 @@ def test_oos_verdict_requires_shield(env, mock_site, cache_edge):
     assert "verdict=ORIGIN_OUTAGE_STALE_SERVED" in _lanes_lines(env)[-1]
     assert "WARN — ORIGIN_OUTAGE_STALE_SERVED (origin + edge-tunnel dark, users shielded by cached edge HTML; cache-state shield=5 stale=5 fresh=0): streak 1/2" in lt
     cs = _cache_lines(env)[-1]
-    assert "shield=5" in cs and "gap=0" in cs and "batclass=shielded" in cs
+    assert "shield=5" in cs and "gap=0" in cs and "batverdict=shielded" in cs
     assert state_dict(env)["pending_page"] == "-", "no page latch at streak 1"
     # mutual exclusion with the streak-1 full-edge rule (cached green caps
     # edge failures at 4/6 < conjunct 5; here 2/6)
@@ -339,7 +339,36 @@ def test_oos_without_shield_evidence_stays_mixed(env, mock_site, cache_edge):
     assert "ORIGIN_OUTAGE_STALE_SERVED" not in lt
     assert "WARN — failure streak 1/2 (2 check(s) failed, 1 P0)" in lt
     cs = _cache_lines(env)[-1]
-    assert "gap=5" in cs and "shield=0" in cs and "batclass=gap" in cs
+    assert "gap=5" in cs and "shield=0" in cs and "batverdict=gap" in cs
+
+
+def test_dynamic_200s_while_origin_dark_never_shield(env, mock_site, cache_edge):
+    """Contradictory-evidence guard: a 200 with ccs=miss/bypass means the
+    edge REACHED the origin to serve it — it cannot prove users are
+    cache-shielded while the origin lane reads dark. dynamic 200s are
+    neither shield nor gap: the OOS branch must stay shut and the tick
+    rides the GENERIC fail-open MIXED path (CI-found 2026-11-18: the live
+    edge leaked HIT 200s into an unpinned legacy fixture and flipped the
+    pinned MIXED fail-open contract to ORIGIN_OUTAGE_STALE_SERVED)."""
+    base_url, specs = cache_edge
+    specs.update({r: (200, "MISS", 0, CONTRACT_CC) for r in ROUTES})
+    _origin_dark(env)
+    env["NFM_CACHE_STATE_BASE"] = base_url
+    tmp = Path(env["NFM_MONITOR_LOG"]).parent
+    env["NFM_MONITOR_PROBE"] = _probe(tmp, _report(_oos_rows()))
+
+    r = run_script(env)
+    assert r.returncode == 1, (r.returncode, log_text(env))
+
+    lt = log_text(env)
+    assert "verdict=MIXED" in _lanes_lines(env)[-1]
+    assert "ORIGIN_OUTAGE_STALE_SERVED" not in lt
+    cs = _cache_lines(env)[-1]
+    assert "dyn=5" in cs
+    assert "shield=0" in cs and "gap=0" in cs, (
+        "dynamic 200s are neither shield nor gap — contradictory evidence"
+    )
+    assert "batverdict=mixed" in cs
 
 
 def test_oos_streak2_pages_with_latch(env, mock_site, cache_edge):
@@ -389,7 +418,7 @@ def test_full_edge_outage_unchanged_when_cached_dark(env, mock_site, cache_edge)
     assert "verdict=FULL_EDGE_OUTAGE" in _lanes_lines(env)[-1]
     assert "ORIGIN_OUTAGE_STALE_SERVED" not in lt
     cs = _cache_lines(env)[-1]
-    assert "gap=5" in cs and "shield=0" in cs and "batclass=gap" in cs
+    assert "gap=5" in cs and "shield=0" in cs and "batverdict=gap" in cs
     # the live 2026-11-16 episode shape, now visible as a dimension: edge
     # erroring (502) on treated routes while the origin is dark
     assert "=err(502,ccs=none,a=0)" in cs
