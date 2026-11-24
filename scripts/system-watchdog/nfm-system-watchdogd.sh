@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # nfm-system-watchdogd.sh — system-domain watchdog (NFM-5346, 2026-10-07).
 #
+# v2 (2026-11-16, NFM-5976 re-issue): FAIL-CLOSED engine liveness — the real
+# engine socket must answer _ping with an explicit HTTP 200; the G2 ro-gate
+# OR leg is dropped (it answers-when-dead and silently defeated the headless
+# revival leg during the 2026-11-16 logout window).
+#
 # Why: on 2026-10-07T06:44Z a macOS Software-Update restart countdown
 # expired and the ensuing logout hung partway, leaving the gui/501 launchd
 # domain permanently in "on-demand-only mode": StartInterval fires,
@@ -12,10 +17,12 @@
 # This daemon runs as ROOT in the system domain — the only supervision
 # anchor that survives a gui-domain wedge. It never kills anything; it
 # only revives:
-#   1. Docker Desktop (prod daemon)  — pgrep the app; if gone, `open -a
-#      Docker` as the console user via launchctl asuser (the SRE-proven
-#      recovery from NFM-5343: all containers auto-restart via restart
-#      policy, no rebuild).
+#   1. The Docker engine (prod daemon) — probe the engine API socket for
+#      an explicit HTTP 200 _ping (fail-closed); if dead, revive via a
+#      session-aware launch: the proven GUI path (`open -a`) when a
+#      gui/$GUI_UID Aqua session exists, or headless `com.docker.backend
+#      -unattended -with-frontend=false` when it does not. All containers
+#      auto-restart via restart policy, no rebuild.
 #   2. The gui-domain interval-agent watchdog — if its log goes stale,
 #      kickstart it; it in turn re-kicks each StartInterval agent
 #      (site-monitor, 7892-sentinel, 3443-poll, 5267-eval-sampler).
@@ -32,13 +39,16 @@ set -uo pipefail
 # --- config -----------------------------------------------------------------
 GUI_UID=501
 GUI_USER=lwj04
+GUI_USER_HOME="/Users/$GUI_USER"
 POLL_SECONDS=60
-DOCKER_TRIGGER_COOLDOWN=300   # `open -a Docker` at most every 5 min (startup ~90s)
+DOCKER_TRIGGER_COOLDOWN=300   # revive attempt at most every 5 min (startup ~90s)
 WATCHDOG_STALE=360            # gui watchdog log older than 6 min = wedged/dead
 LOG=/var/log/nfm-watchdogd.log
 STATE_DIR=/var/run/nfm-watchdogd
 GUI_WATCHDOG_LOG="/Users/$GUI_USER/Library/Logs/nfm-interval-agent-watchdog.log"
-DOCKER_APP="Docker Desktop"   # Electron app process name (pgrep -x)
+DOCKER_APP_PATH="/Applications/Docker.app"
+BACKEND_BIN="$DOCKER_APP_PATH/Contents/MacOS/com.docker.backend"
+ENGINE_SOCK="$GUI_USER_HOME/.docker/run/docker.sock"  # real engine API socket
 
 mkdir -p "$STATE_DIR"
 touch "$LOG"
@@ -51,19 +61,50 @@ if (( $(stat -f %z "$LOG") > 1048576 )); then
   tail -n 400 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 fi
 
-# --- 1. Docker Desktop liveness ----------------------------------------------
-if pgrep -x -u "$GUI_UID" "$DOCKER_APP" >/dev/null 2>&1; then
-  : # app alive; container-level health is the sentinel's job (site-monitor)
+# Engine liveness (v2, fail-closed — NFM-5976 re-issue): the REAL engine
+# socket must answer _ping with an explicit HTTP 200. A bare
+# `curl -s -o /dev/null` exits 0 on ANY HTTP response, and the G2 ro-gate
+# proxy (a root LaunchDaemon that survives logout) answers with error-class
+# responses while its upstream engine is dead — that combination kept
+# liveness TRUE through the entire 2026-11-16 logout dark window and made
+# the headless revival leg unreachable (NFM-5976). The ro-gate OR leg is
+# dropped entirely: an answers-when-dead proxy cannot be a liveness oracle.
+# root can always connect to ENGINE_SOCK (G2 deploy-gate DAC design).
+ENGINE_PROBE_CODE="000"
+engine_alive() {
+  ENGINE_PROBE_CODE="$(/usr/bin/curl -s -o /dev/null --max-time 5 --write-out '%{http_code}' --unix-socket "$ENGINE_SOCK" http://localhost/_ping 2>/dev/null)"
+  [[ "$ENGINE_PROBE_CODE" == "200" ]]
+}
+
+# --- 1. Docker engine liveness (GUI or headless) ------------------------------
+if engine_alive; then
+  : # engine alive; container-level health is the sentinel's job (site-monitor)
 else
   now=$(date +%s)
   last=0; [[ -f "$STATE_DIR/docker-triggered" ]] && last=$(cat "$STATE_DIR/docker-triggered" 2>/dev/null || echo 0)
   if (( now - last > DOCKER_TRIGGER_COOLDOWN )); then
-    log "Docker Desktop not running (pgrep -x miss) — launching via launchctl asuser"
     echo "$now" > "$STATE_DIR/docker-triggered"
-    if launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" open -a Docker >> "$LOG" 2>&1; then
-      log "Docker Desktop launch issued (containers auto-restart via restart policy)"
+    if launchctl print "gui/$GUI_UID" >/dev/null 2>&1; then
+      # Aqua session present → proven GUI revival path (NFM-5343). Full app
+      # path avoids the LaunchServices name-lookup flake of 11-11 10:58Z
+      # ("Unable to find application named 'Docker'").
+      log "Docker engine down (probe code $ENGINE_PROBE_CODE) — gui/$GUI_UID session present; launching Docker Desktop via launchctl asuser"
+      if launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" open -a "$DOCKER_APP_PATH" >> "$LOG" 2>&1; then
+        log "Docker Desktop launch issued (containers auto-restart via restart policy)"
+      else
+        log "ERROR: open -a Docker failed (GUI path)"
+      fi
     else
-      log "ERROR: open -a Docker failed"
+      # No Aqua session (no-login boot — the NFM-5971 class) → headless
+      # backend revival (R5/NFM-5975). BINDING precondition (CPO ruling
+      # 2026-11-16): this leg must pass a fresh logout validation before
+      # any controlled reboot is re-confirmed (NFM-5976).
+      log "Docker engine down (probe code $ENGINE_PROBE_CODE) — no gui/$GUI_UID session; starting com.docker.backend unattended (headless)"
+      if launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" "$BACKEND_BIN" -unattended -with-frontend=false >> "$LOG" 2>&1; then
+        log "headless backend launch issued (containers auto-restart via restart policy)"
+      else
+        log "ERROR: headless backend start failed — engine stays down until login; see this log"
+      fi
     fi
   fi
 fi
