@@ -13,6 +13,8 @@
     <true/>
     <key>StartInterval</key>
     <integer>60</integer>
+    <key>AbandonProcessGroup</key>
+    <true/>
     <key>StandardOutPath</key>
     <string>/var/log/nfm-watchdogd.out.log</string>
     <key>StandardErrorPath</key>

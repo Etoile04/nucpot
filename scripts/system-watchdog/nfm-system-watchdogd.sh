@@ -6,6 +6,17 @@
 # OR leg is dropped (it answers-when-dead and silently defeated the headless
 # revival leg during the 2026-11-16 logout window).
 #
+# v3 (2026-11-24, NFM-6071): BOUNDED + DETACHED engine launches. The
+# 2026-11-24T14:21:45Z logout window wedged the launchd invocation for ~1h:
+# the headless leg ran `com.docker.backend -unattended` (a PERSISTENT daemon)
+# in the FOREGROUND with stdio inherited from $LOG — the daemon never exits,
+# the invocation never exits, launchd never overlaps a running job, and every
+# later StartInterval fire is suppressed (decision beats dark until a manual
+# kill) while the daemon's own log stream polluted $LOG. Both engine-down
+# legs now launch through bounded_launch(): backgrounded, stdio detached,
+# hard per-invocation ceiling — an orphaned background daemon is the desired
+# outcome, not a failure.
+#
 # Why: on 2026-10-07T06:44Z a macOS Software-Update restart countdown
 # expired and the ensuing logout hung partway, leaving the gui/501 launchd
 # domain permanently in "on-demand-only mode": StartInterval fires,
@@ -76,6 +87,37 @@ engine_alive() {
   [[ "$ENGINE_PROBE_CODE" == "200" ]]
 }
 
+# --- engine-revival launcher (v3, NFM-6071) -----------------------------------
+# Every engine-down launch runs in the BACKGROUND with stdio detached from
+# $LOG, and this invocation never blocks longer than LAUNCH_BOUND_SECONDS on
+# any launch path. An orphaned background daemon is the desired outcome —
+# launchd re-parents it and it keeps reviving the engine after this script
+# exits (proven 2026-11-24: the wedged foreground daemon WAS the healthy
+# engine while its parent invocation sat blocked for an hour).
+LAUNCH_BOUND_SECONDS=15   # worst-case per-fire budget; beats stay ~60s apart
+
+# bounded_launch <label> <cmd...>
+#   Runs <cmd...> via `launchctl asuser $GUI_UID sudo -u $GUI_USER` in the
+#   background, stdio detached. Returns 0 when the child was still running at
+#   the bound (persistent daemon — the normal revival outcome), else the
+#   child's exit status (fast-fail errors still surface to the caller's
+#   ERROR log line).
+bounded_launch() {
+  local label="$1"; shift
+  launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" "$@" </dev/null >/dev/null 2>&1 &
+  local pid=$!
+  local waited=0
+  while (( waited < LAUNCH_BOUND_SECONDS )) && kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    log "$label: launch still in flight after ${LAUNCH_BOUND_SECONDS}s — proceeding detached"
+    return 0
+  fi
+  wait "$pid"
+}
+
 # --- 1. Docker engine liveness (GUI or headless) ------------------------------
 if engine_alive; then
   : # engine alive; container-level health is the sentinel's job (site-monitor)
@@ -89,7 +131,7 @@ else
       # path avoids the LaunchServices name-lookup flake of 11-11 10:58Z
       # ("Unable to find application named 'Docker'").
       log "Docker engine down (probe code $ENGINE_PROBE_CODE) — gui/$GUI_UID session present; launching Docker Desktop via launchctl asuser"
-      if launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" open -a "$DOCKER_APP_PATH" >> "$LOG" 2>&1; then
+      if bounded_launch "Docker Desktop (gui/$GUI_UID)" open -a "$DOCKER_APP_PATH"; then
         log "Docker Desktop launch issued (containers auto-restart via restart policy)"
       else
         log "ERROR: open -a Docker failed (GUI path)"
@@ -100,7 +142,7 @@ else
       # 2026-11-16): this leg must pass a fresh logout validation before
       # any controlled reboot is re-confirmed (NFM-5976).
       log "Docker engine down (probe code $ENGINE_PROBE_CODE) — no gui/$GUI_UID session; starting com.docker.backend unattended (headless)"
-      if launchctl asuser "$GUI_UID" sudo -u "$GUI_USER" "$BACKEND_BIN" -unattended -with-frontend=false >> "$LOG" 2>&1; then
+      if bounded_launch "headless backend" "$BACKEND_BIN" -unattended -with-frontend=false; then
         log "headless backend launch issued (containers auto-restart via restart policy)"
       else
         log "ERROR: headless backend start failed — engine stays down until login; see this log"

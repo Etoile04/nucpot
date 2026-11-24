@@ -10,12 +10,39 @@ the failure-mode table live there; this README is the operator surface.
 > previously existed only on the host. As of this branch, **this directory is the
 > source of truth**; host paths are deployed copies (byte-parity rule below).
 
+## Engine-down revival — bounded + detached (NFM-6071)
+
+On 2026-11-24T14:21:45Z a 60s-countdown logout (loginwindow `kAELogOutEvent`)
+quit Docker Desktop with the session; the watchdogd tick correctly took the
+headless leg — but ran `com.docker.backend -unattended` (a PERSISTENT daemon)
+in the foreground with stdio inherited from the decision log. The daemon never
+exits → the launchd invocation never exits → launchd never overlaps a running
+job → every later StartInterval fire was suppressed (decision beats dark until
+a manual `sudo kill -9 <bash pid>`), while the daemon's log stream polluted
+`$LOG` (~37 lines/min). Both engine-down legs now launch through
+`bounded_launch()` (background + detached stdio + 15s ceiling); an orphaned
+background daemon is the desired outcome, and fast-fail errors still surface
+to the caller's ERROR line.
+
+Unwedge a wedged invocation (root): `sudo kill -9 <bash pid>` — the revived
+sudo/backend chain survives (re-parented to launchd) and beats resume on the
+next 60s tick. The revived daemon may keep writing its inherited $LOG fd until
+it restarts or the log rotates past 1 MiB (fd stays pinned to the retired
+inode — harmless).
+
+The orphaned chain survives the invocation's own exit only because the plist
+sets `AbandonProcessGroup`: by default launchd SIGKILLs every process left in
+a completed job's process group, which would kill the freshly-started backend
+seconds after the bounded invocation returns (stdio/fd detachment alone does
+not escape the job's process group). Deploying the plist therefore requires a
+one-time reload (see byte-parity host-apply below).
+
 ## Files
 
 | File | Host deploy path | Role |
 |---|---|---|
 | `nfm-system-watchdogd.sh` | `/usr/local/lib/nfm-watchdog/nfm-system-watchdogd.sh` | the 60s root watchdog (Docker liveness, gui-watchdog liveness) + additive section 3 (registration-gap gate) + additive section 4 (replica-gap gate, NFM-5966) |
-| `com.nfm.watchdogd.plist` | `/Library/LaunchDaemons/com.nfm.watchdogd.plist` | byte-parity record — **unchanged** by either gate; no plist deploy is needed for this work |
+| `com.nfm.watchdogd.plist` | `/Library/LaunchDaemons/com.nfm.watchdogd.plist` | launchd job definition. `AbandonProcessGroup` (NFM-6071) keeps the detached revival chain alive across invocation exit — needs a one-time reload when deployed. Gate work left it otherwise unchanged (60s `StartInterval`). |
 | `nfm-registration-gap-gate.py` | `/usr/local/lib/nfm-watchdog/nfm-registration-gap-gate.py` | dual-signal gate module, PRIMARY connector (stdlib-only, Python 3.9-compatible for `/usr/bin/python3`) |
 | `nfm-replica-gap-gate.py` | `/usr/local/lib/nfm-watchdog/nfm-replica-gap-gate.py` | dual-signal gate module, z203 REPLICA connector (NFM-5966; same stdlib-only constraints) |
 
@@ -78,6 +105,17 @@ tail -3 /var/log/nfm-watchdogd.log | grep 'reg-gap-gate:'                    # t
 tail -3 /var/log/nfm-watchdogd.log | grep 'rep-gap-gate-replica:'            # replica gate ticking
 ```
 
+Plist changes (e.g. `AbandonProcessGroup`, NFM-6071) deploy separately and take
+effect only after a reload:
+
+```bash
+git show "$SHA:scripts/system-watchdog/com.nfm.watchdogd.plist" > /tmp/com.nfm.watchdogd.plist.new
+sudo mv /tmp/com.nfm.watchdogd.plist.new /Library/LaunchDaemons/com.nfm.watchdogd.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.nfm.watchdogd.plist
+sudo launchctl bootout system/com.nfm.watchdogd
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.nfm.watchdogd.plist
+```
+
 Rollback of a bad apply: `git show <previous-sha>:...` re-deploy the prior files,
 or delete section 3/4 — sections 1–2 (Docker, gui-watchdog) are independent.
 
@@ -106,6 +144,14 @@ enter the action), the same decision-matrix/caps/backoff/reset coverage over
 the SSH-probed Signal 2, ssh_fail/log_missing fail-closed-for-actions,
 the SSH-skip budget rule (closed+clean ⇒ no probe; dirty ⇒ probe), and the
 bounded-failure contract.
+
+`scripts/tests/test_nfm6071_watchdogd_launch_bounds.py` — the NFM-6071
+launch-bounds regression, behavioral (real bash against stubbed launchctl,
+no source-text matching): both engine-down legs exit within the launch bound
+while the spawned daemon survives invocation exit, fast-fail status surfaces
+as the caller's ERROR line, launch chatter never reaches the decision log
+(stdio detachment), the additive gate sections keep executing, and the plist
+semantically (plistlib) keeps 60s `StartInterval` + `AbandonProcessGroup`.
 
 ## Replica gate (NFM-5966, D2-G3) — what can fire, and when
 
@@ -152,6 +198,8 @@ remove watchdogd section 4 — sections 1–3 are independent and untouched.
 
 - Host is production: zero network/firewall/NAT change; the only action is a
   launchctl kickstart of an existing system service.
-- NO KeepAlive change (window-gated HA lane): the plist is byte-identical to the
-  deployed one.
+- NO KeepAlive change (window-gated HA lane). (NFM-6071 added
+  `AbandonProcessGroup` — see the Files table and the plist reload steps above;
+  until the host plist is re-deployed, repo and deployed plists are NOT
+  byte-identical.)
 - Verify tunnel out of scope: label asserted absent from every executable path.
