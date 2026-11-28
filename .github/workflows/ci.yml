@@ -299,12 +299,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, schema-drift-guard]
     # NFM-5157 / ADR-022 D3: BACKSTOP ONLY — must stay >= 1.5x the sum of
-    # this job's step caps (120s resolve-base pull + 600+600s for the two
-    # build wraps below = 22m; the 600s NFM-5160 bootstrap-shim leg was
+    # this job's step caps (120s resolve-base pull + 1200+1200s for the two
+    # build wraps below = 42m; the 600s NFM-5160 bootstrap-shim leg was
     # retired in NFM-5189 once `stable` was minted on the public GHCR
     # package) so a stalled egress leg (base-image pull, in-build pip/pnpm
     # fetch) fails the step red instead of cancelling the job.
-    timeout-minutes: 45
+    # NFM-1562: caps raised 600s -> 1200s (cold-cache pip install measured
+    # past 600s: run 44085938749, exit 124 at exactly the 600s mark); job
+    # backstop follows the same invariant: 1.5x * 42m = 63m -> 65.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v7
 
@@ -327,7 +330,7 @@ jobs:
       # registry stall on the single network leg exits non-zero (step
       # failure -> job failure -> CI Failure Triage) instead of hanging
       # to the job-level backstop. The 1.5x invariant lives at the job
-      # level (timeout-minutes: 45 vs the 30m sum of build caps).
+      # level (timeout-minutes: 65 vs the 42m sum of build caps).
       - name: Resolve build-base (pull)
         run: timeout --kill-after=60 120 docker pull ghcr.io/etoile04/nucpot-build-base:stable
 
@@ -335,8 +338,12 @@ jobs:
       # pip/pnpm fetches from the runner host — wrap so a network stall
       # exits non-zero (failure) instead of hanging to the backstop.
       # --kill-after escalates to SIGKILL if buildkit ignores SIGTERM.
+      # NFM-1562: 600s -> 1200s — cold-cache API builds (full pip install
+      # inside the image, no persistent layer cache on this job) measured
+      # past the 600s cap (44085938749: pip leg CANCELED at exactly 600s,
+      # exit 124). Mirror-image failures: 42786405905, 41636438230.
       - name: Build API image
-        run: timeout --kill-after=60 600 docker build -f docker/prod-api.Dockerfile -t nucpot-ci-api:verify .
+        run: timeout --kill-after=60 1200 docker build -f docker/prod-api.Dockerfile -t nucpot-ci-api:verify .
 
       - name: Verify API image can start
         run: |
@@ -345,7 +352,7 @@ jobs:
             python -c "from nfm_db.main import app; print('✅ API app imports successfully')"
 
       - name: Build Web image
-        run: timeout --kill-after=60 600 docker build -f docker/web.Dockerfile -t nucpot-ci-web:verify .
+        run: timeout --kill-after=60 1200 docker build -f docker/web.Dockerfile -t nucpot-ci-web:verify .
 
       - name: Verify Web image can start
         run: |
