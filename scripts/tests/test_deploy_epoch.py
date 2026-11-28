@@ -1204,6 +1204,10 @@ def _run_workflow_deploy_step(
             HOME=str(tmp_path / "home"),
             RUNNER_TEMP=str(runner_temp),
             GITHUB_OUTPUT=str(out_file),
+            # NFM-5984: the step sources deploy_event.sh from the checkout to
+            # capture start_ms — the real step runs post-checkout with
+            # GITHUB_WORKSPACE set, so the harness must mirror that.
+            GITHUB_WORKSPACE=str(REPO_ROOT),
             FAKE_DEPLOY_EPOCH=deploy_epoch,
             FAKE_DEPLOY_RC=str(deploy_rc),
         ),
@@ -1215,7 +1219,10 @@ def _run_workflow_deploy_step(
 def test_workflow_deploy_step_binds_epoch_anchor_to_step_output(tmp_path: Path):
     proc, output = _run_workflow_deploy_step(tmp_path, deploy_epoch="7", deploy_rc=0)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert output.strip() == "epoch=7"
+    # NFM-5984: the output also carries the start_ms capture line; the epoch
+    # anchor must still land as its own exact line.
+    assert "epoch=7" in output.splitlines()
+    assert output.count("epoch=") == 1
     assert "this run minted deploy-epoch 7" in proc.stdout
 
 
@@ -1224,6 +1231,19 @@ def test_workflow_deploy_step_leaves_epoch_unset_when_deploy_dies_before_mint(tm
     assert proc.returncode == 1, "the ssh exit code stays authoritative"
     assert "epoch=" not in output
     assert "::warning::NFM-5253: no DEPLOY_EPOCH_MINTED anchor" in proc.stdout
+
+
+def test_workflow_deploy_step_captures_start_ms_even_when_deploy_fails(tmp_path: Path):
+    """NFM-5984: the deploy step records its wall-clock start into
+    GITHUB_OUTPUT BEFORE any deploy work, so the emit step can compute a real
+    duration_ms even for failed deploys (the emit step owns the sentinel-0
+    fallback; the capture itself must be unconditional)."""
+    proc, output = _run_workflow_deploy_step(tmp_path, deploy_epoch="", deploy_rc=1)
+    assert proc.returncode == 1
+    start_lines = [ln for ln in output.splitlines() if ln.startswith("start_ms=")]
+    assert len(start_lines) == 1, f"expected exactly one start_ms line, got: {output!r}"
+    value = start_lines[0].split("=", 1)[1]
+    assert value.isdigit() and int(value) > 0, f"start_ms not a positive int: {value!r}"
 
 
 def test_workflow_emit_wiring_semantics():

@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 18
     steps:
       - name: Download payload from orchestrator run
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: watchdog-payload
           run-id: ${{ github.event.client_payload.orchestrator_run_id }}

@@ -940,6 +940,21 @@ jobs:
           DEPLOY_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # NFM-5984: capture the deploy wall-clock start BEFORE any deploy
+          # work so the emit step can record a real duration_ms (the fragment
+          # step used to send a zero sentinel, leaking the lib default into
+          # every master event — epochs 71–72). Start-anchored wall clock
+          # like staging's exit-trap duration, but measured through
+          # post-deploy verification, so prod durations run larger than
+          # staging's for the same deploy. deploy_event.sh ships in this same
+          # checkout and its clock helper never fails; bookkeeping must not
+          # fail the deploy, so an unavailable clock leaves start_ms unset
+          # and the emit step falls back to the sentinel.
+          if . "$GITHUB_WORKSPACE/scripts/lib/deploy_event.sh" 2>/dev/null; then
+            echo "start_ms=$(deploy_event_now_ms)" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::NFM-5984: deploy_event.sh clock unavailable — emit step will record duration_ms=0"
+          fi
           # NFM-4270 (ADR-013 G2): repo sync stays with lwj04 (repo owner);
           # the deploy body runs as the dedicated deploy identity via the
           # root-owned sudo entry → full docker gate (audited). The scp'd
@@ -1235,6 +1250,35 @@ jobs:
             FIRST_POLL="false"
           fi
 
+          # NFM-5984: the fragment used to send a zero duration sentinel and
+          # pass no health-status flag at all, so the lib defaults (0 /
+          # "error") leaked into every master event — even green deploys with
+          # health_gate_first_poll_passed=true recorded health_status="error"
+          # (epochs 71–72, e.g. event 7f3b7e8d… @ 2026-11-15T13:53:20Z).
+          # duration: deploy start→emit wall clock (start-anchored like the
+          # staging trap's figure, but measured through post-deploy
+          # verification — cutover, external smoke, Celery verify all run
+          # between deploy and emit) from the deploy step's start_ms output;
+          # sentinel 0 when
+          # the deploy died before minting one — a metric may not fail the
+          # event it annotates (NFM-2119 doctrine). health_status: derived
+          # from the SAME FIRST_POLL boolean this event emits, so the fields
+          # can never contradict each other (gate attested → ok, else error;
+          # the bounded-retry budget has no partial verdict, so there is no
+          # degraded signal on this path).
+          START_MS="${{ steps.deploy.outputs.start_ms }}"
+          DURATION_MS="0"
+          case "${START_MS:-}" in
+            ''|*[!0-9]*) : ;; # deploy died pre-capture or unparsable — sentinel 0
+            *)
+              NOW_MS="$(deploy_event_now_ms 2>/dev/null || echo 0)"
+              DURATION_MS=$(( NOW_MS - START_MS ))
+              [ "$DURATION_MS" -lt 0 ] && DURATION_MS="0" # clock-skew clamp
+            ;;
+          esac
+          HEALTH_STATUS="error"
+          [ "$FIRST_POLL" = "true" ] && HEALTH_STATUS="ok"
+
           _prod_emit() {
             # NFM-5934: exactly ONE line per run. The direct call below
             # AND the EXIT trap both used to append (deploy_event_emit
@@ -1261,7 +1305,8 @@ jobs:
               --health-gate-first-poll-passed "$2" \
               --rollback-triggered false \
               --skip-flag-used false \
-              --duration-ms 0 \
+              --duration-ms "$DURATION_MS" \
+              --health-status "$HEALTH_STATUS" \
               --deploy-epoch "${RUN_EPOCH:-}" \
               || return 0
             return 0

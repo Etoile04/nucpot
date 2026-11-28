@@ -444,6 +444,65 @@
 #     from 2026-11-06T18:14:58Z) is NFM-5871's — untouched; origin/cached
 #     probe targets and cadence unchanged.
 #
+# NFM-5875 (2026-11-16, SRE; parent NFM-5870 ADR-026 AC5, NATIVE-YES branch
+# per the NFM-5873 gate verdict) — edge cache-state as a classification
+# dimension on the 5 treated HTML routes:
+#   - Context: the NATIVE-YES path is live — NFM-5873 response rule
+#     dce2cc9a (ruleset 32f1d9a4) sets CF-internal max-age=1800 +
+#     stale-while-revalidate=31534200 + stale-if-error=604800, all
+#     cloudflare_only, scoped to `/ /datasets /browse /potentials
+#     /materials`. The client-visible contract is UNCHANGED
+#     (s-maxage=1800, stale-while-revalidate=31534200 — NFM-5863). The
+#     Worker sibling NFM-5874 closed superseded, so the x-edge-cache-state
+#     header contract never existed; the dimension consumes CF-NATIVE
+#     evidence instead: cf-cache-status vocabulary + age + the
+#     cache-control byte contract.
+#   - New probe lane cache_state_probes (evidence-only, rc 0 always, direct
+#     egress, mirrors the NFM-5797 discriminator shape): per treated route
+#     one GET through the edge hostname capturing status /
+#     cf-cache-status / age / cache-control. Per-tick CACHE-STATE line
+#     between LANES and REPLICA (green + degrade alike), so the
+#     classification is visible in the tick stream the SRE heartbeat
+#     reads (the lane fact: ~/Library/Logs/nfm-site-monitor.log).
+#   - Per-route freshness classes (origin-independent): fresh (200 +
+#     HIT/REVALIDATED + age<=1800), stale (200 + STALE/UPDATING ccs or
+#     age>1800 — serve-stale observed, healthy SWR behavior), dynamic
+#     (200 + MISS/DYNAMIC/BYPASS/none — eligibility-drift hint), error
+#     (non-200/transport). Tick context (origin-dependent): shield=<n>
+#     routes PROVEN cache-served (fresh|stale classes only) while the
+#     origin lane is dark (users cache-shielded — a 200 with ccs
+#     miss/bypass means the edge reached the origin, contradicting an
+#     origin-dark verdict, so it is never shield); gap=<n> routes erroring
+#     at the edge while the
+#     origin lane is dark (the ADR-026 stale-contract gap — 502/530
+#     instead of stale; FIRST NATURAL EXPOSURE 2026-11-16 ~07:35Z, episode
+#     NFM-6016: rule verified enabled, edge returned 502-no-stale — AC6
+#     evidence, CTO window eligible >=17:10Z 11-17); drift=<n> cache-control
+#     bytes off the NFM-5873 contract (proof-(a) revert-trigger detection).
+#   - New verdict ORIGIN_OUTAGE_STALE_SERVED (fail-open, additive): origin
+#     FAIL + edge-tunnel FAIL + edge-cached OK + PROVEN cache shield
+#     (shield>=1) — previously this combination fell to MIXED. This is the
+#     e7/e8 lesson honored at the classification layer: once stale-serving
+#     exists, origin-down-with-users-shielded must not read as a generic
+#     full-edge outage. Without the shield evidence the tick stays MIXED
+#     (unchanged fail-open). Page discipline mirrors NFM-5876 PD (NFM-5666
+#     discipline for shielded-degradation classes): WARN at streak 1, page
+#     at streak 2 — users are shielded but content is frozen for up to the
+#     SIE window, so the origin outage must still page. Mutually exclusive
+#     with PARTIAL_DEGRADED (that requires origin ok) and with the s1
+#     streak-1 rule (cached=ok caps edge failures at 4/6 < conjunct 5).
+#     TRANSIT_BROWNOUT precedes and can only delay the page, never consume
+#     it (unchanged rule).
+#   - Scope guards: every pre-existing verdict (ALL_OK / FULL_EDGE_OUTAGE /
+#     PARTIAL_DEGRADED / ORIGIN_DEGRADED / CACHED_DEGRADED / MIXED /
+#     UNCLASSIFIED) keeps its exact matrix cell and page semantics —
+#     ORIGIN_DEGRADED (tunnel ok + cached ok + origin fail) intentionally
+#     keeps the generic path; no pinned line format is touched (green OK
+#     lines byte-stable, FULL_EDGE_OUTAGE CRITICAL byte-stable); the
+#     CACHE-STATE line is evidence-only for every pre-existing verdict.
+#   - Env seams (test-only; unset in production => identical behavior):
+#     NFM_CACHE_STATE_BASE, NFM_CACHE_STATE_TIMEOUT, NFM_CACHE_STATE_CURL.
+#
 # NFM-5892 (2026-11-07, SRE; CPO dispatch from NFM-5891/NFM-5890) — restore
 # s1 episode booking on the streak>=2 CRITICAL paths:
 #   - Defect (e9, 2026-11-07 03:20Z -> 03:33Z): the first REAL episode to
@@ -471,6 +530,34 @@
 #     transit-side suppression is by definition not a site-side episode).
 #     The close path is unchanged — once open=1, the next green tick books
 #     the episode close with its existing RECOVERY line.
+#
+# NFM-6006 (2026-11-16, LE adjudication of the SRE retro-file) — booking
+# gate widened from the paging conjuncts to the episode shape:
+#   - Episode (11-11 11:42:09Z -> 12:19:42Z, ~37.5m): confirmed CRITICAL on
+#     the streak>=2 lane (all-connection-error / SSL UNEXPECTED_EOF shape)
+#     but booked NOTHING — no t2-ledger append, no open window, no episode
+#     close RECOVERY line, no fresh latch timestamp (pending_page kept
+#     e23's 10:59:31Z) — because the NFM-5892 call was gated on s1_match,
+#     whose conjunct 4 (hard>latency) is a PAGING precision rule (fx3
+#     latency-dominant exclusion) that a 100% connection-error episode can
+#     never satisfy. LE verdict: conjunct-4 page exclusion BY DESIGN; the
+#     evidence loss a DEFECT (the exact NFM-5892 class resurfacing one
+#     conjunct deeper). NOT reboot state loss — streak continuity survived
+#     the 11:47-48Z restart (first-failure 11:42:09Z persisted into the
+#     11:49:44Z CRITICAL; all state is file-backed).
+#   - Fix: s1_classify also sets s1_episode_match (conjuncts 1-3 only);
+#     the streak>=2 booking gate uses it. The streak-1 early-page rule is
+#     byte-for-byte unchanged (conjunct 4 keeps excluding latency-dominant
+#     sets from the PAGE; rate-limited s1 matches already book anyway).
+#   - Rate-limit semantics (unchanged, now documented): last_page counts
+#     LANE EMISSION stamps (s1 pages + s2 bookings), never delivery —
+#     notify_page is best-effort osascript with no delivery feedback. The
+#     1/1800s cooldown gates only the streak-1 lane; the streak>=2 lane's
+#     notify is unconditional. pending_page is a single keep-earliest slot
+#     armed at page-emission / first-CRITICAL tick — a second episode under
+#     an unacked older latch stays timestamp-invisible (the 11:42 episode's
+#     reconciliation trail pointed at e23); multi-episode latch semantics
+#     remain a CTO-level follow-up, NOT changed here.
 #
 # NFM-5947 (2026-11-11, SRE; CPO triage 2026-11-10T16:03Z on QA courier
 # NFM-5947, per the NFM-5858 precedent) — Homepage P1 single family
@@ -635,6 +722,19 @@ fi
 ORIGIN_BASE="${NFM_ORIGIN_BASE:-http://localhost:3000}"
 ORIGIN_TIMEOUT="${NFM_ORIGIN_TIMEOUT:-3}"
 ORIGIN_CURL="${NFM_ORIGIN_CURL:-/usr/bin/curl}"
+
+# NFM-5875: edge cache-state probe — the edge hostname (treated routes are
+# edge objects; probing origin here would measure the wrong surface), per-
+# route budget, binary, and the client-visible cache-control BYTE contract
+# from NFM-5873 proof (a) (origin sends s-maxage=1800, SWR=31534200 on all
+# 5 routes; the response rule is cloudflare_only so the client bytes are
+# the compliance surface). Age > 1800 is stale evidence because the rule
+# pins CF-internal freshness at exactly 1800s (NFM-5873 proof (c)).
+CACHE_STATE_BASE="${NFM_CACHE_STATE_BASE:-https://nucpot.dpdns.org}"
+CACHE_STATE_TIMEOUT="${NFM_CACHE_STATE_TIMEOUT:-8}"
+CACHE_STATE_CURL="${NFM_CACHE_STATE_CURL:-/usr/bin/curl}"
+CACHE_STATE_CC_CONTRACT="s-maxage=1800, stale-while-revalidate=31534200"
+CACHE_STATE_MAX_FRESH_AGE=1800
 
 # NFM-5542 (ADR-023) D2: pin python egress to direct, defense-in-depth.
 # no_proxy='*' neutralizes ENV-VAR proxies for urllib (the
@@ -845,6 +945,18 @@ s1_classify() {
      && (( s1_hard > s1_latency )); then
     s1_match=1
   fi
+  # NFM-6006: episode-shape gate — conjuncts 1-3 WITHOUT the paging-only
+  # hard>latency conjunct. A latency-dominant (connection-error) full-edge
+  # set is excluded from the streak-1 early PAGE by design (fx3/NFM-5262
+  # diurnal-flap exclusion) but is still a real full-edge episode: booking
+  # evidence must not hinge on a paging precision conjunct (the 11-11
+  # 11:42:09Z episode CRITICALed on the streak>=2 lane and booked nothing).
+  s1_episode_match=0
+  if (( s1_edge_failed >= S1_FAILED_MIN )) \
+     && (( s1_p0_failed >= S1_P0_MIN )) \
+     && (( s1_main_failed >= 1 && s1_verify_failed >= 1 )); then
+    s1_episode_match=1
+  fi
 }
 
 s1_class_hist() { # "502 502 530 " -> "502x2,530x1"
@@ -929,7 +1041,12 @@ s1_handle_match() { # streak first_fail since_remind
 # last_page rate-limit marker + open=1/win_first) for episodes whose FIRST
 # full-edge-shaped tick arrives at streak>=2 (the e9 class — header NFM-5892
 # block). Called from the streak>=2 CRITICAL lane AFTER the TRANSIT_BROWNOUT
-# early-exit with s1_match already classified. Booking is gated on an
+# early-exit with the shape already classified. NFM-6006: the gate is the
+# EPISODE shape (s1_episode_match = conjuncts 1-3), not the paging
+# conjuncts — the 11-11T11:42:09Z latency-dominant (all connection-error)
+# episode CRITICALed here and booked nothing while s1_match=0 gated the
+# call; conjunct 4 (hard>latency) stays a streak-1-PAGE-only precision
+# rule (fx3), never an evidence rule. Booking is gated on an
 # open==0 window (idempotent: reminder ticks never re-append) and reuses
 # the ruling §2 by-episode separation (a window re-opening after <10 min
 # green is the SAME episode — count, no append). The PAGE itself stays on
@@ -1593,6 +1710,121 @@ origin_probes() { # prints "origin: /=<code>/<ms>ms/<bytes>B browse=..."; rc 0 a
   printf '%s' "$acc"
 }
 
+# ---- NFM-5875 edge cache-state probe ----------------------------------------
+# CF-native header evidence on the 5 treated HTML routes through the edge
+# hostname (ADR-026 NATIVE-YES surface — see the header NFM-5875 block).
+# Evidence-ONLY like the NFM-5797 discriminator: prints one machine-token
+# line and always exits 0 — a failed route is err-tagged evidence, never an
+# error and never an alarm/state input. Direct-pinned (--noproxy '*') +
+# absolute binary path (NFM-4579/ADR-023 discipline). Tokens are LOWERCASE
+# throughout (NFM-4951 grep-FAIL cleanliness contract).
+cache_state_probes() { # prints "cache-state: /=fresh(200,ccs=hit,a=254) ..."; rc 0 always
+  local acc route url hdr code ccs age cc cls tok drift
+  acc="cache-state:"
+  for route in $SCAN_PAGES; do
+    url="${CACHE_STATE_BASE}${route}"
+    hdr="$("$CACHE_STATE_CURL" -sS -o /dev/null --noproxy '*' \
+      --max-time "$CACHE_STATE_TIMEOUT" -H 'Connection: close' \
+      -A 'nfm-site-monitor/1.6 (+NFM-5875 edge cache-state dimension)' \
+      -D - -w $'\n__META__ %{http_code}\n' "$url" 2>/dev/null)"
+    code="$(printf '%s' "$hdr" | awk '/^__META__/ {print $2}' | tail -1)"
+    ccs="$(printf '%s' "$hdr" | grep -i '^cf-cache-status:' | head -1 | awk '{print tolower($2)}' | tr -d '[:space:]')"
+    age="$(printf '%s' "$hdr" | grep -i '^age:' | head -1 | awk '{print $2}' | tr -d '[:space:]')"
+    cc="$(printf '%s' "$hdr" | grep -i '^cache-control:' | head -1 | cut -d: -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    drift=""
+    # contract drift is a 200-response property; error pages legitimately
+    # carry no-store error cache-control — flagging those would false-drift
+    # every outage tick
+    if [[ "$code" == "200" && "$cc" != "$CACHE_STATE_CC_CONTRACT" ]]; then drift="!"; fi
+    if [[ -z "$code" || "$code" == "000" ]]; then
+      # transport failure / no response at all
+      tok="err(000,ccs=none,a=0)${drift}"
+    elif [[ "$code" != "200" ]]; then
+      # any edge error status — freshness vocabulary does not apply
+      tok="err(${code},ccs=${ccs:-none},a=${age:-0})${drift}"
+    else
+      case "$ccs" in
+        hit|revalidated)
+          if [[ "${age:-0}" =~ ^[0-9]+$ && "$age" -gt "$CACHE_STATE_MAX_FRESH_AGE" ]]; then
+            cls="stale"   # age beyond the rule-pinned 1800s freshness window
+          else
+            cls="fresh"
+          fi ;;
+        stale|updating)
+          cls="stale" ;;  # serve-stale evidence (SIE / SWR engaged)
+        *)
+          # miss/dynamic/bypass/expired/absent — treated routes should be
+          # cache-eligible; anything else is eligibility-drift evidence
+          cls="dynamic" ;;
+      esac
+      tok="${cls}(${code},ccs=${ccs:-none},a=${age:-0})${drift}"
+    fi
+    acc="$acc ${route}=${tok}"
+  done
+  printf '%s' "$acc"
+}
+
+# Classify the cache-state tokens into per-class counts + a one-word tick
+# class. Needs LANE_ORIGIN (call after ORIGIN_EV exists). Sets:
+#   CS_FRESH CS_STALE CS_DYN CS_ERR CS_SHIELD CS_GAP CS_DRIFT CS_BATVERDICT
+# Counting rules: CS_SHIELD = treated routes PROVEN cache-served (fresh or
+# stale classes only — ccs HIT/REVALIDATED/STALE/UPDATING) while the origin
+# lane is DARK. A 200 whose ccs is miss/dynamic/bypass/none (the dynamic
+# class) means the edge REACHED the origin to serve it — contradictory
+# evidence for an origin-dark verdict, so it is neither shield nor gap;
+# CS_GAP = routes erroring at the edge while the origin lane is DARK (the
+# ADR-026 stale-contract gap class); CS_ERR = edge errors with the origin
+# UP. The tick token is spelled batverdict= (NOT batclass=): the legacy
+# green-tick format guards pin `class=` as absent from the verdict segment
+# (test_nfm_site_monitor_refs / test_nfm5708 replay) and the refs battery
+# already owns the batclass= token — one token per meaning.
+# CS_BATVERDICT precedence: gap family (page-relevant) > edge-degraded >
+# shielded > stale > drift > fresh > mixed (fail-open floor).
+cache_state_classify() {
+  CS_FRESH=0; CS_STALE=0; CS_DYN=0; CS_ERR=0
+  CS_SHIELD=0; CS_GAP=0; CS_DRIFT=0
+  local route tok
+  for route in $SCAN_PAGES; do
+    # exact word match on "<route>=" (the "=" anchor keeps "/" from
+    # prefix-matching "/datasets" et al.); words are split one-per-line
+    tok="$(printf '%s' "$CACHE_STATE_OUT" | tr ' ' '\n' | awk -v r="${route}=" 'index($0, r) == 1')"
+    [[ -z "$tok" ]] && continue
+    case "$tok" in
+      *"=fresh("*)   CS_FRESH=$((CS_FRESH + 1)) ;;
+      *"=stale("*)   CS_STALE=$((CS_STALE + 1)) ;;
+      *"=dynamic("*) CS_DYN=$((CS_DYN + 1)) ;;
+      *"=err("*)     CS_ERR=$((CS_ERR + 1)) ;;
+    esac
+    [[ "$tok" == *"!" ]] && CS_DRIFT=$((CS_DRIFT + 1))
+    # class-prefix anchor: the token shape is cls(<code>,ccs=...,a=...),
+    # so "=fresh(" / "=stale(" are exact and cannot false-positive on an
+    # a=200 age or a route substring.
+    if [[ "$tok" == *"=fresh("* || "$tok" == *"=stale("* ]]; then
+      # cache-PROVEN classes only (see the counting-rules comment above):
+      # HIT/REVALIDATED/STALE/UPDATING cannot be produced by a live origin,
+      # so they are the only 200s that prove users are cache-shielded.
+      [[ "$LANE_ORIGIN" == "fail" ]] && CS_SHIELD=$((CS_SHIELD + 1))
+    elif [[ "$tok" != *"(200,"* && "$LANE_ORIGIN" == "fail" ]]; then
+      CS_GAP=$((CS_GAP + 1))
+    fi
+  done
+  if (( CS_GAP > 0 )); then
+    if (( CS_SHIELD > 0 )); then CS_BATVERDICT="stale-gap"; else CS_BATVERDICT="gap"; fi
+  elif (( CS_ERR > 0 )); then
+    CS_BATVERDICT="edge-degraded"
+  elif (( CS_SHIELD > 0 )); then
+    CS_BATVERDICT="shielded"
+  elif (( CS_STALE > 0 )); then
+    CS_BATVERDICT="stale"
+  elif (( CS_DRIFT > 0 )); then
+    CS_BATVERDICT="drift"
+  elif (( CS_FRESH == 5 )); then
+    CS_BATVERDICT="fresh"
+  else
+    CS_BATVERDICT="mixed"
+  fi
+}
+
 # ---- NFM-5966 replica liveness probe (z203 over tailscale, one SSH trip) ----
 # Read-only remote battery: per-unit LoadState/ActiveState (systemctl show
 # needs no root), the replica connector log tail (registration age), and a
@@ -1734,6 +1966,9 @@ REPPYEOF
 # Sets LANE_ORIGIN / LANE_TUNNEL / LANE_CACHED / LANE_TUNNEL_EV /
 # LANE_TUNNEL_TOK / LANE_VERDICT. Matrix + page rule documented in the header
 # NFM-5876 block; unknown lanes never classify (fail-open).
+# NFM-5875 addition: the ORIGIN_OUTAGE_STALE_SERVED cell also consumes
+# CS_SHIELD from cache_state_classify (must run FIRST — main flow orders
+# the cache-state probe before this classify).
 lane_row_state() { # $1 = check name -> ok|fail|unknown from the raw probe table
   local row
   # Row shape is "| <icon> <name> | <sev> | ..." so the anchor is
@@ -1802,6 +2037,15 @@ three_lane_classify() { # sets the LANE_* variables from PROBE_ROWS + ORIGIN_EV
     LANE_VERDICT="ORIGIN_DEGRADED"
   elif [[ "$LANE_TUNNEL" == "ok" && "$LANE_CACHED" == "fail" ]]; then
     LANE_VERDICT="CACHED_DEGRADED"
+  elif [[ "$LANE_TUNNEL" == "fail" && "$LANE_CACHED" == "ok" && "$LANE_ORIGIN" == "fail" \
+         && "${CS_SHIELD:-0}" -gt 0 ]]; then
+    # NFM-5875: origin + edge-tunnel dark while the cached edge PROVABLY
+    # still serves treated routes (shield>=1 from the cache-state probe) —
+    # the e7/e8 lesson at the classification layer: users are shielded, so
+    # this is NOT a generic full-edge outage. Fail-open: without the
+    # shield evidence (probe dark/garbled) the tick stays MIXED exactly as
+    # before. Requires cache_state_classify to have run (CS_SHIELD set).
+    LANE_VERDICT="ORIGIN_OUTAGE_STALE_SERVED"
   else
     LANE_VERDICT="MIXED"
   fi
@@ -2104,8 +2348,23 @@ log "ORIGIN — $ORIGIN_EV"
 # stays the tick's newest line (liveness read; green OK lines stay
 # byte-stable, NFM-5708 convention). AC1: the lane result + verdict are
 # visible per tick in this log.
+# NFM-5875: the cache-state probe + classify run BEFORE three_lane_classify
+# so the ORIGIN_OUTAGE_STALE_SERVED cell can consume CS_SHIELD (probe is
+# origin-independent; only the classify reads LANE_ORIGIN). Evidence-only:
+# never feeds streaks, state, or the paging machinery beyond the new
+# verdict's own rule.
+CACHE_STATE_OUT="$(cache_state_probes 2>/dev/null)"
+LANE_ORIGIN="$(lane_origin_state)"
+cache_state_classify
 three_lane_classify
 log "LANES — origin=$LANE_ORIGIN edge-tunnel=$LANE_TUNNEL_TOK edge-cached=$LANE_CACHED verdict=$LANE_VERDICT [NFM-5876]"
+
+# NFM-5875: cache-state dimension line — every real-probe tick (green +
+# degrade alike), between LANES and REPLICA so the OK/WARN/CRITICAL line
+# stays the tick's newest line (liveness read preserved). AC5: the
+# cache-state classification is visible in the monitor output as a
+# dimension.
+log "CACHE-STATE — ${CACHE_STATE_OUT#cache-state: } — fresh=$CS_FRESH stale=$CS_STALE err=$CS_ERR dyn=$CS_DYN shield=$CS_SHIELD gap=$CS_GAP drift=$CS_DRIFT batverdict=$CS_BATVERDICT [NFM-5875]"
 
 # NFM-5966: replica lane evidence — every real-probe tick (green + degrade
 # alike), after the LANES line so the OK/WARN/CRITICAL line stays the tick's
@@ -2282,7 +2541,8 @@ if (( RC == 1 )); then
       exit 1
     fi
     # NFM-5892: book the full-edge episode AT this streak>=2 CRITICAL tick
-    # when the s1 conjuncts match (s1_match=1) and no window is open — the
+    # when the episode shape matches (s1_episode_match=1, NFM-6006 gate) and
+    # no window is open — the
     # e9 class: episodes entering full-edge via lane-by-lane escalation
     # (tunnel dark -> cached edge dark next tick) previously paged with NO
     # ledger append, NO t2-ledger count, NO rate-limit marker and NO open
@@ -2294,7 +2554,10 @@ if (( RC == 1 )); then
     # byte-identical when nothing books).
     s2_book_ev=""
     s1_classify
-    if (( s1_match == 1 )); then
+    # NFM-6006: gate on the EPISODE shape (conjuncts 1-3), not the paging
+    # conjuncts — a latency-dominant full-edge CRITICAL books like any other
+    # full-edge episode; conjunct 4 keeps gating only the streak-1 early page.
+    if (( s1_episode_match == 1 )); then
       s1_book_streak2
     fi
     # NFM-5876: PARTIAL_DEGRADED page rule — the edge-tunnel lane is dark
@@ -2318,6 +2581,32 @@ if (( RC == 1 )); then
         log "CRITICAL — PARTIAL_DEGRADED page (NFM-5876 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline for the new class): edge-tunnel dark while origin-direct and cached edge stay green — streak $streak, first failure $first_fail — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — users currently shielded by cached edge HTML — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
       fi
       notify_page "PARTIAL_DEGRADED: edge-tunnel dark, cached edge shielding users (streak $streak)"
+      state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
+        "$skip_a_next" "$skip_b_next" "$blind_p0_next"
+      exit 2
+    fi
+    # NFM-5875: ORIGIN_OUTAGE_STALE_SERVED page rule — mirror of the
+    # NFM-5876 PD rule (NFM-5666 discipline for shielded-degradation
+    # classes): WARN streak 1 (branch below), PAGE streak 2. The class
+    # means BOTH the origin and the edge-tunnel are dark while the cached
+    # edge provably still serves the treated HTML routes — users are
+    # shielded but content is frozen for up to the SIE window, so the
+    # origin outage must still page. Mutually exclusive with
+    # PARTIAL_DEGRADED (that requires origin ok) and with the s1 streak-1
+    # rule (cached=ok caps edge failures at 4/6 < conjunct 5); sits after
+    # TRANSIT_BROWNOUT like PD, so suppression can only delay the page.
+    if [[ "$LANE_VERDICT" == "ORIGIN_OUTAGE_STALE_SERVED" ]]; then
+      pending="$(state_get pending_page -)"
+      if [[ "$pending" == "-" || -z "$pending" ]]; then
+        pending="$NOW"   # latch: survives recovery until the heartbeat acks
+      fi
+      if (( since_remind >= REMINDER_RUNS )); then
+        since_remind=0
+        log "CRITICAL (ongoing reminder, first failure $first_fail) — ORIGIN_OUTAGE_STALE_SERVED persists (origin + tunnel dark, users cache-shielded; NFM-5875 page rule: WARN streak 1, page streak ${PD_PAGE_STREAK}) — $failed check(s) failed ($p0 P0) — cache-state shield=$CS_SHIELD gap=$CS_GAP stale=$CS_STALE — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      else
+        log "CRITICAL — ORIGIN_OUTAGE_STALE_SERVED page (NFM-5875 rule: WARN streak 1, page streak ${PD_PAGE_STREAK}; NFM-5666 discipline): origin + edge-tunnel dark while cached edge serves the treated routes — users shielded, content frozen — streak $streak, first failure $first_fail — cache-state shield=$CS_SHIELD gap=$CS_GAP stale=$CS_STALE — $failed check(s) failed ($p0 P0) — $faildetail$s2_book_ev $REF_EV [$(proxy_state_line)]"
+      fi
+      notify_page "ORIGIN_OUTAGE_STALE_SERVED: origin + tunnel dark, cached edge shielding users (shield=$CS_SHIELD, streak $streak)"
       state_write "$streak" "$first_fail" "$since_remind" CRITICAL 0 "$pending" "$scan_skip_next" \
         "$skip_a_next" "$skip_b_next" "$blind_p0_next"
       exit 2
@@ -2346,8 +2635,12 @@ if (( RC == 1 )); then
     # NFM-5876: a PARTIAL_DEGRADED tick warns IMMEDIATELY at streak 1 (the
     # new class's first half of the page rule); the generic streak-1 WARN
     # text stays byte-identical for every other verdict.
+    # NFM-5875: ORIGIN_OUTAGE_STALE_SERVED warns immediately at streak 1
+    # too (same NFM-5666 discipline for shielded-degradation classes).
     if [[ "$LANE_VERDICT" == "PARTIAL_DEGRADED" ]]; then
       log "WARN — PARTIAL_DEGRADED (edge-tunnel dark, users shielded by cached edge): streak ${streak}/${PD_PAGE_STREAK} — immediate WARN per NFM-5876; page at streak ${PD_PAGE_STREAK} — tunnel lane: ${LANE_TUNNEL_EV:-unknown} — $faildetail $REF_EV"
+    elif [[ "$LANE_VERDICT" == "ORIGIN_OUTAGE_STALE_SERVED" ]]; then
+      log "WARN — ORIGIN_OUTAGE_STALE_SERVED (origin + edge-tunnel dark, users shielded by cached edge HTML; cache-state shield=$CS_SHIELD stale=$CS_STALE fresh=$CS_FRESH): streak ${streak}/${PD_PAGE_STREAK} — immediate WARN per NFM-5666 discipline (NFM-5875); page at streak ${PD_PAGE_STREAK} — $faildetail $REF_EV"
     else
       log "WARN — failure streak $streak/$STREAK_THRESHOLD ($failed check(s) failed, $p0 P0) — confirming before CRITICAL — $faildetail $REF_EV"
     fi

@@ -1,0 +1,40 @@
+# NFM HA replica — VERIFY tunnel connector (tunnel 847668eb, verify.nucpot.dpdns.org)
+#
+# SOAK-MODE unit (D2-G4): this is the ONLY replica connector enabled during
+# the pre-window shadow soak. It joins the verify tunnel's connector pool
+# (non-P0 surface, operator-consented); the MAIN tunnel pool is untouched
+# until the window cutover (see cloudflared-nucpot-replica.service).
+#
+# Token handling identical to the MAIN unit: written at install time into
+# /etc/nfm/replica/verify-replica.env (0600 root) from the Mac VERIFY plist.
+#
+# Deployed to: /etc/systemd/system/cloudflared-verify-replica.service
+# Log:         /var/log/cloudflared-verify-replica.log
+
+[Unit]
+Description=NFM HA replica - VERIFY tunnel connector (nucpot-verify, 847668eb)
+# Wants= (not just After=) so the forwarder is pulled in even if this unit is
+# started standalone (NFM-5965 CR F4).
+After=network-online.target nfm-origin-forwarder.service tailscaled.service
+Wants=network-online.target nfm-origin-forwarder.service
+
+[Service]
+Type=simple
+User=root
+# TUNNEL_TOKEN=... (0600 root, written by install-replica.sh at install time)
+EnvironmentFile=/etc/nfm/replica/verify-replica.env
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --protocol http2 run
+Restart=always
+RestartSec=10
+TimeoutStopSec=30s
+StandardOutput=append:/var/log/cloudflared-verify-replica.log
+StandardError=append:/var/log/cloudflared-verify-replica.log
+
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

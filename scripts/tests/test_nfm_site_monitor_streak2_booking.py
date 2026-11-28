@@ -101,6 +101,12 @@ def env(tmp_path, mock_site):
         # NFM-5966 replica-lane seams (units not-found = NOTE-class, silent)
         "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
         "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
+        # NFM-5875 cache-state seam: hermetic dead-port pin — this file keeps
+        # its own env dict (it does not inherit the shared fixture), so the
+        # shared-fixture pin does not reach it. Without the pin the probe
+        # defaults to the LIVE edge and CI can leak real responses into the
+        # booking scenario contracts (2026-11-18 CI failure class).
+        "NFM_CACHE_STATE_BASE": "http://127.0.0.1:9",
     }
 
 
@@ -175,6 +181,24 @@ def _fulledge_5of6():
         (TUNNEL_LANE, "P0", "234ms", "HTTP 530: "),
         (OTHER_LANES[0], "P1", "125ms", "HTTP 502: Bad Gateway"),
         (VERIFY_LANE, "P0", "402ms", "HTTP 530: "),
+    ]
+
+
+def _fulledge_6of6_connection_error():
+    """NFM-6006 2026-11-11T11:42:09Z shape — full-edge 6/6, 2 P0, both
+    hostnames, but EVERY failure is connection-class (SSL UNEXPECTED_EOF /
+    connection reset): hard=0, latency-dominant. Paging conjunct 4 excludes
+    it from the streak-1 early page BY DESIGN (fx3); the episode must still
+    book on the streak>=2 lane."""
+    ssl = "Connection error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1081)"
+    rst = "Connection error: [Errno 54] Connection reset by peer"
+    return [
+        (CACHED_LANES[0], "P1", "—", ssl),
+        (CACHED_LANES[1], "P1", "—", rst),
+        (TUNNEL_LANE, "P0", "—", ssl),
+        (OTHER_LANES[0], "P1", "—", rst),
+        (OTHER_LANES[1], "P1", "—", rst),
+        (VERIFY_LANE, "P0", "—", ssl),
     ]
 
 
@@ -435,6 +459,52 @@ def test_fulledge_below_conjuncts_books_nothing(env):
     assert s1_state_dict(env) == {}
 
 
+def test_connection_error_fulledge_books_on_streak2_lane(env):
+    """NFM-6006 (2026-11-11T11:42:09Z episode): a latency-dominant all-
+    connection-error full-edge set is excluded from the streak-1 early page
+    by conjunct 4 (fx3 stays true) but MUST still book on the streak>=2
+    lane — ledger append, open window, last_page stamp, t2-ledger suffix on
+    the CRITICAL line, and the green tick closes the episode. Pre-fix
+    behavior booked nothing (no suffix, no window, no ledger entry) because
+    the booking gate reused the paging conjuncts wholesale."""
+    tmp = os.path.dirname(env["NFM_MONITOR_LOG"])
+    # streak 1 — generic WARN; no s1 page (conjunct 4), no booking evidence
+    env["NFM_MONITOR_PROBE"] = _probe(tmp, _report(_fulledge_6of6_connection_error()))
+    r1 = run_script(env)
+    assert r1.returncode == 1, (r1.returncode, log_text(env))
+    lt1 = log_text(env)
+    assert "WARN — failure streak 1/2" in lt1
+    assert t2_evidence_lines(env) == []
+    assert notify_lines(env) == []
+    assert s1_state_dict(env).get("open", "0") == "0"
+    assert s1_state_dict(env).get("ledger", "") == ""
+    # streak 2 — CRITICAL via the streak>=2 lane, and the episode BOOKS
+    env["NFM_MONITOR_PROBE"] = _probe(tmp, _report(_fulledge_6of6_connection_error()))
+    r2 = run_script(env)
+    assert r2.returncode == 2, (r2.returncode, log_text(env))
+    crit = crit_lines(env)
+    assert len(crit) == 1
+    assert "t2-ledger: episodes=1 rolling-30d (delta +1" in crit[0]
+    assert "rate-limit 1/1800s" in crit[0]
+    assert "NFM-5664 ruling 35aa85eb §4" in crit[0]
+    assert len(notify_lines(env)) == 1              # the streak>=2 lane page
+    s1 = s1_state_dict(env)
+    assert s1["open"] == "1"
+    assert s1["win_first"] != "-"
+    assert s1["last_page"] != "0"
+    assert len(s1["ledger"].split()) == 1
+    assert state_dict(env)["level"] == "CRITICAL"
+    # green tick closes the booked window with the episode-closed line
+    env["NFM_MONITOR_PROBE"] = _probe_green(tmp)
+    assert run_script(env).returncode == 0
+    lt = log_text(env)
+    assert "RECOVERY — streak-1 full-edge episode closed: window" in lt
+    s1 = s1_state_dict(env)
+    assert s1["open"] == "0"
+    assert s1["close_epoch"] != "0"
+    assert len(s1["ledger"].split()) == 1           # close never re-appends
+
+
 def test_transit_brownout_tick_never_books(env, mock_site):
     """TRANSIT_BROWNOUT suppression exits BEFORE the booking call: a
     transit-side tick at streak>=2 books nothing — ledger unchanged, no
@@ -490,8 +560,10 @@ def test_streak1_paging_path_untouched_static():
     assert 'if [[ "$p0" != "0" ]] && (( streak == 1 )); then' in src
     assert 's1_handle_match "$streak" "$first_fail" "$since_remind"' in src
     assert src.count("s1_book_streak2() {") == 1
-    # the booking call is gated on s1_match — never bare
+    # the booking call is gated on the episode-shape classifier — never bare
+    # (NFM-6006: episode shape = conjuncts 1-3; the hard>latency paging
+    # conjunct stays streak-1-page-only)
     call_site = src.index("      s1_book_streak2")
-    assert "s1_match == 1" in src[call_site - 200:call_site]
+    assert "s1_episode_match == 1" in src[call_site - 200:call_site]
     # the booking call site sits AFTER the streak-1 gate in the file
     assert src.index('(( streak == 1 ))') < call_site
