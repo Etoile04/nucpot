@@ -360,6 +360,14 @@ def env(tmp_path, mock_site):
         # never WARN) — pre-existing tests stay silent on the replica lane.
         "NFM_MONITOR_REPLICA_STATE": str(tmp_path / "monitor.replica.state"),
         "NFM_REPLICA_SSH": write_replica_stub_ssh(tmp_path, replica_battery()),
+        # NFM-5875 cache-state seam: hermetic by default (dead port — the
+        # probe default is the LIVE edge hostname, and an unpinned seam made
+        # CI leak real 200/HIT responses into every legacy scenario, firing
+        # ORIGIN_OUTAGE_STALE_SERVED where the contracts pin MIXED). With
+        # nothing listening, every pre-existing contract test sees zero
+        # shield evidence and keeps its exact pre-5875 verdict; the
+        # cache-state suite overrides per test with its own fixture edge.
+        "NFM_CACHE_STATE_BASE": "http://127.0.0.1:9",
     }
     yield e
 
