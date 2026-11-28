@@ -40,6 +40,12 @@ on:
       # Schema baseline is a frozen snapshot; any change to it is itself
       # the B1.7 baseline-bump signal.
       - "schemas/.compat-baseline/**"
+      # NFM-5635/NFM-5633: workflow-only PRs must still run the wiring
+      # suite that pins production-deployment.yml
+      # (scripts/tests/test_nfm_5527_cancel_safety.py) at PR time -
+      # otherwise every PR check can be green while a workflow-only
+      # change breaks deploy wiring (and flips main Batch 1 red on push).
+      - ".github/workflows/**"
   push:
     branches: [main]
 
